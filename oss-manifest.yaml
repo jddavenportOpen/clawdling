@@ -1,0 +1,153 @@
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+# oss-manifest.yaml — the ALLOWLIST of every path that ships in the Clawdascended OSS export.
+# See docs/ARCHITECTURE.md for the export/allowlist design.
+#
+# ALLOWLIST, NOT BLOCKLIST. Anything not matched here does NOT export. New files never ship
+# unless explicitly added (failure-mode F5: export drift). scripts/oss-export.sh copies exactly
+# the paths that match `allow:` below; scripts/oss-leak-gate.sh L5 asserts allowlist === tree.
+#
+# Entry syntax (consumed by oss-export.sh + the gate's L5 python reader):
+#   - a bare path            → that exact file
+#   - a path ending in "/"   → that directory, recursively
+#   - a glob (* ? [])        → fnmatch against tree-relative paths
+#
+# DENY TRIPWIRES (deny: below): the export/loader HARD-FAILS if the source tree contains any of
+# these, even if something accidentally allowlists them. Belt-and-suspenders over the allowlist.
+# ═══════════════════════════════════════════════════════════════════════════════════════════
+
+meta:
+  name: clawdling
+  export_version: v0.1.0
+  # The private source-of-truth this allowlist is carved from.
+  source_branch: oss-carve
+
+# ── DENY TRIPWIRES ────────────────────────────────────────────────────────────────────────────
+# If ANY of these exist in the source tree at export time, the export refuses before copying.
+# (Paid-layer + personal-data classes that must be structurally impossible to ship.)
+deny:
+  - clawd-docs/
+  - src/app/api/stripe/
+  - src/app/billing/
+  - src/app/test-login/
+  - src/lib/billing.ts
+  # Builder / self-mod pipeline (E1) + hosted provisioning/broker (E3). Targets the paid pipeline
+  # code, NOT the generic scripts/provision-db.sh keeper (that is the supabase-mode schema apply).
+  - "src/lib/builder*"
+  - "src/app/builder/"
+  - "src/app/api/builder/"
+  - "**/*selfmod*"
+  - "src/lib/provision*"
+  - "src/app/api/provision/"
+  - .env
+  - .env.localtest
+  - .env.local
+  - .env.production
+
+# ── ALLOWLIST ─────────────────────────────────────────────────────────────────────────────────
+allow:
+  # ── root config / meta ──────────────────────────────────────────────────────────────────────
+  - LICENSE                       # single license, root only (D1) — AGPL-3.0-or-later
+  - NOTICE                        # trademark carve-out + AGPL network-service note (Phase 3)
+  - CONTRIBUTING.md               # DCO + public->private-trunk export flow (Phase 3)
+  - SECURITY.md                   # vuln reporting (GitHub advisory + security@) (Phase 3)
+  - CODE_OF_CONDUCT.md            # Contributor Covenant 2.1 (Phase 3)
+  - CHANGELOG.md                  # v0.1.0 seeded (Phase 3)
+  - README.md                     # BYOK-first rewrite (Clawdling brand)
+  - package.json                  # engine deps (stripe dep removed at de-billing follow-up)
+  - package-lock.json             # reproducible install
+  - tsconfig.json
+  - next.config.ts
+  - next-env.d.ts
+  - postcss.config.mjs
+  - vitest.config.ts
+  - vitest.setup.ts
+  - .env.example                  # BYOK-first; STRIPE_* block stripped at de-billing follow-up
+  - .gitignore
+  - .nvmrc                        # node 24 pin (Vercel parity)
+  - Dockerfile                    # BYOK one-liner run path (D4)
+  - Makefile                      # install/run/dev/build/start/clean/test/leak-scan
+  - install.sh                    # hardened, idempotent, node-version check
+  - AGENTS.md                     # engine agent notes (de-personalized in T1.7)
+  - CLAUDE.md                     # engine build note (de-personalized)
+
+  # ── CI (public-safe, no proprietary secrets) ────────────────────────────────────────────────
+  - .github/workflows/ci.yml
+
+  # ── db (schema only; supabase mode) ─────────────────────────────────────────────────────────
+  - db/migrations/
+
+  # ── docs ────────────────────────────────────────────────────────────────────────────────────
+  - docs/ARCHITECTURE.md
+  - docs/LOCAL-MODE-LIMITATIONS.md
+  - docs/KNOWN-ISSUES.md          # tracked prod-build (Next 16 /_global-error) known-issue note
+  - docs/README.md
+
+  # ── public assets ───────────────────────────────────────────────────────────────────────────
+  - public/
+
+  # ── engine scripts (generic keepers + the OSS tooling itself) ───────────────────────────────
+  - scripts/generate-icons.js
+  - scripts/lint-no-emoji.mjs
+  - scripts/provision-db.sh       # generic supabase-mode schema apply (renamed/sanitized)
+  - oss-manifest.yaml             # the allowlist itself (ships so forks can re-export cleanly)
+  - scripts/oss-export.sh         # the export pipeline (ships so forks can re-export cleanly)
+  - scripts/oss-leak-gate.sh      # the leak gate (ships for `make leak-scan` + public CI)
+  # NOTE: scripts/oss-gate-drill.sh is deliberately NOT allowlisted. It plants real-corpus
+  # canary literals (a real email/IP shape) to prove the gate fires, so it is PRIVATE operator
+  # tooling — like the pattern corpus itself — and must never ship in the public export.
+
+  # ── src: app router (KEEP set only — §1.2c) ─────────────────────────────────────────────────
+  - src/app/layout.tsx
+  - src/app/page.tsx
+  - src/app/globals.css
+  - src/app/error.tsx
+  - src/app/global-error.tsx
+  - src/app/not-found.tsx
+  - src/app/favicon.ico
+  - src/app/privacy/
+  - src/app/terms/
+  - src/app/login/
+  - src/app/settings/
+  - src/app/onboarding/
+  - src/app/chat/
+  - src/app/tasks/
+  - src/app/projects/
+  - src/app/agents/
+  - src/app/docs/
+  # app/api KEEP set
+  - src/app/api/auth/
+  - src/app/api/chat/
+  - src/app/api/tasks/
+  - src/app/api/threads/
+  - src/app/api/user/
+  - src/app/api/domains/
+  - src/app/api/docs/
+  - src/app/api/agents/
+  - src/app/api/projects/
+  - src/app/api/uploads/
+  # app-level tests (engine)
+  - src/app/__tests__/
+
+  # ── src: components (de-personalized shell) ────────────────────────────────────────────────
+  - src/components/
+
+  # ── src: config ─────────────────────────────────────────────────────────────────────────────
+  - src/config/domains.ts         # 3 generic starter domains, profile-driven loader (T4b.2)
+  - src/config/agents.json        # generic assistant/researcher/tasks
+  - src/config/__tests__/         # domains loader/fallback unit test (T4b.2)
+
+  # ── profiles: the starter (empty) profile of the engine/profile split (Phase 4b) ────────────
+  - profiles/                     # profiles/starter/{domains.yaml,agents/*.md,README.md} — generic
+
+  # ── src: lib (engine) ───────────────────────────────────────────────────────────────────────
+  - src/lib/
+
+  # ── src: root ───────────────────────────────────────────────────────────────────────────────
+  - src/auth.ts
+  - src/proxy.ts
+
+  # ── src: cross-cutting tests ────────────────────────────────────────────────────────────────
+  - src/__tests__/
+
+  # ── test stubs ──────────────────────────────────────────────────────────────────────────────
+  - test/

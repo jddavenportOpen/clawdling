@@ -1,0 +1,19 @@
+# secrets
+.env
+.env.localtest
+.env*.local
+# deps + build
+node_modules/
+.next/
+out/
+dist/
+# local self-host state (JSON store under ADJUTANT_STATE_ROOT default)
+.adjutant/
+# leak-gate artifacts + private pattern corpus (never committed, never exported)
+qa/
+# tooling
+.claude/
+.playwright-mcp/
+.vercel/
+*.tsbuildinfo
+.DS_Store

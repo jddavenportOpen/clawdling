@@ -1,0 +1,626 @@
+@import "tailwindcss";
+
+/* ============================================================
+   Clawdling — Strategic Operations Center Design System
+   ============================================================ */
+
+:root {
+  /* Backgrounds */
+  --bg-void: #0A0A0F;
+  --bg-surface: #12121A;
+  --bg-glass: rgba(18, 18, 26, 0.7);
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+
+  /* Neon Accents */
+  --neon-cyan: #00FFE0;
+  --neon-green: #00FF88;
+  --neon-amber: #FFB800;
+  --neon-blue: #0088FF;
+  --neon-purple: #8B5CF6;
+  --neon-magenta: #FF00FF;
+  --neon-red: #FF3366;
+
+  /* Domain Colors */
+  --domain-work: #6366F1;
+  --domain-personal: #F5A623;
+  --domain-notes: #22C55E;
+
+  /* Text */
+  --text-primary: #E8E8F0;
+  --text-secondary: #8888AA;
+  /* a11y: bumped from #555570 to #8484A0 to clear WCAG AA 4.5:1
+     against #0A0A0F / #101017 / #12121A / #1c1c22 surfaces */
+  --text-muted: #8484A0;
+
+  /* Borders */
+  --border-glass: rgba(255, 255, 255, 0.08);
+  --border-glow: rgba(0, 255, 224, 0.3);
+  --border-active: rgba(0, 255, 224, 0.15);
+  --border-divider: rgba(255, 255, 255, 0.06);
+
+  /* Status */
+  --status-ok: #4ADE80;
+  --status-warn: #FACC15;
+  --status-critical: #F87171;
+  --status-info: #60A5FA;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WARM GRAPHITE — v6 design-system foundation (2026-06-10)
+   ────────────────────────────────────────────────────────────────────────
+   The chosen direction (JD): Anthropic-warm / Resend-solid. A single warm
+   near-black luminance ladder where ELEVATION = surfaces getting LIGHTER
+   (never shadows — shadows are reserved for true overlays). Hairline borders
+   are translucent white so they adapt to whatever sits beneath. Text is white
+   at descending opacity (never gray hex). ONE rationed hero accent = clay-amber
+   #f5a623, used FILLED at most once per screen. State colors are muted and
+   carried as ~14%-alpha pill tints, never the brand accent.
+
+   Neutral axis is warmed to hue ~65 (vs the cool indigo 265 in the research
+   default) so the darks read warm/graphite, not cold/slate.
+
+   These semantic tokens are the source of truth for the cockpit restyle.
+   They coexist with the legacy tokens above; components migrate onto these
+   surface/text/accent/state names. Raw hex never appears in restyled components.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* ── Canvas & surface ladder (lighter = more elevated) ──────────────── */
+  --bg-canvas:   oklch(15.5% 0.006 65);   /* #0c0b0a  app background / deepest warm near-black */
+  --bg-sunken:   oklch(13%   0.006 65);   /* wells, inset tracks, code field — below canvas */
+  --surface-1:   oklch(18.5% 0.007 65);   /* #17150f  rail, thread-list column, panels */
+  --surface-2:   oklch(22%   0.008 65);   /* cards, picker tiles, session panes */
+  --surface-3:   oklch(25.5% 0.009 65);   /* #211d15  hover / raised / menus */
+  --surface-4:   oklch(29.5% 0.010 65);   /* active / selected fill */
+
+  /* ── Hairline borders (translucent white — adapt to any bg) ─────────── */
+  --border-hairline: rgba(255, 255, 255, 0.07);  /* standard structural hairline (alias) */
+  --border-micro:    rgba(255, 255, 255, 0.04);  /* faint internal dividers */
+  --border-subtle:   rgba(255, 255, 255, 0.07);  /* standard structural hairline */
+  --border-default:  rgba(255, 255, 255, 0.10);  /* card / pane edge */
+  --border-strong:   rgba(255, 255, 255, 0.14);  /* emphasis / focused container */
+
+  /* ── Text tiers (white at opacity, never gray hex) ──────────────────── */
+  --text-1: rgba(255, 255, 255, 0.93);   /* headings / body */
+  --text-2: rgba(255, 255, 255, 0.66);   /* labels, captions */
+  --text-3: rgba(255, 255, 255, 0.45);   /* meta, timestamps, placeholders */
+  --text-4: rgba(255, 255, 255, 0.26);   /* disabled */
+
+  /* ── ONE hero accent: clay-amber + states ───────────────────────────── */
+  --accent:        oklch(78% 0.16 70);          /* #f5a623  primary clay-amber */
+  --accent-hover:  oklch(83% 0.15 70);          /* lift on hover */
+  --accent-active: oklch(73% 0.16 70);          /* pressed */
+  --accent-subtle: oklch(78% 0.16 70 / 0.14);   /* tinted fill behind selected rail/tab */
+  --accent-text:   oklch(85% 0.10 70);          /* accent-on-dark links/icons */
+  --accent-border: oklch(78% 0.16 70 / 0.45);   /* focus ring / low-alpha accent edge */
+  --on-accent:     oklch(20% 0.02 65);          /* dark text on a solid accent fill */
+  --border-focus:  var(--accent-border);
+
+  /* ── Semantic STATE colors (muted, NOT the accent) ──────────────────── */
+  /* Critic round-2 FIX #2: because amber IS the brand accent, the LIVE/WORKING
+     state must sit on a DISTINCT hue so "an agent is running" never reads as the
+     brand CTA. live/working = a muted instrument CYAN (hue 220, desaturated for
+     dark — neon is cheap); ready = green; attention = a hotter amber-orange that
+     still differs from the 70-hue brand; error = red; idle = grey. The hero
+     amber is now spent ONLY on the single filled CTA — every status cue is a
+     non-brand hue, so banner ≠ brand. */
+  /* Critic round-3 FIX #2 — the live/working state was a saturated 0.13-chroma
+     cyan that read on-screen as a SECOND brand accent competing with the amber
+     (the "teal vs amber" tell). It is desaturated to an instrument grey-cyan
+     (chroma 0.07, hue nudged to 230) — still unmistakably "not amber" so it
+     never collides with the hero CTA, but quiet enough that it reads as muted
+     telemetry, not neon. ready/attention/error are likewise pulled down a notch.
+     The hero clay-amber is the ONLY saturated color on screen. */
+  --state-working: oklch(74% 0.07 230);   /* live / streaming — muted instrument grey-cyan */
+  --state-live:    oklch(74% 0.07 230);   /* alias: an agent is running */
+  --state-ready:   oklch(70% 0.11 150);   /* ready for review / done — muted green */
+  --state-attention: oklch(75% 0.15 55);  /* attention — amber-orange (≠ brand 70), still legible */
+  --state-warn:    oklch(75% 0.15 55);    /* alias */
+  --state-error:   oklch(63% 0.16 27);    /* blocked / failed status glyph + true destructive confirm */
+  /* Critic r1 FIX #2 — inline NON-destructive failure notices (a load error, a
+     transient fetch failure) must NOT use the saturated status red; a filled
+     neon red competing with the brand amber on the same screen is the
+     "second competing accent" tell. This is a muted clay/terracotta on the
+     warm-graphite axis (chroma ~0.11, hue ~35) — legibly "something went wrong"
+     without screaming. Saturated --state-error is reserved for the StatusGlyph
+     error mark + true destructive confirmation. */
+  --state-danger-muted: oklch(67% 0.105 35);
+  --state-idle:    var(--text-3);         /* dormant — grey, NO color */
+
+  /* soft tints for status pills — colored text/dot on ~14%-alpha fill */
+  --tint-working:   oklch(74% 0.07 230 / 0.14);
+  --tint-live:      oklch(74% 0.07 230 / 0.14);
+  --tint-ready:     oklch(70% 0.11 150 / 0.14);
+  --tint-attention: oklch(75% 0.15 55  / 0.14);
+  --tint-error:     oklch(63% 0.16 27  / 0.14);
+  --tint-idle:      rgba(255, 255, 255, 0.06);
+
+  /* ── Radii (tight — mission-control, never rounded-xl everywhere) ───── */
+  --radius-sm: 6px;     /* chips, inputs, buttons */
+  --radius-md: 8px;     /* cards, picker tiles */
+  --radius-lg: 12px;    /* panels, panes, modal */
+  --radius-pill: 9999px;
+
+  /* ── Spacing rhythm ─────────────────────────────────────────────────── */
+  --space-1: 4px;  --space-2: 8px;  --space-3: 12px;  --space-4: 16px;
+  --space-5: 20px; --space-6: 24px; --space-8: 32px;  --space-12: 48px;
+  --space-16: 64px; --space-20: 80px; --space-24: 96px;
+
+  /* ── Elevation / shadow — OVERLAYS ONLY (popover/modal/⌘K), never cards ─ */
+  --shadow-popover: 0 4px 12px rgba(0, 0, 0, 0.35), 0 8px 24px rgba(0, 0, 0, 0.30),
+                    inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-modal:   0 16px 48px rgba(0, 0, 0, 0.40), 0 32px 72px rgba(0, 0, 0, 0.35),
+                    inset 0 0 0 1px rgba(255, 255, 255, 0.10);
+  --focus-ring:     0 0 0 2px oklch(78% 0.16 70 / 0.40), 0 0 0 4px oklch(78% 0.16 70 / 0.20);
+
+  /* ── Motion tokens (ease-out only; never an ease-in for UI) ─────────── */
+  --ease-out-strong:    cubic-bezier(0.23, 1, 0.32, 1);    /* DEFAULT: enter/exit, hovers */
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);   /* on-screen movement / morph */
+  --ease-drawer:        cubic-bezier(0.32, 0.72, 0, 1);    /* trays, sheets, drawers */
+  --dur-micro: 120ms;   /* hover, press */
+  --dur-fast:  150ms;   /* tooltips, small popovers */
+  --dur-base:  200ms;   /* dropdowns, pills, selects */
+  --dur-pane:  280ms;   /* pane / inspector slide */
+  --dur-modal: 320ms;   /* modal / drawer reveal */
+
+  /* ── Type tokens (Geist via npm; bespoke wordmark is its own SVG) ───── */
+  --font-ui:   var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+}
+
+@theme inline {
+  /* V3.1 V2.2 ultrawide adaptive grid (2026-05-28): adds a `3xl:` breakpoint
+     at 1800px so ChatGrid can widen pane columns when JD is on his ultrawide
+     monitor without forcing it on 1440-class laptops. Default Tailwind v4
+     breakpoints stop at `2xl:1536px` — a 16:9 1920x1080 is already past 2xl,
+     so 1800px is the threshold for "this is a genuine ultrawide / wide-desktop
+     posture, push more columns into the grid." Stays consistent with the
+     existing breakpoint scale (sm/md/lg/xl/2xl → 3xl). */
+  --breakpoint-3xl: 1800px;
+
+  --color-void: var(--bg-void);
+  --color-surface: var(--bg-surface);
+  --color-glass: var(--bg-glass);
+
+  --color-neon-cyan: var(--neon-cyan);
+  --color-neon-green: var(--neon-green);
+  --color-neon-amber: var(--neon-amber);
+  --color-neon-blue: var(--neon-blue);
+  --color-neon-purple: var(--neon-purple);
+  --color-neon-magenta: var(--neon-magenta);
+  --color-neon-red: var(--neon-red);
+
+  --color-domain-work: var(--domain-work);
+  --color-domain-personal: var(--domain-personal);
+  --color-domain-notes: var(--domain-notes);
+
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+
+  --color-border-glass: var(--border-glass);
+  --color-border-glow: var(--border-glow);
+  --color-border-active: var(--border-active);
+  --color-border-divider: var(--border-divider);
+
+  --color-status-ok: var(--status-ok);
+  --color-status-warn: var(--status-warn);
+  --color-status-critical: var(--status-critical);
+  --color-status-info: var(--status-info);
+
+  --font-sans: var(--font-geist-sans);
+  --font-display: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* ── WARM GRAPHITE v6 — semantic Tailwind utilities ──────────────────
+     Wires the CSS custom properties above into Tailwind v4 so restyled
+     components use semantic class names (bg-canvas, bg-surface-2, text-1,
+     border-hairline, text-accent, bg-tint-ready, …) and never raw hex. */
+  --color-canvas:    var(--bg-canvas);
+  --color-sunken:    var(--bg-sunken);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-surface-4: var(--surface-4);
+
+  --color-hairline:        var(--border-hairline);
+  --color-border-micro:    var(--border-micro);
+  --color-border-subtle:   var(--border-subtle);
+  --color-border-default:  var(--border-default);
+  --color-border-strong:   var(--border-strong);
+
+  --color-text-1: var(--text-1);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-4: var(--text-4);
+
+  --color-accent:        var(--accent);
+  --color-accent-hover:  var(--accent-hover);
+  --color-accent-active: var(--accent-active);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-text:   var(--accent-text);
+  --color-accent-border: var(--accent-border);
+  --color-on-accent:     var(--on-accent);
+
+  --color-state-working:   var(--state-working);
+  --color-state-live:      var(--state-live);
+  --color-state-ready:     var(--state-ready);
+  --color-state-attention: var(--state-attention);
+  --color-state-warn:      var(--state-warn);
+  --color-state-error:     var(--state-error);
+  --color-state-danger-muted: var(--state-danger-muted);
+  --color-state-idle:      var(--state-idle);
+
+  --color-tint-working:   var(--tint-working);
+  --color-tint-live:      var(--tint-live);
+  --color-tint-ready:     var(--tint-ready);
+  --color-tint-attention: var(--tint-attention);
+  --color-tint-error:     var(--tint-error);
+  --color-tint-idle:      var(--tint-idle);
+
+  --font-ui:        var(--font-geist-sans);
+  --font-geist:     var(--font-geist-sans);
+  --font-geist-mono: var(--font-geist-mono);
+
+  --radius-sm:   6px;
+  --radius-md:   8px;
+  --radius-lg:   12px;
+  --radius-pill: 9999px;
+
+  --ease-out-strong:    cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out-strong: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer:        cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+/* ---- Base ---- */
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  min-height: 100vh;
+  /* Warm Graphite: the global canvas is the warm near-black (hue ~65), not the
+     legacy cool void — so any surface gap reads warm-graphite, never cold-slate. */
+  background-color: var(--bg-canvas);
+  color: var(--text-1);
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WARM GRAPHITE — typography base (Geist Sans UI · Geist Mono telemetry)
+   ────────────────────────────────────────────────────────────────────────
+   Geist is loaded via the npm `geist` package (NOT Google Fonts) so the
+   ss02 / slashed-zero stylistic sets survive. Inter is BANNED as the primary
+   face. Signature UI weights are 300 / 440 / 540 / 640 — never 600/700 in
+   chrome. font-variant-numeric: tabular-nums slashed-zero is the quiet craft
+   signal applied to every number / ID / timestamp / mono surface.
+   ════════════════════════════════════════════════════════════════════════ */
+body {
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+  font-weight: 440;
+  /* Geist ss02 = stricter Swiss geometry; calt/liga on for sans. */
+  font-feature-settings: "ss02" 1, "calt" 1, "liga" 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Data / metrics / IDs / timestamps / code / panes — Geist Mono with tabular,
+   slashed-zero figures; ligatures OFF. This carries every piece of telemetry. */
+.tabular,
+.metric,
+.session-id,
+.timestamp,
+.mono,
+code,
+pre,
+kbd,
+samp {
+  font-family: var(--font-geist-mono), ui-monospace, "SF Mono", monospace;
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1, "liga" 0, "calt" 0;
+}
+
+/* Tailwind's font-mono utility should also carry tabular slashed-zero so any
+   .font-mono numeric (clocks, token counts) reads as crafted telemetry. */
+.font-mono {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "tnum" 1, "zero" 1, "liga" 0, "calt" 0;
+}
+
+/* Signature weight ramp — the only UI weights in chrome (Linear's trick).
+   540 = the "precise but not bold" label weight; no 600/700 anywhere. */
+.weight-light  { font-weight: 300; }
+.weight-body   { font-weight: 440; }
+.weight-label  { font-weight: 540; }
+.weight-strong { font-weight: 640; }
+
+/* Display tracking is negative, scaling with size. */
+.display { letter-spacing: -0.022em; }
+
+/* Mono-uppercase eyebrow (e.g. CLAWDLING) — the "real product" metadata
+   hierarchy. 11px, +0.08em, tertiary text, mono. */
+.overline {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11px;
+  font-weight: 540;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
+
+/* Tighter role caption (critic r1 FIX #5) — the per-agent ROLE eyebrow under a
+   tile name. Smaller + more letterspaced than .overline for a cleaner type
+   rhythm in the agent grid (ORCHESTRATOR / HEALTH / RESEARCH …). Inherits its
+   color so a tile can tint it (e.g. accent-text on the CEO row). */
+.role-caption {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 9.5px;
+  font-weight: 540;
+  letter-spacing: 0.14em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+/* Warm Graphite: text selection carries the clay-amber accent (low alpha),
+   never the legacy neon-cyan — the brand accent is the one hero color. */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-1);
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-void); }
+::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); }
+
+/* ============================================================
+   Glass Panels
+   ============================================================ */
+.glass-panel {
+  background: rgba(18, 18, 26, 0.7);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  box-shadow:
+    0 0 30px rgba(0, 255, 224, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+
+.glass-panel:hover {
+  border-color: rgba(0, 255, 224, 0.15);
+  box-shadow:
+    0 0 40px rgba(0, 255, 224, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.glass-panel-muted {
+  background: rgba(18, 18, 26, 0.4);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+}
+
+.glass-panel-bordered {
+  background: rgba(18, 18, 26, 0.5);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+}
+
+/* ============================================================
+   Neon Glow Utilities
+   ============================================================ */
+.glow-cyan    { box-shadow: 0 0 20px rgba(0, 255, 224, 0.15), 0 0 60px rgba(0, 255, 224, 0.05); }
+.glow-green   { box-shadow: 0 0 20px rgba(0, 255, 136, 0.15), 0 0 60px rgba(0, 255, 136, 0.05); }
+.glow-amber   { box-shadow: 0 0 20px rgba(255, 184, 0, 0.15), 0 0 60px rgba(255, 184, 0, 0.05); }
+.glow-blue    { box-shadow: 0 0 20px rgba(0, 136, 255, 0.15), 0 0 60px rgba(0, 136, 255, 0.05); }
+.glow-purple  { box-shadow: 0 0 20px rgba(139, 92, 246, 0.15), 0 0 60px rgba(139, 92, 246, 0.05); }
+.glow-magenta { box-shadow: 0 0 20px rgba(255, 0, 255, 0.15), 0 0 60px rgba(255, 0, 255, 0.05); }
+.glow-red     { box-shadow: 0 0 20px rgba(255, 51, 102, 0.15), 0 0 60px rgba(255, 51, 102, 0.05); }
+
+.text-glow-cyan    { text-shadow: 0 0 10px rgba(0, 255, 224, 0.5), 0 0 30px rgba(0, 255, 224, 0.2); }
+.text-glow-magenta { text-shadow: 0 0 10px rgba(255, 0, 255, 0.5), 0 0 30px rgba(255, 0, 255, 0.2); }
+
+/* ============================================================
+   Animations
+   ============================================================ */
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.4; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.08); opacity: 1; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes neon-flicker {
+  0%, 19%, 21%, 23%, 25%, 54%, 56%, 100% { opacity: 1; }
+  20%, 24%, 55% { opacity: 0.6; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-breathe {
+  animation: breathe 4s ease-in-out infinite;
+}
+
+.animate-pulse-glow {
+  animation: pulse-glow 3s ease-in-out infinite;
+}
+
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(0, 255, 224, 0.04) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 3s ease-in-out infinite;
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   WARM GRAPHITE — v6 status-glyph + motion primitives
+   ────────────────────────────────────────────────────────────────────────
+   These drive the bespoke StatusGlyph state machine (the "custom emoji").
+   Transform/opacity only, ease-out, no snap/bounce. Every animated class is
+   killed under prefers-reduced-motion below.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* working — the accent arc sweeps clockwise; rotate the whole ring slowly. */
+@keyframes glyph-sweep { to { transform: rotate(360deg); } }
+
+/* queued — dashed ring drifts clockwise, slow + linear. */
+@keyframes glyph-queue-spin { to { transform: rotate(360deg); } }
+
+/* attention — the one eye-demand pulse (opacity 1 → .55 → 1). */
+@keyframes glyph-attention { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* done — single draw-on reveal of the check / ring fill. */
+@keyframes glyph-draw-on { from { stroke-dashoffset: var(--glyph-dash, 64); } to { stroke-dashoffset: 0; } }
+
+/* live fill dot — the ONE thing allowed to breathe (1.6s ease-in-out). */
+@keyframes live-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+/* skeleton shimmer — grey shimmer for pre-first-token loading (no spinner). */
+@keyframes skeleton-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.glyph-working {
+  transform-origin: center;
+  animation: glyph-sweep 1.2s ease-in-out infinite;
+}
+.glyph-queued {
+  transform-origin: center;
+  animation: glyph-queue-spin 8s linear infinite;
+}
+.glyph-attention {
+  animation: glyph-attention 1.4s ease-in-out infinite;
+}
+.glyph-done-draw {
+  animation: glyph-draw-on var(--dur-pane, 280ms) var(--ease-out-strong) both;
+}
+.live-breathe {
+  animation: live-breathe 1.6s ease-in-out infinite;
+}
+.skeleton-line {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 25%,
+    rgba(255, 255, 255, 0.08) 37%,
+    rgba(255, 255, 255, 0.04) 63%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s ease-in-out infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* Press feedback — :active scale(0.97). Apply to interactive chrome. */
+.press {
+  transition: transform var(--dur-micro) var(--ease-out-strong);
+}
+.press:active {
+  transform: scale(0.97);
+}
+
+/* Hover-lift via luminance (NOT shadow) — surfaces get lighter on hover. */
+.lift {
+  transition: background-color var(--dur-fast) var(--ease-out-strong),
+              border-color var(--dur-fast) var(--ease-out-strong);
+}
+
+/* Accent focus ring — low-alpha, NOT a glow. */
+.focus-accent:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+/* ============================================================
+   Safe-area Insets (iOS notch / home-indicator)
+   ============================================================ */
+.safe-top    { padding-top:    env(safe-area-inset-top); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-left   { padding-left:   env(safe-area-inset-left); }
+.safe-right  { padding-right:  env(safe-area-inset-right); }
+
+/* ============================================================
+   Chat-session mobile pass (2026-06-10)
+   ------------------------------------------------------------
+   A single focused agent session must be genuinely usable on a phone:
+   the surface fills the DYNAMIC viewport (100dvh, not the buggy 100vh
+   that under/over-shoots when iOS Safari's toolbars collapse), the
+   transcript scrolls with momentum and doesn't rubber-band the page,
+   and the composer reserves the home-indicator safe area below itself.
+
+   ALL three rules are scoped to phone widths (max-width: 767.98px = below
+   Tailwind's `md`). On desktop they are inert, so desktop layout is
+   byte-for-byte unchanged (guarded by the breakpoint, per the design
+   system's `h-screen` ban → dvh migration is mobile-only here).
+   ============================================================ */
+@media (max-width: 767.98px) {
+  /* The focused chat-session surface fills the dynamic viewport on a phone.
+     `dvh` accounts for the collapsing iOS Safari URL/toolbar; the static
+     `vh` fallback comes first for engines without dvh support. */
+  .chat-dvh {
+    height: 100vh;          /* fallback for no-dvh engines */
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+  }
+
+  /* iOS momentum + no page rubber-band when flicking the transcript. */
+  .momentum-scroll {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  /* Composer reserves the home-indicator inset BELOW its own padding so the
+     send row never sits under the iOS home bar. Adds to the element's
+     existing bottom padding rather than replacing it. */
+  .composer-safe-bottom {
+    padding-bottom: calc(0.5rem + env(safe-area-inset-bottom));
+  }
+}
+
+/* ============================================================
+   Reduced Motion
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  .animate-breathe,
+  .animate-pulse-glow,
+  .animate-shimmer,
+  .animate-pulse-dot,
+  /* WARM GRAPHITE v6 — kill spins/pulses/sweeps; state stays legible via
+     color/opacity end-state (the browser does NOT auto-skip these). */
+  .glyph-working,
+  .glyph-queued,
+  .glyph-attention,
+  .glyph-done-draw,
+  .live-breathe,
+  .skeleton-line {
+    animation: none !important;
+  }
+  /* keep the done glyph drawn (end-state), don't leave it hidden */
+  .glyph-done-draw { stroke-dashoffset: 0; }
+  .press { transition: none; }
+}

@@ -1,0 +1,33 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# Clawdling — starter profile domains.
+#
+# A "domain" is a scoped area of your AI OS: a bundle of a chat agent, a task
+# list, and a dashboard. This file is the source of truth for the domain list
+# that the /chat picker, the per-domain chat buttons, and the "Launch all"
+# control render.
+#
+# This starter profile ships three GENERIC domains so a fresh BYOK install has
+# a usable shell out of the box. Make it yours:
+#   1. Edit / add rows below (id must be a stable lowercase slug).
+#   2. Point `agent` at a prompt template under profiles/starter/agents/.
+#   3. Restart (`make run`) — src/config/domains.ts loads this file at boot,
+#      falling back to the compiled starter rows if it is absent or invalid.
+#
+# Each row: id, label, color (hex accent), blurb, agent (prompt-template ref).
+# ═══════════════════════════════════════════════════════════════════════════
+domains:
+  - id: work
+    label: Work
+    color: "#6366F1"
+    blurb: Projects, tasks, and deadlines
+    agent: agents/tasks.md
+  - id: personal
+    label: Personal
+    color: "#F5A623"
+    blurb: Life admin, errands, and one-off todos
+    agent: agents/assistant.md
+  - id: notes
+    label: Notes
+    color: "#22C55E"
+    blurb: Memory, recall, and reference notes
+    agent: agents/researcher.md

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "assistant",
+    "name": "Assistant",
+    "icon": "sparkle",
+    "description": "Your general-purpose agent. Chats about anything, manages your tasks, and remembers durable facts and preferences you share.",
+    "module": "assistant",
+    "default_args": [],
+    "accepts_files": true
+  },
+  {
+    "id": "researcher",
+    "name": "Researcher",
+    "icon": "magnifying-glass",
+    "description": "Web research agent. Searches the live web, gathers sources, and returns a cited summary.",
+    "module": "researcher",
+    "default_args": [],
+    "accepts_files": false
+  },
+  {
+    "id": "tasks",
+    "name": "Task Manager",
+    "icon": "checks",
+    "description": "Keeps your task list tidy: creates, lists, and completes tasks, and tracks what is open.",
+    "module": "tasks",
+    "default_args": [],
+    "accepts_files": false
+  }
+]

@@ -1,0 +1,63 @@
+name: ci
+
+# Runs on every PR and on pushes to main. Needs no repository secrets — a fork
+# with zero secrets configured runs this green.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: typecheck + vitest
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci --ignore-scripts
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit tests (vitest)
+        run: npm test
+
+      - name: Pure-util tests (node:test)
+        run: npm run test:node
+
+  leak-scan:
+    name: leak-scan (secrets + structure)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # Public-side leak gate: generic secret scan only (the L2/L3 personal
+      # pattern corpus lives private-side and never ships to the public repo).
+      # The full L1-L5 gate runs at export time. See the OSS workplan Phase 6.
+      - name: gitleaks (no-git, filesystem)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: detect --no-git --source . --redact
