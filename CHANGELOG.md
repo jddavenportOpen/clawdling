@@ -20,7 +20,9 @@ self-hostable personal AI OS engine behind Clawdascended.
   Optional `ADJUTANT_STATE=supabase` for a hosted Postgres backend.
 - **Starter profile** — three generic starter domains (work / personal / notes)
   so a fresh install is usable out of the box; edit to make it yours.
-- **Three-command install** — `install.sh` + `make run`, plus a Docker path.
+- **Three-command install** — `git clone` + `install.sh` + `make run` (dev mode).
+  A Docker path exists but is currently blocked by the upstream build issue noted
+  under Known issues.
 - **AGPL-3.0-or-later** license; governance (CONTRIBUTING, SECURITY, CoC).
 
 ### Fixed
