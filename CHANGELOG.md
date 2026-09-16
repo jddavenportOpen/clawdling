@@ -23,6 +23,23 @@ self-hostable personal AI OS engine behind Clawdascended.
 - **Three-command install** — `git clone` + `install.sh` + `make run` (dev mode).
   `make build` / `make start` and the Docker image all work.
 - **AGPL-3.0-or-later** license; governance (CONTRIBUTING, SECURITY, CoC).
+- **Cockpit transcript persistence** — pane history survives a bridge restart.
+  Every session's PTY output is appended to
+  `$CLAWDLING_STATE_ROOT/transcripts/<id>.log` with a JSON sidecar; buffering
+  keeps the disk off the event loop, and a background flusher plus an exit hook
+  mean a `kill -9` loses at most half a second. On boot the sidecars come back
+  as session RECORDS (listed, readable, always `exited` — nothing is
+  resurrected), `GET /api/sessions/{sid}/history` serves the log
+  byte-addressably for the cockpit's mount-seed and catchup fetches, and a
+  reattach whose cursor has fallen out of the in-memory ring is served from
+  disk instead of reporting a gap. Retention is capped by count and age and
+  never touches a live session.
+- **`claude --resume` support** — spawns name their conversation with
+  `--session-id`, and a spawn carrying `resume_from` continues it, so a
+  restarted pane can get the model's context back and not just the text.
+  Best-effort by design: `--resume` on an unknown id makes the CLI exit
+  immediately, so the bridge probes first and otherwise spawns fresh with
+  `resume_status: "unavailable"`.
 
 ### Fixed
 - **Tools ON by default + task round-trip** — the core acting tools ship enabled

@@ -199,8 +199,14 @@ def test_a_cursor_older_than_the_ring_reports_a_gap(live):
     sid = live.spawn()["session_id"]
     feed(live, sid, "x\r")
     session = live.session(sid)
-    # Pretend the ring has rolled past this client's cursor.
-    session._total_bytes += session._ring_cap * 2
+    # Pretend history has rolled past this client's cursor. Both stores have
+    # to roll: since transcripts landed, the on-disk log covers a cursor the
+    # ring has dropped, and a `gap` is only honest when NEITHER still holds
+    # it. Trimming the transcript head is exactly what a capped log does.
+    rolled = session._ring_cap * 2
+    session._total_bytes += rolled
+    if session.transcript is not None:
+        session.transcript._trimmed += rolled
 
     with live.client.stream(
         "GET", f"/api/sessions/{sid}/stream", headers={"Last-Event-ID": "0"}

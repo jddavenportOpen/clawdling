@@ -14,15 +14,22 @@ domain of your life with its own agent prompt and its own working directory.
 Spawn them, tile them, drive them from your phone. This needs the local bridge
 (`make bridge`) and the Claude Code CLI.
 
+**Workers.** Same bridge, opposite posture. A pane is a conversation you sit in;
+a worker is a job you hand off. You give it an objective, it runs headless in
+its own git branch with a deadline, and you read the outcome later. See
+[Background workers](#background-workers).
+
 It is the free, open-source, self-hostable engine behind the hosted
 **Clawdascended** product. Same engine; the hosted product adds the managed
 extras (see [What Clawdling is not](#what-clawdling-is-not)).
 
-> Status: alpha. Both modes are verified end to end: chat + tools, and a cockpit
-> pane spawned through the API, typed into, streamed back over SSE, and killed
-> without orphaning the child. Some domain dashboards are not yet wired for a
-> fresh install and render empty for now. See docs/KNOWN-ISSUES.md for the
-> honest gaps.
+> Status: alpha, and verified end to end: chat + tools; a cockpit pane spawned,
+> typed into, streamed over SSE and killed without orphaning its child; pane
+> history surviving a bridge restart (including `kill -9`), with `--resume`
+> restoring the model's own context; a headless worker dispatched to its own git
+> worktree and reaped on timeout; and voice into the composer. Some domain
+> dashboards are not yet wired for a fresh install and render empty. See
+> docs/KNOWN-ISSUES.md for the honest gaps.
 
 ## Install (3 commands)
 
@@ -66,6 +73,44 @@ rebuild.
 To use it from your phone, see [docs/REMOTE-ACCESS.md](./docs/REMOTE-ACCESS.md).
 Read the lockdown section before you expose it: the bridge can run commands on
 your machine.
+
+## Background workers
+
+A pane and a worker are the same engine pointed in opposite directions.
+
+|  | Pane (`/chat`) | Worker (`/workers`) |
+| --- | --- | --- |
+| You are | attached, typing | gone |
+| It runs | in a terminal | headless |
+| It stops when | you close it | it finishes, or hits its deadline |
+| It writes in | the directory you chose | its own git worktree, on its own branch |
+| It remembers the task via | the conversation | a `WORKPLAN.md` on disk |
+
+Open `/workers`, type what you want done, pick a domain agent, and dispatch.
+The run appears in the list with its status, its elapsed time against its
+ceiling, and its log.
+
+What a worker does on dispatch, and why:
+
+- **Its own git worktree**, on `clawdling/worker-<id>`. Two workers writing files
+  in one checkout share an index and a `HEAD`; the second one to switch branches
+  destroys the first one's work. If the directory is not a git repo it runs there
+  anyway and the run says `isolation: none` with the reason - it never claims an
+  isolation it did not get.
+- **A `WORKPLAN.md`** holding the objective and the run id. An unattended run
+  outlives its own context window, so the task has to exist on disk. It never
+  overwrites a `WORKPLAN.md` you already had.
+- **A wall-clock ceiling** (30 minutes by default). Unattended plus no deadline
+  is how you end up with a process nobody remembers starting.
+- **The worktree is kept when the run ends** - the work is the point. Cleanup is
+  an explicit ask, and it refuses whenever the branch still holds commits that
+  exist nowhere else, or uncommitted changes.
+
+Nothing about a worker is free: it is a real `claude` process metering against
+your own key, and four can run at once by default
+(`CLAWDLING_MAX_WORKERS`). Workers need the same bridge as the panes.
+
+Full endpoint and env reference: [bridge/README.md](./bridge/README.md#workers).
 
 ## Who it's for, and how it's different
 

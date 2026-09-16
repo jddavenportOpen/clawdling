@@ -15,6 +15,7 @@ import {
   Inbox,
   LogOut,
   Settings,
+  Zap,
 } from 'lucide-react';
 import { signOut } from 'next-auth/react';
 import { cn } from '@/lib/utils';
@@ -90,6 +91,7 @@ const PRODUCT_NAV: NavGroup[] = [
     title: 'Workspace',
     items: [
       { href: '/chat', icon: MessageSquare, label: 'Chat', badgeKey: undefined },
+      { href: '/workers', icon: Zap, label: 'Workers' },
       { href: '/tasks', icon: Inbox, label: 'Tasks' },
       { href: '/projects', icon: Folder, label: 'Projects', badgeKey: 'projects' },
       { href: '/agents', icon: Bot, label: 'Agents' },

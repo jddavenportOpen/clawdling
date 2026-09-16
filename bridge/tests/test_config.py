@@ -77,6 +77,75 @@ def test_non_integer_knob_is_refused(monkeypatch, tmp_path):
         Config.from_env()
 
 
+# ── persistence knobs ────────────────────────────────────────────────────────
+
+
+def _base_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("BRIDGE_SECRET", TEST_SECRET)
+    monkeypatch.setenv("CLAWDLING_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    monkeypatch.setenv("CLAWDLING_STATE_ROOT", str(tmp_path / "state"))
+
+
+def test_transcript_defaults_are_on_and_bounded(monkeypatch, tmp_path):
+    _base_env(monkeypatch, tmp_path)
+    cfg = Config.from_env()
+    assert cfg.transcripts_enabled is True
+    assert cfg.resume_enabled is True
+    assert cfg.transcript_dir == (tmp_path / "state" / "transcripts")
+    # Bounded on every axis: per-file, per-response, per-count, per-age.
+    assert cfg.transcript_max_file_bytes > 0
+    assert cfg.history_tail_bytes > 0
+    assert cfg.retention_count > 0
+    assert cfg.retention_days > 0
+
+
+def test_the_state_root_is_not_inside_the_workspace(monkeypatch, tmp_path):
+    """Every session's cwd is inside the workspace. Transcripts must not be:
+    an agent that can rewrite its own transcript is not a record."""
+    monkeypatch.setenv("BRIDGE_SECRET", TEST_SECRET)
+    monkeypatch.setenv("CLAWDLING_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    monkeypatch.delenv("CLAWDLING_STATE_ROOT", raising=False)
+    cfg = Config.from_env()
+    assert cfg.workspace_root not in cfg.transcript_dir.parents
+
+
+def test_persistence_knobs_read_from_env(monkeypatch, tmp_path):
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLAWDLING_HISTORY_TAIL_BYTES", "4096")
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPT_MAX_FILE_BYTES", "8192")
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPT_RETENTION", "7")
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPT_MAX_AGE_DAYS", "3")
+    cfg = Config.from_env()
+    assert (cfg.history_tail_bytes, cfg.transcript_max_file_bytes) == (4096, 8192)
+    assert (cfg.retention_count, cfg.retention_days) == (7, 3)
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
+def test_persistence_can_be_switched_off(monkeypatch, tmp_path, value):
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPTS", value)
+    monkeypatch.setenv("CLAWDLING_RESUME", value)
+    cfg = Config.from_env()
+    assert cfg.transcripts_enabled is False
+    assert cfg.resume_enabled is False
+
+
+def test_a_retention_cap_of_zero_means_unlimited_not_invalid(monkeypatch, tmp_path):
+    """0 disables ONE half of retention so the other can be used alone."""
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPT_RETENTION", "0")
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPT_MAX_AGE_DAYS", "0")
+    cfg = Config.from_env()
+    assert (cfg.retention_count, cfg.retention_days) == (0, 0)
+
+
+def test_a_negative_retention_cap_is_refused(monkeypatch, tmp_path):
+    _base_env(monkeypatch, tmp_path)
+    monkeypatch.setenv("CLAWDLING_TRANSCRIPT_RETENTION", "-1")
+    with pytest.raises(ConfigError):
+        Config.from_env()
+
+
 # ── profiles ─────────────────────────────────────────────────────────────────
 
 

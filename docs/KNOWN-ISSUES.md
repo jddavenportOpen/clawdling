@@ -45,15 +45,16 @@ they are. Chat, tasks and memory are the supported surface in this release.
 Verified end to end (2026-09-16): spawn a pane through `POST /api/sessions/cockpit-spawn`,
 fetch stream metadata, send input, receive the echo over SSE straight from the
 bridge, list sessions, delete, and confirm the child process is gone with no
-orphans. 108 bridge tests and 469 web tests pass.
+orphans. Also verified: boot a bridge, spawn, send input, **kill the bridge
+process**, boot a second one over the same state root, and get the session back
+from `GET /api/sessions` with its output still readable from
+`GET /api/sessions/{sid}/history` — including after a `kill -9` with no
+graceful shutdown. 163 bridge tests and 490 web tests pass.
 
 Not built yet, and the UI degrades rather than crashing on each:
 
-- **No transcript persistence.** Scrollback is an in-memory 256KB ring per
-  session, replayed when a pane reattaches. Restart the bridge and history is
-  gone. There is no `--resume`. This is the biggest gap.
-- `/upload`, `/costs`, `/metadata`, `/title`, `/rehydrate`, `/stream-post` and the
-  per-session `/history` log-tail are not implemented and return 404.
+- `/upload`, `/costs`, `/metadata`, `/title`, `/rehydrate` and `/stream-post`
+  are not implemented and return 404.
 - **No multi-user authorization.** Any valid token can reach any session, which
   is correct for a single-user local bridge and wrong for anything shared.
 - `persistent: true` on a domain spawn is accepted and ignored; there are no
@@ -61,3 +62,20 @@ Not built yet, and the UI degrades rather than crashing on each:
 - `PaneSwitcher` colors its status dot by comparing against the literal string
   `live`; the bridge reports `running`, so that one dot renders in the default
   color. Cosmetic.
+
+### Transcript persistence: what it does and does not restore
+
+Pane history now survives a bridge restart (`bridge/README.md`, "Persistence").
+Three honest limits on top of that:
+
+- **A restart still ends the `claude` processes.** The transcript and
+  `--resume` bring the history and the model's context back under a NEW pane;
+  you are not reattached to the old process. Nothing is resurrected on boot, on
+  purpose — a bridge that adopted a terminal it does not hold would be
+  guessing.
+- **Nothing calls `resume_from` automatically yet.** The bridge accepts it on
+  spawn and the plumbing is tested end to end, but no UI control asks for it,
+  so today resuming a conversation is an API call, not a button.
+- **A transcript is a verbatim PTY capture.** Anything a pane prints — secrets
+  included — lands in plain text under `CLAWDLING_STATE_ROOT` until retention
+  removes it. `CLAWDLING_TRANSCRIPTS=0` opts out.

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import jwt
@@ -25,6 +26,24 @@ from bridge.main import create_app
 TEST_SECRET = "clawdling-unit-test-secret-aaaaaaaaaaaa"
 
 FAKE_CLAUDE = "/bin/cat"
+
+#: A stub that ACCEPTS flags and then behaves like /bin/cat. `/bin/cat` treats
+#: `--session-id <uuid>` as a filename and dies, so any test that exercises
+#: the resume flags needs this instead. Printing argv first means a test can
+#: also read the child's own view of its command line off the PTY.
+_FLAG_TOLERANT_STUB = """#!/usr/bin/env python3
+import os, sys
+os.write(1, ("ARGV " + " ".join(sys.argv[1:]) + "\\n").encode())
+os.execv("/bin/cat", ["/bin/cat"])
+"""
+
+
+@pytest.fixture
+def flag_tolerant_bin(tmp_path: Path) -> str:
+    path = tmp_path / "fake-claude"
+    path.write_text(_FLAG_TOLERANT_STUB, encoding="utf-8")
+    path.chmod(0o755)
+    return str(path)
 
 
 def make_token(
@@ -68,7 +87,13 @@ def outside_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def config(workspace: Path) -> Config:
+def state_root(tmp_path: Path) -> Path:
+    """Transcripts go to a tmp dir, never to the developer's ~/.clawdling."""
+    return (tmp_path / "state").resolve()
+
+
+@pytest.fixture
+def config(workspace: Path, state_root: Path) -> Config:
     return Config(
         secret=TEST_SECRET,
         workspace_root=workspace,
@@ -78,6 +103,13 @@ def config(workspace: Path) -> Config:
         repo_root=Path(__file__).resolve().parents[2],
         profile="starter",
         cors_origins=("http://localhost:3000",),
+        state_root=state_root,
+        history_tail_bytes=8 * 1024,
+        # `--session-id` is a `claude` flag. FAKE_CLAUDE is /bin/cat, which
+        # would reject it and exit before echoing anything, so the general
+        # suite runs with resume off. The resume tests (test_resume.py) use a
+        # stub that records argv instead.
+        resume_enabled=False,
     )
 
 
@@ -146,8 +178,9 @@ class LiveServer:
         return resp.json()
 
 
-@pytest.fixture
-def live(config):
+@contextmanager
+def live_server(config):
+    """Run a real uvicorn on an ephemeral port for the life of the block."""
     import threading
 
     import httpx
@@ -180,3 +213,9 @@ def live(config):
         client.close()
         server.should_exit = True
         thread.join(timeout=15)
+
+
+@pytest.fixture
+def live(config):
+    with live_server(config) as server:
+        yield server

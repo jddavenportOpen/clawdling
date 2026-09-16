@@ -6,7 +6,7 @@ import { Suspense, useEffect, useState } from 'react';
 import {
   Inbox, Folder, Bot, Settings,
   MoreHorizontal, X,
-  MessageSquare,
+  MessageSquare, Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -24,6 +24,7 @@ const hrefToSlug = (href: string): string => {
 };
 
 const moreTabs = [
+  { href: '/workers', label: 'Workers', icon: Zap, color: '#00FFE0' },
   { href: '/settings', label: 'Settings', icon: Settings, color: '#00FFE0' },
 ];
 

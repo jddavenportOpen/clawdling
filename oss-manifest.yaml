@@ -115,6 +115,7 @@ allow:
   - src/app/tasks/
   - src/app/projects/
   - src/app/agents/
+  - src/app/workers/             # worker dispatch + run list UI
   - src/app/docs/
   # app/api KEEP set
   - src/app/api/auth/
@@ -128,6 +129,8 @@ allow:
   - src/app/api/projects/
   - src/app/api/uploads/
   - src/app/api/sessions/        # cockpit pane control plane -> the local bridge
+  - src/app/api/workers/         # headless worker dispatch -> the local bridge
+  - src/app/api/transcribe/      # voice -> text (provider-pluggable, optional)
   # app-level tests (engine)
   - src/app/__tests__/
 

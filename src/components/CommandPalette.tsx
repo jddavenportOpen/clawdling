@@ -12,6 +12,7 @@ import {
   Bot,
   Settings,
   BookOpen,
+  Zap,
 } from 'lucide-react';
 import { DOMAINS } from '@/config/domains';
 import agentRegistry from '@/config/agents.json';
@@ -20,6 +21,7 @@ import agentRegistry from '@/config/agents.json';
 // the configured domains and agents. href + label + icon only (no badges).
 const pages = [
   { name: 'Chat', href: '/chat', icon: MessageSquare, group: 'Navigation' },
+  { name: 'Workers', href: '/workers', icon: Zap, group: 'Navigation' },
   { name: 'Tasks', href: '/tasks', icon: Inbox, group: 'Navigation' },
   { name: 'Projects', href: '/projects', icon: Folder, group: 'Navigation' },
   { name: 'Agents', href: '/agents', icon: Bot, group: 'Navigation' },
