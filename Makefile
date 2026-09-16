@@ -13,9 +13,9 @@ run:
 ## dev: alias for run
 dev: run
 
-## build: production build. KNOWN ISSUE: blocked upstream on Next.js 16.2.x —
-## crashes prerendering /_global-error (not Node-specific). See docs/KNOWN-ISSUES.md.
-## Self-host via `make run` (dev) until the upstream fix lands.
+## build: production build -> .next/standalone.
+## If it crashes on /_global-error, you have NODE_ENV=development set; use
+## `env -u NODE_ENV make build`. See docs/KNOWN-ISSUES.md.
 build:
 	npm run build
 

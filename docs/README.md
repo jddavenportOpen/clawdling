@@ -1,6 +1,6 @@
-# Clawdascended — docs
+# Clawdling — docs
 
-Clawdascended is a self-hostable personal AI OS engine: a chat interface with
+Clawdling is a self-hostable personal AI OS engine: a chat interface with
 acting tools (task management + durable memory + web search) and local-first
 state, running on your own Anthropic API key (BYOK).
 

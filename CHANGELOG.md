@@ -21,8 +21,7 @@ self-hostable personal AI OS engine behind Clawdascended.
 - **Starter profile** — three generic starter domains (work / personal / notes)
   so a fresh install is usable out of the box; edit to make it yours.
 - **Three-command install** — `git clone` + `install.sh` + `make run` (dev mode).
-  A Docker path exists but is currently blocked by the upstream build issue noted
-  under Known issues.
+  `make build` / `make start` and the Docker image all work.
 - **AGPL-3.0-or-later** license; governance (CONTRIBUTING, SECURITY, CoC).
 
 ### Fixed
@@ -33,8 +32,9 @@ self-hostable personal AI OS engine behind Clawdascended.
   new local-store round-trip vitest test.
 - **App-page static-prerender crashes** — `/login`, `/login/verify`, and the new
   custom `not-found` no longer crash `next build` (root layout is `force-dynamic`;
-  correct for a single-user auth-gated cockpit). The remaining `/_global-error`
-  crash is upstream — see Known issues.
+  correct for a single-user auth-gated cockpit). The `/_global-error` crash that
+  remained was a `NODE_ENV=development` build shell, not a framework bug — see
+  Known issues.
 
 ### Not included (by design)
 This is the **engine only**. The hosted Builder / self-modification pipeline,
@@ -42,8 +42,7 @@ billing/metering, hosted provisioning, and curated premium domain packs are part
 of the managed Clawdascended product and are not in this repository.
 
 ### Known issues
-- **Production build blocked upstream.** `make build` / `make start` (and the
-  Docker image) do not complete: Next.js 16.2.x crashes prerendering its own
-  `/_global-error` page (React 19 null-dispatcher; vercel/next.js #85668 /
-  #86178). Not Node-version specific, not sidestepped by Docker. Self-host via
-  `make run` (dev) until the upstream fix lands. Detail: `docs/KNOWN-ISSUES.md`.
+- **`next build` requires a non-development `NODE_ENV`.** If `NODE_ENV=development`
+  is exported in your build shell, `next build` crashes prerendering
+  `/_global-error`. Use `env -u NODE_ENV make build`. This affects any Next 16 app,
+  not just Clawdling. Detail: `docs/KNOWN-ISSUES.md`.

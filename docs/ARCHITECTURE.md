@@ -1,6 +1,6 @@
 # Architecture
 
-Clawdascended is a single Next.js application. The chat runtime, acting tools,
+Clawdling is a single Next.js application. The chat runtime, acting tools,
 memory, auth, and state drivers all live in one codebase; a few environment
 switches produce the different deployment shapes (local self-host vs hosted).
 

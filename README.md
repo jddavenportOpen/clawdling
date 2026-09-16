@@ -15,7 +15,7 @@ extras (see [What Clawdling is not](#what-clawdling-is-not)).
 ## Install (3 commands)
 
 ```bash
-git clone <this-repo> clawdling && cd clawdling
+git clone https://github.com/JDDavenport/clawdling.git && cd clawdling
 ./install.sh          # checks Node 24, writes .env, prompts for your Anthropic key, installs deps
 make run              # → http://localhost:3000
 ```
@@ -29,12 +29,19 @@ you through the tools and how to customize your domains. The core acting tools
 (tasks + memory) are ON out of the box, so the very first "create a task, then
 list tasks" run works with zero extra config.
 
-> **Production build note.** `make build` / `make start` (and the Docker image,
-> which ships that build) currently do **not** complete, due to an open upstream
-> Next.js 16 bug that crashes while prerendering the framework's own
-> `/_global-error` page. This is not Node-version specific and is not sidestepped
-> by Docker. Run Clawdling via `make run` (dev) until the upstream fix lands. Full
-> detail: [docs/KNOWN-ISSUES.md](./docs/KNOWN-ISSUES.md).
+## Who it's for, and how it's different
+
+You want an assistant that **does things**, not another chat window. You want the
+data on your own disk. You want to pay Anthropic directly instead of a
+subscription layered on top.
+
+Open WebUI, LibreChat and AnythingLLM are chat front-ends: good UIs over a model,
+usually with RAG. OpenHands and similar are coding agents. Dify is a workflow
+builder for teams. Clawdling is a **personal operations cockpit**: the agent holds
+durable tools against *your* task list and *your* memory, stored as plain JSON on
+your machine, with no database to run and no account to create. Single user, by
+design. If you want a hosted multi-tenant version with a managed builder and
+billing, that's Clawdascended, and this is the engine underneath it.
 
 ## What it is
 
@@ -88,32 +95,23 @@ your own terms.
 
 - **Node.js 24.** This is the pinned version (`.nvmrc`, `engines.node: ">=24 <26"`).
   `nvm install 24 && nvm use 24` is the easiest path. Dev mode (`make run`) runs
-  cleanly on Node 24. (The production build has an open upstream issue that is
-  independent of Node version — see [Production build](#production-build) below.)
+  cleanly on Node 24, and `make build` produces a standalone production server.
 - An **Anthropic API key** (`sk-ant-api03-...`) from <https://console.anthropic.com>.
 
 ## Production build
 
-`make build` (`next build`) currently **does not complete** on this version of
-Next.js (16.2.x). It compiles the whole app, then crashes at the static-export
-step while prerendering the framework's own `/_global-error` page — a known
-upstream Next.js 16 / React 19 bug (vercel/next.js
-[#85668](https://github.com/vercel/next.js/issues/85668) /
-[#86178](https://github.com/vercel/next.js/issues/86178)). It is **not**
-Node-version specific and is **not** sidestepped by Docker (the image runs the
-same `next build`). Because `make start` and the Docker image both ship the
-output of that build, both are affected until the upstream fix lands.
+```bash
+make build     # next build -> .next/standalone
+make start     # serves the standalone server on :3000
+```
 
-Run Clawdling via **`make run`** (dev mode) in the meantime — it's the fully
-supported self-host path and does not run the failing static-export step. Full
-detail and everything we tried: [docs/KNOWN-ISSUES.md](./docs/KNOWN-ISSUES.md).
+If `next build` crashes while prerendering `/_global-error` with
+`Cannot read properties of null (reading 'useContext')`, you have `NODE_ENV=development`
+set in your shell. `next build` must run with `NODE_ENV` unset or `production`.
+Fix it with `env -u NODE_ENV make build`. This is not specific to Clawdling; any
+Next 16 app fails the same way under a dev `NODE_ENV`.
 
 ## Run with Docker
-
-> **Heads up:** the Docker image builds from `next build`, which is currently
-> blocked by the upstream issue described in [Production build](#production-build).
-> The commands below are the intended usage once that clears; today, use
-> `make run` for self-hosting.
 
 ```bash
 docker run -e ANTHROPIC_API_KEY=sk-ant-api03-... -p 3000:3000 -v clawdling-data:/data clawdling

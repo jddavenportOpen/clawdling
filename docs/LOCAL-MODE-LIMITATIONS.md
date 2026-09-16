@@ -1,6 +1,6 @@
 # Self-host: what works today
 
-Clawdascended is in alpha. Set expectations honestly so a fresh self-host
+Clawdling is in alpha. Set expectations honestly so a fresh self-host
 install is not confusing.
 
 ## Works
@@ -10,9 +10,11 @@ install is not confusing.
   complete tasks) and remember/recall durable facts you share.
 - **Sign-in** — single-user local mode needs no login; magic-link for multi-user.
 - **Docs** and **Settings** (manage your key, model, effort, and budget).
-- **Tasks**, **Projects**, and the **Agents** roster.
 
 ## Not wired yet
+- **Projects** and the **Agents** roster are not carved into this release and are
+  not reachable from a fresh install.
+
 The starter profile ships three generic domains (Work, Personal, Notes). Domain
 dashboards are declarative and on the roadmap; today the value is in Chat plus
 the task and memory tools. Nothing crashes — surfaces that are not yet populated
