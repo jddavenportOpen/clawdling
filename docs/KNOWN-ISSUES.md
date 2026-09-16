@@ -39,3 +39,25 @@ command, `NODE_ENV=development` fails and `env -u NODE_ENV` produces
 The chat and tools path (tasks + memory) works end to end on a clean clone. Some
 domain dashboards are not yet wired to local state and will render empty until
 they are. Chat, tasks and memory are the supported surface in this release.
+
+## Cockpit mode: what is verified, and what is not
+
+Verified end to end (2026-09-16): spawn a pane through `POST /api/sessions/cockpit-spawn`,
+fetch stream metadata, send input, receive the echo over SSE straight from the
+bridge, list sessions, delete, and confirm the child process is gone with no
+orphans. 108 bridge tests and 469 web tests pass.
+
+Not built yet, and the UI degrades rather than crashing on each:
+
+- **No transcript persistence.** Scrollback is an in-memory 256KB ring per
+  session, replayed when a pane reattaches. Restart the bridge and history is
+  gone. There is no `--resume`. This is the biggest gap.
+- `/upload`, `/costs`, `/metadata`, `/title`, `/rehydrate`, `/stream-post` and the
+  per-session `/history` log-tail are not implemented and return 404.
+- **No multi-user authorization.** Any valid token can reach any session, which
+  is correct for a single-user local bridge and wrong for anything shared.
+- `persistent: true` on a domain spawn is accepted and ignored; there are no
+  persistent "continuity brains" in this release, so that badge stays dark.
+- `PaneSwitcher` colors its status dot by comparing against the literal string
+  `live`; the bridge reports `running`, so that one dot renders in the default
+  color. Cosmetic.

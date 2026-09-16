@@ -23,7 +23,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { DOMAINS } from '@/config/domains';
+import { DOMAINS, type DomainDef } from '@/config/domains';
 import agentRegistry from '@/config/agents.json';
 // ── Warm Graphite foundation (REUSED — never redefined here) ────────────────
 // Icon's `state` encodes Phosphor weight (regular idle → fill active → duotone
@@ -115,7 +115,31 @@ export default function NewSessionPicker({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [recentCwds, setRecentCwds] = useState<string[]>([]);
+  // The compiled DOMAINS is the STARTER fallback in the browser bundle:
+  // loadProfileDomains() reads the filesystem and so returns null client-side.
+  // Hydrate from the server, which does resolve the active profile, so a domain
+  // added to profiles/<profile>/domains.yaml shows up without a recompile.
+  const [liveDomains, setLiveDomains] = useState<DomainDef[]>(DOMAINS);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/domains', { cache: 'no-store' });
+        if (!res.ok) return;
+        const j = (await res.json()) as { data?: { domains?: DomainDef[] } };
+        const rows = j?.data?.domains;
+        if (!cancelled && Array.isArray(rows) && rows.length > 0) setLiveDomains(rows);
+      } catch {
+        // Keep the compiled fallback; the picker must always render.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -204,7 +228,7 @@ export default function NewSessionPicker({
     setError(null);
     const sids: string[] = [];
     await Promise.all(
-      DOMAINS.map(async (d) => {
+      liveDomains.map(async (d) => {
         try {
           const res = await fetch('/api/sessions/spawn-domain', {
             method: 'POST',
@@ -227,7 +251,7 @@ export default function NewSessionPicker({
     }
     onClose();
     router.push(`/chat?panes=${sids.map(encodeURIComponent).join(',')}`);
-  }, [router, onClose]);
+  }, [router, onClose, liveDomains]);
 
   // ── Build the row set ──────────────────────────────────────────────────────
   const rows = useMemo<Row[]>(() => {
@@ -269,7 +293,7 @@ export default function NewSessionPicker({
       run: () => spawnCockpit('adhoc', { cwd: DEFAULT_CWD }),
     });
 
-    const domainList = scopeDomain ? DOMAINS.filter((d) => d.id === scopeDomain) : DOMAINS;
+    const domainList = scopeDomain ? liveDomains.filter((d) => d.id === scopeDomain) : liveDomains;
     for (const d of domainList) {
       const g = domainGlyph(d.id); // per-domain DUOTONE glyph + warm tint
       out.push({
@@ -324,15 +348,15 @@ export default function NewSessionPicker({
         glyph: Lightning,
         iconState: 'active',
         tint: 'var(--state-working)',
-        label: `Launch all ${DOMAINS.length} domains`,
-        sub: `Spawns one scoped session per domain (${DOMAINS.length} at once)`,
+        label: `Launch all ${liveDomains.length} domains`,
+        sub: `Spawns one scoped session per domain (${liveDomains.length} at once)`,
         keywords: 'launch all domains everything attack power',
         group: 'Power',
         run: launchAll,
       });
     }
     return out;
-  }, [recentCwds, scopeDomain, projectsOnly, spawnCockpit, spawnDomain, launchAll, router, onClose]);
+  }, [recentCwds, liveDomains, scopeDomain, projectsOnly, spawnCockpit, spawnDomain, launchAll, router, onClose]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

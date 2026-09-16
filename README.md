@@ -1,16 +1,28 @@
 # Clawdling
 
-**Clawdling** is a personal AI OS engine you run yourself. It's a clean web
-cockpit around a chat agent that can **act** — manage tasks, remember facts, and
-recall them across sessions — backed by local state on your own machine. Bring
-your own Anthropic API key, own your data, done.
+**Clawdling** is a personal AI OS you run yourself. It has two modes, and you can
+use either or both.
+
+**Chat mode.** A clean web cockpit around an agent that can **act** — manage
+tasks, remember facts, recall them across sessions — backed by local state on
+your own machine. Bring your own Anthropic API key, own your data, done. This
+needs nothing but Node.
+
+**Cockpit mode.** Many real **Claude Code** sessions at once, side by side in
+one screen. Each pane is an actual `claude` process on your machine, scoped to a
+domain of your life with its own agent prompt and its own working directory.
+Spawn them, tile them, drive them from your phone. This needs the local bridge
+(`make bridge`) and the Claude Code CLI.
 
 It is the free, open-source, self-hostable engine behind the hosted
 **Clawdascended** product. Same engine; the hosted product adds the managed
 extras (see [What Clawdling is not](#what-clawdling-is-not)).
 
-> Status: alpha. The chat + tools experience works end to end. Some domain
-> dashboards are not yet wired for a fresh install and render empty for now.
+> Status: alpha. Both modes are verified end to end: chat + tools, and a cockpit
+> pane spawned through the API, typed into, streamed back over SSE, and killed
+> without orphaning the child. Some domain dashboards are not yet wired for a
+> fresh install and render empty for now. See docs/KNOWN-ISSUES.md for the
+> honest gaps.
 
 ## Install (3 commands)
 
@@ -23,11 +35,37 @@ make run              # → http://localhost:3000
 `install.sh` is executable; if your clone dropped the exec bit, run
 `bash install.sh` instead.
 
-`make run` starts the cockpit in dev mode (`next dev`) — the **primary,
-supported self-host path**. On first boot it seeds a welcome thread that walks
-you through the tools and how to customize your domains. The core acting tools
-(tasks + memory) are ON out of the box, so the very first "create a task, then
-list tasks" run works with zero extra config.
+`make run` starts the cockpit in dev mode (`next dev`). On first boot it seeds a
+welcome thread that walks you through the tools and how to customize your
+domains. The core acting tools (tasks + memory) are ON out of the box, so the
+very first "create a task, then list tasks" run works with zero extra config.
+
+### Add the Claude Code panes (optional)
+
+```bash
+openssl rand -hex 32          # put this in .env as BRIDGE_SECRET
+make bridge                   # starts the PTY bridge on :8787
+```
+
+Requires the [Claude Code CLI](https://claude.com/claude-code) on your PATH.
+With the bridge running, the session picker can spawn real `claude` panes: one
+per domain, an ad-hoc pane, a pane per project, or all your domains at once.
+Without it, chat mode works exactly as before — the panes are simply unavailable.
+
+To create a new domain agent:
+
+```bash
+make domain ID=health LABEL=Health BLURB="Training, food, and sleep"
+```
+
+That writes the profile row plus an agent prompt template under
+`profiles/<profile>/agents/`. Edit the template to give the agent its real
+scope. The picker hydrates from the server, so it shows up on next open with no
+rebuild.
+
+To use it from your phone, see [docs/REMOTE-ACCESS.md](./docs/REMOTE-ACCESS.md).
+Read the lockdown section before you expose it: the bridge can run commands on
+your machine.
 
 ## Who it's for, and how it's different
 
@@ -36,12 +74,17 @@ data on your own disk. You want to pay Anthropic directly instead of a
 subscription layered on top.
 
 Open WebUI, LibreChat and AnythingLLM are chat front-ends: good UIs over a model,
-usually with RAG. OpenHands and similar are coding agents. Dify is a workflow
-builder for teams. Clawdling is a **personal operations cockpit**: the agent holds
-durable tools against *your* task list and *your* memory, stored as plain JSON on
-your machine, with no database to run and no account to create. Single user, by
-design. If you want a hosted multi-tenant version with a managed builder and
-billing, that's Clawdascended, and this is the engine underneath it.
+usually with RAG. OpenHands and similar are coding agents pointed at a repo. Dify
+is a workflow builder for teams.
+
+Clawdling is a **personal operations cockpit**. Two things follow from that.
+Its tools act on *your* task list and *your* memory, stored as plain JSON on your
+machine, with no database to run and no account to create. And in cockpit mode it
+runs many real Claude Code sessions at once, partitioned by domain of your life
+rather than ganged onto one repo, each with its own prompt and its own directory.
+
+Single user, by design. If you want a hosted multi-tenant version with a managed
+builder and billing, that's Clawdascended, and this is the engine underneath it.
 
 ## What it is
 

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "license": "AGPL-3.0-or-later",
-  "description": "Clawdling — the open-source, bring-your-own-key personal AI OS engine (the open engine behind Clawdascended).",
+  "description": "Clawdling \u2014 the open-source, bring-your-own-key personal AI OS engine (the open engine behind Clawdascended).",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:node": "node --test --experimental-strip-types src/lib/__tests__/sse-state.test.ts",
-    "lint:no-emoji": "node scripts/lint-no-emoji.mjs"
+    "lint:no-emoji": "node scripts/lint-no-emoji.mjs",
+    "domain:add": "node scripts/add-domain.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.110.0",

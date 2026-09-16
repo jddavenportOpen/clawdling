@@ -1,6 +1,9 @@
 # Clawdling — self-host make targets.
 # (ADJUTANT_ env-var names are internal engine config and are intentionally kept.)
-.PHONY: install run dev build start test typecheck leak-scan docker-build docker-run clean
+.PHONY: install run dev build start test typecheck leak-scan bridge bridge-install bridge-test docker-build docker-run clean
+
+# The bridge runs on Python. Prefer a local .venv if one exists.
+PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
 ## install: one-time setup (node check, .env, deps, state dir)
 install:
@@ -31,9 +34,30 @@ test:
 typecheck:
 	npm run typecheck
 
+## domain: create a domain agent -> `make domain ID=health LABEL=Health`
+## Writes the profile row + an agent prompt template. No rebuild needed.
+domain:
+	@test -n "$(ID)" || (echo 'usage: make domain ID=<slug> [LABEL="..."] [BLURB="..."]' && exit 2)
+	node scripts/add-domain.mjs --id "$(ID)" $(if $(LABEL),--label "$(LABEL)",) $(if $(BLURB),--blurb "$(BLURB)",) $(if $(COLOR),--color "$(COLOR)",)
+
 ## leak-scan: run the OSS personal-data leak gate locally
 leak-scan:
 	bash scripts/oss-leak-gate.sh
+
+## bridge-install: create .venv and install the Python bridge dependencies
+bridge-install:
+	python3 -m venv .venv
+	.venv/bin/pip install -q --upgrade pip
+	.venv/bin/pip install -r bridge/requirements.txt
+
+## bridge: run the PTY bridge on http://127.0.0.1:8787 (needs BRIDGE_SECRET set)
+## Run `make bridge-install` once first. See bridge/README.md.
+bridge:
+	$(PYTHON) -m uvicorn bridge.main:app --host $${BRIDGE_HOST:-127.0.0.1} --port $${BRIDGE_PORT:-8787}
+
+## bridge-test: run the bridge's pytest suite (never invokes the real claude CLI)
+bridge-test:
+	$(PYTHON) -m pytest bridge/tests -q
 
 ## docker-build: build the production container image
 docker-build:

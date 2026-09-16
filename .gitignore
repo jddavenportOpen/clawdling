@@ -11,6 +11,11 @@ dist/
 .adjutant/
 # leak-gate artifacts + private pattern corpus (never committed, never exported)
 qa/
+# python bridge
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
 # tooling
 .claude/
 .playwright-mcp/

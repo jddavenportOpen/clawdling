@@ -79,8 +79,9 @@ allow:
   # ── docs ────────────────────────────────────────────────────────────────────────────────────
   - docs/ARCHITECTURE.md
   - docs/LOCAL-MODE-LIMITATIONS.md
-  - docs/KNOWN-ISSUES.md          # tracked prod-build (Next 16 /_global-error) known-issue note
+  - docs/KNOWN-ISSUES.md          # NODE_ENV build trap + honest scope notes
   - docs/README.md
+  - docs/REMOTE-ACCESS.md         # reaching the cockpit from a phone (tunnel/tailnet + lockdown)
 
   # ── public assets ───────────────────────────────────────────────────────────────────────────
   - public/
@@ -88,6 +89,7 @@ allow:
   # ── engine scripts (generic keepers + the OSS tooling itself) ───────────────────────────────
   - scripts/generate-icons.js
   - scripts/lint-no-emoji.mjs
+  - scripts/add-domain.mjs        # `make domain ID=...` — create a domain agent
   - scripts/provision-db.sh       # generic supabase-mode schema apply (renamed/sanitized)
   - oss-manifest.yaml             # the allowlist itself (ships so forks can re-export cleanly)
   - scripts/oss-export.sh         # the export pipeline (ships so forks can re-export cleanly)
@@ -125,6 +127,7 @@ allow:
   - src/app/api/agents/
   - src/app/api/projects/
   - src/app/api/uploads/
+  - src/app/api/sessions/        # cockpit pane control plane -> the local bridge
   # app-level tests (engine)
   - src/app/__tests__/
 
@@ -138,6 +141,11 @@ allow:
 
   # ── profiles: the starter (empty) profile of the engine/profile split (Phase 4b) ────────────
   - profiles/                     # profiles/starter/{domains.yaml,agents/*.md,README.md} — generic
+
+  # ── bridge: the local PTY control plane that drives real `claude` CLI panes ──────────────────
+  # Generic + single-user by construction: no account routing, no ~/clawd, no personal domains.
+  - bridge/
+  - BRIDGE-CONTRACT.md            # wire contract between the Next UI and the bridge
 
   # ── src: lib (engine) ───────────────────────────────────────────────────────────────────────
   - src/lib/
