@@ -21,7 +21,10 @@ UI in a real browser, which the earlier API-level checks never did.
 - **One `BRIDGE_SECRET`, generated for you.** `.env.example` declared the
   bridge block twice (Next reads the last, empty, copy); `install.sh` now
   writes the secret and `make bridge` (`scripts/run-bridge.sh`) reads the same
-  `.env`, deriving its port from `BRIDGE_URL`.
+  `.env`, deriving its port from `BRIDGE_URL`. It loads only `BRIDGE_*`,
+  `CLAWDLING_*` and `ADJUTANT_PROFILE`: the bridge hands its environment to
+  every pane, and Claude Code prefers `ANTHROPIC_API_KEY` over the subscription
+  login, so loading the chat key would move every pane onto API billing.
 - **`make bridge-install` requires Python 3.10+** instead of failing on the
   3.9 macOS ships with a pydantic traceback.
 - **`make run` / `make start` listen on 127.0.0.1**; `CLAWDLING_HOST` opts in

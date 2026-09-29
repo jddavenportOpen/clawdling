@@ -63,6 +63,12 @@ Not built yet, and the UI degrades rather than crashing on each:
   this bridge does not have.** A pane notices the 404 and opens on the raw
   terminal, the real Claude Code screen, instead. The clean toggle is still
   there and says it cannot load.
+- **Type after the Claude Code prompt appears.** Input sent while a pane is
+  still starting (the first few seconds, longer after the folder-trust
+  question) can be dropped by Claude Code; send it again once the prompt shows.
+- **On a brand-new pane the "history above / live below" divider can draw over
+  the first menu line**, which on first run is "Yes, I trust this folder". The
+  down-arrow and Enter buttons under the terminal still pick it.
 - **The big "+ New session" button searches projects**, so on a fresh install
   it shows "No matches." Start a pane from a domain row (Work, Personal,
   Notes) instead, or add a domain with `make domain`.

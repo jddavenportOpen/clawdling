@@ -56,7 +56,8 @@ make bridge                  # in a second terminal, next to `make run`
 
 `install.sh` already wrote a random `BRIDGE_SECRET` into `.env`, and `make bridge`
 reads it from that same file, so the cockpit and the bridge agree with nothing to
-copy. (An `.env` from before that change has an empty one: run
+copy. It loads only the bridge's own settings (`BRIDGE_*`, `CLAWDLING_*`): your
+chat API key never reaches a pane, so the panes stay on your Claude plan. (An `.env` from before that change has an empty one: run
 `openssl rand -hex 32` and paste the result after `BRIDGE_SECRET=`.)
 
 Requires the [Claude Code CLI](https://claude.com/claude-code) on your PATH,

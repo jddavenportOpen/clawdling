@@ -4,9 +4,16 @@
 #   make bridge            (or: bash scripts/run-bridge.sh)
 #
 # The cockpit (Next) and the bridge must hold the same BRIDGE_SECRET. Next loads
-# .env by itself; the bridge reads only its environment. So this loads .env
-# first and the secret lives in exactly one place. A variable already exported
-# in your shell wins over .env, which is also how Next behaves.
+# .env by itself; the bridge reads only its environment. So this loads the
+# bridge's OWN knobs from .env (BRIDGE_*, CLAWDLING_*, ADJUTANT_PROFILE) and the
+# secret lives in exactly one place. A variable already exported in your shell
+# wins over .env, which is also how Next behaves.
+#
+# Nothing else in .env is loaded, on purpose. The bridge hands its environment
+# to every `claude` pane, and Claude Code prefers ANTHROPIC_API_KEY over your
+# subscription login: loading the chat key would silently move every pane onto
+# pay-per-use API billing (and hand the chat key, NEXTAUTH_SECRET, Google
+# secrets to whatever a pane runs).
 #
 # The listen port comes from BRIDGE_URL (the address the cockpit dials), so the
 # two cannot drift apart. BRIDGE_PORT overrides it.
@@ -19,6 +26,7 @@ if [ -f .env ]; then
     key="${line%%=*}"
     val="${line#*=}"
     case "$key" in ''|*[!A-Za-z0-9_]*) continue ;; esac
+    case "$key" in BRIDGE_*|CLAWDLING_*|ADJUTANT_PROFILE) ;; *) continue ;; esac
     [ -n "$val" ] || continue            # an empty value never clobbers a real one
     [ -z "${!key+x}" ] || continue       # your shell wins over .env
     case "$val" in
