@@ -90,6 +90,7 @@ allow:
   - scripts/generate-icons.js
   - scripts/lint-no-emoji.mjs
   - scripts/add-domain.mjs        # `make domain ID=...` — create a domain agent
+  - scripts/run-bridge.sh         # `make bridge`: start the PTY bridge from the same .env
   - scripts/provision-db.sh       # generic supabase-mode schema apply (renamed/sanitized)
   - oss-manifest.yaml             # the allowlist itself (ships so forks can re-export cleanly)
   - scripts/oss-export.sh         # the export pipeline (ships so forks can re-export cleanly)

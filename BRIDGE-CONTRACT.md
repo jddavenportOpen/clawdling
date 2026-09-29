@@ -31,7 +31,7 @@ Returns 201: `{ session_id, name, cwd, domain, model, status, created_at, last_a
 
 ### GET /api/sessions
 Returns `{ sessions: [ {session_id, name, cwd, domain, model, status, created_at, last_activity} ] }`
-`status` one of `starting|running|exited`.
+`status` one of `starting|live|exited`. (`live`, not `running`: the cockpit UI reads every other pane status as dead. Worker runs keep their own `running`.)
 Includes sessions restored from disk after a bridge restart; those carry
 `restored: true` and always read `exited` (the bridge holds no terminal for
 them). Additive per-session keys, present only when they have something to
@@ -50,7 +50,7 @@ cursor pointed at bytes that have been trimmed.
 ### GET /api/sessions/{sid}/stream  (SSE)
 `text/event-stream`. Events:
 - `event: output` / `data: {"chunk": "<utf8>"}` — PTY output
-- `event: status` / `data: {"status": "running|exited", "exit_code": n|null}`
+- `event: status` / `data: {"status": "live|exited", "exit_code": n|null}`
 - `event: ping` every 15s (keepalive)
 On connect, replays the session's scrollback first so a reattaching pane is not
 blank — from the in-memory ring, or from the on-disk transcript when that

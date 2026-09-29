@@ -34,7 +34,7 @@ def test_spawn_returns_the_contract_shape(client, auth, config):
         "created_at",
         "last_activity",
     }
-    assert body["status"] == "running"
+    assert body["status"] == "live"
     assert body["cwd"] == str(config.workspace_root)
     assert len(body["session_id"]) == 36  # uuid4
 
@@ -120,7 +120,7 @@ def test_list_reports_every_session(client, auth):
     b = spawn(client, auth, name="b")
     rows = client.get("/api/sessions", headers=auth).json()["sessions"]
     assert {r["session_id"] for r in rows} == {a["session_id"], b["session_id"]}
-    assert all(r["status"] == "running" for r in rows)
+    assert all(r["status"] == "live" for r in rows)
 
 
 def test_list_alias_matches(client, auth):

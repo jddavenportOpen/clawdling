@@ -34,7 +34,7 @@ extras (see [What Clawdling is not](#what-clawdling-is-not)).
 ## Install (3 commands)
 
 ```bash
-git clone https://github.com/JDDavenport/clawdling.git && cd clawdling
+git clone https://github.com/jddavenportOpen/clawdling.git && cd clawdling
 ./install.sh          # checks Node 24, writes .env, prompts for your Anthropic key, installs deps
 make run              # → http://localhost:3000
 ```
@@ -50,11 +50,20 @@ very first "create a task, then list tasks" run works with zero extra config.
 ### Add the Claude Code panes (optional)
 
 ```bash
-openssl rand -hex 32          # put this in .env as BRIDGE_SECRET
-make bridge                   # starts the PTY bridge on :8787
+make bridge-install          # once: a Python 3.10+ venv with the bridge's dependencies
+make bridge                  # in a second terminal, next to `make run`
 ```
 
-Requires the [Claude Code CLI](https://claude.com/claude-code) on your PATH.
+`install.sh` already wrote a random `BRIDGE_SECRET` into `.env`, and `make bridge`
+reads it from that same file, so the cockpit and the bridge agree with nothing to
+copy. (An `.env` from before that change has an empty one: run
+`openssl rand -hex 32` and paste the result after `BRIDGE_SECRET=`.)
+
+Requires the [Claude Code CLI](https://claude.com/claude-code) on your PATH,
+signed in (run `claude` once and log in). Each pane is that CLI on your own
+Claude plan, so the panes need no API key. A new pane opens on the real Claude
+Code screen; the first time a folder is used, Claude Code asks whether you
+trust it. Answer with the arrow and Enter buttons under the terminal.
 With the bridge running, the session picker can spawn real `claude` panes: one
 per domain, an ad-hoc pane, a pane per project, or all your domains at once.
 Without it, chat mode works exactly as before — the panes are simply unavailable.
@@ -73,6 +82,11 @@ rebuild.
 To use it from your phone, see [docs/REMOTE-ACCESS.md](./docs/REMOTE-ACCESS.md).
 Read the lockdown section before you expose it: the bridge can run commands on
 your machine.
+
+**Who can reach it.** `make run` and `make bridge` listen on `127.0.0.1` only.
+Single-user mode has no login, so anyone who can reach the cockpit's port can
+drive your panes. `CLAWDLING_HOST=0.0.0.0 make run` opens it to your network;
+do that only behind the tunnel and access lock in REMOTE-ACCESS.md.
 
 ## Background workers
 
@@ -184,7 +198,11 @@ your own terms.
 - **Node.js 24.** This is the pinned version (`.nvmrc`, `engines.node: ">=24 <26"`).
   `nvm install 24 && nvm use 24` is the easiest path. Dev mode (`make run`) runs
   cleanly on Node 24, and `make build` produces a standalone production server.
-- An **Anthropic API key** (`sk-ant-api03-...`) from <https://console.anthropic.com>.
+- An **Anthropic API key** (`sk-ant-api03-...`) from <https://console.anthropic.com>,
+  for chat mode. (No key yet? `ADJUTANT_MOCK=1` in `.env` streams a canned reply
+  at zero cost so you can look around.)
+- For the Claude Code panes: **Python 3.10+** (macOS ships 3.9, which cannot run
+  the bridge: `brew install python@3.12`) and the **Claude Code CLI**, signed in.
 
 ## Production build
 
@@ -230,7 +248,8 @@ starter domains if the file is missing or invalid. See
 | Env var | Values | Default | What it does |
 |---|---|---|---|
 | `ANTHROPIC_API_KEY` | `sk-ant-api03-...` | required | The key every model call meters against |
-| `ADJUTANT_ENGINE` | `sdk` \| `cli` \| `mock` | `sdk` | `sdk` calls the Anthropic API with your key; `cli` uses your local Claude Code / Max subscription (see note); `mock` streams a canned reply (zero cost, for demos) |
+| `ADJUTANT_ENGINE` | `sdk` | `sdk` | Chat calls the Anthropic API with your key. This build has no other chat engine; the panes reach Claude through the `claude` CLI instead (see below) |
+| `ADJUTANT_MOCK` | `1` | unset | Chat streams a canned reply and spends nothing, for demos |
 | `ADJUTANT_PROFILE` | profile name | `starter` | Which profile under `profiles/` supplies the domains |
 | `ADJUTANT_STATE` | `local` \| `supabase` | `local` | `local` = JSON files under `ADJUTANT_STATE_ROOT`; `supabase` = hosted Postgres |
 | `ADJUTANT_AUTH` | `single` \| `magic-link` | `single` | `single` = one implicit local user, no login; `magic-link` = email sign-in |
@@ -238,14 +257,14 @@ starter domains if the file is missing or invalid. See
 | `ADJUTANT_MODEL` | model id | `claude-sonnet-4-6` | Which Claude model to use |
 | `ADJUTANT_EFFORT` | `low`..`max` | `medium` | Reasoning effort / latency tradeoff |
 
-### `ADJUTANT_ENGINE=cli` — a note on Anthropic's Terms
+### Which account pays for what
 
-The `cli` engine drives replies through your **own** locally-installed Claude
-Code against your **own** Claude subscription (e.g. a Max plan), on your **own**
-machine. That is a personal-use configuration only. Do **not** use it to resell
-access or to serve other people — that would violate Anthropic's Terms of
-Service. For anything beyond your own single-user install, use `sdk` mode with a
-metered API key.
+- **Chat** meters against the Anthropic API key in `.env`.
+- **Panes and workers** run the `claude` CLI on your machine, signed in with
+  your own Claude plan. That is ordinary use of Claude Code by you. Do **not**
+  use Clawdling to give other people access to your subscription or to resell
+  it; Anthropic's terms do not allow that. For anything beyond your own
+  single-user install, use API keys.
 
 ## License
 

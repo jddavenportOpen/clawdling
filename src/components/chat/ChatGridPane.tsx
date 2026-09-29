@@ -394,6 +394,16 @@ export default function ChatGridPane({
   // spec. A resume-swap from the clean composer auto-flips to raw (which owns
   // the full sid-swap + reload).
   const [view, setView] = useState<'clean' | 'raw'>('clean');
+  // The clean view needs a structured-transcript endpoint. When the bridge
+  // has none (CleanTranscript reports a 404), fall back to the raw terminal
+  // ONCE so a new pane opens on something usable. Once is deliberate: if the
+  // user flips back to clean after that, it is their choice and it sticks.
+  const autoRawDone = useRef(false);
+  const onTranscriptUnavailable = useCallback(() => {
+    if (autoRawDone.current) return;
+    autoRawDone.current = true;
+    setView('raw');
+  }, []);
   // Bumped on every clean-composer send so CleanTranscript can re-poll
   // promptly (don't wait the full refresh interval to show JD's bubble).
   const [sendTick, setSendTick] = useState(0);
@@ -586,6 +596,7 @@ export default function ChatGridPane({
                 // "switch to raw" dead-end (raw is also empty on a dead sid).
                 isDead={isDeadStatus}
                 onResume={() => setView('raw')}
+                onUnavailable={onTranscriptUnavailable}
                 echoes={echoes}
                 onEchoReconciled={dropEcho}
                 onRetryEcho={(id, text) => {

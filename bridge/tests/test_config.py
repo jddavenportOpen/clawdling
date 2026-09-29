@@ -292,3 +292,51 @@ async def test_a_child_that_exits_on_its_own_is_observed(tmp_path):
         await asyncio.sleep(0.02)
     assert session.status == "exited"
     assert session.exit_code == 3
+
+
+# --- CORS: loopback on any port by default, an explicit list is exact --------
+
+
+def test_cors_defaults_to_loopback_on_any_port(monkeypatch, tmp_path):
+    import re
+
+    monkeypatch.setenv("BRIDGE_SECRET", TEST_SECRET)
+    monkeypatch.setenv("CLAWDLING_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    monkeypatch.delenv("CLAWDLING_CORS_ORIGINS", raising=False)
+    cfg = Config.from_env()
+    assert cfg.cors_origins == ()
+    rx = re.compile(cfg.cors_origin_regex)
+    # install.sh suggests `PORT=3001 make run` when 3000 is taken; that cockpit
+    # must still be allowed to open the stream.
+    for ok in ("http://localhost:3000", "http://localhost:3001",
+               "http://127.0.0.1:3917", "http://[::1]:3000", "http://localhost"):
+        assert rx.match(ok), ok
+    for bad in ("http://evil.example", "http://localhost.evil.example:3000",
+                "http://192.168.1.10:3000", "null"):
+        assert not rx.match(bad), bad
+
+
+def test_an_explicit_cors_list_is_exact(monkeypatch, tmp_path):
+    monkeypatch.setenv("BRIDGE_SECRET", TEST_SECRET)
+    monkeypatch.setenv("CLAWDLING_WORKSPACE_ROOT", str(tmp_path / "ws"))
+    monkeypatch.setenv("CLAWDLING_CORS_ORIGINS", "https://cockpit.example.com")
+    cfg = Config.from_env()
+    assert cfg.cors_origins == ("https://cockpit.example.com",)
+    assert cfg.cors_origin_regex == ""
+
+
+def test_default_cors_answers_a_preflight_from_a_non_3000_cockpit(config):
+    from dataclasses import replace
+
+    from fastapi.testclient import TestClient
+
+    from bridge.config import DEFAULT_CORS_ORIGIN_REGEX
+    from bridge.main import create_app
+
+    cfg = replace(config, cors_origins=(), cors_origin_regex=DEFAULT_CORS_ORIGIN_REGEX)
+    with TestClient(create_app(cfg)) as c:
+        pre = {"Access-Control-Request-Method": "GET"}
+        ok = c.options("/api/health", headers={"Origin": "http://localhost:3917", **pre})
+        assert ok.headers.get("access-control-allow-origin") == "http://localhost:3917"
+        bad = c.options("/api/health", headers={"Origin": "http://evil.example", **pre})
+        assert "access-control-allow-origin" not in bad.headers

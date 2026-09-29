@@ -59,9 +59,35 @@ Not built yet, and the UI degrades rather than crashing on each:
   is correct for a single-user local bridge and wrong for anything shared.
 - `persistent: true` on a domain spawn is accepted and ignored; there are no
   persistent "continuity brains" in this release, so that badge stays dark.
-- `PaneSwitcher` colors its status dot by comparing against the literal string
-  `live`; the bridge reports `running`, so that one dot renders in the default
-  color. Cosmetic.
+- **The clean (chat-bubble) pane view needs a structured-transcript endpoint
+  this bridge does not have.** A pane notices the 404 and opens on the raw
+  terminal, the real Claude Code screen, instead. The clean toggle is still
+  there and says it cannot load.
+- **The big "+ New session" button searches projects**, so on a fresh install
+  it shows "No matches." Start a pane from a domain row (Work, Personal,
+  Notes) instead, or add a domain with `make domain`.
+
+Fixed 2026-09-29, after a first stranger install through a real browser:
+
+- **Every live pane rendered as "Stopped - no response".** The bridge reported
+  a pane as `running`; the UI treats anything but `live`/`starting` as dead.
+  This was filed here as a cosmetic dot color. It was not: the 09-16
+  verification drove the API, never a browser, so nobody saw the pane itself.
+  The bridge now reports `live`.
+- **The panes could only be reached from port 3000.** The bridge's browser
+  allowlist was `localhost:3000`, while `install.sh` tells you to use
+  `PORT=3001` when 3000 is busy. It now allows loopback on any port;
+  `CLAWDLING_CORS_ORIGINS` still sets an exact list.
+- **`BRIDGE_SECRET` was declared twice in `.env.example`**, and Next reads the
+  last one, so filling in the first left the cockpit with an empty secret.
+  `make bridge` also never read `.env`. Now there is one declaration,
+  `install.sh` fills it, and `make bridge` reads the same file.
+- **`make bridge-install` used whatever `python3` was first on PATH**; the one
+  macOS ships (3.9) cannot import the bridge. It now requires 3.10+ and says
+  how to get it.
+- **`make run` listened on every network interface** (Next's default), with no
+  login in single-user mode. It now listens on 127.0.0.1 unless
+  `CLAWDLING_HOST` says otherwise.
 
 ### Transcript persistence: what it does and does not restore
 

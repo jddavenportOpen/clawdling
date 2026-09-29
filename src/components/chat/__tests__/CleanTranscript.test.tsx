@@ -167,6 +167,39 @@ describe('CleanTranscript', () => {
     expect(document.body.textContent?.match(/this session has ended/i)).toBeNull();
   });
 
+  // ── No transcript endpoint at all (the open-source bridge serves none) ──
+  function httpError(status: number) {
+    return Object.assign(new Error(`transcript ${status}`), { status });
+  }
+
+  it('a 404 on a LIVE pane reports the transcript unavailable (so the pane opens raw)', async () => {
+    swrError = httpError(404);
+    const onUnavailable = vi.fn();
+    render(
+      <CleanTranscript sessionId="sid_none" pollMs={0} isDead={false} onUnavailable={onUnavailable} />
+    );
+    await waitFor(() => expect(onUnavailable).toHaveBeenCalled());
+  });
+
+  it('a 5xx is a flap, not a missing endpoint: no unavailable report', () => {
+    swrError = httpError(503);
+    const onUnavailable = vi.fn();
+    render(
+      <CleanTranscript sessionId="sid_flap" pollMs={0} isDead={false} onUnavailable={onUnavailable} />
+    );
+    expect(onUnavailable).not.toHaveBeenCalled();
+  });
+
+  it('a 404 on a DEAD pane keeps the ended card and reports nothing', () => {
+    swrError = httpError(404);
+    const onUnavailable = vi.fn();
+    const { getByText } = render(
+      <CleanTranscript sessionId="sid_gone" pollMs={0} isDead onResume={() => {}} onUnavailable={onUnavailable} />
+    );
+    expect(getByText(/this session has ended/i)).toBeInTheDocument();
+    expect(onUnavailable).not.toHaveBeenCalled();
+  });
+
   // ── Optimistic echo (cockpit-chat-ux #1) ─────────────────────────────────
   it('renders a pending "sending" echo bubble', () => {
     swrData = payload([]);

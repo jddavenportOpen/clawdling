@@ -9,9 +9,13 @@ PYTHON ?= $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo pytho
 install:
 	./install.sh
 
-## run: start the dev cockpit at http://localhost:3000 (the primary self-host path)
+## run: start the dev cockpit at http://localhost:3000 (the primary self-host path).
+## Listens on 127.0.0.1 only. Single-user mode has no login, so anyone who can
+## reach this port can drive your panes, and panes run commands on this machine.
+## `CLAWDLING_HOST=0.0.0.0 make run` opens it to your network: read
+## docs/REMOTE-ACCESS.md (tunnel + access lock) before you do.
 run:
-	npm run dev
+	npm run dev -- --hostname $${CLAWDLING_HOST:-127.0.0.1}
 
 ## dev: alias for run
 dev: run
@@ -22,9 +26,10 @@ dev: run
 build:
 	npm run build
 
-## start: run the production build (after `make build`; see build note above)
+## start: run the production build (after `make build`; see build note above).
+## 127.0.0.1 only, like `run`; CLAWDLING_HOST overrides.
 start:
-	npm start
+	npm start -- --hostname $${CLAWDLING_HOST:-127.0.0.1}
 
 ## test: run the unit/component test suite (vitest)
 test:
@@ -44,16 +49,29 @@ domain:
 leak-scan:
 	bash scripts/oss-leak-gate.sh
 
-## bridge-install: create .venv and install the Python bridge dependencies
+## bridge-install: create .venv and install the Python bridge dependencies.
+## Needs Python 3.10+. macOS ships 3.9, which cannot import the bridge, so this
+## picks the first python3 / python3.13..3.10 that qualifies and says so if none do.
 bridge-install:
-	python3 -m venv .venv
-	.venv/bin/pip install -q --upgrade pip
-	.venv/bin/pip install -r bridge/requirements.txt
+	@ok='import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)'; py=''; \
+	for c in python3 python3.13 python3.12 python3.11 python3.10; do \
+	  if command -v $$c >/dev/null 2>&1 && $$c -c "$$ok" 2>/dev/null; then py=$$c; break; fi; \
+	done; \
+	if [ -z "$$py" ]; then \
+	  echo "The bridge needs Python 3.10 or newer; found $$(python3 --version 2>&1)." >&2; \
+	  echo "On a Mac: brew install python@3.12, then run make bridge-install again." >&2; exit 1; \
+	fi; \
+	if [ -x .venv/bin/python ] && ! .venv/bin/python -c "$$ok" 2>/dev/null; then \
+	  echo "Replacing .venv (it was built on a Python older than 3.10)."; rm -rf .venv; \
+	fi; \
+	echo "Using $$py ($$($$py --version 2>&1))"; \
+	$$py -m venv .venv && .venv/bin/pip install -q --upgrade pip && .venv/bin/pip install -q -r bridge/requirements.txt
 
-## bridge: run the PTY bridge on http://127.0.0.1:8787 (needs BRIDGE_SECRET set)
-## Run `make bridge-install` once first. See bridge/README.md.
+## bridge: run the PTY bridge on 127.0.0.1, on the port in BRIDGE_URL (8787).
+## Reads BRIDGE_SECRET and the CLAWDLING_* knobs from .env, the same file the
+## cockpit reads, so the two always agree. Run `make bridge-install` once first.
 bridge:
-	$(PYTHON) -m uvicorn bridge.main:app --host $${BRIDGE_HOST:-127.0.0.1} --port $${BRIDGE_PORT:-8787}
+	@PYTHON="$(PYTHON)" bash scripts/run-bridge.sh
 
 ## bridge-test: run the bridge's pytest suite (never invokes the real claude CLI)
 bridge-test:

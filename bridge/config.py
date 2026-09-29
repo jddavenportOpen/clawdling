@@ -29,7 +29,14 @@ DEFAULT_PROFILE = "starter"
 DEFAULT_CLAUDE_BIN = "claude"
 DEFAULT_COLS = 120
 DEFAULT_ROWS = 32
-DEFAULT_CORS_ORIGINS = "http://localhost:3000,http://127.0.0.1:3000"
+# With CLAWDLING_CORS_ORIGINS unset, a loopback origin on ANY port may open the
+# stream. A fixed :3000 list broke the moment the cockpit ran anywhere else, and
+# install.sh itself tells people to `PORT=3001 make run` when 3000 is taken: the
+# browser was refused the stream and every pane sat blank. CORS is not the lock
+# here; every stream still needs a token only the cockpit can mint. Set
+# CLAWDLING_CORS_ORIGINS to an explicit list (e.g. a tunnel origin) and only
+# that list is allowed.
+DEFAULT_CORS_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$"
 
 # A shared HMAC secret shorter than this is not a secret. 32 bytes is the same
 # floor `openssl rand -base64 32` produces and the floor install.sh already
@@ -169,6 +176,8 @@ class Config:
     default_cols: int = DEFAULT_COLS
     default_rows: int = DEFAULT_ROWS
     cors_origins: tuple[str, ...] = ()
+    #: Used only when no explicit list is configured ("" = none).
+    cors_origin_regex: str = ""
 
     @property
     def allowed_roots(self) -> tuple[Path, ...]:
@@ -214,8 +223,9 @@ class Config:
             _env("CLAWDLING_STATE_ROOT", DEFAULT_STATE_ROOT) or DEFAULT_STATE_ROOT
         ).expanduser()
 
-        origins_raw = _env("CLAWDLING_CORS_ORIGINS", DEFAULT_CORS_ORIGINS) or ""
+        origins_raw = _env("CLAWDLING_CORS_ORIGINS") or ""
         cors_origins = tuple(o.strip() for o in origins_raw.split(",") if o.strip())
+        cors_origin_regex = "" if cors_origins else DEFAULT_CORS_ORIGIN_REGEX
 
         return cls(
             secret=secret,
@@ -249,4 +259,5 @@ class Config:
             default_cols=_env_int("CLAWDLING_DEFAULT_COLS", DEFAULT_COLS),
             default_rows=_env_int("CLAWDLING_DEFAULT_ROWS", DEFAULT_ROWS),
             cors_origins=cors_origins,
+            cors_origin_regex=cors_origin_regex,
         )

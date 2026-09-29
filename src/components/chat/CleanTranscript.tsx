@@ -222,12 +222,20 @@ interface Props {
   /** CAT-04: user clicked "Resume / open raw" on the dead empty-state. The
    *  parent flips to the raw SessionTerminal which owns the resume sid-swap. */
   onResume?: () => void;
+  /** The transcript endpoint 404s for a pane that is NOT dead: this bridge
+   *  serves no structured transcript (the open-source bridge never has), so
+   *  the clean view can never fill. The parent shows the raw terminal. */
+  onUnavailable?: () => void;
 }
 
 const fetcher = async (url: string): Promise<TranscriptResponse> => {
   const res = await fetch(url, { cache: 'no-store' });
   if (!res.ok) {
-    throw new Error(`transcript ${res.status}`);
+    // Carry the status: a 404 means there is no transcript endpoint for this
+    // session at all, which the pane handles differently from a flap.
+    const err = new Error(`transcript ${res.status}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 };
@@ -254,6 +262,7 @@ export default function CleanTranscript({
   liveStatus,
   isDead = false,
   onResume,
+  onUnavailable,
 }: Props) {
   const { data, error, isLoading, mutate } = useSWR<TranscriptResponse>(
     sessionId ? `/api/sessions/${encodeURIComponent(sessionId)}/transcript` : null,
@@ -266,6 +275,15 @@ export default function CleanTranscript({
       keepPreviousData: true,
     }
   );
+
+  // A 404 on a pane that is not dead is not a flap: there is no transcript
+  // to load, now or later. Say so once so the pane can open on the raw
+  // terminal instead of on "couldn't load". A 5xx keeps the soft message.
+  const transcriptMissing =
+    !data && !isDead && (error as { status?: number } | undefined)?.status === 404;
+  useEffect(() => {
+    if (transcriptMissing) onUnavailable?.();
+  }, [transcriptMissing, onUnavailable]);
 
   // Force a re-fetch when the parent bumps refetchKey (right after a send).
   // A brief delay lets the agent's reply start landing in the JSONL.

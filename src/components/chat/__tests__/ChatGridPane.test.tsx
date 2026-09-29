@@ -357,6 +357,30 @@ describe('ChatGridPane → clean ⇄ raw toggle', () => {
     expect(getByTestId('mock-session-terminal')).toBeInTheDocument();
   });
 
+  it('opens on the raw terminal ONCE when the bridge has no clean transcript', () => {
+    cleanTranscriptProps.length = 0;
+    const { getByTestId } = render(
+      <ChatGridPane
+        sessionId="sid_notranscript"
+        initialTitle="t"
+        initialStatus="live"
+        isActive={false}
+        onFocus={() => {}}
+        onRemove={() => {}}
+      />
+    );
+    const report = cleanTranscriptProps[cleanTranscriptProps.length - 1]?.onUnavailable as () => void;
+    expect(typeof report).toBe('function');
+    act(() => report());
+    expect(getByTestId('pane-toggle-view')).toHaveTextContent('raw');
+    // The user flips back to clean on purpose: that choice sticks.
+    fireEvent.click(getByTestId('pane-toggle-view'));
+    expect(getByTestId('pane-toggle-view')).toHaveTextContent('clean');
+    const again = cleanTranscriptProps[cleanTranscriptProps.length - 1]?.onUnavailable as () => void;
+    act(() => again());
+    expect(getByTestId('pane-toggle-view')).toHaveTextContent('clean');
+  });
+
   it('wires sessionId + send-nudge + resume-handoff into the clean children', () => {
     cleanTranscriptProps.length = 0;
     cleanComposerProps.length = 0;

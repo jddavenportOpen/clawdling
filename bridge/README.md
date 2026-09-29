@@ -130,7 +130,7 @@ model, timestamps, status, exit code, pid, and the `claude` conversation id).
   flush interval — verified by killing one and reading the log back.
 - **Boot reads the sidecars back as RECORDS.** They are listed by
   `GET /api/sessions` with `restored: true` and status `exited`. Nothing is
-  restarted. A sidecar left saying `running` by an unclean kill is still
+  restarted. A sidecar left saying `live` by an unclean kill is still
   reported `exited`: this bridge holds no terminal for that process, so
   anything else would be a lie the UI would act on. If the recorded pid is
   somehow still alive, that gets a line in the log.

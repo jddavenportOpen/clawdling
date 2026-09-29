@@ -60,6 +60,16 @@ else
   fi
   tmp="$(mktemp)"; sed "s#^NEXTAUTH_SECRET=.*#NEXTAUTH_SECRET=${SECRET}#" .env > "$tmp" && mv "$tmp" .env
 
+  # The cockpit and the PTY bridge (Claude Code panes) share one secret.
+  # Write it now: `make bridge` reads this same file, so the panes need no
+  # manual step. Hex, so it is safe unquoted in .env and in a shell.
+  if command -v openssl >/dev/null 2>&1; then
+    BSECRET="$(openssl rand -hex 32)"
+  else
+    BSECRET="$(node -e 'console.log(require("crypto").randomBytes(32).toString("hex"))')"
+  fi
+  tmp="$(mktemp)"; sed "s#^BRIDGE_SECRET=.*#BRIDGE_SECRET=${BSECRET}#" .env > "$tmp" && mv "$tmp" .env
+
   # Prompt for the one required value: the Anthropic key. Skippable.
   KEY="${ANTHROPIC_API_KEY:-}"
   if [ -z "$KEY" ]; then
@@ -104,3 +114,7 @@ fi
 say ""
 say "Done. Start the cockpit with:"
 say "   make run      # → http://localhost:3000"
+say ""
+say "Optional, the Claude Code panes (needs Python 3.10+ and the claude CLI, signed in):"
+say "   make bridge-install   # once"
+say "   make bridge           # in a second terminal, alongside make run"

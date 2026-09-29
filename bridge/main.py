@@ -106,13 +106,15 @@ def create_app(
     if restored:
         log.info("restored %d prior session record(s) from %s", restored, cfg.transcript_dir)
 
-    if cfg.cors_origins:
+    if cfg.cors_origins or cfg.cors_origin_regex:
         # The browser opens the SSE stream straight at the bridge (the Next.js
         # route only mints the token), so the bridge is a cross-origin target
-        # and needs CORS. Origins are an explicit allowlist; never "*".
+        # and needs CORS. Either an explicit allowlist or, by default, loopback
+        # on any port (config.DEFAULT_CORS_ORIGIN_REGEX); never "*".
         app.add_middleware(
             CORSMiddleware,
             allow_origins=list(cfg.cors_origins),
+            allow_origin_regex=cfg.cors_origin_regex or None,
             allow_credentials=False,
             allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
             allow_headers=["Authorization", "Content-Type", "Last-Event-ID"],

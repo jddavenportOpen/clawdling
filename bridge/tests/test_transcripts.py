@@ -76,7 +76,7 @@ def test_a_spawn_writes_a_log_and_a_sidecar(client, auth, config):
     assert meta["session_id"] == sid
     assert meta["name"] == "pane-one"
     assert meta["cwd"] == str(config.workspace_root)
-    assert meta["status"] == "running"
+    assert meta["status"] == "live"
     assert meta["pid"] == _session(client, sid).pid
     assert meta["bridge_pid"] == os.getpid()
 
@@ -273,7 +273,7 @@ def test_a_session_survives_a_restart_as_a_record(config, auth):
         rows = second.get("/api/sessions", headers=auth).json()["sessions"]
         row = next(r for r in rows if r["session_id"] == sid)
         assert row["name"] == "survivor"
-        assert row["status"] == "exited"  # never "running"
+        assert row["status"] == "exited"  # never "live"
         assert row["restored"] is True
 
         history = second.get(f"/api/sessions/{sid}/history", headers=auth)
@@ -314,12 +314,12 @@ def test_a_sidecar_left_saying_running_is_reported_exited(config, auth, state_ro
         _flush(first)
         path = config.transcript_dir / f"{sid}.json"
         meta = json.loads(path.read_text())
-        assert meta["status"] == "running"
+        assert meta["status"] == "live"
         # Skip the clean-shutdown stamp entirely, the way SIGKILL would.
         first.app_ref.state.transcripts.shutdown()
         first.app_ref.state.sessions.kill_all_now()
 
-    assert json.loads(path.read_text())["status"] == "running"
+    assert json.loads(path.read_text())["status"] == "live"
     with _boot(config) as second:
         row = next(
             r

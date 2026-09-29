@@ -146,7 +146,7 @@ def test_a_fresh_stream_reports_status(live):
     with live.client.stream("GET", f"/api/sessions/{sid}/stream") as resp:
         frames = read_frames(frames_of(resp), 1)
     assert frames[0]["event"] == "status"
-    assert json.loads(frames[0]["data"])["status"] == "running"
+    assert json.loads(frames[0]["data"])["status"] == "live"
 
 
 def test_reattach_replays_scrollback(live):

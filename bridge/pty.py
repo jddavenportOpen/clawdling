@@ -63,7 +63,11 @@ SUBSCRIBER_QUEUE_MAX = 4096
 MAX_RETAINED_EXITED = 50
 
 STATUS_STARTING = "starting"
-STATUS_RUNNING = "running"
+#: A spawned pane with a process behind it. "live", not "running": the cockpit
+#: UI treats every pane status other than "live"/"starting" as dead, so a
+#: bridge that said "running" made every working pane render as "Stopped - no
+#: response". Workers keep their own "running" (bridge/workers.py).
+STATUS_LIVE = "live"
 STATUS_EXITED = "exited"
 
 #: How a spawn answered "did you restore the model's context, or only the text?"
@@ -247,13 +251,13 @@ class PtySession:
 
         self.pid = pid
         self._master_fd = master_fd
-        self.status = STATUS_RUNNING
+        self.status = STATUS_LIVE
         self._apply_winsize(self.cols, self.rows)
         if self.transcript is not None:
             # The pid lands in the sidecar so a NEXT bridge can say something
             # honest about a process this one no longer owns.
             self.transcript.set_meta(
-                status=STATUS_RUNNING, pid=pid, bridge_pid=os.getpid()
+                status=STATUS_LIVE, pid=pid, bridge_pid=os.getpid()
             )
 
         reader = threading.Thread(

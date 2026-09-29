@@ -4,6 +4,31 @@ All notable changes to Clawdling are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## Unreleased (2026-09-29): the cockpit works in a browser for a stranger
+
+Found by installing from a cold public clone on a clean Node 24 and driving the
+UI in a real browser, which the earlier API-level checks never did.
+
+### Fixed
+- **Live panes no longer show "Stopped - no response".** The bridge reported
+  panes as `running`; the UI reads anything but `live`/`starting` as dead. The
+  bridge now says `live` (workers keep `running`).
+- **Panes open on the raw Claude Code terminal** when the bridge has no
+  structured transcript (this one never has), instead of on "couldn't load
+  the clean transcript". Once per pane; choosing clean afterwards sticks.
+- **Panes work when the cockpit is not on :3000.** The bridge allows loopback
+  origins on any port by default; `CLAWDLING_CORS_ORIGINS` is still exact.
+- **One `BRIDGE_SECRET`, generated for you.** `.env.example` declared the
+  bridge block twice (Next reads the last, empty, copy); `install.sh` now
+  writes the secret and `make bridge` (`scripts/run-bridge.sh`) reads the same
+  `.env`, deriving its port from `BRIDGE_URL`.
+- **`make bridge-install` requires Python 3.10+** instead of failing on the
+  3.9 macOS ships with a pydantic traceback.
+- **`make run` / `make start` listen on 127.0.0.1**; `CLAWDLING_HOST` opts in
+  to more. Single-user mode has no login.
+- **Docs no longer promise a `cli` or `mock` chat engine** that this build does
+  not have. `ADJUTANT_MOCK=1` is the zero-cost demo switch.
+
 ## [0.1.0] — unreleased
 
 The first open-source release of the Clawdling engine — the bring-your-own-key,

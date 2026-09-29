@@ -195,13 +195,13 @@ def test_a_missing_conversation_spawns_fresh_and_says_so(rconfig, auth, resume_h
         assert session.argv[1:3] == ["--session-id", second["session_id"]]
         assert second["resume_status"] == "unavailable"
         assert second["resume_from"] == first["session_id"]
-        assert second["status"] == "running"  # a working pane, not a 500
+        assert second["status"] == "live"  # a working pane, not a 500
 
 
 def test_resume_from_an_unknown_id_still_spawns(rconfig, auth, resume_home):
     with _boot(rconfig) as client:
         body = spawn(client, auth, resume_from="6f1c9f10-0000-4000-8000-00000000000b")
-        assert body["status"] == "running"
+        assert body["status"] == "live"
         assert body["resume_status"] == "unavailable"
 
 
