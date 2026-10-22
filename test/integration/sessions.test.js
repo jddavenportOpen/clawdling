@@ -69,7 +69,11 @@ test('spawn with a first prompt: title, hooks drive starting -> working -> ready
   assert.ok(inter.opts.settings.endsWith('hooks-settings.json'));
   assert.deepEqual(inter.opts.addDir, [home]);
   assert.ok(fs.readFileSync(inter.opts.appendSystemPromptFile, 'utf8').includes('About '), 'context file includes me.md');
-  const statuses = readLog(fakeLog).filter((e) => e.mode === 'hook').map((e) => e.event);
+  // The fake logs a hook after the hook process exits, which can be just after the server saw it.
+  const statuses = await waitFor(() => {
+    const ev = readLog(fakeLog).filter((e) => e.mode === 'hook').map((e) => e.event);
+    return ev.length >= 3 ? ev : null;
+  }, { label: 'three hook runs logged' });
   assert.deepEqual(statuses.slice(0, 3), ['SessionStart', 'UserPromptSubmit', 'Stop']);
   assert.ok(readLog(fakeLog).filter((e) => e.mode === 'hook').every((e) => e.stdout === ''), 'hook prints nothing');
 });
