@@ -52,3 +52,16 @@ test('Donna prompt carries the message, roster and live sessions; result parsing
   assert.equal(parseResult('[{"type":"system"},{"type":"result","result":"arr"}]').result, 'arr');
   assert.equal(parseResult('garbage'), null);
 });
+
+test('pairing info: LAN URL when bound to all interfaces, loopback otherwise', async () => {
+  const { pairingInfo } = await import('../../server/index.js');
+  const t = 'ab'.repeat(32);
+  const all = pairingInfo({ host: '0.0.0.0', port: 4747, token: t, lan: ['192.168.1.20', '10.0.0.5'] });
+  assert.equal(all.url, 'http://192.168.1.20:4747');
+  assert.deepEqual(all.lan, ['http://192.168.1.20:4747', 'http://10.0.0.5:4747']);
+  assert.equal(all.link, `clawdling://connect?url=${encodeURIComponent('http://192.168.1.20:4747')}&t=${t}`);
+  assert.equal(all.bind, '0.0.0.0');
+  assert.equal(pairingInfo({ host: '0.0.0.0', port: 1, token: t, lan: [] }).url, 'http://127.0.0.1:1');
+  assert.equal(pairingInfo({ host: '127.0.0.1', port: 4747, token: t, lan: ['192.168.1.20'] }).url, 'http://127.0.0.1:4747');
+  assert.equal(pairingInfo({ host: '100.64.0.7', port: 4747, token: t, lan: [] }).url, 'http://100.64.0.7:4747');
+});
