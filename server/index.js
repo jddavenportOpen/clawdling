@@ -248,7 +248,9 @@ export async function startServer(opts = {}) {
   for (const d of [paths.rt, paths.logs, paths.run, paths.ctx, paths.bin]) ensureDir(d, 0o700);
 
   const logger = opts.logger || makeLogger({ quiet: opts.quiet, file: path.join(paths.logs, 'server.log') });
-  const testMode = isTestMode(env);
+  // A server driving the fake claude is a test server, whatever else the environment says: it must
+  // never reach the official Telegram API, the real osascript or the real Messages database.
+  const testMode = isTestMode(env) || /fake-claude/.test(env.CLAWDLING_CLAUDE_BIN || '');
   const socket = tmuxSocketName(env);
   const claudeBin = env.CLAWDLING_CLAUDE_BIN || 'claude';
   if (testMode) {
@@ -284,7 +286,7 @@ export async function startServer(opts = {}) {
     pollTimeoutSec: Number(env.CLAWDLING_TELEGRAM_POLL_TIMEOUT) || 25,
     blocked: testMode && apiBase === TELEGRAM_OFFICIAL_BASE ? 'test mode: TELEGRAM_API_BASE must point at a local stub' : null,
   });
-  const imessage = new IMessageGateway({ paths, org, donna, events, logger, env });
+  const imessage = new IMessageGateway({ paths, org, donna, events, logger, env: testMode ? { ...env, CLAWDLING_TEST: '1' } : env });
   const transcripts = new TranscriptReader();
   const configDir = claudeConfigDir(cEnv);
 
@@ -611,6 +613,7 @@ export async function startServer(opts = {}) {
     stopped = true;
     telegram.stop();
     imessage.stop();
+    donna.stop();
     await sessions.shutdown();
     events.closeAll();
     for (const c of wss.clients) c.terminate();

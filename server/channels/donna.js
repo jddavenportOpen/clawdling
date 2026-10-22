@@ -90,6 +90,20 @@ export class DonnaRouter {
     Object.assign(this, { paths, org, sessions, events, claudeBin, env, getPort, shimDir, logger, timeoutMs });
     this.queue = Promise.resolve();
     this.inFlight = 0;
+    this.children = new Set();
+    this.stopped = false;
+  }
+
+  /** Kill any Donna turn still running (server shutdown). */
+  stop() {
+    this.stopped = true;
+    for (const child of this.children) {
+      try {
+        process.kill(-child.pid, 'SIGTERM');
+      } catch {
+        // already gone
+      }
+    }
   }
 
   get busy() {
@@ -178,6 +192,10 @@ export class DonnaRouter {
       let stdout = '';
       let stderr = '';
       let done = false;
+      if (this.stopped) {
+        resolve({ ok: false, error: 'Clawdling is shutting down' });
+        return;
+      }
       const child = spawn(claude, args, {
         cwd,
         detached: true,
@@ -190,10 +208,12 @@ export class DonnaRouter {
           PATH: `${this.shimDir}:${this.env.PATH || '/usr/bin:/bin'}`,
         },
       });
+      this.children.add(child);
       const finish = (res) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        this.children.delete(child);
         resolve(res);
       };
       const killGroup = (sig) => {
