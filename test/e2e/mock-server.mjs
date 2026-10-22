@@ -636,9 +636,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (p === '/api/pair' && m === 'GET') {
-      const host = req.headers.host || '127.0.0.1';
-      const lanUrl = `http://192.168.1.20:${host.split(':')[1] || 4747}`;
-      send(res, 200, { url: lanUrl, token, link: `${lanUrl}/?t=${token}`, lan: ['192.168.1.20'], bind: st.bind });
+      // Same shape as the real server: lan is a list of URLs, link is the app's deep link.
+      const port = (req.headers.host || '').split(':')[1] || '4747';
+      const lan = [`http://192.168.1.20:${port}`];
+      const url = st.bind === '127.0.0.1' ? `http://127.0.0.1:${port}` : lan[0];
+      send(res, 200, { url, token, link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`, lan, bind: st.bind });
       return;
     }
     if (p === '/api/pair/qr.svg' && m === 'GET') {

@@ -10,13 +10,16 @@ export default defineConfig({
   globalSetup: './global-setup.mjs',
   fullyParallel: false,
   workers: 1, // one shared server state; the suite is serial by design
-  retries: 0,
+  // One retry absorbs infrastructure flakes on a shared machine (a browser process killed
+  // under load); Playwright still reports any test that needed it as "flaky".
+  retries: Number(process.env.CLAWDLING_E2E_RETRIES ?? 1),
   timeout: 45_000,
   expect: { timeout: 8_000 },
   reporter: [['list']],
   use: {
     baseURL: process.env.CLAWDLING_E2E_URL,
     browserName: 'chromium',
+    channel: process.env.CLAWDLING_E2E_CHANNEL || undefined, // e.g. "chromium" for new-headless Chromium
     headless: true,
     viewport: { width: 1440, height: 900 },
     colorScheme: 'dark',

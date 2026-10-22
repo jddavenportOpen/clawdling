@@ -94,7 +94,7 @@ export function Wizard({ name: presetName = '' }) {
       <div class="modal-head wz-done">
         <span class="wz-done-icon"><${Icon} name="check" size=${18} /></span>
         <h2 id="wz-title" class="modal-title">${created.name} is ready</h2>
-        <p class="modal-text">Created <code>${agentFolder(created)}</code> with its own CLAUDE.md and a memory folder. Every session of ${created.name} starts from those files.</p>
+        <p class="modal-text">Created <code>${created.dir ? created.dir.replace(/^\/(Users|home)\/[^/]+/, '~') : agentFolder(created)}</code> with its own CLAUDE.md and a memory folder. Every session of ${created.name} starts from those files.</p>
       </div>
       <div class="wz-next">
         <button class="wz-option is-primary" onClick=${flesh} data-autofocus data-testid="wz-flesh">

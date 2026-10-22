@@ -52,7 +52,7 @@ export function AgentPage({ id, tab = 'sessions' }) {
         <h1 class="page-title">${info.name}</h1>
         ${info.mission ? html`<p class="hero-mission">${info.mission}</p>` : html`<p class="hero-mission is-empty">No mission yet. Add one in Context.</p>`}
         <p class="hero-meta">
-          <span class="mono">${agentFolder(info)}</span>
+          <span class="mono" title=${info.dir || ''}>${info.dir ? info.dir.replace(/^\/(Users|home)\/[^/]+/, '~') : agentFolder(info)}</span>
           ${info.repo ? html`<span class="mono" title="Sessions open in this repo">${info.repo}</span>` : null}
           ${info.model ? html`<span>Model: <span class="mono">${info.model}</span></span>` : null}
         </p>
