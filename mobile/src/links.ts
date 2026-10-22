@@ -114,8 +114,8 @@ export function networkKind(host: string): NetworkKind {
     return 'public';
   }
   if (h.startsWith('[')) {
+    if (/^\[fd7a:115c:a1e0:/i.test(h)) return 'tailscale'; // Tailscale's IPv6 range
     if (/^\[f[cd]/i.test(h) || /^\[fe80/i.test(h)) return 'lan';
-    if (/^\[fd7a:115c:a1e0/i.test(h)) return 'tailscale';
     return 'public';
   }
   if (!h.includes('.') || h.endsWith('.local') || h.endsWith('.lan') || h.endsWith('.home.arpa')) return 'lan';
