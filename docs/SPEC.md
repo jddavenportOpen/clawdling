@@ -257,7 +257,8 @@ no field or path in §4 was renamed or removed.
 - `POST /api/sessions/:sid/resume` accepts optional `{cols, rows}` and is idempotent (200 with the
   Session if it is already live).
 - Status: `SessionStart` with no first prompt pending moves `starting` → `ready` (a fresh session is
-  waiting for you). `needs_you` is also used when Claude Code's own folder-trust dialog is on screen
+  waiting for you). It changes nothing for a session that is already `working`, `ready` or waiting on
+  a permission prompt (e.g. a late or replayed SessionStart after a resume). `needs_you` is also used when Claude Code's own folder-trust dialog is on screen
   (before any hook can run); `notification` then explains what to answer. After a permission
   prompt, typing Enter/1-9/Esc in the terminal moves `needs_you` → `working`.
 - Agent `needs_you` counts sessions in `needs_you` **or** `ready` (both are "your turn"), matching the rail.
@@ -270,8 +271,16 @@ no field or path in §4 was renamed or removed.
   approve a permission prompt). Keystrokes over the terminal WebSocket are always delivered.
 
 **Terminal WebSocket**
-- A `snapshot` message can arrive again later (after a resume, or after the control client
-  reattaches). Treat every `snapshot` as a full repaint: `term.reset()` then `term.write(data)`.
+- `/ws/term/:sid?cols=<n>&rows=<n>` (20..500 x 4..200, out-of-range values are ignored): the server
+  resizes the tmux window to that size first, waits for tmux to apply it and for the app to redraw
+  (output quiet for 50 ms, at most 400 ms), and only then cuts the first `snapshot`. A client that
+  sends its size this way needs no "drop the first snapshot and reconnect" handshake.
+- After a `{"t":"resize"}` that actually changes the window size, that viewer gets a fresh
+  `snapshot` cut at the new size (a resize to the current size sends nothing).
+- A `snapshot` message can arrive again later (after a resume, a resize, or after the control
+  client reattaches). Treat every `snapshot` as a full repaint: `term.reset()` then `term.write(data)`.
+- Snapshots include up to 2000 lines of tmux history above the screen, so they can be taller than
+  the viewer; the last `rows` rows are the visible screen.
 - The server strips terminal *queries* (DA, DSR/CPR, DECRQM, XTVERSION, OSC colour queries...) from
   `out` data: tmux already answered them, and an xterm.js answer would be typed into the session.
   The snapshot replays the app's terminal modes (bracketed paste, mouse, focus, cursor keys).
