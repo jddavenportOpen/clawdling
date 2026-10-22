@@ -7,6 +7,7 @@ import {
   groupHome,
   hostLabel,
   isPermissionPrompt,
+  terminalQuestion,
   maskToken,
   previewText,
   relativeTime,
@@ -35,6 +36,8 @@ function session(over: Partial<Session>): Session {
     notification: null,
     resumable: false,
     last_message: null,
+    waiting_on: null,
+    reports_waiting: true,
     ...over,
   };
 }
@@ -57,6 +60,17 @@ describe('session names and status', () => {
     assert.equal(statusMeta('starting').tone, 'working');
     assert.equal(statusMeta('ready').tone, 'ready');
     assert.equal(statusMeta('ended').tone, 'ended');
+  });
+
+  it('knows which questions only the terminal can answer', () => {
+    const q = (over: Partial<Session>) => terminalQuestion(session({ status: 'needs_you', ...over }));
+    assert.deepEqual(q({ waiting_on: 'permission_prompt' }), { kind: 'permission', certain: true });
+    assert.deepEqual(q({ waiting_on: 'elicitation_dialog' }), { kind: 'choice', certain: true });
+    assert.deepEqual(q({ waiting_on: 'trust' }), { kind: 'startup', certain: true });
+    assert.equal(q({ waiting_on: 'idle_prompt', notification: 'Claude is waiting for your input' }), null);
+    assert.equal(q({ waiting_on: null, notification: 'Claude needs your permission to use Bash' }), null, 'a server that reports waiting_on is trusted');
+    assert.deepEqual(q({ waiting_on: null, reports_waiting: false, notification: 'Claude needs your permission to use Bash' }), { kind: 'permission', certain: false });
+    assert.equal(terminalQuestion(session({ status: 'ready', waiting_on: 'permission_prompt' })), null);
   });
 
   it('spots permission prompts', () => {

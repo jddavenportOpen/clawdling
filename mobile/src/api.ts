@@ -133,6 +133,8 @@ export function normalizeSession(raw: unknown): Session | null {
     notification: strOrNull(raw.notification),
     resumable: typeof raw.resumable === 'boolean' ? raw.resumable : status === 'ended',
     last_message: strOrNull(raw.last_message),
+    waiting_on: status === 'needs_you' ? strOrNull(raw.waiting_on) : null,
+    reports_waiting: 'waiting_on' in raw,
   };
 }
 
@@ -194,6 +196,7 @@ export function normalizeMessagesPage(raw: unknown): MessagesPage {
     messages,
     next: next === null || !Number.isFinite(next) ? null : next,
     status: raw.status == null ? null : normalizeStatus(raw.status),
+    more: typeof raw.more === 'boolean' ? raw.more : null,
   };
 }
 
@@ -203,7 +206,7 @@ export function normalizeDonnaMessage(raw: unknown): DonnaMessage | null {
   if (!role) return null;
   const text = str(raw.text);
   if (!text) return null;
-  return { role, text, ts: strOrNull(raw.ts), channel: strOrNull(raw.channel) };
+  return { role, text, ts: strOrNull(raw.ts), channel: strOrNull(raw.channel), ...(raw.error === true ? { error: true } : {}) };
 }
 
 function errorText(body: unknown): string | null {

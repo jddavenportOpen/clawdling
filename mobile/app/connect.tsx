@@ -41,7 +41,13 @@ export default function ConnectScreen() {
           return;
         }
       }
-      const check = await checkConnection(target.url, target.token);
+      let check = await checkConnection(target.url, target.token);
+      // The first request to a local address is what makes iOS ask for Local Network access, and
+      // it fails while that question is on screen. Give the person a moment, then try once more.
+      if (!check.ok && check.step === 'health' && check.error?.kind === 'network' && target.network === 'lan') {
+        await new Promise((r) => setTimeout(r, 2500));
+        check = await checkConnection(target.url, target.token);
+      }
       const p = connectProblem(target, check);
       if (p) {
         setProblem(p);

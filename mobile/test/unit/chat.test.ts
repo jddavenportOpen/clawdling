@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   channelLabel,
+  groupForDisplay,
   mergeDonna,
   mergeMessages,
   newLocalItem,
@@ -54,6 +55,28 @@ describe('session messages', () => {
   it('never drops a failed message on its own', () => {
     const p = [pending('p1', 'retry me', 1, 'failed')];
     assert.deepEqual(reconcilePending(p, [msg(2, 'user', 'retry me')]), p);
+  });
+});
+
+describe('display grouping', () => {
+  const tool = (n: number, name: string): ChatMessage => ({ n, role: 'assistant', text: '', tools: [{ name, summary: name.toLowerCase() }], ts: `t${n}` });
+  it('folds a run of tool-only lines into the next reply, keeping the first key', () => {
+    const shown = groupForDisplay([msg(0, 'user', 'fix it'), msg(1, 'assistant', 'Looking.'), tool(2, 'Grep'), tool(3, 'Read'), msg(4, 'assistant', 'Fixed.')]);
+    assert.deepEqual(
+      shown.map((m) => [m.key, m.role, m.text, m.tools.map((t) => t.name)]),
+      [
+        ['n0', 'user', 'fix it', []],
+        ['n1', 'assistant', 'Looking.', []],
+        ['n2', 'assistant', 'Fixed.', ['Grep', 'Read']],
+      ],
+    );
+  });
+
+  it('keeps a trailing run (still working) and a run before a user message as tool-only rows', () => {
+    const a = groupForDisplay([msg(0, 'user', 'go'), tool(1, 'Bash'), tool(2, 'Edit')]);
+    assert.deepEqual(a.map((m) => [m.key, m.text, m.tools.length]), [['n0', 'go', 0], ['n1', '', 2]]);
+    const b = groupForDisplay([tool(0, 'Bash'), msg(1, 'user', 'stop')]);
+    assert.deepEqual(b.map((m) => [m.key, m.role]), [['n0', 'assistant'], ['n1', 'user']]);
   });
 });
 

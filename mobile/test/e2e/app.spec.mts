@@ -32,8 +32,6 @@ const test = base.extend<{ shot: (name: string) => Promise<void> }, { mock: Mock
   },
 });
 
-test.describe.configure({ mode: 'serial' });
-
 async function control(mock: Mock, what: string, body: object = {}) {
   const res = await fetch(`${mock.url}/__mock/${what}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`mock control ${what} failed: ${res.status}`);
@@ -133,14 +131,24 @@ test('tapping an agent starts a session with the first message', async ({ page, 
   await expect(page.getByTestId('chat-screen').getByText('Got it: "Find every subscription I pay for. Then rank them by cost."')).toBeVisible({ timeout: 15_000 });
 });
 
-test('a permission prompt is shown, and sending asks first', async ({ page, mock, shot }) => {
+test('a permission prompt is shown, and the app leaves the answer to the terminal', async ({ page, mock, shot }) => {
   await connect(page, mock);
   await page.getByText('Categorize September spending').first().click();
-  await expect(page.getByTestId('needs-card')).toContainText('Waiting for your permission');
-  await expect(page.getByTestId('needs-card')).toContainText('Permission needed to run a script (Bash)');
+  const card = page.getByTestId('needs-card');
+  await expect(card).toContainText('Waiting for your permission');
+  await expect(card).toContainText('Permission needed to run a script (Bash)');
+  await expect(card).toContainText('the app never answers these for you');
+  await expect(page.getByTestId('composer-input')).not.toBeEditable();
+  await expect(page.getByTestId('composer-send')).toBeDisabled();
   await shot('05-needs-you');
+});
 
+test('an older server: sending into a permission prompt asks first', async ({ page, mock }) => {
+  await connect(page, mock);
+  await control(mock, 'legacy', { on: true });
+  await page.getByText('Categorize September spending').first().click();
   const chat = page.getByTestId('chat-screen');
+  await expect(page.getByTestId('needs-card')).toContainText('Waiting for your permission');
   let asked = '';
   page.once('dialog', (d) => {
     asked = d.message();
@@ -153,7 +161,7 @@ test('a permission prompt is shown, and sending asks first', async ({ page, mock
   page.once('dialog', (d) => void d.accept());
   await page.getByTestId('composer-send').click();
   await expect(chat.getByTestId('msg-me').filter({ hasText: 'yes, go ahead' })).toBeVisible();
-  await expect(chat.getByText('Got it: "yes, go ahead"')).toBeVisible({ timeout: 15_000 });
+  await control(mock, 'legacy', { on: false });
 });
 
 test('an ended session can be resumed', async ({ page, mock }) => {

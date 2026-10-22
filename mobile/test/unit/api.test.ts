@@ -89,6 +89,7 @@ describe('HttpClient requests', () => {
           { n: 4, role: 'system', text: 'unknown role' },
         ],
         next: 3,
+        more: true,
         status: 'ready',
       }),
     );
@@ -101,6 +102,7 @@ describe('HttpClient requests', () => {
     ]);
     assert.equal(page.next, 3);
     assert.equal(page.status, 'ready');
+    assert.equal(page.more, true);
   });
 
   it('omits after on the first page', async () => {
@@ -230,6 +232,11 @@ describe('normalizers', () => {
     assert.equal(s?.agent_name, 'Money');
     assert.equal(s?.status, 'working');
     assert.equal(s?.title, null);
+    assert.equal(s?.reports_waiting, false, 'an older server says nothing about waiting_on');
+    const n = normalizeSession({ sid: 'abc', agent: 'money', status: 'needs_you', waiting_on: 'permission_prompt' });
+    assert.equal(n?.waiting_on, 'permission_prompt');
+    assert.equal(n?.reports_waiting, true);
+    assert.equal(normalizeSession({ sid: 'abc', status: 'working', waiting_on: 'permission_prompt' })?.waiting_on, null);
     assert.equal(normalizeSession({ agent: 'x' }), null);
     assert.equal(normalizeSession(null), null);
   });

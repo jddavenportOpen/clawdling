@@ -82,6 +82,25 @@ describe('DemoClient', () => {
     assert.equal(page.status, 'ready');
   });
 
+  it('refuses to type into a permission prompt, like the server', async () => {
+    const c = new DemoClient({ now: () => NOW, schedule: () => {} });
+    const sid = SAMPLE.sessions.find((s) => s.status === 'needs_you')!.sid;
+    const s = await c.session(sid);
+    assert.equal(s.waiting_on, 'permission_prompt');
+    await assert.rejects(c.send(sid, 'yes'), /answer it in the cockpit/);
+  });
+
+  it('pages messages like the server: from the start, with more', async () => {
+    const c = new DemoClient({ now: () => NOW, schedule: () => {} });
+    const sid = SAMPLE.sessions.find((s) => s.status === 'working')!.sid;
+    const first = await c.messages(sid, { limit: 2 });
+    assert.deepEqual(first.messages.map((m) => m.n), [0, 1]);
+    assert.equal(first.more, true);
+    const rest = await c.messages(sid, { after: first.next, limit: 50 });
+    assert.equal(rest.more, false);
+    assert.equal(rest.messages[0].n, 2);
+  });
+
   it('refuses to send to an ended session until it is resumed', async () => {
     const c = new DemoClient({ now: () => NOW, schedule: () => {} });
     const ended = SAMPLE.sessions.find((s) => s.status === 'ended')!.sid;

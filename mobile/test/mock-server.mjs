@@ -20,6 +20,8 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SAMPLE = JSON.parse(fs.readFileSync(path.join(HERE, '..', 'src', 'demo', 'sample.json'), 'utf8'));
 const VERSION = '1.0.0-mock';
 const MIN = 60_000;
+// Same rule as the server: Enter would answer these, so typing into them is refused (409).
+const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -76,24 +78,29 @@ function seed(now) {
       last_activity_at: iso(now, s.activeMinutesAgo),
       ended_at: s.endedMinutesAgo === undefined ? null : iso(now, s.endedMinutesAgo),
       notification: s.notification ?? null,
+      waiting_on: s.status === 'needs_you' ? s.waitingOn ?? 'notification' : null,
       last_message: s.lastMessage ?? null,
     });
+    // Like the server's transcript reader: entries are numbered from 0.
     messages.set(
       s.sid,
-      s.messages.map((m, i) => ({ n: i + 1, role: m.role, text: m.text, tools: m.tools ?? [], ts: iso(now, m.minutesAgo) })),
+      s.messages.map((m, i) => ({ n: i, role: m.role, text: m.text, tools: m.tools ?? [], ts: iso(now, m.minutesAgo) })),
     );
   }
   const donna = SAMPLE.donna.map((d) => ({ role: d.role, text: d.text, channel: d.channel, ts: iso(now, d.minutesAgo) }));
   return { org: { version: 1, ...SAMPLE.org, channels: {} }, agents, sessions, messages, donna };
 }
 
-function view(s) {
-  return {
+function view(s, { legacy = false } = {}) {
+  const v = {
     ...s,
     name: `${s.agent_name}: ${s.title || 'new session'}`,
+    waiting_on: s.status === 'needs_you' ? s.waiting_on ?? null : null,
     resumable: s.status === 'ended',
     attach_cmd: `tmux -L clawdling attach -t ${s.tmux_name}`,
   };
+  if (legacy) delete v.waiting_on; // servers before waiting_on did not send the field at all
+  return v;
 }
 
 function lanAddresses() {
@@ -136,7 +143,7 @@ export async function startMockServer(opts = {}) {
   };
   const push = (sid, role, text, tools = []) => {
     const list = state.messages.get(sid) ?? [];
-    const m = { n: (list[list.length - 1]?.n ?? 0) + 1, role, text, tools, ts: now() };
+    const m = { n: list.length ? list[list.length - 1].n + 1 : 0, role, text, tools, ts: now() };
     list.push(m);
     state.messages.set(sid, list);
     return m;
@@ -144,6 +151,7 @@ export async function startMockServer(opts = {}) {
   const reply = (s, text) => {
     s.status = 'working';
     s.notification = null;
+    s.waiting_on = null;
     s.last_activity_at = now();
     const delay = replyMs + Math.floor(Math.random() * 400);
     later(() => {
@@ -174,6 +182,7 @@ export async function startMockServer(opts = {}) {
       last_activity_at: now(),
       ended_at: null,
       notification: null,
+      waiting_on: null,
       last_message: null,
     };
     state.sessions.set(sid, s);
@@ -207,14 +216,14 @@ export async function startMockServer(opts = {}) {
     ['GET', /^\/api\/health$/, () => [200, { ok: true, version: VERSION, tmux: { ok: true, version: 'mock' }, claude: { ok: true, version: 'mock' }, home: '/home/alex/clawdling' }], { public: true }],
     ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
     ['GET', /^\/api\/org$/, () => [200, orgView()]],
-    ['GET', /^\/api\/pair$/, () => [200, { url: baseUrl, token, link: pairLink(), lan: lanAddresses(), bind: host }]],
+    ['GET', /^\/api\/pair$/, () => [200, { url: baseUrl, token, link: pairLink(), lan: lanAddresses().map((ip) => `http://${ip}:${new URL(baseUrl).port}`), bind: host }]],
     [
       'GET',
       /^\/api\/sessions$/,
-      () => [200, [...state.sessions.values()].sort((a, b) => (b.last_activity_at || '').localeCompare(a.last_activity_at || '')).map(view)],
+      () => [200, [...state.sessions.values()].sort((a, b) => (b.last_activity_at || '').localeCompare(a.last_activity_at || '')).map((s) => view(s, flags))],
     ],
     ['POST', /^\/api\/sessions$/, (m, b) => [201, view(spawn(b))]],
-    ['GET', /^\/api\/sessions\/([^/]+)$/, (m) => [200, view(findSession(m[1]))]],
+    ['GET', /^\/api\/sessions\/([^/]+)$/, (m) => [200, view(findSession(m[1]), flags)]],
     [
       'PATCH',
       /^\/api\/sessions\/([^/]+)$/,
@@ -255,6 +264,9 @@ export async function startMockServer(opts = {}) {
         const s = findSession(m[1]);
         if (s.status === 'ended') throw new HttpError(409, 'that session has ended; resume it first');
         if (typeof b.text !== 'string') throw new HttpError(400, 'send {text, enter}');
+        if (!flags.legacy && s.status === 'needs_you' && ANSWER_IN_TERMINAL.has(s.waiting_on)) {
+          throw new HttpError(409, `the session is waiting for your answer in the terminal (${s.notification || s.waiting_on}); answer it in the cockpit first`);
+        }
         if (b.text) push(s.sid, 'user', b.text);
         if (!s.title) s.title = deriveTitle(b.text);
         if (b.enter !== false) reply(s, b.text);
@@ -265,13 +277,16 @@ export async function startMockServer(opts = {}) {
       'GET',
       /^\/api\/sessions\/([^/]+)\/messages$/,
       (m, b, url) => {
+        // Same paging as the server: from the start (or after `after`), oldest first, `more` if cut.
         const s = findSession(m[1]);
         const all = state.messages.get(s.sid) ?? [];
-        const limit = Math.max(1, Math.min(500, Number(url.searchParams.get('limit')) || 200));
+        const limit = Math.max(1, Math.min(1000, Number(url.searchParams.get('limit')) || 200));
         const afterRaw = url.searchParams.get('after');
-        const list = afterRaw === null ? all.slice(-limit) : all.filter((x) => x.n > Number(afterRaw)).slice(0, limit);
-        const next = list.length ? list[list.length - 1].n : afterRaw === null ? 0 : Number(afterRaw);
-        return [200, { messages: list, next, status: s.status }];
+        const after = afterRaw === null || afterRaw === '' ? -1 : Number(afterRaw);
+        if (!Number.isInteger(after) || after < -1) throw new HttpError(400, 'after must be an integer >= -1');
+        const list = all.filter((x) => x.n > after).slice(0, limit);
+        const next = list.length ? list[list.length - 1].n : after;
+        return [200, { messages: list, next, more: all.length > 0 && all[all.length - 1].n > next, status: s.status }];
       },
     ],
     [
@@ -374,6 +389,7 @@ export async function startMockServer(opts = {}) {
       if (!s) return send(res, 404, { error: 'no such session' });
       s.status = b.status;
       s.notification = b.notification ?? null;
+      s.waiting_on = b.waiting_on ?? (b.status === 'needs_you' ? 'notification' : null);
       if (b.status === 'ended') s.ended_at = now();
       return send(res, 200, view(s));
     }

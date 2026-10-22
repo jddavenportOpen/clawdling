@@ -121,7 +121,6 @@ export function MessageList({ rows, empty, header }: { rows: ChatRow[]; empty?: 
       keyboardShouldPersistTaps="handled"
       ListEmptyComponent={empty ? <View style={styles.emptyWrap}>{empty}</View> : null}
       ListFooterComponent={header ? <View style={styles.listHeader}>{header}</View> : null}
-      maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
       testID="message-list"
     />
   );

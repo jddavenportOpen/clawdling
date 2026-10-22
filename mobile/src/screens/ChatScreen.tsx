@@ -9,7 +9,7 @@ import { useCallback, useMemo, useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isApiError, toApiError } from '../api';
-import { localId, maxN, mergeMessages, nextCursor, reconcilePending, type PendingMessage } from '../chat';
+import { groupForDisplay, localId, maxN, mergeMessages, nextCursor, reconcilePending, type PendingMessage } from '../chat';
 import { AgentAvatar } from '../components/AgentAvatar';
 import { Banner, ConnectionBanner } from '../components/Banner';
 import { Button } from '../components/Button';
@@ -21,7 +21,7 @@ import { ScreenHeader } from '../components/ScreenHeader';
 import { StatusPill } from '../components/StatusPill';
 import { confirmAsync } from '../confirm';
 import { useConnection } from '../connection';
-import { activityTime, isPermissionPrompt, previewText, relativeTimeLong, sessionTitle } from '../format';
+import { activityTime, previewText, relativeTimeLong, sessionTitle, terminalQuestion, type TerminalQuestion } from '../format';
 import { stashPending, takePending } from '../handoff';
 import { colors, radius, tones, type } from '../theme';
 import type { Agent, ChatMessage, ClawdlingClient, Session, SessionStatus } from '../types';
@@ -29,6 +29,13 @@ import { useKeyboardVisible } from '../useKeyboard';
 import { usePolling } from '../usePolling';
 
 const PAGE = 200;
+
+function questionTitle(q: TerminalQuestion | null): string {
+  if (!q) return 'Waiting on you';
+  if (q.kind === 'permission') return 'Waiting for your permission';
+  if (q.kind === 'choice') return 'Waiting for your choice';
+  return 'Waiting for an answer before it starts';
+}
 
 export function ChatScreen({ sid, agentId }: { sid?: string; agentId?: string }) {
   const { client, connection } = useConnection();
@@ -102,8 +109,8 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
         let page = await client.messages(sid, { after: cursor.current, limit: PAGE });
         let merged = mergeMessages(messagesRef.current, page.messages);
         cursor.current = nextCursor(page.next, merged, cursor.current);
-        // A long session can take a few pages to catch up the first time.
-        for (let i = 0; i < 10 && page.messages.length >= PAGE; i++) {
+        // The server pages from the start; a long session takes a few pages to catch up.
+        for (let i = 0; i < 20 && (page.more ?? page.messages.length >= PAGE) && page.messages.length > 0; i++) {
           page = await client.messages(sid, { after: cursor.current, limit: PAGE });
           merged = mergeMessages(merged, page.messages);
           cursor.current = nextCursor(page.next, merged, cursor.current);
@@ -146,13 +153,17 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
   const poll = usePolling(task, () => (Date.now() < boostUntil.current ? 700 : statusRef.current === 'working' ? 1500 : 2000), !gone);
 
   const notification = session?.notification ?? null;
-  const permission = status === 'needs_you' && isPermissionPrompt(notification);
+  const question: TerminalQuestion | null = session ? terminalQuestion({ ...session, status: status ?? session.status }) : null;
+  // A question only the terminal can answer: the server refuses to type into it, so don't offer to.
+  const blocked = !!question?.certain;
   const ended = status === 'ended';
 
   const send = async (textArg?: string) => {
     const text = (textArg ?? draft).trim();
     if (!text) return;
-    if (permission) {
+    if (blocked) return;
+    if (question && !question.certain) {
+      // An older server types into whatever is on screen, and Return would answer the prompt.
       const ok = await confirmAsync(
         'A permission prompt is open',
         `${notification}\n\nSending types your message and presses Return in the terminal, which can approve the prompt. To answer it safely, use the cockpit on your computer.`,
@@ -225,14 +236,15 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
   };
 
   const rows = useMemo<ChatRow[]>(() => {
-    const out: ChatRow[] = messages.map((m, i) => ({
+    const shown = groupForDisplay(messages);
+    const out: ChatRow[] = shown.map((m, i) => ({
       kind: 'msg',
-      key: `n${m.n}`,
+      key: m.key,
       side: m.role === 'user' ? 'me' : 'them',
       text: m.text,
       tools: m.tools,
       ts: m.ts,
-      showMeta: i === messages.length - 1 || messages[i + 1].role !== m.role,
+      showMeta: i === shown.length - 1 || shown[i + 1].role !== m.role,
     }));
     if (unsupported && session?.last_message) {
       out.push({ kind: 'msg', key: 'last', side: 'them', text: session.last_message, tools: [], ts: session.last_activity_at, showMeta: true });
@@ -336,11 +348,17 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
 
         {status === 'needs_you' ? (
           <View style={styles.needs} testID="needs-card">
-            <Icon name={permission ? 'hand-left-outline' : 'chatbubble-ellipses-outline'} size={18} color={tones.needs.text} style={{ marginTop: 1 }} />
+            <Icon name={question ? 'hand-left-outline' : 'chatbubble-ellipses-outline'} size={18} color={tones.needs.text} style={{ marginTop: 1 }} />
             <View style={styles.flexShrink}>
-              <Text style={styles.needsTitle}>{permission ? 'Waiting for your permission' : 'Waiting on you'}</Text>
+              <Text style={styles.needsTitle}>{questionTitle(question)}</Text>
               <Text style={styles.needsText}>{notification ?? `${agentName} is waiting for your reply.`}</Text>
-              {permission ? <Text style={styles.needsHint}>Answer permission prompts in the cockpit on your computer.</Text> : null}
+              {question ? (
+                <Text style={styles.needsHint}>
+                  {question.certain
+                    ? 'Answer it in the cockpit on your computer. To keep you in control, the app never answers these for you.'
+                    : 'Answer it in the cockpit on your computer.'}
+                </Text>
+              ) : null}
             </View>
           </View>
         ) : null}
@@ -366,9 +384,9 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
             value={draft}
             onChangeText={setDraft}
             onSend={() => void send()}
-            placeholder={sid ? `Message ${agentName}` : `What should ${agentName} do?`}
+            placeholder={blocked ? 'Answer this in the cockpit on your computer' : sid ? `Message ${agentName}` : `What should ${agentName} do?`}
             sending={creating}
-            disabled={!loaded && !!sid}
+            disabled={(!loaded && !!sid) || blocked}
             bottomInset={keyboard ? 8 : insets.bottom}
             autoFocus={!sid}
           />

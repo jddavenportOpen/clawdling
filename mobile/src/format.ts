@@ -136,6 +136,30 @@ export function hostLabel(url: string): string {
   return url.replace(/^[a-z]+:\/\//i, '').replace(/\/+$/, '');
 }
 
+/**
+ * Questions only the terminal can answer: Enter would pick an option (folder trust defaults to
+ * "No, exit", a permission prompt to "Yes"), so the server refuses to type into them (409).
+ */
+export const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
+
+export type TerminalQuestion = { kind: 'permission' | 'choice' | 'startup'; certain: boolean };
+
+/**
+ * Is this session waiting on a question that must be answered in the terminal? `certain` is false
+ * for older servers that do not report `waiting_on`, where the notice text is the only clue.
+ */
+export function terminalQuestion(s: Pick<Session, 'status' | 'waiting_on' | 'reports_waiting' | 'notification'>): TerminalQuestion | null {
+  if (s.status !== 'needs_you') return null;
+  if (s.waiting_on) {
+    if (!ANSWER_IN_TERMINAL.has(s.waiting_on)) return null;
+    if (s.waiting_on === 'permission_prompt') return { kind: 'permission', certain: true };
+    if (s.waiting_on === 'elicitation_dialog') return { kind: 'choice', certain: true };
+    return { kind: 'startup', certain: true };
+  }
+  if (!s.reports_waiting && isPermissionPrompt(s.notification)) return { kind: 'permission', certain: false };
+  return null;
+}
+
 /** True when a needs-you notice is a permission prompt (answering it means pressing keys in the TUI). */
 export function isPermissionPrompt(notification: string | null | undefined): boolean {
   return !!notification && /\bpermission\b|\bapprove\b|\ballow\b/i.test(notification);

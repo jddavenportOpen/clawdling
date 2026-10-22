@@ -1,7 +1,7 @@
 // Chat bookkeeping shared by the session chat and Donna: merging polled pages, matching the
 // messages you just sent against what the server echoes back, and the "Ran: ..." tool lines.
 
-import type { ChatMessage, DonnaMessage, DonnaRole, ToolCall } from './types';
+import type { ChatMessage, DonnaMessage, DonnaRole, MessageRole, ToolCall } from './types';
 
 /** Merge a polled page into what we have: dedupe by `n`, keep order by `n`. */
 export function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]): ChatMessage[] {
@@ -10,6 +10,43 @@ export function mergeMessages(existing: ChatMessage[], incoming: ChatMessage[]):
   for (const m of existing) byN.set(m.n, m);
   for (const m of incoming) byN.set(m.n, m);
   return [...byN.values()].sort((a, b) => a.n - b.n);
+}
+
+export interface DisplayMessage {
+  key: string;
+  role: MessageRole;
+  text: string;
+  tools: ToolCall[];
+  ts: string | null;
+}
+
+/**
+ * Claude Code writes an assistant turn as several transcript lines (text, then each tool call on
+ * its own line), and the server returns one message per line. For reading on a phone, a run of
+ * tool-only lines is folded into the next assistant text (or kept as one group before a user
+ * message), so "Ran: ..." steps collapse together. Keys stay stable while a run grows.
+ */
+export function groupForDisplay(messages: ChatMessage[]): DisplayMessage[] {
+  const out: DisplayMessage[] = [];
+  let run: DisplayMessage | null = null;
+  for (const m of messages) {
+    if (m.role === 'assistant' && !m.text.trim()) {
+      if (!run) run = { key: `n${m.n}`, role: 'assistant', text: '', tools: [], ts: m.ts };
+      run.tools = [...run.tools, ...m.tools];
+      run.ts = m.ts ?? run.ts;
+      continue;
+    }
+    if (m.role === 'assistant') {
+      out.push(run ? { ...run, text: m.text, tools: [...run.tools, ...m.tools], ts: m.ts } : { key: `n${m.n}`, role: 'assistant', text: m.text, tools: m.tools, ts: m.ts });
+      run = null;
+      continue;
+    }
+    if (run) out.push(run);
+    run = null;
+    out.push({ key: `n${m.n}`, role: m.role, text: m.text, tools: m.tools, ts: m.ts });
+  }
+  if (run) out.push(run);
+  return out;
 }
 
 export function maxN(messages: ChatMessage[]): number | null {

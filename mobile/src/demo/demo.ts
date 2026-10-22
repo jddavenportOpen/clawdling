@@ -3,6 +3,7 @@
 // and say so.
 
 import { ApiError } from '../api';
+import { ANSWER_IN_TERMINAL } from '../format';
 import type {
   Agent,
   AgentKind,
@@ -38,6 +39,7 @@ export interface SampleSession {
   activeMinutesAgo: number;
   endedMinutesAgo?: number;
   notification?: string;
+  waitingOn?: string;
   lastMessage?: string;
   messages: SampleMessage[];
 }
@@ -101,9 +103,11 @@ export function materialize(now: number, data: SampleData = SAMPLE): DemoState {
       notification: s.notification ?? null,
       resumable: s.status === 'ended',
       last_message: s.lastMessage ?? null,
+      waiting_on: s.status === 'needs_you' ? s.waitingOn ?? null : null,
+      reports_waiting: true,
     });
     messages[s.sid] = s.messages.map((m, i) => ({
-      n: i + 1,
+      n: i, // numbered from 0, like the server's transcript reader
       role: m.role,
       text: m.text,
       tools: m.tools ?? [],
@@ -168,7 +172,7 @@ export class DemoClient implements ClawdlingClient {
 
   private push(sid: string, role: 'user' | 'assistant', text: string, tools: ToolCall[] = []): ChatMessage {
     const list = (this.state.messages[sid] ||= []);
-    const m: ChatMessage = { n: (list[list.length - 1]?.n ?? 0) + 1, role, text, tools, ts: this.stamp() };
+    const m: ChatMessage = { n: list.length ? list[list.length - 1].n + 1 : 0, role, text, tools, ts: this.stamp() };
     list.push(m);
     return m;
   }
@@ -176,6 +180,7 @@ export class DemoClient implements ClawdlingClient {
   private replyLater(s: Session, text: string) {
     s.status = 'working';
     s.notification = null;
+    s.waiting_on = null;
     s.last_activity_at = this.stamp();
     this.schedule(() => {
       const reply =
@@ -236,6 +241,8 @@ export class DemoClient implements ClawdlingClient {
       notification: null,
       resumable: false,
       last_message: null,
+      waiting_on: null,
+      reports_waiting: true,
     };
     this.state.sessions.unshift(s);
     this.state.messages[s.sid] = [];
@@ -249,6 +256,11 @@ export class DemoClient implements ClawdlingClient {
   async send(sid: string, text: string): Promise<void> {
     const s = this.find(sid);
     if (s.status === 'ended') throw new ApiError('conflict', 'That session has ended; resume it first.', { status: 409 });
+    if (s.status === 'needs_you' && s.waiting_on && ANSWER_IN_TERMINAL.has(s.waiting_on)) {
+      throw new ApiError('conflict', `The session is waiting for your answer in the terminal (${s.notification ?? s.waiting_on}); answer it in the cockpit first.`, {
+        status: 409,
+      });
+    }
     this.push(sid, 'user', text);
     if (!s.title) s.title = deriveTitle(text) || null;
     this.replyLater(s, text);
@@ -271,13 +283,16 @@ export class DemoClient implements ClawdlingClient {
     return { ...s };
   }
 
+  /** Same paging as the server: from the start (or after `after`), oldest first, `more` if cut. */
   async messages(sid: string, opts: { after?: number | null; limit?: number } = {}): Promise<MessagesPage> {
     const s = this.find(sid);
     const all = this.state.messages[sid] ?? [];
     const limit = opts.limit ?? 200;
-    const list = opts.after == null ? all.slice(-limit) : all.filter((m) => m.n > (opts.after as number)).slice(0, limit);
-    const next = list.length ? list[list.length - 1].n : opts.after ?? (all[all.length - 1]?.n ?? 0);
-    return { messages: list.map((m) => ({ ...m, tools: [...m.tools] })), next, status: s.status };
+    const after = opts.after ?? -1;
+    const list = all.filter((m) => m.n > after).slice(0, limit);
+    const next = list.length ? list[list.length - 1].n : after;
+    const last = all[all.length - 1]?.n ?? -1;
+    return { messages: list.map((m) => ({ ...m, tools: [...m.tools] })), next, status: s.status, more: last > next };
   }
 
   async donnaMessages(limit = 50): Promise<DonnaMessage[]> {

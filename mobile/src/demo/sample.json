@@ -96,7 +96,8 @@
           ],
           "text": "I read **142 transactions** totalling $3,184.20. Two things already stand out:\n\n- A $59.99 charge from *StreamBox* on the 3rd and again on the 17th\n- Groceries are 31% above August\n\nI'd like to run a short script to total every category so the numbers are exact."
         }
-      ]
+      ],
+      "waitingOn": "permission_prompt"
     },
     {
       "sid": "8a1b9c2d-3e4f-4a5b-8c6d-7e8f9a0b1c02",

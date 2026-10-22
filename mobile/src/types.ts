@@ -48,6 +48,13 @@ export interface Session {
   resumable: boolean;
   /** First ~280 chars of Claude's last reply (from the Stop hook), when the server provides it. */
   last_message: string | null;
+  /**
+   * What a needs_you session is waiting on, from Claude Code's Notification hook or the server's
+   * own screen check: "permission_prompt", "elicitation_dialog", "idle_prompt", "trust", ... .
+   */
+  waiting_on: string | null;
+  /** False for servers that predate `waiting_on` (the app then falls back to reading the notice). */
+  reports_waiting: boolean;
 }
 
 export interface Health {
@@ -81,6 +88,8 @@ export interface MessagesPage {
   /** Cursor to pass as `after` on the next request. */
   next: number | null;
   status: SessionStatus | null;
+  /** True when the server has more messages after `next` (null: the server did not say). */
+  more: boolean | null;
 }
 
 export type DonnaRole = 'user' | 'donna';
@@ -91,6 +100,8 @@ export interface DonnaMessage {
   ts: string | null;
   /** Where the message came from: "app", "telegram", "imessage", ... */
   channel: string | null;
+  /** True when this is Donna reporting that her turn failed. */
+  error?: boolean;
 }
 
 export interface DonnaReply {

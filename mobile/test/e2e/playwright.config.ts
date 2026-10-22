@@ -7,7 +7,9 @@ export default defineConfig({
   expect: { timeout: 12_000 },
   fullyParallel: false,
   workers: 1,
-  retries: 0,
+  // Tests are independent (fresh browser context, mock reset). One retry absorbs a browser killed
+  // from outside (a shared machine's memory guard does that); a real failure fails twice.
+  retries: 1,
   reporter: [['list']],
   outputDir: './results',
   use: {
