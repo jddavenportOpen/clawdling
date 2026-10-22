@@ -35,14 +35,15 @@ export function Wizard({ name: presetName = '' }) {
   const [created, setCreated] = useState(null);
   const body = useRef(null);
 
-  // Each step puts the keyboard straight into its field.
+  // Each step (and the done screen) puts the keyboard straight into its main control.
   useEffect(() => {
     const id = requestAnimationFrame(() => {
-      const el = body.current && body.current.querySelector('[data-autofocus]');
+      const scope = created ? document.querySelector('.wizard') : body.current;
+      const el = scope && scope.querySelector('[data-autofocus]');
       if (el) el.focus();
     });
     return () => cancelAnimationFrame(id);
-  }, [step]);
+  }, [step, created]);
 
   const steps = kind === 'project' ? ['Kind', 'Name', 'Goal', 'Repo'] : ['Kind', 'Name', 'Mission'];
   const last = steps.length - 1;

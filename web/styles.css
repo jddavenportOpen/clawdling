@@ -447,8 +447,8 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .pal-item.is-sel { background: var(--surface-3); }
 .pal-lead { width: 18px; display: grid; place-items: center; flex-shrink: 0; color: var(--text-2); }
 .pal-text { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 10px; }
-.pal-label { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 1; }
-.pal-hint { color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 3; }
+.pal-label { flex: 0 1 auto; max-width: 78%; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pal-hint { flex: 1 1 0; min-width: 0; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pal-right { flex-shrink: 0; font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .pal-item.is-sel .pal-right { color: var(--text-2); }
 .pal-empty { padding: 24px 12px; color: var(--text-3); text-align: center; }
@@ -596,7 +596,11 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .steps > li { counter-increment: step; position: relative; padding-left: 36px; display: flex; flex-direction: column; gap: 6px; }
 .steps > li::before { content: counter(step); position: absolute; left: 0; top: -1px; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%;
   border: 1px solid var(--line-3); color: var(--text-2); font-size: 11.5px; font-weight: 650; }
-.steps > li.is-done::before { content: "✓"; color: var(--ready); border-color: color-mix(in srgb, var(--ready) 45%, transparent); }
+/* A drawn check (two borders), not a text glyph. */
+.steps > li.is-done::before { content: ""; border-color: color-mix(in srgb, var(--ready) 45%, transparent);
+  background: linear-gradient(var(--ready), var(--ready)) no-repeat; background-size: 0 0; }
+.steps > li.is-done > .step-title::before { content: ""; position: absolute; left: 9px; top: 5px; width: 5px; height: 10px;
+  border: solid var(--ready); border-width: 0 2px 2px 0; transform: rotate(40deg); }
 .steps > li + li::after { content: ""; position: absolute; left: 11.5px; top: -14px; height: 12px; width: 1px; background: var(--line-2); }
 .step-title { font-weight: 600; }
 .step-text { color: var(--text-2); font-size: 13px; }

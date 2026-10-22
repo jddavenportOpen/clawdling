@@ -25,6 +25,8 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
       const el = node.querySelector('[data-autofocus]') || list()[0];
       if (el) el.focus();
     });
+    // On the document, not the dialog: focus can fall to <body> when the content swaps
+    // (a wizard step, a removed button) and Escape/Tab must still work.
     const onKey = (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -35,13 +37,14 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
         if (!f.length) return;
         const first = f[0];
         const last = f[f.length - 1];
-        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        if (!node.contains(document.activeElement)) { e.preventDefault(); (e.shiftKey ? last : first).focus(); }
+        else if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
         else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       }
     };
-    node.addEventListener('keydown', onKey);
+    document.addEventListener('keydown', onKey, true);
     return () => {
-      node.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey, true);
       if (getState().focusTick === tick0 && prev && typeof prev.focus === 'function' && document.contains(prev)) prev.focus();
     };
   }, []);

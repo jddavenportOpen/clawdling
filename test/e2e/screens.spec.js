@@ -21,8 +21,8 @@ async function liveSids(min) {
   return list.map((s) => s.sid);
 }
 
-async function settle(page) {
-  await page.waitForTimeout(700);
+async function settle(page, ms = 700) {
+  await page.waitForTimeout(ms);
   await page.evaluate(() => document.fonts && document.fonts.ready);
 }
 
@@ -41,11 +41,11 @@ for (const vp of [{ w: 1440, h: 900 }, { w: 1024, h: 768 }]) {
       await shot(page, `cockpit-1-pane-${tag}`);
       await openPanes(page, sids.slice(1, 3));
       await expect(panes(page)).toHaveCount(3);
-      await settle(page);
+      await settle(page, 2200);
       await shot(page, `cockpit-3-panes-${tag}`);
       await openPanes(page, sids.slice(3, 6));
       await expect(panes(page)).toHaveCount(6);
-      await settle(page);
+      await settle(page, 3200); // let the activity traces of working sessions draw
       await shot(page, `cockpit-6-panes-${tag}`);
     });
 
