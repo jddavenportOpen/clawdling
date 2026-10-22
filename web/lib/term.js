@@ -73,11 +73,8 @@ export class TermView {
     this.sent = { cols: 0, rows: 0 };
     this.buckets = new Array(TRACE_BUCKETS).fill(0);
     this.wantFocus = false;
-    // First connect is a sizing handshake: the server snapshots at the tmux window's current
-    // size, which may not be ours. We send our size, drop that first snapshot, and reconnect
-    // so the snapshot we paint was cut at our geometry (otherwise a taller window's blank rows
-    // scroll the real content off screen).
-    this.sized = false;
+    // Keystrokes typed while the socket is (re)connecting are queued, never dropped.
+    this.pending = '';
 
     this.term = new Terminal({
       fontFamily: MONO,
@@ -135,22 +132,13 @@ export class TermView {
     if (this.wantFocus) {
       this.wantFocus = false;
       const a = document.activeElement;
-      if (!(a && a.closest && a.closest('.modal, .menu'))) this.term.focus();
+      if (!(a && a.closest && a.closest('.modal, .menu, .pane-title-input'))) this.term.focus();
     }
     clearTimeout(this.rt);
     this.rt = setTimeout(() => this.sendResize(), 40);
-    // A pane that was hidden when it connected painted a snapshot cut at someone else's size:
-    // now that we know ours, send it and take a fresh snapshot once.
-    if (first && !this.sized && !this.ended && this.ws && this.ws.readyState === 1) {
-      this.sized = true;
-      setTimeout(() => {
-        this.sendResize(true);
-        const old = this.ws;
-        this.ws = null;
-        try { if (old) old.close(1000, 'resized'); } catch { /* ignore */ }
-        setTimeout(() => this.connect(), 90);
-      }, 0);
-    }
+    // A pane that was hidden when it connected sends its real size now; the server answers a
+    // resize with a fresh snapshot cut at that size.
+    if (first) setTimeout(() => this.sendResize(true), 0);
   }
 
   setFontSize() {
@@ -172,7 +160,8 @@ export class TermView {
 
   input(data) {
     if (this.ended) return;
-    this.sendMsg({ t: 'in', data });
+    if (this.sendMsg({ t: 'in', data })) return;
+    this.pending = (this.pending + data).slice(-4096); // flushed as soon as the socket opens
   }
 
   onKey(e) {
@@ -204,7 +193,8 @@ export class TermView {
     clearTimeout(this.timer);
     if (this.ws && this.ws.readyState <= 1) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const sizing = !this.sized && !this.ended && this.opened;
+    // Our size on the URL: the server cuts the first snapshot at it (no blank rows from a
+    // taller window pushing the real screen off the top).
     const q = this.opened && this.term.cols && this.term.rows ? `?cols=${this.term.cols}&rows=${this.term.rows}` : '';
     let ws;
     try {
@@ -215,33 +205,22 @@ export class TermView {
     }
     this.ws = ws;
     this.setConn(this.attempt ? 'reconnecting' : 'connecting');
-    let sizingTimer = 0;
-    const finishSizing = () => {
-      clearTimeout(sizingTimer);
-      if (this.ws !== ws || this.sized) return;
-      this.sized = true;
-      this.ws = null;
-      try { ws.close(1000, 'resized'); } catch { /* already closed */ }
-      setTimeout(() => this.connect(), 90); // let the server apply our size first
-    };
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.attempt = 0;
       this.setConn('open');
       this.sendResize(true);
-      if (sizing) sizingTimer = setTimeout(finishSizing, 1500); // no snapshot? carry on anyway
+      if (this.pending && !this.ended) {
+        const queued = this.pending;
+        this.pending = '';
+        this.sendMsg({ t: 'in', data: queued });
+      }
     };
     ws.onmessage = (ev) => {
       if (this.ws !== ws) return;
       let m;
       try { m = JSON.parse(ev.data); } catch { return; }
       if (!m || typeof m !== 'object') return;
-      if (sizing && !this.sized) {
-        if (m.t === 'snapshot') finishSizing();
-        else if (m.t === 'status' && this.hooks.onStatus) this.hooks.onStatus(m.status, m);
-        else if (m.t === 'ended') { this.sized = true; this.markEnded(); }
-        return;
-      }
       if (m.t === 'snapshot') {
         this.term.reset();
         if (m.data) this.term.write(normalizeSnapshot(m.data));
@@ -281,6 +260,7 @@ export class TermView {
   markEnded() {
     if (this.ended) return;
     this.ended = true;
+    this.pending = '';
     clearTimeout(this.timer);
     this.setConn('ended');
     if (this.hooks.onEnded) this.hooks.onEnded();

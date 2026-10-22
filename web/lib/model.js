@@ -57,10 +57,9 @@ export function sessionTime(s) {
   return s.status === 'ended' ? (s.ended_at || s.last_activity_at || s.created_at) : (s.last_activity_at || s.created_at);
 }
 
-// The server knows its real tmux socket (tests use a private one); fall back to the default.
+// Only the server knows its real tmux socket, so the attach command is always its attach_cmd.
 export function attachCommand(s) {
-  if (s && typeof s.attach_cmd === 'string' && s.attach_cmd.trim()) return s.attach_cmd.trim();
-  return `tmux -L clawdling attach -t ${s && s.tmux_name ? s.tmux_name : '<session>'}`;
+  return s && typeof s.attach_cmd === 'string' && s.attach_cmd.trim() ? s.attach_cmd.trim() : '';
 }
 
 const NEEDS_ORDER = { needs_you: 0, ready: 1 };
@@ -90,10 +89,16 @@ export function agentStats(agentId, sessions) {
   for (const s of sessions) {
     if (s.agent !== agentId || s.status === 'ended') continue;
     live += 1;
-    if (s.status === 'needs_you') needs += 1;
+    if (needsYou(s)) needs += 1; // needs_you + ready: the same "need you" as the rail
     if (s.status === 'working' || s.status === 'starting') working += 1;
   }
   return { live, needs, working };
+}
+
+export function countNeedsYou(sessions) {
+  let n = 0;
+  for (const s of sessions) if (needsYou(s)) n += 1;
+  return n;
 }
 
 export const KIND_LABEL = { chief: 'Chief of staff', domain: 'Domain', project: 'Project' };

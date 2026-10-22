@@ -302,6 +302,26 @@ export async function resumeSession(sid) {
   }
 }
 
+// Answer Claude Code's startup dialog in a session (1 = yes, 2 = no). 409 = nothing to answer.
+export async function answerDialog(sid, option) {
+  try {
+    const s = await api.answer(sid, option);
+    if (s && s.sid) mergeSession(s);
+    else mergeSession({ sid, waiting_on: null });
+    const v = terms.get(sid);
+    if (v && option === 1) v.focus();
+    return true;
+  } catch (e) {
+    if (e && e.status === 409) {
+      toast('Claude Code is no longer asking. The session has moved on.', { ms: 3600 });
+      mergeSession({ sid, waiting_on: null });
+    } else {
+      errorToast('Could not answer Claude Code', e);
+    }
+    return false;
+  }
+}
+
 export async function renameSession(sid, title) {
   const t = (title || '').trim();
   const prev = getState().sessions[sid];
@@ -317,8 +337,10 @@ export async function renameSession(sid, title) {
 }
 
 export async function copyAttach(session) {
-  const ok = await copyText(attachCommand(session));
-  toast(ok ? 'Attach command copied. Paste it in any terminal.' : attachCommand(session), { tone: ok ? 'ok' : 'info', ms: ok ? 2600 : 8000 });
+  const cmd = attachCommand(session);
+  if (!cmd) { toast('This server did not send an attach command for the session.', { tone: 'error' }); return; }
+  const ok = await copyText(cmd);
+  toast(ok ? 'Attach command copied. Paste it in any terminal.' : cmd, { tone: ok ? 'ok' : 'info', ms: ok ? 2600 : 8000 });
 }
 
 export function setRenaming(sid) {

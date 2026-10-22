@@ -7,7 +7,7 @@ import { Icon } from './icons.js';
 import {
   closeOverlay, endSession, closePane, closeMenu, focusSession, setRenaming, copyAttach, resumeSession, askEndSession,
 } from '../lib/actions.js';
-import { sessionName } from '../lib/model.js';
+import { sessionName, attachCommand } from '../lib/model.js';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -134,7 +134,7 @@ export function Menu() {
       ended && s.resumable !== false ? { label: 'Resume', icon: 'play', run: act(() => resumeSession(s.sid)) } : null,
       { label: isOpen ? 'Focus pane' : 'Open in workspace', icon: 'layout-split', run: act(() => focusSession(s.sid)) },
       { label: 'Rename…', icon: 'more', run: act(() => { focusSession(s.sid); setTimeout(() => setRenaming(s.sid), 30); }) },
-      { label: 'Copy attach command', icon: 'terminal', run: act(() => copyAttach(s)) },
+      attachCommand(s) ? { label: 'Copy attach command', icon: 'terminal', run: act(() => copyAttach(s)) } : null,
       isOpen ? { label: 'Hide pane', icon: 'pane-hide', run: act(() => closePane(s.sid)) } : null,
       !ended ? { label: 'End session…', icon: 'x', danger: true, run: act(() => askEndSession(s.sid)) } : null,
     ].filter(Boolean);

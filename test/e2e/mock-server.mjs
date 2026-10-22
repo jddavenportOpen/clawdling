@@ -49,6 +49,10 @@ const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const STARTUP_DIALOG_KINDS = new Set(['trust', 'imports']);
+// Same wording as the real server's notices.
+const TRUST_NOTICE = 'Claude Code is asking whether you trust this folder. In the terminal, choose "Yes, I trust this folder" (arrow keys, then Enter). Trust your org folder once from a Scratch session and no agent will ask again.';
+const IMPORTS_NOTICE = 'Claude Code is asking whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal.';
 
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 
@@ -128,6 +132,7 @@ function sess(agentsById, agent, title, status, opts = {}) {
     last_activity_at: iso(ended ? (opts.ended ?? last) : last),
     ended_at: ended ? iso(opts.ended ?? 2 * HOUR) : null,
     notification: opts.notification || null,
+    waiting_on: status === 'needs_you' ? (opts.waiting_on || 'notification') : null,
     resumable: opts.resumable ?? true,
     permission_mode: null,
     last_message: opts.last_message || null,
@@ -356,7 +361,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function setStatus(s, status, extra = {}) {
     Object.assign(s, extra, { status });
-    if (status !== 'needs_you') s.notification = extra.notification || null;
+    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; }
     if (status === 'ended') { s.ended_at = new Date().toISOString(); }
     else s.ended_at = null;
     s.last_activity_at = new Date().toISOString();
@@ -390,7 +395,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       setStatus(s, 'ready');
       return;
     }
-    if (event === 'Notification') { setStatus(s, 'needs_you', { notification: payload.message || 'Claude needs your attention' }); return; }
+    if (event === 'Notification') {
+      setStatus(s, 'needs_you', { notification: payload.message || 'Claude needs your attention', waiting_on: payload.notification_type || 'notification' });
+      return;
+    }
     if (event === 'SessionEnd') setStatus(s, 'ended');
   }
 
@@ -416,6 +424,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   function feedInput(s, data) {
     if (s.status === 'ended') return;
     const term = ensureTerm(s);
+    if (s.status === 'needs_you' && STARTUP_DIALOG_KINDS.has(s.waiting_on)) {
+      term.dialogKeys = (term.dialogKeys || '') + data; // like the real dialog: keys go to it
+      for (const ch of data) if (ch >= ' ') out(s, ch);
+      return;
+    }
     if (data.startsWith('\x1b')) {
       if (data === '\x1b\r') { term.line += '\n'; out(s, '\r\n  '); }
       return; // arrows and other escape sequences: ignored by the mock
@@ -592,7 +605,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       send(res, 201, s);
       return;
     }
-    mm = p.match(/^\/api\/sessions\/([^/]+)(\/resume|\/send)?$/);
+    mm = p.match(/^\/api\/sessions\/([^/]+)(\/resume|\/send|\/answer)?$/);
     if (mm) {
       const s = st.sessions.get(decodeURIComponent(mm[1]));
       if (!s) { send(res, 404, { error: 'no such session' }); return; }
@@ -618,6 +631,24 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
           const term = ensureTerm(s); // viewers still attached get a fresh cut, like core
           for (const ws of term.viewers) if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'snapshot', data: term.buf.replace(/\r\n/g, '\n') }));
           later(400, () => { if (s.status === 'starting') applyHook(s, 'SessionStart', { source: 'resume' }); });
+        }
+        send(res, 200, s);
+        return;
+      }
+      if (mm[2] === '/answer' && m === 'POST') {
+        const option = body.option;
+        if (option !== 1 && option !== 2) { send(res, 400, { error: 'option must be 1 or 2' }); return; }
+        if (s.status !== 'needs_you' || !STARTUP_DIALOG_KINDS.has(s.waiting_on)) { send(res, 409, { error: 'no dialog is waiting for an answer' }); return; }
+        const kind = s.waiting_on;
+        out(s, `\r\n${DIM}(${option === 1 ? 'yes' : 'no'})${RESET}\r\n`);
+        if (kind === 'trust' && option === 2) {
+          out(s, `${DIM}Exiting.${RESET}\r\n`);
+          setStatus(s, 'ended');
+        } else {
+          s.waiting_on = null;
+          s.notification = null;
+          out(s, `${CLAUDE}✻${RESET} Welcome to ${BOLD}Claude Code${RESET} ${DIM}(mock)${RESET}\r\n${DIM}›${RESET} `);
+          applyHook(s, 'SessionStart', { source: 'startup' });
         }
         send(res, 200, s);
         return;
@@ -692,6 +723,19 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       let n = 0;
       for (const term of st.terms.values()) for (const ws of term.viewers) { ws.terminate(); n += 1; }
       send(res, 200, { dropped: n });
+      return;
+    }
+    if (p === '/__mock/dialog' && req.method === 'POST') {
+      const body = await readBody(req);
+      const sess1 = st.sessions.get(body.sid);
+      if (!sess1) { send(res, 404, { error: 'no such session' }); return; }
+      const kind = body.kind || 'trust';
+      const screen = kind === 'trust'
+        ? `\x1b[2J\x1b[HAccessing workspace:\r\n${sess1.cwd}\r\n\r\nQuick safety check: Is this a project you created or one you trust?\r\n\r\n ${CLAUDE}❯${RESET} 1. Yes, I trust this folder\r\n   2. No, exit\r\n`
+        : `\x1b[2J\x1b[HAllow external CLAUDE.md file imports?\r\n\r\n ${CLAUDE}❯${RESET} 1. Yes, allow external imports\r\n   2. No, disable external imports\r\n`;
+      out(sess1, screen);
+      setStatus(sess1, 'needs_you', { waiting_on: kind, notification: kind === 'trust' ? TRUST_NOTICE : IMPORTS_NOTICE });
+      send(res, 204);
       return;
     }
     if (p === '/__mock/bind' && req.method === 'POST') {
