@@ -75,3 +75,32 @@ test('SessionManager.init: loads, reconciles against tmux, replays the hook spoo
     rmrf(home);
   }
 });
+
+test('replay never rolls a session back: spooled events older than the last applied hook are dropped', async () => {
+  const home = tempHome();
+  try {
+    initOrg({ home, answers: defaultAnswers() });
+    const paths = runtimePaths(home);
+    fs.mkdirSync(paths.rt, { recursive: true });
+    fs.writeFileSync(paths.sessions, JSON.stringify({ version: 1, sessions: [row(A, { status: 'ready' })] }));
+    const tmux = { listSessions: async () => [{ name: `cl-work-${A.slice(0, 6)}`, pane: '%1', sid: A }], control: () => ({ on() {}, closed: false, close() {} }), hasSession: async () => true };
+    const sm = new SessionManager({ paths, org: new OrgStore(paths), events: new EventBus({ file: paths.events }), tmux, claudeBin: 'claude', socket: 's', shimDir: paths.bin, env: process.env, getPort: () => 1 });
+    await sm.init();
+    // Live: the prompt (t=1s) and the Stop (t=5s) both arrived; the prompt's hook had timed out on
+    // its side, so it was also spooled.
+    sm.applyHook('UserPromptSubmit', A, { prompt: 'go' }, '2026-10-22T10:00:01.000Z');
+    sm.applyHook('Stop', A, { last_assistant_message: 'finished' }, '2026-10-22T10:00:05.000Z');
+    assert.equal(sm.get(A).status, 'ready');
+    fs.writeFileSync(paths.hookSpool, JSON.stringify({ event: 'UserPromptSubmit', sid: A, payload: { prompt: 'go' }, ts: '2026-10-22T10:00:01.000Z' }) + '\n');
+    assert.equal(sm.replaySpool(), 1);
+    assert.equal(sm.get(A).status, 'ready', 'the stale prompt event did not flip it back to working');
+    // A newer spooled event still applies.
+    fs.writeFileSync(paths.hookSpool, JSON.stringify({ event: 'Notification', sid: A, payload: { message: 'Claude is waiting for your input', notification_type: 'idle_prompt' }, ts: '2026-10-22T10:01:05.000Z' }) + '\n');
+    sm.replaySpool();
+    assert.equal(sm.get(A).status, 'needs_you');
+    assert.equal(JSON.parse(fs.readFileSync(paths.sessions, 'utf8')).socket, 's', 'the registry records its tmux socket');
+    await sm.shutdown();
+  } finally {
+    rmrf(home);
+  }
+});

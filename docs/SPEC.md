@@ -336,3 +336,25 @@ no field or path in §4 was renamed or removed.
 - `GET /api/pair/qr.svg` → `image/svg+xml` QR code of `link` (`Cache-Control: no-store`; it contains
   the token). Generated server-side with the MIT `qrcode-generator` package (new runtime dependency).
 - `clawdling start --host 0.0.0.0` prints a LAN-exposure warning and suggests Tailscale.
+
+**Verifier fixes (implemented)**
+- `POST /api/sessions/:sid/answer {option}` answers the question Claude Code is showing. Only while
+  `status` is `needs_you` and `waiting_on` is `trust`, `imports` or `permission_prompt`; otherwise
+  `409`. `option` is the 1-based position in Claude Code's list as shown on screen: folder trust
+  `1` = "No, exit", `2` = "Yes, I trust this folder"; permission prompts `1` = Yes, `2` = Yes and
+  don't ask again, `3` = No. A bad option, or one past the last choice, is `400`. Returns the Session
+  plus `answered: {option, label}`. While such a question is open the Session carries
+  `choices: [{option, label}]` (read from the screen), else `choices: null`. Claude Code 2.1.283's
+  trust dialog hides its numbers and **ignores digit keys** (verified on the real CLI: `1` and `2`
+  do nothing), so the server answers like a person: it reads the screen, moves the pointer with
+  the arrow keys, checks the pointer is on the chosen line, then presses Enter.
+- The trust notification names the folder and says what to answer.
+- `POST /api/hooks` takes the hook's `ts`; an event older than the newest one already applied to
+  that session is ignored, so replayed hooks can't roll a session back. The hook script now spools
+  on any failure (refused, timeout, non-2xx), not only on a refused connection.
+- `clawdling start` refuses (exit 1, nothing touched) when a server already runs for the home or
+  the port is taken. It binds the port before writing any state; until it has reattached sessions
+  the API answers `503 {error:"Clawdling is starting"}` (hooks spool and are replayed).
+- Donna's headless turns add `--setting-sources project,local --strict-mcp-config` (no user
+  settings, no MCP servers). `doctor` fails when the cockpit is down. `clawdling attach` uses the
+  socket recorded in `server.json` (or `sessions.json`, which now records `socket`).

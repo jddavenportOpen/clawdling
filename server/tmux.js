@@ -25,6 +25,7 @@ set -g escape-time 10
 set -g set-titles off
 set -g allow-rename off
 set -g mouse off
+set -g focus-events on
 `;
 
 /** Split a byte stream into lines on 0x0a without ever decoding (keeps UTF-8 intact). */

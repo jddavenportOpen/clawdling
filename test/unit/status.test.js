@@ -106,3 +106,69 @@ test('SessionStart only moves a starting session to ready; working/ready/waiting
   applyHookEvent(late, 'SessionStart', { source: 'resume' });
   assert.equal(late.status, 'working');
 });
+
+test('parseChoices reads Claude Code select lists from the rendered screen', async () => {
+  const { parseChoices, trustNotice } = await import('../../server/sessions.js');
+  // Captured from claude 2.1.283's folder-trust dialog.
+  const trust = [
+    ' Accessing workspace:',
+    '',
+    ' /private/tmp/cl-digitprobe-jM4E',
+    '',
+    ' Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source',
+    " project, or work from your team). If not, take a moment to review what's in this folder first.",
+    '',
+    " Claude Code'll be able to read, edit, and execute files here.",
+    '',
+    ' Security guide',
+    '',
+    ' ❯ No, exit',
+    '   Yes, I trust this folder',
+    '',
+    ' Enter to confirm · Esc to cancel',
+  ].join('\n');
+  assert.deepEqual(parseChoices(trust), { labels: ['No, exit', 'Yes, I trust this folder'], selected: 0 });
+  const moved = trust.replace(' ❯ No, exit', '   No, exit').replace('   Yes, I trust', ' ❯ Yes, I trust');
+  assert.deepEqual(parseChoices(moved), { labels: ['No, exit', 'Yes, I trust this folder'], selected: 1 });
+  const perm = [
+    ' Bash command',
+    '   echo hi',
+    '',
+    ' Do you want to proceed?',
+    '   1. Yes',
+    " ❯ 2. Yes, and don't ask again for echo commands in",
+    '      /Users/sam/projects/a-very-long-folder-name',
+    '   3. No, and tell Claude what to do differently (esc)',
+  ].join('\n');
+  const p = parseChoices(perm);
+  assert.equal(p.selected, 1);
+  assert.equal(p.labels.length, 3);
+  assert.equal(p.labels[1], "2. Yes, and don't ask again for echo commands in /Users/sam/projects/a-very-long-folder-name");
+  assert.equal(p.labels[2], '3. No, and tell Claude what to do differently (esc)');
+  assert.equal(parseChoices('> just a prompt\nassistant: hi'), null);
+  assert.equal(parseChoices(' ❯ only one choice'), null);
+  const n = trustNotice('/Users/sam/code/store');
+  assert.match(n, /trust \/Users\/sam\/code\/store/);
+  assert.match(n, /Answer 2 \("Yes, I trust this folder"\)/);
+  assert.match(n, /1 \("No, exit"\) ends it/);
+  assert.match(n, /a project agent whose code lives elsewhere asks once for its repo/);
+  assert.doesNotMatch(n, /no agent will ask again/);
+});
+
+test('parseChoices takes the live (lowest) list, not an answered one or a past prompt line', async () => {
+  const { parseChoices } = await import('../../server/sessions.js');
+  const screen = [
+    '❯ need permission?',
+    ' Do you want to proceed?',
+    ' ❯ 1. Yes',
+    '   2. Yes, always',
+    '   3. No',
+    '',
+    'assistant: permission answered (yes), done',
+    ' Do you want to proceed?',
+    '   1. Yes',
+    '   2. Yes, always',
+    ' ❯ 3. No',
+  ].join('\n');
+  assert.deepEqual(parseChoices(screen), { labels: ['1. Yes', '2. Yes, always', '3. No'], selected: 2 });
+});

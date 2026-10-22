@@ -94,10 +94,20 @@ export class TelegramGateway {
       const t = String(token).trim();
       if (!BOT_TOKEN_RE.test(t)) throw badRequest('that does not look like a bot token from @BotFather (digits:letters)');
       if (t !== this.token()) {
+        // Ask Telegram who this bot is before storing the token: a rejected token is refused here,
+        // and the reply can name the bot (@username) the owner has to open.
+        let me = null;
+        try {
+          me = await this.api('getMe', {}, 8000, t);
+        } catch (err) {
+          if (err.status === 401 || err.status === 404) throw badRequest('Telegram rejected that bot token. Copy it again from @BotFather.');
+          this.lastError = err.message; // offline or blocked: keep the token, polling retries
+        }
         writeEnvVar(this.paths.env, 'TELEGRAM_BOT_TOKEN', t);
         st.offset = 0;
-        delete st.bot_username;
-        this.botUsername = null;
+        this.botUsername = me?.username || null;
+        if (this.botUsername) st.bot_username = this.botUsername;
+        else delete st.bot_username;
         this.org.update((o) => {
           o.channels.telegram = { ...o.channels.telegram, chat_id: null, enabled: enabled === false ? false : true };
         });
@@ -153,12 +163,12 @@ export class TelegramGateway {
     else go();
   }
 
-  async api(method, params = {}, timeoutMs = 15000) {
-    const token = this.token();
+  async api(method, params = {}, timeoutMs = 15000, tokenOverride = null) {
+    const token = tokenOverride || this.token();
     if (!token) throw new Error('no Telegram bot token configured');
     if (this.blocked) throw new Error(this.blocked);
     const signals = [AbortSignal.timeout(timeoutMs)];
-    if (this.abort) signals.push(this.abort.signal);
+    if (this.abort && !tokenOverride) signals.push(this.abort.signal);
     // The URL contains the token: never log it or put it in an error message.
     const res = await fetch(`${this.apiBase}/bot${token}/${method}`, {
       method: 'POST',

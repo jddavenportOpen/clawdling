@@ -40,10 +40,20 @@ server can type into those sessions, so the server is built to be reachable only
 - Only one Telegram chat is paired: a **private** chat that sent the current 6-digit code within
   30 minutes. Five wrong codes burn the code. Every other chat, including groups, gets no reply and
   never reaches Donna. iMessage only answers the configured handle.
-- Each turn is `claude -p --permission-mode dontAsk` with an allow-list: `clawdling spawn`, `send`,
-  `ls`, `new` and `end`, reading files inside the org folder, and editing her own `memory/`. No
-  arbitrary shell, no writes elsewhere, no network tools. `clawdling init`, `start`, `service`,
-  `donna` and `attach` refuse to run inside a Donna turn.
+- Each turn is `claude -p --permission-mode dontAsk --setting-sources project,local
+  --strict-mcp-config --allowedTools ...`. The allow-list is `clawdling spawn`, `send`, `ls`, `new`
+  and `end`, reading files inside the org folder, and editing her own `memory/`; under `dontAsk`
+  everything else is refused without a prompt. No arbitrary shell, no writes elsewhere, no network
+  tools. `clawdling init`, `start`, `service`, `donna` and `attach` refuse to run inside a Donna turn.
+- **Your own Claude Code setup does not apply to Donna's turns.** `--setting-sources project,local`
+  skips your user settings (`~/.claude/settings.json`: your allow rules, hooks, plugins), so a
+  personal rule such as `Bash(git *)` cannot widen what a text message can make Donna run. Only
+  settings files in `donna/.claude/` would load, and Clawdling creates none. `--strict-mcp-config`
+  without `--mcp-config` loads no MCP servers at all, so your connected services (mail, Slack,
+  files...) are out of reach of a text message. Enterprise managed policy still applies, and Claude
+  Code still signs in the usual way (Clawdling never handles the credentials).
+- Interactive agent sessions are different on purpose: they are your normal Claude Code sessions
+  with your settings, MCP servers and permission prompts, shown in the cockpit.
 - Text messages are untrusted input to a model. The allow-list bounds what a confused or tricked
   Donna can do: start, message or end your own agents' sessions, which then run under Claude Code's
   normal permission prompts in the cockpit.
@@ -53,7 +63,9 @@ server can type into those sessions, so the server is built to be reachable only
 ## Agents
 
 Agent sessions are ordinary interactive Claude Code sessions: Claude Code's permission system
-applies. Clawdling pre-approves only `clawdling ls/spawn/send/new/end/doctor` (in the generated
+applies. Clawdling never answers a permission prompt or a folder-trust question on its own: typed
+text (Donna, the CLI, the API) is refused while one is on screen, and only an explicit
+`POST /api/sessions/:sid/answer` from the owner (cockpit or phone, with the token) picks a choice. Clawdling pre-approves only `clawdling ls/spawn/send/new/end/doctor` (in the generated
 `--settings` file and the org `.claude/settings.json`). Agents can read the whole org folder
 (`--add-dir`). Permission mode defaults to Claude Code's normal "ask"; `acceptEdits` is opt-in and
 `bypassPermissions` is never offered.
