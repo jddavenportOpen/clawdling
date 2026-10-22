@@ -11,7 +11,7 @@ const STEPS: { icon: string; title: string; body: string }[] = [
   {
     icon: 'laptop-outline',
     title: 'Run Clawdling on your computer',
-    body: "Clawdling is free and runs on your Mac or Linux computer. If you don't have it yet, see github.com/jddavenportOpen/clawdling. So your phone can reach it, start it like this:\n\n```sh\nclawdling start --host 0.0.0.0\n```",
+    body: "Clawdling is free and runs on your Mac or Linux computer. If you don't have it yet, get it from [github.com/jddavenportOpen/clawdling](https://github.com/jddavenportOpen/clawdling). So your phone can reach it, start it like this:\n\n```sh\nclawdling start --host 0.0.0.0\n```",
   },
   {
     icon: 'qr-code-outline',

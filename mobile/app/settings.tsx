@@ -138,7 +138,7 @@ function Settings() {
           <Card inset={48}>
             <Row icon="information-circle-outline" label="Version" value={version} />
             <Row icon="document-text-outline" label="License" value="AGPL-3.0" />
-            <Row icon="logo-github" label="Source code" value="github.com/jddavenportOpen/clawdling" onPress={() => void openLink(SOURCE_URL)} testID="source-row" />
+            <Row icon="logo-github" label="Source code" value="GitHub" onPress={() => void openLink(SOURCE_URL)} testID="source-row" />
           </Card>
           <Text style={styles.footer}>Clawdling is free and open source. The app is a chat client for your own Clawdling server; it runs no agents itself.</Text>
         </View>

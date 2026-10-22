@@ -113,7 +113,9 @@ export default function ConnectScreen() {
   const cancelConfirm = () => {
     setConfirmTarget(null);
     setProblem(null);
-    if (connection) router.replace('/home');
+    if (!connection) return;
+    if (router.canGoBack()) router.back();
+    else router.replace('/home');
   };
 
   const demo = async () => {
@@ -136,7 +138,7 @@ export default function ConnectScreen() {
         <View style={styles.column}>
           {notice ? (
             <View style={styles.block}>
-              <Banner tone="warn" title="Connect again" message={notice} testID="connect-notice" />
+              <Banner tone="warn" icon="key-outline" title="Connect again" message={notice} testID="connect-notice" />
             </View>
           ) : null}
 
@@ -158,8 +160,8 @@ export default function ConnectScreen() {
                 <Text style={styles.confirmNote}>You are connected to {hostLabel(connection.url)} now. This replaces it.</Text>
               ) : null}
               <View style={styles.confirmRow}>
-                <Button title="Cancel" variant="secondary" onPress={cancelConfirm} style={styles.flex} testID="confirm-cancel" />
-                <Button title="Connect" onPress={confirm} busy={busy === 'confirm'} style={styles.flex} testID="confirm-connect" />
+                <Button title="Cancel" variant="secondary" onPress={cancelConfirm} style={styles.grow} testID="confirm-cancel" />
+                <Button title="Connect" onPress={confirm} busy={busy === 'confirm'} style={styles.grow} testID="confirm-connect" />
               </View>
             </View>
           ) : (
@@ -200,14 +202,14 @@ export default function ConnectScreen() {
                   />
                   <View style={styles.pasteRow}>
                     {Platform.OS !== 'web' ? (
-                      <Button title="Paste" variant="secondary" icon="clipboard-outline" onPress={pasteFromClipboard} style={styles.flex} />
+                      <Button title="Paste" variant="secondary" icon="clipboard-outline" onPress={pasteFromClipboard} style={styles.grow} />
                     ) : null}
                     <Button
                       title="Connect"
                       onPress={() => void connectLink(link)}
                       busy={busy === 'link'}
                       disabled={!link.trim()}
-                      style={styles.flex}
+                      style={styles.grow}
                       testID="link-connect"
                     />
                   </View>
@@ -253,6 +255,7 @@ export default function ConnectScreen() {
 
 const styles = StyleSheet.create({
   flex: { flex: 1, backgroundColor: colors.bg },
+  grow: { flex: 1 },
   scroll: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: 22 },
   column: { width: '100%', maxWidth: 440, alignSelf: 'center' },
   block: { marginBottom: 20 },

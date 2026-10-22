@@ -6,20 +6,42 @@ import { Icon } from './Icon';
 
 type Tone = 'warn' | 'error' | 'info';
 
-export function Banner({ tone = 'warn', title, message, action, onAction, testID }: { tone?: Tone; title: string; message?: string | null; action?: string; onAction?: () => void; testID?: string }) {
+export function Banner({
+  tone = 'warn',
+  title,
+  message,
+  action,
+  onAction,
+  icon,
+  testID,
+}: {
+  tone?: Tone;
+  title: string;
+  message?: string | null;
+  action?: string;
+  onAction?: () => void;
+  icon?: string;
+  testID?: string;
+}) {
   const t = TONES[tone];
   return (
     <View style={[styles.box, { backgroundColor: t.bg, borderColor: t.border }]} accessibilityRole="alert" testID={testID}>
-      <Icon name={t.icon} size={18} color={t.fg} style={styles.icon} />
+      <Icon name={icon ?? t.icon} size={18} color={t.fg} style={styles.icon} />
       <View style={styles.body}>
         <Text style={[styles.title, { color: t.fg }]}>{title}</Text>
         {message ? <Text style={styles.message}>{message}</Text> : null}
+        {action && onAction ? (
+          <Pressable
+            onPress={onAction}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={action}
+            style={({ pressed }) => [styles.action, { borderColor: t.border }, pressed && { opacity: 0.6 }]}
+          >
+            <Text style={[styles.actionText, { color: t.fg }]}>{action}</Text>
+          </Pressable>
+        ) : null}
       </View>
-      {action && onAction ? (
-        <Pressable onPress={onAction} hitSlop={10} accessibilityRole="button" accessibilityLabel={action} style={({ pressed }) => [styles.action, pressed && { opacity: 0.6 }]}>
-          <Text style={[styles.actionText, { color: t.fg }]}>{action}</Text>
-        </Pressable>
-      ) : null}
     </View>
   );
 }
@@ -40,14 +62,12 @@ export function ConnectionBanner({ error, retryAt, onRetry, host }: { error: Api
   const secs = useCountdown(error && error.retryable ? retryAt : null);
   if (!error || error.kind === 'auth') return null;
   if (error.retryable) {
-    const where = host ? ` at ${host}` : '';
-    const title = error.kind === 'timeout' ? `Your computer${where} is slow to answer` : `Can't reach your computer${where}`;
+    const title = error.kind === 'timeout' ? 'Your computer is slow to answer' : error.kind === 'server' ? 'Clawdling hit an error' : "Can't reach your computer";
+    const retry = secs !== null && secs > 0 ? `Retrying in ${secs}s.` : 'Retrying…';
     const message =
       error.kind === 'server'
-        ? error.message
-        : secs !== null && secs > 0
-          ? `Retrying in ${secs}s. Check that Clawdling is running and your phone is on the same network or Tailscale.`
-          : 'Retrying now…';
+        ? `${error.message} ${retry}`
+        : `${retry} Check that Clawdling is running${host ? ` at ${host}` : ''} and this phone is on the same Wi-Fi or on Tailscale.`;
     return <Banner tone="warn" title={title} message={message} action="Retry now" onAction={onRetry} testID="retry-banner" />;
   }
   return <Banner tone="error" title="Something went wrong" message={error.message} action="Retry" onAction={onRetry} testID="error-banner" />;
@@ -73,6 +93,6 @@ const styles = StyleSheet.create({
   body: { flex: 1, gap: 2 },
   title: { fontSize: 15, lineHeight: 20, fontWeight: '600' },
   message: { fontSize: 13, lineHeight: 18, color: colors.text2 },
-  action: { paddingVertical: 2, paddingLeft: 6 },
-  actionText: { fontSize: 14, lineHeight: 19, fontWeight: '600' },
+  action: { alignSelf: 'flex-start', marginTop: 8, paddingVertical: 6, paddingHorizontal: 12, borderRadius: 999, borderWidth: StyleSheet.hairlineWidth },
+  actionText: { fontSize: 14, lineHeight: 18, fontWeight: '600' },
 });

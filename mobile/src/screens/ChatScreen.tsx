@@ -273,14 +273,14 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
       }
       subtitle={
         <View style={styles.subRow}>
+          {status ? <StatusPill status={status} compact /> : null}
           <Text style={styles.sub} numberOfLines={1}>
-            {agentName}
+            {sid ? agentName : 'New session · starts when you send'}
             {when ? ` · ${when}` : ''}
           </Text>
           {demo ? <DemoBadge /> : null}
         </View>
       }
-      right={status ? <StatusPill status={status} /> : sid ? null : <StatusPill status="ready" compact />}
       testID="chat-header"
     />
   );
@@ -383,7 +383,7 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   flexShrink: { flex: 1, minWidth: 0 },
   title: { fontSize: 16, lineHeight: 21, fontWeight: '600', color: colors.text },
-  subRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 1 },
+  subRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 3 },
   sub: { fontSize: 13, lineHeight: 17, color: colors.text2, flexShrink: 1 },
   bannerWrap: { paddingHorizontal: 12, paddingTop: 10 },
   noticeWrap: { paddingHorizontal: 12, paddingBottom: 8 },
