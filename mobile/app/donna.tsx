@@ -107,7 +107,10 @@ function DonnaChat({ client, demo }: { client: ClawdlingClient; demo: boolean })
       const text = (textArg ?? draft).trim();
       if (!text) return;
       if (textArg === undefined) setDraft('');
-      const mine = newLocalItem(serverRef.current, pruneLocal(serverRef.current, localRef.current), 'user', text, 'sending');
+      // Count against the history as it was before this send: the reply can reach the history
+      // (through a poll) before the POST returns, and must not be counted as an older copy.
+      const snapshot = serverRef.current;
+      const mine = newLocalItem(snapshot, pruneLocal(snapshot, localRef.current), 'user', text, 'sending');
       localRef.current = [...localRef.current, mine];
       setLocal((l) => [...pruneLocal(serverRef.current, l), mine]);
       setInFlight((n) => n + 1);
@@ -119,7 +122,7 @@ function DonnaChat({ client, demo }: { client: ClawdlingClient; demo: boolean })
         setLocal((l) => {
           const next = l.map((x) => (x.id === mine.id ? { ...x, state: 'sent' as const } : x));
           if (!reply.trim()) return next;
-          return [...next, newLocalItem(serverRef.current, next, 'donna', reply, 'sent')];
+          return [...next, newLocalItem(snapshot, next, 'donna', reply, 'sent')];
         });
         poll.kick();
       } catch (e) {

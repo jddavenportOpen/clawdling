@@ -384,7 +384,7 @@ function Chat({ client, sid, agentId, demo }: { client: ClawdlingClient; sid: st
             value={draft}
             onChangeText={setDraft}
             onSend={() => void send()}
-            placeholder={blocked ? 'Answer this in the cockpit on your computer' : sid ? `Message ${agentName}` : `What should ${agentName} do?`}
+            placeholder={blocked ? 'Answer it on your computer' : sid ? `Message ${agentName}` : `What should ${agentName} do?`}
             sending={creating}
             disabled={(!loaded && !!sid) || blocked}
             bottomInset={keyboard ? 8 : insets.bottom}

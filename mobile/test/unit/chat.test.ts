@@ -133,6 +133,13 @@ describe('Donna local echo', () => {
     assert.deepEqual(pruneLocal([s('user', 'yes'), s('user', 'yes')], [a, b]), []);
   });
 
+  it('a reply that reached the history before the POST returned is not shown twice', () => {
+    const before = [s('user', 'status?')];
+    const after = [...before, s('user', 'plan my week'), s('donna', 'Health is on it.')];
+    const reply = newLocalItem(before, [], 'donna', 'Health is on it.', 'sent');
+    assert.equal(mergeDonna(after, [reply]).rows.filter((r) => r.text === 'Health is on it.').length, 1);
+  });
+
   it('labels outside channels only', () => {
     assert.equal(channelLabel('telegram'), 'via Telegram');
     assert.equal(channelLabel('imessage'), 'via iMessage');
