@@ -12,9 +12,9 @@
   },
   "scripts": {
     "start": "node bin/clawdling.js start",
-    "test": "node --test test/unit/ test/integration/",
-    "test:unit": "node --test test/unit/",
-    "test:integration": "node --test test/integration/",
+    "test": "node --test --test-concurrency=1 test/unit/*.test.js test/integration/*.test.js",
+    "test:unit": "node --test test/unit/*.test.js",
+    "test:integration": "node --test --test-concurrency=1 test/integration/*.test.js",
     "e2e": "playwright test -c test/e2e/playwright.config.js",
     "smoke:live": "node test/live/smoke-live.mjs"
   },

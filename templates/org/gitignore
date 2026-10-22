@@ -1,0 +1,5 @@
+# Clawdling runtime state and secrets: never commit these.
+.clawdling/
+.env
+.archive/
+.DS_Store
