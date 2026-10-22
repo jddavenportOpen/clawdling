@@ -326,6 +326,7 @@ export class SessionManager {
         // skip torn line
       }
     }
+    if (n) this.save();
     return n;
   }
 

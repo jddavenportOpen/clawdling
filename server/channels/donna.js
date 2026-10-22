@@ -2,8 +2,9 @@
 // `claude -p --output-format json`, run serially. Donna routes by running the clawdling CLI.
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { which } from '../paths.js';
-import { isUuid, oneLine } from '../util.js';
+import { clampText, isUuid, oneLine, readTail } from '../util.js';
 
 export const DONNA_TIMEOUT_MS = 180000;
 
@@ -97,12 +98,46 @@ export class DonnaRouter {
 
   /** Queue one inbound message; resolves with Donna's reply text (rejects with a short reason). */
   handle({ channel, text }) {
+    this.logChat({ role: 'user', text, channel });
     this.inFlight++;
     const run = this.queue.then(() => this.runTurn({ channel, text }));
     this.queue = run.catch(() => {}).finally(() => {
       this.inFlight--;
     });
-    return run;
+    return run.then(
+      (reply) => {
+        this.logChat({ role: 'donna', text: reply, channel });
+        return reply;
+      },
+      (err) => {
+        this.logChat({ role: 'donna', text: `Donna hit an error: ${oneLine(err.message, 200)}`, channel, error: true });
+        throw err;
+      }
+    );
+  }
+
+  /** Every exchange on every channel (telegram, imessage, app) in one append-only log. */
+  logChat(entry) {
+    try {
+      const line = JSON.stringify({ ts: new Date().toISOString(), ...entry, text: clampText(entry.text, 8000) }) + '\n';
+      fs.appendFileSync(this.paths.donnaChat, line, { mode: 0o600 });
+    } catch (err) {
+      this.logger?.warn?.(`could not write donna-chat.jsonl: ${err.message}`);
+    }
+  }
+
+  messages(limit = 50) {
+    const out = [];
+    for (const line of readTail(this.paths.donnaChat, 1024 * 1024).split('\n')) {
+      if (!line) continue;
+      try {
+        const e = JSON.parse(line);
+        out.push({ role: e.role, text: e.text, ts: e.ts, channel: e.channel, ...(e.error ? { error: true } : {}) });
+      } catch {
+        // torn line
+      }
+    }
+    return out.slice(-Math.max(1, Math.min(500, limit)));
   }
 
   async runTurn({ channel, text }) {

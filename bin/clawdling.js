@@ -225,6 +225,12 @@ async function cmdStart(args) {
   console.log(`  Org:   ${home}`);
   console.log(`  tmux:  tmux -L ${srv.socket} ls`);
   console.log('Ctrl-C stops the cockpit. Your sessions keep running in tmux.\n');
+  if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
+    console.log(`WARNING: --host ${host} makes the cockpit reachable from other devices on your network.`);
+    console.log('  Every page and API still needs your token, but anyone on this network can reach the login page.');
+    console.log('  Away from home, prefer Tailscale: bind to your tailnet address, or keep 127.0.0.1 and use `tailscale serve`.');
+    console.log('  Pair a phone from Settings in the cockpit (QR code), or with GET /api/pair.\n');
+  }
   if (args.flags.open) openInBrowser(srv.openUrl);
   let stopping = false;
   const stop = async (sig) => {

@@ -53,6 +53,7 @@ export function runtimePaths(home) {
     hookSpool: path.join(rt, 'hook-spool.jsonl'),
     telegramState: path.join(rt, 'telegram.json'),
     imessageState: path.join(rt, 'imessage.json'),
+    donnaChat: path.join(rt, 'donna-chat.jsonl'),
   };
 }
 

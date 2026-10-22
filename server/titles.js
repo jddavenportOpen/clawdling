@@ -22,7 +22,7 @@ export function deriveTitle(text, max = TITLE_MAX) {
 
   let line = '';
   for (const raw of s.split('\n')) {
-    const l = raw.replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d{1,3}[.)]\s+)+/, '').trim();
+    const l = raw.replace(/^\s*(?:#{1,6}\s+|>\s*|[-*+]\s+|\d{1,3}[.)]\s+|\[[ xX]\]\s+)+/, '').trim();
     if (l) {
       line = l;
       break;

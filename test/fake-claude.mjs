@@ -137,7 +137,11 @@ function hookCommands(event) {
   return groups.flatMap((g) => (g.hooks || []).filter((h) => h.type === 'command').map((h) => h.command));
 }
 
-const transcriptPath = path.join(os.tmpdir(), `fake-claude-${sid}.jsonl`);
+// Transcripts go where Claude Code puts them, but only under an explicit CLAUDE_CONFIG_DIR
+// (tests set a temp dir), so the fake can never write into a real ~/.claude.
+const transcriptPath = process.env.CLAUDE_CONFIG_DIR
+  ? path.join(process.env.CLAUDE_CONFIG_DIR, 'projects', process.cwd().replace(/[^a-zA-Z0-9]/g, '-'), `${sid}.jsonl`)
+  : path.join(os.tmpdir(), `fake-claude-${sid}.jsonl`);
 
 function runHook(event, extra = {}) {
   const payload = JSON.stringify({ session_id: sid, transcript_path: transcriptPath, cwd: process.cwd(), permission_mode: opts.permissionMode || 'default', hook_event_name: event, ...extra });
@@ -160,9 +164,10 @@ function runHook(event, extra = {}) {
   );
 }
 
-function transcript(role, text) {
+function transcript(type, message, extra = {}) {
   try {
-    fs.appendFileSync(transcriptPath, JSON.stringify({ type: role, message: { role, content: [{ type: 'text', text }] } }) + '\n');
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.appendFileSync(transcriptPath, JSON.stringify({ type, message, sessionId: sid, timestamp: new Date().toISOString(), isSidechain: false, cwd: process.cwd(), ...extra }) + '\n');
   } catch {
     // ignore
   }
@@ -223,15 +228,18 @@ async function interactive() {
       process.exit(0);
     }
     await runHook('UserPromptSubmit', { prompt: text });
-    transcript('user', text);
+    transcript('user', { role: 'user', content: '<local-command-caveat>Caveat: plumbing the chat view must hide</local-command-caveat>' }, { isMeta: true });
+    transcript('user', { role: 'user', content: text });
     if (text.includes('permission?')) {
+      transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'text', text: 'I need to run a command.' }, { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'echo hi', description: 'Say hi' } }] });
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'hi' }] });
       waitingPermission = true;
       process.stdout.write('Claude wants to run: echo hi. Allow? 1) yes 2) no\n');
       await runHook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
       return;
     }
     process.stdout.write(`assistant: ${text}\n> `);
-    transcript('assistant', text);
+    transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: `assistant: ${text}` }] });
     await runHook('Stop', { stop_hook_active: false, last_assistant_message: text });
   };
   let chain = Promise.resolve();

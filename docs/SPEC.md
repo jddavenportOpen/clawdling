@@ -296,3 +296,28 @@ no field or path in §4 was renamed or removed.
   the default socket or the real claude, and never calls the official Telegram API or osascript.
   `clawdling start --port 0` picks a free port; the actual port is in `.clawdling/server.json`.
   `CLAWDLING_WEB_DIR` overrides the static directory. `test/helpers.mjs` has `startServerProc()`.
+
+**App API (iPhone app addendum, implemented)**. All need the token; native requests send
+`x-clawdling-token` and no `Origin` (allowed, like the CLI). Requests from a foreign web origin are refused.
+- `GET /api/sessions/:sid/messages?after=<n>&limit=<m>` → `{messages:[{n, role:"user"|"assistant",
+  text, tools:[{name, summary}], ts}], next, more, status}`. Read from the session's Claude Code
+  transcript (`${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/<session-id>.jsonl`; the hook-reported
+  `transcript_path` is used when it matches). Kept: real user prompts (string content or text
+  blocks) and assistant text/tool_use blocks. Dropped: tool_result-only user turns, `isMeta`,
+  `isSidechain`, slash-command plumbing (`<command-name>`, `<local-command-stdout>`, ...),
+  synthetic assistant lines, thinking blocks. One entry per transcript line (append-only, so `n`
+  is stable: the 0-based index in the filtered list). `after` (default -1) returns `n > after`;
+  `limit` 1-1000 (default 200); `next` = last returned `n` (or `after` when nothing is new);
+  `more` = more entries exist past `next`. `summary` = first 80 chars of the tool input's
+  command / file_path / pattern / url / description (then path, query, prompt).
+- `POST /api/donna/chat {text}` → `{reply}` (one Donna headless turn through the same runner and
+  tool allow-list as Telegram; on failure `{reply:"Donna hit an error: ...", error}`, still 200).
+  Max 8000 chars. `GET /api/donna/messages?limit=50` → `{messages:[{role:"user"|"donna", text, ts,
+  channel:"telegram"|"imessage"|"app", error?}]}`, oldest first, merged across channels, from
+  `.clawdling/donna-chat.jsonl` (every Donna exchange on every channel is logged there).
+- `GET /api/pair` → `{url, token, link:"clawdling://connect?url=<url-encoded url>&t=<token>", lan:
+  ["http://<non-internal IPv4>:<port>", ...], bind}`. `url` = first `lan` entry when bound to
+  0.0.0.0, `http://127.0.0.1:<port>` when bound to loopback, else `http://<bind host>:<port>`.
+- `GET /api/pair/qr.svg` → `image/svg+xml` QR code of `link` (`Cache-Control: no-store`; it contains
+  the token). Generated server-side with the MIT `qrcode-generator` package (new runtime dependency).
+- `clawdling start --host 0.0.0.0` prints a LAN-exposure warning and suggests Tailscale.

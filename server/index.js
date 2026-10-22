@@ -1,6 +1,7 @@
 // The Clawdling server: HTTP API + static cockpit + terminal WebSockets + SSE, all on 127.0.0.1.
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
@@ -36,6 +37,7 @@ import {
 } from './paths.js';
 import { SessionManager } from './sessions.js';
 import { Tmux } from './tmux.js';
+import { TranscriptReader, claudeConfigDir, findTranscript } from './transcripts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
 const MIME = {
@@ -203,6 +205,35 @@ function sidParam(m) {
   return sid;
 }
 
+/** Non-internal IPv4 addresses of this machine (for pairing a phone on the same network). */
+export function lanAddresses() {
+  const out = [];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if ((a.family === 'IPv4' || a.family === 4) && !a.internal) out.push(a.address);
+    }
+  }
+  return out;
+}
+
+export function pairingInfo({ host, port, token, lan = lanAddresses() }) {
+  const lanUrls = lan.map((ip) => `http://${ip}:${port}`);
+  let url;
+  if (host === '0.0.0.0' || host === '::') url = lanUrls[0] || `http://127.0.0.1:${port}`;
+  else if (isLoopback(host)) url = `http://127.0.0.1:${port}`;
+  else url = `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
+  return { url, token, link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`, lan: lanUrls, bind: host };
+}
+
+/** SVG QR code for a string, via the MIT `qrcode-generator` package (server-side only). */
+export function qrSvg(text) {
+  const qrcode = requireHere('qrcode-generator');
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  return qr.createSvgTag({ cellSize: 4, margin: 4, scalable: true, title: 'Clawdling pairing code', alt: 'Clawdling pairing code' });
+}
+
 /**
  * Start a server. Resolves once it is listening.
  * @param {object} opts {home, port, host, env, quiet, webDir}
@@ -252,6 +283,8 @@ export async function startServer(opts = {}) {
     blocked: testMode && apiBase === TELEGRAM_OFFICIAL_BASE ? 'test mode: TELEGRAM_API_BASE must point at a local stub' : null,
   });
   const imessage = new IMessageGateway({ paths, org, donna, events, logger, env });
+  const transcripts = new TranscriptReader();
+  const configDir = claudeConfigDir(cEnv);
 
   const versions = { at: 0, claude: null, tmux: null };
   async function toolVersions() {
@@ -370,6 +403,55 @@ export async function startServer(opts = {}) {
     }],
     ['GET', /^\/api\/events$/, (req, m, res) => {
       events.attachSse(req, res);
+      return null;
+    }],
+    ['GET', /^\/api\/sessions\/([^/]+)\/messages$/, (req, m, res, url) => {
+      const rec = sessions.require(sidParam(m));
+      const afterRaw = url.searchParams.get('after');
+      const after = afterRaw === null || afterRaw === '' ? -1 : Number(afterRaw);
+      if (!Number.isInteger(after) || after < -1) throw badRequest('after must be an integer >= -1');
+      const limitRaw = Number(url.searchParams.get('limit') || 200);
+      const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(1000, limitRaw)) : 200;
+      const file = findTranscript({ ids: [rec.claude_session_id, rec.sid].filter(Boolean), hint: rec.transcript_path, configDir });
+      const all = file ? transcripts.read(file) : [];
+      const page = [];
+      for (const e of all) {
+        if (e.n <= after) continue;
+        if (page.length >= limit) break;
+        page.push(e);
+      }
+      const next = page.length ? page[page.length - 1].n : after;
+      return [200, { messages: page, next, more: all.length > 0 && all[all.length - 1].n > next, status: rec.status }];
+    }],
+    ['POST', /^\/api\/donna\/chat$/, async (req) => {
+      const b = await jsonBody(req);
+      const text = typeof b.text === 'string' ? b.text.replace(/\0/g, '').trim() : '';
+      if (!text) throw badRequest('send {text}');
+      if (text.length > 8000) throw new HttpError(413, 'message is longer than 8000 characters');
+      events.publish('channel', { channel: 'app', direction: 'in', text: text.slice(0, 500), ts: new Date().toISOString() });
+      try {
+        const reply = (await donna.handle({ channel: 'app', text })) || 'Done.';
+        events.publish('channel', { channel: 'app', direction: 'out', text: reply.slice(0, 500), ts: new Date().toISOString() });
+        return [200, { reply }];
+      } catch (err) {
+        const reason = String(err.message || err).slice(0, 200);
+        return [200, { reply: `Donna hit an error: ${reason}`, error: reason }];
+      }
+    }],
+    ['GET', /^\/api\/donna\/messages$/, (req, m, res, url) => {
+      const limit = Number(url.searchParams.get('limit') || 50);
+      return [200, { messages: donna.messages(Number.isInteger(limit) ? limit : 50) }];
+    }],
+    ['GET', /^\/api\/pair$/, () => [200, pairingInfo({ host, port, token })]],
+    ['GET', /^\/api\/pair\/qr\.svg$/, (req, m, res) => {
+      let svg;
+      try {
+        svg = qrSvg(pairingInfo({ host, port, token }).link);
+      } catch (err) {
+        throw new HttpError(503, `QR code unavailable (${err.code === 'MODULE_NOT_FOUND' ? 'run npm install' : err.message})`);
+      }
+      res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(svg) });
+      res.end(req.method === 'HEAD' ? undefined : svg);
       return null;
     }],
     ['GET', /^\/api\/channels$/, () => [200, channelsStatus()]],
