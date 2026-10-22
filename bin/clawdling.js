@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { readToken, loadOrCreateToken } from '../server/auth.js';
 import { OrgStore, defaultAnswers, initOrg } from '../server/org.js';
-import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, tmuxSocketName, which } from '../server/paths.js';
+import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
@@ -463,7 +463,7 @@ async function cmdService(args) {
   if (sub !== 'install' && sub !== 'uninstall') throw new CliError('usage: clawdling service install|uninstall [--dry-run]');
   const home = resolveHome(args.flags.home);
   const port = String(args.flags.port || DEFAULT_PORT);
-  const node = process.execPath;
+  const node = stableNodePath();
   const cli = path.join(PKG_ROOT, 'bin', 'clawdling.js');
   const envPath = process.env.PATH || '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
   if (process.platform === 'darwin') {

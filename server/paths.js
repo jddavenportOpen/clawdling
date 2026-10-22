@@ -119,6 +119,20 @@ export const SCRUBBED_ENV = [
   'CLAWDLING_SID',
 ];
 
+/**
+ * The node binary to write into hooks, shims and login items. Prefers the PATH entry (e.g.
+ * /opt/homebrew/bin/node) over a versioned install path that disappears on upgrade.
+ */
+export function stableNodePath(env = process.env) {
+  const onPath = which('node', env.PATH || '');
+  try {
+    if (onPath && fs.realpathSync(onPath) === fs.realpathSync(process.execPath)) return onPath;
+  } catch {
+    // fall through
+  }
+  return process.execPath;
+}
+
 /** A copy of the environment that is safe to hand to tmux and claude child processes. */
 export function childEnv(env = process.env) {
   const out = { ...env };
