@@ -1,6 +1,6 @@
 # Clawdling 1.0 — build spec
 
-Owner: JD Davenport (CEO worker drafting). Date: 2026-10-22. Ship target: today.
+Author: JD Davenport. Date: 2026-10-22. Status: shipped as 1.0.0.
 
 ## 0. One-line product
 

@@ -28,3 +28,11 @@ staff you can text.
   `resume`, `donna`, `service install` (macOS LaunchAgent; systemd unit on Linux).
 - **Agent-native install:** `SETUP.md` is a playbook Claude Code follows to install Clawdling and
   interview you in at most five questions.
+- **Answer Claude Code's questions from the cockpit:** `POST /api/sessions/:sid/answer {option}`
+  answers folder trust, external imports and permission prompts the way a person would (arrow keys
+  onto the chosen line, then Enter). Sessions waiting on a question carry `choices` in screen order,
+  and the cockpit's buttons follow those labels (Claude Code 2.1.283 lists "No, exit" first).
+- **Donna runs isolated:** her text-message turns use `--setting-sources project,local
+  --strict-mcp-config`, so your own allow rules, hooks, plugins and MCP servers never apply to her.
+- **One server per org:** a second `clawdling start` exits at once instead of hanging, and hooks
+  that miss the server are queued and replayed in order.

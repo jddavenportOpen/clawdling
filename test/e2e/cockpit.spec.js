@@ -415,8 +415,9 @@ test.describe('startup dialogs', () => {
     await expect.poll(async () => (await sessionBySid(sid)).status).not.toBe('needs_you');
     await expect(pane(page, sid)).not.toHaveAttribute('data-status', 'ended');
     if (isMock()) {
+      // Claude Code 2.1.283 lists "No, exit" first, so "Yes" is the second choice on screen.
       const req = (await mockRequests()).find((r) => r.method === 'POST' && r.path === `/api/sessions/${sid}/answer`);
-      expect(req.body).toEqual({ option: 1 });
+      expect(req.body).toEqual({ option: 2 });
     }
   });
 

@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Icon, AgentIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
+import { dialogAnswers } from '../lib/dialogs.js';
 import { TerminalView } from './terminal.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
@@ -156,7 +157,8 @@ function TitleEditor({ sid, name, title }) {
 }
 
 // Claude Code's own startup dialogs (detected by the server from the screen, before any hook
-// runs). Answered with POST /api/sessions/:sid/answer {option}; the terminal keeps working too.
+// runs). Answered with POST /api/sessions/:sid/answer {option}, where option is the choice's place
+// on screen (the server's `choices`); the terminal keeps working too.
 export const STARTUP_DIALOGS = {
   trust: { text: 'Claude Code is asking whether it can trust this folder.', yes: 'Yes, trust it', no: 'No, exit' },
   imports: { text: 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
@@ -164,19 +166,20 @@ export const STARTUP_DIALOGS = {
 
 function DialogBanner({ s }) {
   const d = STARTUP_DIALOGS[s.waiting_on];
+  const opts = dialogAnswers(s.choices);
   const [busy, setBusy] = useState(0);
-  const answer = async (option) => {
+  const answer = async (option, yes) => {
     setBusy(option);
-    await answerDialog(s.sid, option);
+    await answerDialog(s.sid, option, { focus: yes });
     setBusy(0);
   };
   return html`<div class="pane-dialog" role="group" aria-label="Claude Code is asking" data-testid="pane-dialog" data-dialog=${s.waiting_on}>
     <${StatusGlyph} status="needs_you" label=${false} />
     <span class="dialog-text" data-testid="pane-dialog-text">${d.text}</span>
-    <span class="dialog-actions">
-      <button class="btn btn-quiet btn-sm" onClick=${() => answer(2)} disabled=${!!busy} data-testid="dialog-no">${busy === 2 ? 'Answering…' : d.no}</button>
-      <button class="btn btn-primary btn-sm" onClick=${() => answer(1)} disabled=${!!busy} data-testid="dialog-yes">${busy === 1 ? 'Answering…' : d.yes}</button>
-    </span>
+    ${opts ? html`<span class="dialog-actions">
+      <button class="btn btn-quiet btn-sm" onClick=${() => answer(opts.no, false)} disabled=${!!busy} data-testid="dialog-no">${busy === opts.no ? 'Answering…' : d.no}</button>
+      <button class="btn btn-primary btn-sm" onClick=${() => answer(opts.yes, true)} disabled=${!!busy} data-testid="dialog-yes">${busy === opts.yes ? 'Answering…' : d.yes}</button>
+    </span>` : html`<span class="dialog-note" data-testid="pane-dialog-terminal">Answer it in the terminal below.</span>`}
   </div>`;
 }
 

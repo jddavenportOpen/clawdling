@@ -378,6 +378,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
   background: var(--needs-soft); border-bottom: 1px solid color-mix(in srgb, var(--needs) 32%, transparent); font-size: 12.5px; }
 .dialog-text { flex: 1; min-width: 0; color: var(--text); font-weight: 500; }
 .dialog-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.dialog-note { flex-shrink: 0; color: var(--text-2); font-size: 12px; }
 @container pane (max-width: 470px) { .pane-dialog { flex-wrap: wrap; } .dialog-actions { width: 100%; justify-content: flex-end; } }
 .pane-body { position: relative; flex: 1; min-height: 0; }
 .term-host { position: absolute; inset: 6px 4px 2px 10px; --vscode-scrollbar-shadow: transparent; transition: opacity 0.15s; }

@@ -302,19 +302,20 @@ export async function resumeSession(sid) {
   }
 }
 
-// Answer Claude Code's startup dialog in a session (1 = yes, 2 = no). 409 = nothing to answer.
-export async function answerDialog(sid, option) {
+// Answer Claude Code's startup dialog in a session. `option` is the choice's place on screen (see
+// the session's `choices`; Claude Code decides the order). 409 = nothing to answer.
+export async function answerDialog(sid, option, { focus = false } = {}) {
   try {
     const s = await api.answer(sid, option);
     if (s && s.sid) mergeSession(s);
-    else mergeSession({ sid, waiting_on: null });
+    else mergeSession({ sid, waiting_on: null, choices: null });
     const v = terms.get(sid);
-    if (v && option === 1) v.focus();
+    if (v && focus) v.focus();
     return true;
   } catch (e) {
     if (e && e.status === 409) {
       toast('Claude Code is no longer asking. The session has moved on.', { ms: 3600 });
-      mergeSession({ sid, waiting_on: null });
+      mergeSession({ sid, waiting_on: null, choices: null });
     } else {
       errorToast('Could not answer Claude Code', e);
     }

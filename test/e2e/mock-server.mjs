@@ -361,7 +361,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function setStatus(s, status, extra = {}) {
     Object.assign(s, extra, { status });
-    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; }
+    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; }
     if (status === 'ended') { s.ended_at = new Date().toISOString(); }
     else s.ended_at = null;
     s.last_activity_at = new Date().toISOString();
@@ -637,11 +637,15 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       }
       if (mm[2] === '/answer' && m === 'POST') {
         const option = body.option;
-        if (option !== 1 && option !== 2) { send(res, 400, { error: 'option must be 1 or 2' }); return; }
+        if (!Number.isInteger(option) || option < 1 || option > 9) { send(res, 400, { error: 'option must be the number of a choice (1 or 2)' }); return; }
         if (s.status !== 'needs_you' || !STARTUP_DIALOG_KINDS.has(s.waiting_on)) { send(res, 409, { error: 'no dialog is waiting for an answer' }); return; }
+        const choice = (s.choices || []).find((c) => c.option === option);
+        if (!choice) { send(res, 400, { error: `there are only ${(s.choices || []).length} choices` }); return; }
         const kind = s.waiting_on;
-        out(s, `\r\n${DIM}(${option === 1 ? 'yes' : 'no'})${RESET}\r\n`);
-        if (kind === 'trust' && option === 2) {
+        const no = /^no\b/i.test(choice.label);
+        s.choices = null;
+        out(s, `\r\n${DIM}(${choice.label})${RESET}\r\n`);
+        if (kind === 'trust' && no) {
           out(s, `${DIM}Exiting.${RESET}\r\n`);
           setStatus(s, 'ended');
         } else {
@@ -730,11 +734,14 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const sess1 = st.sessions.get(body.sid);
       if (!sess1) { send(res, 404, { error: 'no such session' }); return; }
       const kind = body.kind || 'trust';
+      // Shaped like Claude Code 2.1.283: the trust dialog hides its numbers and lists "No, exit"
+      // first, with the pointer on it. `choices` is what core reads off that screen, in screen order.
+      const labels = kind === 'trust' ? ['No, exit', 'Yes, I trust this folder'] : ['Yes, allow external imports', 'No, disable external imports'];
       const screen = kind === 'trust'
-        ? `\x1b[2J\x1b[HAccessing workspace:\r\n${sess1.cwd}\r\n\r\nQuick safety check: Is this a project you created or one you trust?\r\n\r\n ${CLAUDE}❯${RESET} 1. Yes, I trust this folder\r\n   2. No, exit\r\n`
-        : `\x1b[2J\x1b[HAllow external CLAUDE.md file imports?\r\n\r\n ${CLAUDE}❯${RESET} 1. Yes, allow external imports\r\n   2. No, disable external imports\r\n`;
+        ? `\x1b[2J\x1b[HAccessing workspace:\r\n${sess1.cwd}\r\n\r\nQuick safety check: Is this a project you created or one you trust?\r\n\r\n ${CLAUDE}❯${RESET} ${labels[0]}\r\n   ${labels[1]}\r\n`
+        : `\x1b[2J\x1b[HAllow external CLAUDE.md file imports?\r\n\r\n ${CLAUDE}❯${RESET} 1. ${labels[0]}\r\n   2. ${labels[1]}\r\n`;
       out(sess1, screen);
-      setStatus(sess1, 'needs_you', { waiting_on: kind, notification: kind === 'trust' ? TRUST_NOTICE : IMPORTS_NOTICE });
+      setStatus(sess1, 'needs_you', { waiting_on: kind, notification: kind === 'trust' ? TRUST_NOTICE : IMPORTS_NOTICE, choices: labels.map((label, i) => ({ option: i + 1, label })) });
       send(res, 204);
       return;
     }
