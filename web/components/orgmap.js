@@ -2,13 +2,13 @@
 // routes through her), domains on the next ring, projects on the outer ring
 // fanned out from their domain. Hand-built SVG, no chart library.
 import { html } from '../lib/html.js';
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Icon, AgentIcon, hasIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { api } from '../lib/api.js';
 import { startSession, focusSession, navigate, openOverlay } from '../lib/actions.js';
-import { agentStats, sessionName, statusText, KIND_LABEL, sortAgents } from '../lib/model.js';
+import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL } from '../lib/model.js';
 import { relTime, clamp, prefersReducedMotion } from '../lib/util.js';
 
 const TAU = Math.PI * 2;
@@ -369,7 +369,7 @@ function MapPanel({ n, sessions, onClose, agents, ownerName }) {
     return () => { live = false; };
   }, [n.id]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -400,7 +400,7 @@ function MapPanel({ n, sessions, onClose, agents, ownerName }) {
       <h3 class="panel-h">Live sessions <span class="sec-count">${mine.length}</span></h3>
       ${mine.length ? html`<ul class="panel-list">${mine.map((s) => html`<li><button class="panel-row" onClick=${() => focusSession(s.sid)}>
           <${StatusGlyph} status=${s.status} label=${false} /><span class="pr-title">${sessionName(s, agentsById)}</span>
-          <span class="pr-meta">${statusText(s)} · ${relTime(s.last_activity_at || s.created_at, now)}</span></button></li>`)}</ul>`
+          <span class="pr-meta" title=${statusText(s)}>${STATUS_LABEL[s.status] || s.status} · ${relTime(s.last_activity_at || s.created_at, now)}</span></button></li>`)}</ul>`
         : html`<p class="panel-quiet">No live sessions.</p>`}
       <h3 class="panel-h">NOW.md <span class="panel-h-sub">what ${a ? a.name : 'it'} knows right now</span></h3>
       ${err ? html`<p class="panel-quiet">Could not load memory: ${err}</p>`

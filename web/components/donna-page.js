@@ -182,7 +182,7 @@ function IMessageCard({ m }) {
     </header>
     ${supported ? html`<ol class="steps">
       <li><span class="step-title">Let Clawdling read Messages</span>
-        <span class="step-text">System Settings → Privacy &amp; Security → <strong>Full Disk Access</strong>: turn it on for the terminal app that runs <code>clawdling start</code>.</span></li>
+        <span class="step-text">System Settings → Privacy & Security → <strong>Full Disk Access</strong>: turn it on for the terminal app that runs <code>clawdling start</code>.</span></li>
       <li><span class="step-title">Let it send replies</span>
         <span class="step-text">The first time Donna replies, macOS asks to let your terminal control <strong>Messages</strong> (Automation). Allow it.</span></li>
       <li><span class="step-title">Use a second Apple ID on this Mac</span>

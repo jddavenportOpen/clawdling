@@ -131,7 +131,7 @@ function SessionRow({ s, section, agentsById, onScreen, focused, now }) {
   const agent = agentLabel(s, agentsById);
   const ended = s.status === 'ended';
   const canResume = ended && s.resumable !== false;
-  const meta = ended ? (canResume ? 'Ended · click to resume' : 'Ended') : statusText(s);
+  const meta = ended ? (canResume ? 'Ended · resume' : 'Ended') : statusText(s);
   const when = relTime(sessionTime(s), now);
   const click = () => (canResume ? resumeSession(s.sid) : focusSession(s.sid));
   const more = (e) => {

@@ -15,7 +15,8 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
   const ref = useRef(null);
   const close = useRef(onClose);
   close.current = onClose;
-  useEffect(() => {
+  // Layout effect: Escape/Tab work from the very first frame the dialog exists.
+  useLayoutEffect(() => {
     const prev = document.activeElement;
     const node = ref.current;
     const list = () => [...node.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
@@ -93,7 +94,7 @@ export function Menu() {
     if (first) first.focus();
   }, [menu]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (!menu) return undefined;
     const onDown = (e) => { if (ref.current && !ref.current.contains(e.target)) closeMenu(); };
     const onKey = (e) => {

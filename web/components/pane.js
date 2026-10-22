@@ -26,7 +26,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const [conn, setConn] = useState('connecting');
   const [flash, setFlash] = useState(false);
   const el = useRef(null);
-  const lastTick = useRef(focusTick);
+  // A pane that mounts already focused (just opened, or restored on reload) takes the keyboard too.
+  const lastTick = useRef(focused ? -1 : focusTick);
 
   // A rail click / palette jump / ⌘N targets this pane: reveal it, flash it,
   // and put the keyboard in its terminal. Nothing else in the workspace moves.

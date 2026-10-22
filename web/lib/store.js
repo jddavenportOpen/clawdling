@@ -1,6 +1,6 @@
 // A tiny global store: one immutable state object, shallow-merged updates,
 // and a selector hook that re-renders a component only when its slice changes.
-import { useEffect, useReducer, useRef } from 'preact/hooks';
+import { useLayoutEffect, useReducer, useRef } from 'preact/hooks';
 
 let state = {};
 const listeners = new Set();
@@ -44,12 +44,17 @@ export function useStore(selector, eq = shallowEqual) {
   const value = selector(state);
   const last = useRef(value);
   last.current = value;
-  useEffect(() => subscribe((s) => {
-    const next = sel.current(s);
-    if (!eq(next, last.current)) {
-      last.current = next;
-      force();
-    }
-  }), []);
+  useLayoutEffect(() => {
+    const check = (s) => {
+      const next = sel.current(s);
+      if (!eq(next, last.current)) {
+        last.current = next;
+        force();
+      }
+    };
+    const unsubscribe = subscribe(check);
+    check(state); // an update may have landed between render and subscribe
+    return unsubscribe;
+  }, []);
   return value;
 }
