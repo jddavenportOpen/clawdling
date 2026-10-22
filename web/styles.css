@@ -621,6 +621,9 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .chan-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; gap: 12px; align-items: baseline; padding: 8px 12px; border-radius: var(--r-md); background: var(--bg-stage); border: 1px solid var(--line); }
 .chan-dir { font-size: 12px; font-weight: 650; color: var(--text-3); }
 .dir-out .chan-dir { color: var(--accent); }
+.dir-sys .chan-text { color: var(--text-2); }
+.donna-thread { margin-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+.donna-thread .card-h { margin-bottom: 0; }
 .chan-text { white-space: pre-wrap; word-break: break-word; }
 .chan-meta { font-size: 11.5px; color: var(--text-3); white-space: nowrap; }
 
@@ -639,6 +642,19 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .keys dd, .facts dd { margin: 0; color: var(--text-2); }
 .facts dt { width: 110px; flex-shrink: 0; color: var(--text-3); font-size: 12px; }
 .facts dd { font-size: 12px; word-break: break-all; }
+
+.phone-card { grid-column: 1 / -1; }
+.phone-card .card-title { margin-bottom: 16px; }
+.phone-grid { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 24px; align-items: start; }
+.qr-frame { width: 184px; height: 184px; display: grid; place-items: center; border-radius: var(--r-lg); background: #ffffff; border: 1px solid var(--line-2); }
+.qr { display: block; width: 168px; height: 168px; image-rendering: pixelated; }
+.phone-text { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.phone-lead { margin: 0; color: var(--text-2); font-size: 13px; max-width: 60ch; }
+.phone-text .set-note { margin: 0; }
+.phone-warn { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 10px 12px; border-radius: var(--r-md);
+  background: var(--needs-soft); border: 1px solid color-mix(in srgb, var(--needs) 30%, transparent); color: var(--text); font-size: 12.5px; }
+.phone-warn .icon { color: var(--needs); margin-top: 2px; }
+@media (max-width: 720px) { .phone-grid { grid-template-columns: 1fr; } }
 
 /* ---------- org map ---------- */
 .map-page { display: flex; flex-direction: column; height: 100%; }

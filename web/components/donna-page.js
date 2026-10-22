@@ -59,15 +59,22 @@ export function DonnaPage() {
       <section class="card donna-log" aria-labelledby="log-title">
         <h2 id="log-title" class="card-title">Recent messages</h2>
         ${log.length ? html`<ol class="chan-log">${[...log].reverse().slice(0, 30).map((e, i) => {
-          const dir = e.direction || e.dir || (e.from_me || e.outbound ? 'out' : 'in');
-          const text = e.text || e.message || e.summary || e.reply || '';
+          const dir = e.direction || e.dir || null;
           const ch = e.channel || e.source || 'channel';
-          return html`<li key=${i} class=${`chan-row dir-${dir === 'out' ? 'out' : 'in'}`}>
-            <span class="chan-dir" aria-label=${dir === 'out' ? 'Donna replied' : 'You wrote'}>${dir === 'out' ? 'Donna' : 'You'}</span>
-            <span class="chan-text">${text || html`<em>${e.event || e.kind || 'event'}</em>`}</span>
+          const label = dir === 'out' ? (donna ? donna.name : 'Donna') : dir === 'in' ? 'You' : 'Clawdling';
+          const text = dir ? (e.text || e.message || '') : e.event === 'paired' ? `Paired with chat ${e.chat || ''}`.trim()
+            : e.event === 'error' ? `Error: ${e.text || 'unknown'}` : (e.text || e.event || 'event');
+          return html`<li key=${i} class=${`chan-row dir-${dir || 'sys'}`}>
+            <span class="chan-dir">${label}</span>
+            <span class="chan-text">${text}</span>
             <span class="chan-meta">${ch} · ${relTime(e.at || e.ts || e._at, now)}</span>
           </li>`;
         })}</ol>` : html`<p class="panel-quiet">Messages to and from ${donna ? donna.name : 'Donna'} appear here as they happen.</p>`}
+        ${channels && channels.donna && channels.donna.session ? html`<div class="donna-thread">
+          <h3 class="card-h">Her channel conversation${channels.donna.busy ? html` <span class="pill pill-wait"><span class="pill-dot"></span>Working on a message</span>` : null}</h3>
+          <p class="step-note">Texts are handled in one running Claude Code conversation. Read it any time from her folder:</p>
+          <${CopyLine} text=${`claude --resume ${channels.donna.session}`} label="Copy the command that opens Donna's channel conversation" />
+        </div>` : null}
         ${donnaSessions.length ? html`<h3 class="card-h">Donna's sessions</h3><ul class="srows">${donnaSessions.slice(0, 5).map((s) => html`<li key=${s.sid}>
           <div class="srow"><${StatusGlyph} status=${s.status} /><button class="srow-main" onClick=${() => focusSession(s.sid)}>
             <span class="srow-title">${sessionName(s, agentsById)}</span><span class="srow-meta">${s.status === 'ended' ? 'Ended' : statusText(s)} · ${relTime(s.last_activity_at || s.created_at, now)}</span>
@@ -88,6 +95,9 @@ function TelegramCard({ t }) {
   const configured = !!(t && t.configured);
   const paired = !!(t && t.paired);
   const enabled = !!(t && t.enabled);
+  const pending = code || (t && t.pairing_code) || null;
+  const bot = t && t.bot_username ? `@${String(t.bot_username).replace(/^@/, '')}` : 'your bot';
+  const expires = t && t.pairing_expires_at ? Math.max(0, Math.round((Date.parse(t.pairing_expires_at) - Date.now()) / 60000)) : null;
 
   const connect = async (withToken) => {
     setBusy(true);
@@ -138,15 +148,16 @@ function TelegramCard({ t }) {
       </li>
       <li class=${paired ? 'is-done' : ''}>
         <span class="step-title">Pair your phone</span>
-        ${code ? html`<span class="step-text">Send this to your bot from your phone:</span>
-            <div class="pair-code" data-testid="pairing-code"><span class="pair-cmd">/pair</span> <span class="pair-digits">${code}</span>
-              <button class="icon-btn icon-btn-sm" aria-label="Copy pairing message" onClick=${async () => { const ok = await copyText(`/pair ${code}`); toast(ok ? 'Copied' : `/pair ${code}`, { tone: 'ok', ms: 1600 }); }}><${Icon} name="copy" size=${14} /></button></div>
-            <span class="step-note">The first chat that pairs becomes the only one Donna answers. Everyone else is ignored.</span>`
+        ${pending && !paired ? html`<span class="step-text">Send this to ${bot} from your phone:</span>
+            <div class="pair-code" data-testid="pairing-code"><span class="pair-cmd">/pair</span> <span class="pair-digits">${pending}</span>
+              <button class="icon-btn icon-btn-sm" aria-label="Copy pairing message" onClick=${async () => { const ok = await copyText(`/pair ${pending}`); toast(ok ? 'Copied' : `/pair ${pending}`, { tone: 'ok', ms: 1600 }); }}><${Icon} name="copy" size=${14} /></button></div>
+            <span class="step-note">${expires != null ? `Expires in ${expires} min. ` : ''}The first chat that pairs becomes the only one Donna answers. Everyone else is ignored.</span>`
           : paired ? html`<span class="step-text">Paired. Donna only answers this chat.</span>`
           : html`<span class="step-text">${configured ? 'Get a one-time code, then send it to your bot.' : 'After the token is saved you get a 6-digit code to send to your bot.'}</span>
             ${configured ? html`<button class="btn btn-quiet" onClick=${() => connect(false)} disabled=${busy} data-testid="tg-code">Get pairing code</button>` : null}`}
       </li>
     </ol>
+    ${t && t.error ? html`<p class="form-error" role="alert"><${Icon} name="alert" size=${14} /> ${t.error}</p>` : null}
     ${configured ? html`<footer class="card-foot">
       <label class="switch"><input type="checkbox" checked=${enabled} onChange=${toggle} disabled=${busy} /><span class="switch-ui" aria-hidden="true"></span>
         <span>${enabled ? 'Donna answers on Telegram' : 'Telegram is paused'}</span></label>

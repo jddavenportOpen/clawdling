@@ -75,7 +75,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       <span class="pane-glyph" title=${STATUS_LABEL[s.status] || s.status}><${StatusGlyph} status=${s.status} /></span>
       <${PaneTitle} sid=${sid} name=${name} title=${s.title} editing=${renaming} />
       <span class="pane-chip" title=${agent && agent.mission ? agent.mission : agentLabel(s, agentsById)}>
-        <span class="chip-icon" style=${agent && agent.color ? { color: agent.color } : undefined} aria-hidden="true"><${AgentIcon} agent=${agent || { name: agentLabel(s, agentsById) }} size=${12} /></span>${agentLabel(s, agentsById)}
+        <span class="chip-icon" aria-hidden="true"><${AgentIcon} agent=${agent || { name: agentLabel(s, agentsById) }} size=${12} /></span>${agentLabel(s, agentsById)}
       </span>
       ${s.model ? html`<span class="pane-model" title="Model">${s.model}</span>` : null}
       <${Trace} sid=${sid} status=${s.status} />

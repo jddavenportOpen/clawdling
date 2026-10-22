@@ -286,7 +286,10 @@ test.describe('pane lifecycle', () => {
     await pane(page, ids.brief).getByTestId('pane-attach').click();
     await expect(page.locator('.toast')).toContainText('Attach command copied');
     const s = await sessionBySid(ids.brief);
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`tmux -L clawdling attach -t ${s.tmux_name}`);
+    // The server's attach_cmd knows its real tmux socket; without one the default socket is used.
+    const expected = s.attach_cmd || `tmux -L clawdling attach -t ${s.tmux_name}`;
+    expect(expected).toContain(s.tmux_name);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
   });
 
   test('hiding a pane keeps the session running', async ({ page }) => {

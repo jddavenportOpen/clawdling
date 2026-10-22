@@ -44,6 +44,8 @@ export function sessionName(s, agentsById = {}) {
 export function statusText(s) {
   if (!s) return '';
   if (s.status === 'needs_you') return s.notification ? String(s.notification) : 'Needs you';
+  if (s.status === 'ready' && s.last_message) return `Your turn · ${String(s.last_message)}`;
+  if (s.status === 'starting' && s.notification) return String(s.notification);
   return STATUS_LABEL[s.status] || s.status || '';
 }
 
@@ -55,7 +57,9 @@ export function sessionTime(s) {
   return s.status === 'ended' ? (s.ended_at || s.last_activity_at || s.created_at) : (s.last_activity_at || s.created_at);
 }
 
+// The server knows its real tmux socket (tests use a private one); fall back to the default.
 export function attachCommand(s) {
+  if (s && typeof s.attach_cmd === 'string' && s.attach_cmd.trim()) return s.attach_cmd.trim();
   return `tmux -L clawdling attach -t ${s && s.tmux_name ? s.tmux_name : '<session>'}`;
 }
 

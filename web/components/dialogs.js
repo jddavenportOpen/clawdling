@@ -2,7 +2,7 @@
 // the row kebab menu, and toasts.
 import { html } from '../lib/html.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import { useStore } from '../lib/store.js';
+import { useStore, getState } from '../lib/store.js';
 import { Icon } from './icons.js';
 import {
   closeOverlay, endSession, closePane, closeMenu, focusSession, setRenaming, copyAttach, resumeSession, askEndSession,
@@ -18,6 +18,7 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
   // Layout effect: Escape/Tab work from the very first frame the dialog exists.
   useLayoutEffect(() => {
     const prev = document.activeElement;
+    const tick0 = getState().focusTick; // a jump made from inside the dialog owns focus afterwards
     const node = ref.current;
     const list = () => [...node.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
     requestAnimationFrame(() => {
@@ -41,7 +42,7 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
     node.addEventListener('keydown', onKey);
     return () => {
       node.removeEventListener('keydown', onKey);
-      if (prev && typeof prev.focus === 'function' && document.contains(prev)) prev.focus();
+      if (getState().focusTick === tick0 && prev && typeof prev.focus === 'function' && document.contains(prev)) prev.focus();
     };
   }, []);
   return html`<div class=${`modal-backdrop align-${align}`} onMouseDown=${(e) => { if (e.target === e.currentTarget) close.current(); }}>

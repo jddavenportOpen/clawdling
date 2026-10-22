@@ -162,7 +162,7 @@ function AgentRow({ a, stats }) {
   return html`<li class="row-wrap agent-row" data-agent=${a.id}>
     <button class="row" onClick=${start} aria-label=${`New session with ${a.name}${stats.live ? `, ${stats.live} live` : ''}`}
       title=${`${a.name}: start a new session${a.mission ? `\n${a.mission}` : ''}`}>
-      <span class="row-icon" style=${a.color ? { '--agent': a.color } : undefined}><${AgentIcon} agent=${a} size=${14} /></span>
+      <span class="row-icon"><${AgentIcon} agent=${a} size=${14} /></span>
       <span class="row-main">
         <span class="row-title">${a.name}</span>
         <span class="row-meta"><span class="row-status">${KIND_LABEL[a.kind] || a.kind}</span></span>

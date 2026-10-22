@@ -42,6 +42,9 @@ const P = {
   key: () => html`<circle cx="5.4" cy="10.6" r="2.8"/><path d="m7.4 8.6 5.8-5.8M11.2 4.8l1.6 1.6M9.6 6.4l1.2 1.2"/>`,
   spark: () => html`<path d="M8 2v3.2M8 10.8V14M2 8h3.2M10.8 8H14M3.8 3.8l2.2 2.2M10 10l2.2 2.2M12.2 3.8 10 6M6 10l-2.2 2.2"/>`,
   dot: () => html`<circle cx="8" cy="8" r="3" class="fill"/>`,
+  star: () => html`<path d="m8 2.3 1.75 3.62 3.95.55-2.87 2.76.7 3.93L8 11.3l-3.53 1.86.7-3.93L2.3 6.47l3.95-.55z"/>`,
+  pen: () => html`<path d="m10.4 2.9 2.7 2.7-7.3 7.3-3.4.7.7-3.4z"/><path d="m9.1 4.2 2.7 2.7"/>`,
+  plane: () => html`<path d="M7.1 2.6c.5-.5 1.3-.5 1.8 0v4.1l4.9 2.6v1.6l-4.9-1.3v2.7l1.4 1.2v1.1L8 13.8l-2.3.8v-1.1l1.4-1.2V9.6l-4.9 1.3V9.3l4.9-2.6z"/>`,
   keyboard: () => html`<rect x="1.6" y="4" width="12.8" height="8" rx="1.4"/><path d="M4.2 6.6h.1M6.7 6.6h.1M9.2 6.6h.1M11.7 6.6h.1M4.6 9.4h6.8"/>`,
   external: () => html`<path d="M9.4 2.6h4v4"/><path d="M13.4 2.6 7.6 8.4"/><path d="M11.4 9.4v3c0 .6-.4 1-1 1H3.6c-.6 0-1-.4-1-1V5.6c0-.6.4-1 1-1h3"/>`,
 };
@@ -49,6 +52,7 @@ const P = {
 // Agent icons stored in agent.json map onto the set above; unknown names
 // fall back to the agent's initial so a custom icon never renders blank.
 const ALIASES = {
+  coins: 'coin', pencil: 'pen', travel: 'plane', trip: 'plane', writing: 'pen',
   work: 'briefcase', job: 'briefcase', health: 'heart', fitness: 'heart', money: 'coin', finance: 'coin',
   dollar: 'coin', wallet: 'coin', family: 'users', people: 'users', team: 'users', learning: 'book',
   school: 'book', study: 'book', project: 'folder', code: 'terminal', repo: 'folder', donna: 'chat',

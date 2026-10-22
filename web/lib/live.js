@@ -17,13 +17,19 @@ function indexAgents(agents) {
   return byId;
 }
 
+function applyOrg(r) {
+  const agents = Array.isArray(r && r.agents) ? r.agents : [];
+  const patch = { org: (r && r.org) || {}, agents, agentsById: indexAgents(agents) };
+  if (r && r.channels) {
+    patch.channels = r.channels;
+    if (Array.isArray(r.channels.recent) && !getState().channelLog.length) patch.channelLog = r.channels.recent.slice(-50);
+  }
+  setState(patch);
+}
+
 export async function refreshOrg() {
   try {
-    const r = await api.org();
-    const agents = Array.isArray(r && r.agents) ? r.agents : [];
-    const patch = { org: (r && r.org) || r || {}, agents, agentsById: indexAgents(agents) };
-    if (r && r.channels) patch.channels = r.channels;
-    setState(patch);
+    applyOrg(await api.org());
   } catch (e) {
     if (!(e instanceof ApiError && e.status === 401)) console.warn('[clawdling] org refresh failed', e);
   }
@@ -77,11 +83,19 @@ export function handleEvent(type, payload) {
       refreshSessions();
     }
   } else if (type === 'org') {
-    refreshOrg();
+    // The server may ship the whole org view with the event; apply it, else refetch.
+    if (data && Array.isArray(data.agents)) applyOrg(data);
+    else refreshOrg();
   } else if (type === 'channel') {
+    if (data && typeof data === 'object' && (data.telegram || data.imessage)) {
+      // A channel STATUS snapshot (configured, paired, pairing code...), not a message.
+      const { channel: _c, ...status } = data;
+      setState({ channels: status });
+      if (Array.isArray(status.recent)) setState({ channelLog: status.recent.slice(-50) });
+      return;
+    }
     const entry = { ...(data && typeof data === 'object' ? data : { text: String(data) }), _at: Date.now() };
     setState((s) => ({ channelLog: [...s.channelLog, entry].slice(-50) }));
-    refreshChannels();
   }
 }
 

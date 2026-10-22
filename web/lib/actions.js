@@ -6,6 +6,7 @@ import { load, save } from './prefs.js';
 import { terms } from './term.js';
 import { copyText } from './util.js';
 import { attachCommand } from './model.js';
+import { nextPaneSize } from './layout.js';
 
 const LAYOUTS = ['focus', 'split', 'grid'];
 
@@ -252,7 +253,7 @@ export function closeMenu() {
 
 // ---------- server actions ----------
 export async function startSession(agent, { prompt, model, title } = {}) {
-  const body = { agent };
+  const body = { agent, ...(nextPaneSize() || {}) };
   if (prompt && prompt.trim()) body.prompt = prompt.trim();
   if (model && model.trim()) body.model = model.trim();
   if (title && title.trim()) body.title = title.trim();
@@ -287,11 +288,13 @@ export async function endSession(sid) {
 
 export async function resumeSession(sid) {
   try {
-    const s = await api.resume(sid);
+    const v = terms.get(sid);
+    const size = v && v.term.cols > 0 ? { cols: v.term.cols, rows: v.term.rows } : nextPaneSize(getState().open.includes(sid) ? 0 : 1);
+    const s = await api.resume(sid, size || undefined);
     mergeSession(s && s.sid ? s : { sid, status: 'starting', ended_at: null });
     focusSession((s && s.sid) || sid);
-    const v = terms.get((s && s.sid) || sid);
-    if (v) v.setEnded(false);
+    const view = terms.get((s && s.sid) || sid);
+    if (view) view.setEnded(false);
     return s;
   } catch (e) {
     errorToast('Could not resume the session', e);

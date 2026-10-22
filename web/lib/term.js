@@ -33,6 +33,27 @@ const TRACE_BUCKETS = 40;
 
 export const terms = new Map(); // sid -> TermView
 
+let cell = null;
+function cellSize(fontSize) {
+  if (cell && cell.f === fontSize) return cell;
+  let w = fontSize * 0.6;
+  try {
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.font = `${fontSize}px ${MONO}`;
+    w = ctx.measureText('W').width || w;
+  } catch { /* keep the estimate */ }
+  cell = { f: fontSize, w, h: Math.ceil(fontSize * 1.18) };
+  return cell;
+}
+
+// Columns x rows a terminal of this pixel size will get (same font rules as layout()).
+export function estimateSize(pxW, pxH) {
+  const base = Number(load('termFontSize', 13)) || 13;
+  const f = pxW < 520 ? Math.max(11, base - 1) : base;
+  const c = cellSize(f);
+  return { cols: Math.max(20, Math.min(500, Math.floor((pxW - 16) / c.w))), rows: Math.max(6, Math.min(200, Math.floor((pxH - 10) / c.h))) };
+}
+
 // capture-pane snapshots are "\n"-joined; a terminal needs CR+LF or lines staircase.
 export function normalizeSnapshot(data) {
   return String(data || '').replace(/\r?\n/g, '\r\n');
@@ -201,7 +222,7 @@ export class TermView {
       if (this.disposed) return;
       if (this.ended) { this.setConn('ended'); return; }
       if (ev && (ev.code === 4401 || ev.code === 4403)) { this.setConn('denied'); return; }
-      if (ev && ev.code === 4404) { this.markEnded(); return; }
+      if (ev && (ev.code === 4404 || ev.code === 1008)) { this.markEnded(); return; }
       this.scheduleReconnect();
     };
     ws.onerror = () => { /* onclose follows and owns the retry */ };

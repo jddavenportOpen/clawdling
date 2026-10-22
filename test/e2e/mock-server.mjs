@@ -129,6 +129,11 @@ function sess(agentsById, agent, title, status, opts = {}) {
     ended_at: ended ? iso(opts.ended ?? 2 * HOUR) : null,
     notification: opts.notification || null,
     resumable: opts.resumable ?? true,
+    permission_mode: null,
+    last_message: opts.last_message || null,
+    transcript_path: null,
+    attach_cmd: `tmux -L clawdling attach -t cl-${agent}-${sid.slice(0, 6)}`,
+    get name() { return `${this.agent_name}: ${this.title || 'new session'}`; },
   };
 }
 
@@ -237,6 +242,23 @@ function bannerFor(s, agent) {
   return `${lines.join('\r\n')}\r\n${DIM}›${RESET} `;
 }
 
+// A QR-looking placeholder (not a decodable code): the real server renders the real one.
+function placeholderQr(seed) {
+  const n = 25;
+  let h = 2166136261;
+  const bits = [];
+  for (let i = 0; i < n * n; i += 1) {
+    h ^= seed.charCodeAt(i % seed.length) + i;
+    h = Math.imul(h, 16777619) >>> 0;
+    bits.push(h & 1);
+  }
+  const finder = (x, y) => `<path d="M${x} ${y}h7v7h-7z M${x + 1} ${y + 1}v5h5v-5z" fill-rule="evenodd"/><path d="M${x + 2} ${y + 2}h3v3h-3z"/>`;
+  const inFinder = (x, y) => (x < 8 && y < 8) || (x > n - 9 && y < 8) || (x < 8 && y > n - 9);
+  let cells = '';
+  for (let y = 0; y < n; y += 1) for (let x = 0; x < n; x += 1) if (!inFinder(x, y) && bits[y * n + x]) cells += `M${x} ${y}h1v1h-1z`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="-2 -2 ${n + 4} ${n + 4}" shape-rendering="crispEdges"><rect x="-2" y="-2" width="${n + 4}" height="${n + 4}" fill="#fff"/><g fill="#111">${finder(0, 0)}${finder(n - 7, 0)}${finder(0, n - 7)}<path d="${cells}"/></g></svg>`;
+}
+
 // ---------------------------------------------------------------- server
 export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'mock-token-0123456789abcdef', fixture = 'default', quiet = true } = {}) {
   const st = {
@@ -262,9 +284,12 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.terms = new Map();
     st.requests = [];
     st.pairing = null;
+    st.recent = [];
+    st.bind = '127.0.0.1';
+    st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
     for (const s of fx.sessions) ensureTerm(s);
-    broadcast('org', { action: 'reset' });
+    publishOrg('reset', null);
   }
 
   const agentById = (id) => st.agents.find((a) => a.id === id);
@@ -287,6 +312,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   };
   const claudeMd = (a) => a._claude || defaultClaudeMd(a, st.org.owner);
   const nowMd = (a) => (a._now != null ? a._now : defaultNow(a));
+
+  const orgView = () => ({ org: st.org, agents: st.agents.map(agentWithStats), channels: channelStatus() });
+  const publishOrg = (reason, id) => broadcast('org', { reason, id, ...orgView() });
 
   function broadcast(type, data) {
     const frame = `data: ${JSON.stringify({ type, data })}\n\n`;
@@ -339,10 +367,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       for (const ws of term.viewers) {
         if (ws.readyState !== 1) continue;
         ws.send(JSON.stringify({ t: 'status', status }));
-        if (status === 'ended') {
-          ws.send(JSON.stringify({ t: 'ended' }));
-          setTimeout(() => { try { ws.close(1000, 'ended'); } catch { /* ignore */ } }, 30);
-        }
+        if (status === 'ended') ws.send(JSON.stringify({ t: 'ended' })); // like core: the socket stays open
       }
     }
   }
@@ -355,7 +380,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       setStatus(s, 'working');
       return;
     }
-    if (event === 'Stop') { setStatus(s, 'ready'); return; }
+    if (event === 'Stop') {
+      if (typeof payload.last_assistant_message === 'string' && payload.last_assistant_message.trim()) s.last_message = payload.last_assistant_message.trim().slice(0, 280);
+      setStatus(s, 'ready');
+      return;
+    }
     if (event === 'Notification') { setStatus(s, 'needs_you', { notification: payload.message || 'Claude needs your attention' }); return; }
     if (event === 'SessionEnd') setStatus(s, 'ended');
   }
@@ -373,7 +402,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         out(s, `\r\n${BOLD}Bash command${RESET}\r\n   ${CYAN}rm -rf build/${RESET}\r\n\r\n Do you want to proceed?\r\n ${CLAUDE}❯${RESET} 1. Yes\r\n   2. No\r\n`);
         applyHook(s, 'Notification', { message: 'Claude needs your permission to use Bash' });
       } else {
-        applyHook(s, 'Stop');
+        applyHook(s, 'Stop', { last_assistant_message: `You said: ${text}` });
         out(s, `${DIM}›${RESET} `);
       }
     });
@@ -395,13 +424,15 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   }
 
   function createSession(body) {
-    const a = agentById(body.agent);
+    const scratch = body.agent === 'scratch';
+    const a = scratch ? { id: 'scratch', kind: 'scratch', name: 'Scratch', model: null, repo: '/Users/ada/clawdling' } : agentById(body.agent);
     if (!a) return null;
-    const s = sess(Object.fromEntries(st.agents.map((x) => [x.id, x])), a.id, body.title || (body.prompt ? deriveTitle(body.prompt) : null), 'starting', { last: 0, age: 0, model: body.model });
+    const s = sess({ [a.id]: a }, a.id, body.title || (body.prompt ? deriveTitle(body.prompt) : null), 'starting', { last: 0, age: 0, model: body.model });
     s.created_at = new Date().toISOString();
     s.last_activity_at = s.created_at;
     st.sessions.set(s.sid, s);
     const term = ensureTerm(s);
+    if (Number.isInteger(body.cols) && Number.isInteger(body.rows)) { term.cols = body.cols; term.rows = body.rows; }
     term.buf = `${CLAUDE}✻${RESET} Welcome to ${BOLD}Claude Code${RESET} ${DIM}(mock)${RESET}\r\n${DIM}  /help for help · cwd: ${s.cwd.replace('/Users/ada', '~')}${RESET}\r\n\r\n${DIM}›${RESET} `;
     broadcast('session', s);
     if (body.prompt) {
@@ -418,8 +449,14 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   }
 
   function channelStatus() {
-    return JSON.parse(JSON.stringify(st.channels));
+    const c = JSON.parse(JSON.stringify(st.channels));
+    const t = c.telegram;
+    const p = st.pairing && Date.now() < st.pairing.expires ? st.pairing : null;
+    Object.assign(t, { bot_username: t.configured ? 'ada_donna_bot' : null, pairing_code: !t.paired && p ? p.code : null,
+      pairing_expires_at: !t.paired && p ? new Date(p.expires).toISOString() : null, polling: t.configured && t.enabled, error: null });
+    return { ...c, donna: { session: st.donnaSession, busy: false }, recent: st.recent.slice(-30) };
   }
+  const publishChannels = (channel) => broadcast('channel', { channel, ...channelStatus() });
 
   // ---- http helpers
   const send = (res, code, body, headers = {}) => {
@@ -484,7 +521,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (m !== 'GET') st.requests.push({ method: m, path: p, body, at: Date.now() });
 
     if (p === '/api/me' && m === 'GET') { send(res, 200, { ok: true, owner: st.org.owner, org: st.org.name, version: '1.0.0-mock' }); return; }
-    if (p === '/api/org' && m === 'GET') { send(res, 200, { org: st.org, agents: st.agents.map(agentWithStats), channels: channelStatus() }); return; }
+    if (p === '/api/org' && m === 'GET') { send(res, 200, orgView()); return; }
     if (p === '/api/events' && m === 'GET') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       res.write('retry: 1500\n\n');
@@ -504,7 +541,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const a = mkAgent(id, kind, name, String(body.mission || '').trim(), { age: 0, repo: body.repo || null, domain: body.domain || null, model: body.model || null, icon: kind === 'project' ? 'folder' : null, color: null });
       a._log = [`${new Date().toISOString().slice(0, 10)} Created ${name}.`];
       st.agents.push(a);
-      broadcast('org', { action: 'agent_created', id });
+      publishOrg('agent_created', id);
       send(res, 201, publicAgent(a));
       return;
     }
@@ -520,7 +557,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         }
         if (typeof body.claude_md === 'string') a._claude = body.claude_md;
         if (typeof body.now_md === 'string') a._now = body.now_md;
-        broadcast('org', { action: 'context_saved', id });
+        publishOrg('context_updated', id);
         send(res, 204);
         return;
       }
@@ -530,9 +567,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         return;
       }
       if (!mm[2] && m === 'DELETE') {
-        if (id === 'donna' || a.kind === 'chief') { send(res, 400, { error: 'Donna cannot be archived' }); return; }
+        if (id === 'donna' || a.kind === 'chief') { send(res, 400, { error: "Donna is the chief of staff and can't be archived" }); return; }
+        if ([...st.sessions.values()].some((x) => x.agent === id && x.status !== 'ended')) { send(res, 409, { error: `end ${id}'s live sessions before archiving it` }); return; }
         st.agents = st.agents.filter((x) => x.id !== id);
-        broadcast('org', { action: 'agent_archived', id });
+        publishOrg('agent_archived', id);
         send(res, 200, { ok: true, archived: `.archive/${id}-${Date.now()}` });
         return;
       }
@@ -565,8 +603,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       if (mm[2] === '/resume' && m === 'POST') {
         if (s.resumable === false) { send(res, 409, { error: 'this session cannot be resumed' }); return; }
         if (s.status === 'ended') {
+          if (Number.isInteger(body.cols) && Number.isInteger(body.rows)) { const term = ensureTerm(s); term.cols = body.cols; term.rows = body.rows; }
           setStatus(s, 'starting');
           out(s, `\r\n${DIM}── resumed with claude --resume ${s.sid.slice(0, 8)} ──${RESET}\r\n${DIM}›${RESET} `);
+          const term = ensureTerm(s); // viewers still attached get a fresh cut, like core
+          for (const ws of term.viewers) if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'snapshot', data: term.buf.replace(/\r\n/g, '\n') }));
           later(400, () => { if (s.status === 'starting') setStatus(s, 'ready'); });
         }
         send(res, 200, s);
@@ -585,20 +626,33 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       send(res, 204);
       return;
     }
+    if (p === '/api/pair' && m === 'GET') {
+      const host = req.headers.host || '127.0.0.1';
+      const lanUrl = `http://192.168.1.20:${host.split(':')[1] || 4747}`;
+      send(res, 200, { url: lanUrl, token, link: `${lanUrl}/?t=${token}`, lan: ['192.168.1.20'], bind: st.bind });
+      return;
+    }
+    if (p === '/api/pair/qr.svg' && m === 'GET') {
+      res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' });
+      res.end(placeholderQr(token));
+      return;
+    }
     if (p === '/api/channels' && m === 'GET') { send(res, 200, channelStatus()); return; }
     if (p === '/api/channels/telegram' && m === 'POST') {
       const t = st.channels.telegram;
       if (typeof body.token === 'string' && body.token.trim()) { t.configured = true; t.paired = false; t.chat_id_masked = null; }
       if (typeof body.enabled === 'boolean') t.enabled = body.enabled;
       if (!t.configured) { send(res, 400, { error: 'send a bot token first' }); return; }
-      if (!t.paired) st.pairing = String(crypto.randomInt(100000, 1000000));
-      send(res, 200, { ...channelStatus().telegram, pairing_code: t.paired ? null : st.pairing });
+      if (!t.paired && (!st.pairing || body.token || body.pair === true)) st.pairing = { code: String(crypto.randomInt(100000, 1000000)), expires: Date.now() + 10 * MIN };
+      publishChannels('telegram');
+      send(res, 200, { ...channelStatus().telegram });
       return;
     }
     if (p === '/api/channels/imessage' && m === 'POST') {
       const im = st.channels.imessage;
       if (typeof body.handle === 'string') im.handle = body.handle.trim() || null;
       if (typeof body.enabled === 'boolean') im.enabled = body.enabled && !!im.handle;
+      publishChannels('imessage');
       send(res, 200, channelStatus().imessage);
       return;
     }
@@ -616,7 +670,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (p === '/__mock/requests') { send(res, 200, st.requests); return; }
     if (p === '/__mock/channel' && req.method === 'POST') {
       const body = await readBody(req);
-      broadcast('channel', { channel: body.channel || 'telegram', direction: body.direction || 'in', text: body.text || '', at: new Date().toISOString() });
+      const msg = { channel: body.channel || 'telegram', direction: body.direction || 'in', text: body.text || '', ts: new Date().toISOString() };
+      st.recent.push({ type: 'channel', ...msg });
+      broadcast('channel', msg);
       send(res, 204);
       return;
     }
@@ -627,8 +683,17 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       send(res, 200, { dropped: n });
       return;
     }
+    if (p === '/__mock/bind' && req.method === 'POST') {
+      const body = await readBody(req);
+      st.bind = body.bind || '127.0.0.1';
+      send(res, 204);
+      return;
+    }
     if (p === '/__mock/pair' && req.method === 'POST') {
       Object.assign(st.channels.telegram, { paired: true, enabled: true, chat_id_masked: '••4821' });
+      st.pairing = null;
+      st.recent.push({ ts: new Date().toISOString(), type: 'channel', channel: 'telegram', event: 'paired', chat: '••4821' });
+      publishChannels('telegram');
       send(res, 204);
       return;
     }
@@ -669,11 +734,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const term = ensureTerm(s);
       // Like tmux capture-pane: "\n"-joined lines (the client must turn them into CR+LF).
       ws.send(JSON.stringify({ t: 'snapshot', data: term.buf.replace(/\r\n/g, '\n') }));
-      if (s.status === 'ended') {
-        ws.send(JSON.stringify({ t: 'ended' }));
-        setTimeout(() => { try { ws.close(1000, 'ended'); } catch { /* ignore */ } }, 30);
-        return;
-      }
+      ws.send(JSON.stringify({ t: 'status', status: s.status }));
+      if (s.status === 'ended') ws.send(JSON.stringify({ t: 'ended' }));
       term.viewers.add(ws);
       ws.on('message', (raw) => {
         let msg;

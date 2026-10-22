@@ -63,9 +63,10 @@ export const api = {
   spawn: async (body) => one(await request('POST', '/api/sessions', body), 'session'),
   rename: async (sid, title) => one(await request('PATCH', `/api/sessions/${enc(sid)}`, { title }), 'session'),
   end: async (sid) => one(await request('DELETE', `/api/sessions/${enc(sid)}`), 'session'),
-  resume: async (sid) => one(await request('POST', `/api/sessions/${enc(sid)}/resume`), 'session'),
+  resume: async (sid, size) => one(await request('POST', `/api/sessions/${enc(sid)}/resume`, size), 'session'),
   send: (sid, text, enter = true) => request('POST', `/api/sessions/${enc(sid)}/send`, { text, enter }),
 
+  pair: () => request('GET', '/api/pair'),
   channels: () => request('GET', '/api/channels'),
   telegram: (body) => request('POST', '/api/channels/telegram', body),
   imessage: (body) => request('POST', '/api/channels/imessage', body),

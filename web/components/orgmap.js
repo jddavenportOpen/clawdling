@@ -337,7 +337,6 @@ export function OrgMap() {
 }
 
 function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
-  const color = n.agent && n.agent.color;
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
   const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}`;
   const tone = st.needs ? 'needs' : st.working ? 'working' : st.ready ? 'ready' : 'idle';
@@ -349,8 +348,8 @@ function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
     ${st.working && !reduced ? html`<circle class="pulse" r=${n.r + 2} />` : null}
     ${st.needs ? html`<circle class="needs-ring" r=${n.r + 5} />` : null}
     <circle class="sel-ring" r=${n.r + (st.needs ? 9 : 5)} />
-    <circle class="node-disc" r=${n.r} style=${color ? { '--agent': color } : undefined} />
-    <g class="node-icon" style=${color ? { color } : undefined} transform=${`translate(${-iconSize / 2} ${-iconSize / 2})`}>
+    <circle class="node-disc" r=${n.r} />
+    <g class="node-icon" transform=${`translate(${-iconSize / 2} ${-iconSize / 2})`}>
       ${n.kind === 'owner' ? html`<text class="owner-initial" x=${iconSize / 2} y=${iconSize / 2 + 1}>${(n.label || '?').charAt(0).toUpperCase()}</text>`
         : n.kind === 'cluster' ? html`<${Icon} name="folder" size=${iconSize} />`
         : hasIcon(n.agent && n.agent.icon) ? html`<${Icon} name=${n.agent.icon} size=${iconSize} />`

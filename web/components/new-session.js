@@ -9,13 +9,15 @@ import { closeOverlay, startSession, openOverlay } from '../lib/actions.js';
 import { sortAgents, KIND_LABEL, agentStats } from '../lib/model.js';
 import { matches, isMac } from '../lib/util.js';
 
-const GROUPS = [['chief', 'Chief of staff'], ['domain', 'Domains'], ['project', 'Projects']];
+const GROUPS = [['chief', 'Chief of staff'], ['domain', 'Domains'], ['project', 'Projects'], ['scratch', 'No agent']];
+// A plain claude in the org folder, no agent context: for one-off questions.
+const SCRATCH = { id: 'scratch', kind: 'scratch', name: 'Scratch', icon: 'terminal', mission: 'A plain claude in your org folder, with no agent context or memory.' };
 
 export function NewSessionDialog({ agent: preset }) {
   const agents = useStore((s) => s.agents);
   const sessions = useStore((s) => s.sessions);
   const list = useMemo(() => Object.values(sessions), [sessions]);
-  const sorted = useMemo(() => sortAgents(agents), [agents]);
+  const sorted = useMemo(() => [...sortAgents(agents), SCRATCH], [agents]);
   const [q, setQ] = useState('');
   const [pick, setPick] = useState(preset || (sorted[0] && sorted[0].id) || null);
   const [prompt, setPrompt] = useState('');
@@ -65,7 +67,7 @@ export function NewSessionDialog({ agent: preset }) {
             const st = agentStats(a.id, list);
             return html`<div role="option" aria-selected=${pick === a.id ? 'true' : 'false'} tabindex="-1"
               class=${`ns-row ${pick === a.id ? 'is-sel' : ''}`} onClick=${() => setPick(a.id)} onDblClick=${() => go(a.id)} data-agent-option=${a.id}>
-              <span class="ns-icon" style=${a.color ? { '--agent': a.color } : undefined}><${AgentIcon} agent=${a} size=${14} /></span>
+              <span class="ns-icon"><${AgentIcon} agent=${a} size=${14} /></span>
               <span class="ns-text"><span class="ns-name">${a.name}</span>${a.mission ? html`<span class="ns-mission">${a.mission}</span>` : null}</span>
               ${st.live ? html`<span class="badge">${st.live} live</span>` : null}
             </div>`;

@@ -191,3 +191,30 @@ test.describe('donna page', () => {
     expect((await sessionBySid(sid)).agent).toBe('donna');
   });
 });
+
+test.describe('settings: connect your phone', () => {
+  test('shows the pairing QR, a copyable link and the localhost warning', async ({ page, context }) => {
+    await reset('default');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const pair = await api('GET', '/api/pair');
+    await login(page, '#/settings');
+    const card = page.getByTestId('phone-card');
+    await expect(card).toBeVisible();
+    const qr = page.getByTestId('pair-qr');
+    await expect(qr).toHaveAttribute('src', '/api/pair/qr.svg');
+    await expect.poll(() => qr.evaluate((img) => img.complete && img.naturalWidth > 0)).toBe(true);
+    // The token is masked on screen until asked for, but Copy copies the real link.
+    await expect(page.getByTestId('pair-link')).not.toContainText(pair.token);
+    await page.getByTestId('pair-copy').click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(pair.link);
+    if (pair.bind === '127.0.0.1') {
+      await expect(page.getByTestId('pair-warning')).toContainText("Your phone can't reach this cockpit yet: restart with clawdling start --host 0.0.0.0 (same Wi-Fi) or use Tailscale.");
+    }
+    if (isMock()) {
+      await fetch(new URL('/__mock/bind', process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bind: '0.0.0.0' }) });
+      await page.reload();
+      await expect(page.getByTestId('pair-qr')).toBeVisible();
+      await expect(page.getByTestId('pair-warning')).toHaveCount(0);
+    }
+  });
+});

@@ -8,24 +8,10 @@ import { Icon, AgentIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { Pane } from './pane.js';
 import { setLayout, focusSession, startSession, togglePalette, openOverlay } from '../lib/actions.js';
+import { gridShape } from '../lib/layout.js';
 import { sessionName, groupSessions, sortAgents, KIND_LABEL, agentStats, statusText, agentLabel } from '../lib/model.js';
 import { MOD, plural } from '../lib/util.js';
 import { setState } from '../lib/store.js';
-
-// Pick a grid that keeps terminals wide enough for Claude Code's UI.
-export function gridShape(n, W, H) {
-  if (n <= 1 || !W || !H) return { cols: 1, rows: 1 };
-  let best = null;
-  for (let cols = 1; cols <= Math.min(n, 4); cols += 1) {
-    const rows = Math.ceil(n / cols);
-    const w = W / cols;
-    const h = H / rows;
-    const ratio = w / h;
-    const s = Math.min(w / 600, 1) * 1.2 + Math.min(h / 300, 1) - Math.abs(Math.log(ratio / 1.4)) * 0.35;
-    if (!best || s > best.s) best = { cols, rows, s };
-  }
-  return { cols: best.cols, rows: best.rows };
-}
 
 const LAYOUT_OPTS = [
   { id: 'focus', label: 'Focus', icon: 'layout-focus', hint: 'One big pane, the rest as tabs' },
@@ -146,7 +132,7 @@ function EmptyState() {
           ${sortAgents(agents).map((a) => {
             const st = agentStats(a.id, list);
             return html`<li key=${a.id}><button class="agent-card" onClick=${() => startSession(a.id).catch(() => {})} data-agent-card=${a.id}>
-              <span class="ac-icon" style=${a.color ? { '--agent': a.color } : undefined}><${AgentIcon} agent=${a} size=${16} /></span>
+              <span class="ac-icon"><${AgentIcon} agent=${a} size=${16} /></span>
               <span class="ac-text"><span class="ac-name">${a.name}</span><span class="ac-kind">${KIND_LABEL[a.kind] || a.kind}${st.live ? ` · ${st.live} live` : ''}</span>
               ${a.mission ? html`<span class="ac-mission">${a.mission}</span>` : null}</span>
             </button></li>`;

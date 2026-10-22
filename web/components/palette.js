@@ -60,13 +60,14 @@ export function Palette() {
       ['Go to Settings', 'sliders', () => navigate('#/settings'), 'preferences theme'],
       ['New session…', 'plus', () => openOverlay({ type: 'new-session' }), 'start spawn'],
       ['New agent…', 'user-plus', () => openOverlay({ type: 'wizard' }), 'create domain project wizard'],
+      ['New scratch session', 'terminal', () => startSession('scratch').catch(() => {}), 'plain claude no agent'],
       ['Toggle sidebar', 'chevrons-left', () => toggleRail(), 'rail collapse expand'],
       ['Layout: Focus', 'layout-focus', () => setLayout('focus'), 'view'],
       ['Layout: Split', 'layout-split', () => setLayout('split'), 'view'],
       ['Layout: Grid', 'layout-grid', () => setLayout('grid'), 'view'],
     ];
     for (const [label, icon, fn, extra] of go) {
-      const isNew = label.startsWith('New');
+      const isNew = label.endsWith('…');
       out.push({ id: `g:${label}`, group: 'Go to', label, icon, extra, run: isNew ? () => fn() : run(fn) });
     }
     return out;

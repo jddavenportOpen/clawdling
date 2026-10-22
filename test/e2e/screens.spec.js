@@ -91,6 +91,14 @@ for (const vp of [{ w: 1440, h: 900 }, { w: 1024, h: 768 }]) {
       await shot(page, `agent-page-sessions-${tag}`);
     });
 
+    test(`settings with phone pairing (${tag})`, async ({ page }) => {
+      await reset('default');
+      await login(page, '#/settings');
+      await expect(page.getByTestId('pair-qr')).toBeVisible();
+      await settle(page);
+      await shot(page, `settings-${tag}`);
+    });
+
     test(`Donna page (${tag})`, async ({ page }) => {
       test.skip(!isMock(), 'stores a bot token');
       await reset('default');
