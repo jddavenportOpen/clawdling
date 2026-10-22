@@ -35,6 +35,7 @@ export const Composer = forwardRef<
             placeholder={placeholder}
             placeholderTextColor={colors.text3}
             multiline
+            numberOfLines={1}
             editable={!disabled}
             autoFocus={autoFocus}
             style={styles.input}

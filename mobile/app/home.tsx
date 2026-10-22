@@ -90,7 +90,7 @@ function HomeBody({ client, demo, host }: { client: ClawdlingClient; demo: boole
           <View style={styles.statusLine}>
             <View style={[styles.statusDot, { backgroundColor: poll.error ? tones.needs.fg : loaded ? tones.ready.fg : colors.text3 }]} />
             <Text style={styles.statusText} numberOfLines={1}>
-              {demo ? 'Demo: sample agents on this phone, nothing is sent anywhere' : poll.error ? `Reconnecting to ${host}` : loaded ? `Connected to ${host}` : `Connecting to ${host}…`}
+              {demo ? 'Demo mode · sample data on this phone' : poll.error ? `Reconnecting to ${host}` : loaded ? `Connected to ${host}` : `Connecting to ${host}…`}
             </Text>
           </View>
 
@@ -112,7 +112,7 @@ function HomeBody({ client, demo, host }: { client: ClawdlingClient; demo: boole
             <View style={styles.askBody}>
               <Text style={styles.askTitle}>Ask {donna?.name ?? 'Donna'}</Text>
               <Text style={styles.askHint} numberOfLines={1}>
-                She hands it to the right agent and reports back
+                She routes it to the right agent
               </Text>
             </View>
             <Icon name="paper-plane" size={18} color={colors.accent} />
