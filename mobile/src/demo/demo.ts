@@ -180,7 +180,7 @@ export class DemoClient implements ClawdlingClient {
     this.schedule(() => {
       const reply =
         `On it. This is the demo, so nothing actually ran. With your own Clawdling server, ${s.agent_name} would work on ` +
-        `"${quote(text)}" in a real Claude Code session on your computer, and its replies would show up right here.`;
+        `"${quote(text)}" in a real session on your computer, and its replies would show up right here.`;
       this.push(s.sid, 'assistant', reply, [{ name: 'Read', summary: 'Read memory/NOW.md' }]);
       s.status = 'ready';
       s.last_message = reply.slice(0, 280);

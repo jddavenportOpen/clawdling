@@ -42,6 +42,13 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
   const [notice, setNotice] = useState<string | null>(null);
   const demoRef = useRef<DemoClient | null>(null);
   const authLostRef = useRef(false);
+  // Navigation waits for the commit that changes `connection`, so the next screen never renders
+  // with the previous connection (Home must not mount, see "no connection", and bounce back).
+  const [nav, setNav] = useState<{ to: '/home' | '/connect'; n: number } | null>(null);
+
+  useEffect(() => {
+    if (nav) resetTo(nav.to);
+  }, [nav]);
 
   useEffect(() => {
     let alive = true;
@@ -60,7 +67,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     demoRef.current = null;
     setConnection(null);
     setNotice(why);
-    resetTo('/connect');
+    setNav((n) => ({ to: '/connect', n: (n?.n ?? 0) + 1 }));
   }, []);
 
   const onAuthError = useCallback(
@@ -88,7 +95,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     demoRef.current = null;
     setNotice(null);
     setConnection(c);
-    resetTo('/home');
+    setNav((n) => ({ to: '/home', n: (n?.n ?? 0) + 1 }));
   }, []);
 
   const startDemo = useCallback(async () => {
@@ -97,7 +104,7 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     demoRef.current = new DemoClient();
     setNotice(null);
     setConnection({ mode: 'demo' });
-    resetTo('/home');
+    setNav((n) => ({ to: '/home', n: (n?.n ?? 0) + 1 }));
   }, []);
 
   const clearNotice = useCallback(() => setNotice(null), []);

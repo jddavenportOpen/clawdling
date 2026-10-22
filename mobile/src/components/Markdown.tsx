@@ -1,23 +1,15 @@
 import * as Clipboard from 'expo-clipboard';
-import * as WebBrowser from 'expo-web-browser';
 import { memo, useMemo, useState } from 'react';
-import { Linking, Platform, Pressable, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
+import { Linking, Pressable, ScrollView, StyleSheet, Text, View, type TextStyle } from 'react-native';
 import { inlineText, parseMarkdown, safeHref, type Block, type Inline } from '../markdown';
 import { colors, mono, radius } from '../theme';
 
 export type MarkdownTone = 'assistant' | 'user';
 
+/** Opens http(s) and mailto links in the system browser / mail app. The app embeds no browser. */
 export async function openLink(href: string) {
   const safe = safeHref(href);
   if (!safe) return;
-  if (/^https?:/i.test(safe) && Platform.OS !== 'web') {
-    try {
-      await WebBrowser.openBrowserAsync(safe, { presentationStyle: WebBrowser.WebBrowserPresentationStyle.PAGE_SHEET });
-      return;
-    } catch {
-      // fall through to the system handler
-    }
-  }
   try {
     await Linking.openURL(safe);
   } catch {

@@ -61,6 +61,7 @@ describe('session names and status', () => {
 
   it('spots permission prompts', () => {
     assert.equal(isPermissionPrompt('Claude needs your permission to use Bash'), true);
+    assert.equal(isPermissionPrompt('Permission needed to run a script (Bash)'), true);
     assert.equal(isPermissionPrompt('Claude is waiting for your input'), false);
     assert.equal(isPermissionPrompt(null), false);
   });

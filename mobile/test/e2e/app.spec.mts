@@ -78,7 +78,7 @@ test('connects with a pasted link and lists every session by its real name', asy
   await expect(needs.getByText('Categorize September spending')).toBeVisible();
   await expect(needs.getByText("Plan this week's workouts")).toBeVisible();
   await expect(needs.getByText('Draft the Q4 planning agenda')).toBeVisible();
-  await expect(needs.getByText('Claude needs your permission to use Bash')).toBeVisible();
+  await expect(needs.getByText('Permission needed to run a script (Bash)')).toBeVisible();
   await expect(page.getByTestId('section-live').getByText('Fix the broken pricing page links')).toBeVisible();
   await expect(page.getByTestId('section-recent').getByText('Find three kitchen contractors')).toBeVisible();
   await expect(page.getByTestId('section-recent').getByText("Summarize Monday's standup notes")).toBeVisible();
@@ -113,7 +113,7 @@ test('a collapsed run of tool calls expands', async ({ page, mock }) => {
   await connect(page, mock);
   await page.getByText('Fix the broken pricing page links').first().click();
   const chat = page.getByTestId('chat-screen');
-  await expect(chat.getByText('3 more steps')).toBeVisible();
+  await expect(chat.getByText('2 more steps')).toBeVisible();
   await expect(chat.getByText('npm test -- MobileNav')).toHaveCount(0);
   await chat.getByTestId('tool-toggle').click();
   await expect(chat.getByText('npm test -- MobileNav')).toBeVisible();
@@ -137,7 +137,7 @@ test('a permission prompt is shown, and sending asks first', async ({ page, mock
   await connect(page, mock);
   await page.getByText('Categorize September spending').first().click();
   await expect(page.getByTestId('needs-card')).toContainText('Waiting for your permission');
-  await expect(page.getByTestId('needs-card')).toContainText('Claude needs your permission to use Bash');
+  await expect(page.getByTestId('needs-card')).toContainText('Permission needed to run a script (Bash)');
   await shot('05-needs-you');
 
   const chat = page.getByTestId('chat-screen');

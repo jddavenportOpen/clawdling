@@ -18,3 +18,6 @@ playwright-report/
 credentials.json
 .env
 .env.*
+
+# Local signing (credentialsSource: local) is injected at build time, never committed
+credentials/
