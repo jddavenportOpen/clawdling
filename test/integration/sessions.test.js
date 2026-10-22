@@ -93,6 +93,9 @@ test('viewer: snapshot first, live output, input echo, permission -> needs_you, 
     }, { label: 'needs_you' });
     assert.match(nu.notification, /permission/);
     await v.next((m) => m.t === 'status' && m.status === 'needs_you');
+    assert.equal(nu.waiting_on, 'permission_prompt');
+    const typed = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'yes' });
+    assert.equal(typed.status, 409, 'the API (and Donna) can never answer a permission prompt');
     v.send({ t: 'in', data: '1\r' });
     await waitFor(async () => (await getSession(s.sid)).status === 'ready', { label: 'ready after permission' });
     v.send({ t: 'resize', cols: 101, rows: 33 });

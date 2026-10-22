@@ -42,6 +42,7 @@ export const TRUST_NOTICE =
   'Claude Code is asking whether you trust this folder. In the terminal, choose "Yes, I trust this folder" (arrow keys, then Enter). Trust your org folder once from a Scratch session and no agent will ask again.';
 export const IMPORTS_NOTICE = 'Claude Code is asking whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal.';
 export const STALL_NOTICE = 'Claude Code has not finished starting. It may be waiting for an answer in the terminal.';
+const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
 
 /** Which startup dialog (if any) a rendered screen shows. Whitespace-insensitive. */
 export function dialogFromScreen(screen) {
@@ -234,6 +235,7 @@ export class SessionManager {
       last_activity_at: rec.last_activity_at,
       ended_at: rec.ended_at,
       notification: rec.notification,
+      waiting_on: rec.status === 'needs_you' ? rec.waiting_on || null : null,
       resumable: rec.status === 'ended',
       last_message: rec.last_message,
       transcript_path: rec.transcript_path,
@@ -404,6 +406,7 @@ export class SessionManager {
     const text = typeof prompt === 'string' ? prompt.replace(/\0/g, '').slice(0, PROMPT_MAX).trim() : '';
     if (model !== undefined && model !== null && model !== '' && !isValidModel(model)) throw badRequest('invalid model');
     if (!this.claudeAbs()) throw new HttpError(500, `claude CLI not found (looked for "${this.claudeBin}" on PATH). Install Claude Code and sign in.`);
+    if (!which(this.tmux.bin, this.env.PATH || '')) throw new HttpError(500, 'tmux not found on PATH: install tmux 3.2 or newer (brew install tmux)');
     const sid = crypto.randomUUID();
     const rec = newRecord({
       sid,
@@ -755,8 +758,10 @@ export class SessionManager {
     if (typeof text !== 'string') throw badRequest('text must be a string');
     const clean = text.replace(/\0/g, '').slice(0, PROMPT_MAX);
     if (!rec.hooked) await this.waitFor(() => rec.hooked || rec.waiting_on || !isLive(rec.status), 15000);
-    if (rec.waiting_on === 'trust' || rec.waiting_on === 'imports' || rec.waiting_on === 'startup') {
-      throw conflict('Claude Code is waiting for an answer in the terminal (folder trust); answer it in the cockpit first');
+    // Never type into a dialog: Enter would answer it (folder trust defaults to "No, exit"; a
+    // permission prompt defaults to "Yes"). Those answers belong to the owner, in the terminal.
+    if (rec.status === 'needs_you' && ANSWER_IN_TERMINAL.has(rec.waiting_on)) {
+      throw conflict(`the session is waiting for your answer in the terminal (${rec.notification || rec.waiting_on}); answer it in the cockpit first`);
     }
     if (!isLive(rec.status)) throw conflict('that session has ended');
     const target = rec.pane_id || `=${rec.tmux_name}:`;

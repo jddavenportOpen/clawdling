@@ -158,7 +158,7 @@ export class Tmux {
           return { name, id, pane, sid: sid || null, agent: agent || null };
         });
     } catch (err) {
-      if (Tmux.noServer(err)) return [];
+      if (Tmux.noServer(err) || err.code === 'ENOENT') return [];
       throw err;
     }
   }

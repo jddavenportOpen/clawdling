@@ -262,6 +262,12 @@ no field or path in §4 was renamed or removed.
   prompt, typing Enter/1-9/Esc in the terminal moves `needs_you` → `working`.
 - Agent `needs_you` counts sessions in `needs_you` **or** `ready` (both are "your turn"), matching the rail.
 - `DELETE /api/sessions/:sid` returns the Session with `status: "ended"`, `resumable: true`.
+- Session `waiting_on` (only while `needs_you`): `trust` (Claude Code's folder-trust dialog),
+  `permission_prompt`, `elicitation_dialog`, `idle_prompt`, `imports`, `startup` (no hook 20 s after
+  launch) or `notification`. `POST /api/sessions/:sid/send` returns `409` while the session waits on
+  `trust`, `imports`, `startup`, `permission_prompt` or `elicitation_dialog`: typed text plus Enter
+  would answer the dialog, and those answers belong to the owner in the terminal (Donna can never
+  approve a permission prompt). Keystrokes over the terminal WebSocket are always delivered.
 
 **Terminal WebSocket**
 - A `snapshot` message can arrive again later (after a resume, or after the control client
