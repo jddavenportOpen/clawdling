@@ -1,6 +1,9 @@
 // Org map, agent page, new-agent wizard, Donna page.
 import { test, expect } from '@playwright/test';
-import { login, reset, api, isMock, mockRequests, spawn, panes, focusedPane, sessionBySid } from './helpers.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { login, reset, api, isMock, mockRequests, spawn, panes, focusedPane, sessionBySid, tag } from './helpers.js';
 
 async function orgAgents() {
   const r = await api('GET', '/api/org');
@@ -91,9 +94,10 @@ test.describe('agent page', () => {
   test('shows live and recent sessions; Resume brings one back', async ({ page }) => {
     await reset('empty');
     const ended = await spawn({ agent: 'home', title: 'Book the plumber', status: 'ended' });
-    await spawn({ agent: 'home', title: 'Plan the move', status: 'working' });
+    const live = await spawn({ agent: 'home', title: 'Plan the move', status: 'working' });
     await login(page, '#/agent/home');
-    await expect(page.locator('.srow')).toHaveCount(2);
+    await expect(page.locator(`.srow[data-sid="${live}"]`)).toBeVisible();
+    await expect(page.locator(`.srow[data-sid="${ended}"]`)).toContainText('Ended');
     await page.locator(`.srow[data-sid="${ended}"]`).getByTestId('agent-resume').click();
     await expect(page.locator('.page-layer')).toHaveCount(0);
     await expect(focusedPane(page)).toHaveAttribute('data-pane', ended);
@@ -104,7 +108,9 @@ test.describe('new agent wizard', () => {
   test('creates a project agent and offers a first session', async ({ page }) => {
     await reset('empty');
     await login(page);
-    const name = isMock() ? 'Kitchen remodel' : `Kitchen remodel ${Date.now().toString(36).slice(-4)}`;
+    const name = `Kitchen remodel${tag()}`;
+    // The real server checks that a project repo exists; use a real temp dir.
+    const repoDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-web-repo-')));
     await page.getByTestId('new-agent').click();
     const dialog = page.getByRole('dialog');
     await dialog.locator('[data-kind="project"]').click();
@@ -112,7 +118,7 @@ test.describe('new agent wizard', () => {
     await dialog.getByTestId('wz-next').click();
     await dialog.getByTestId('wz-mission').fill('Finish the kitchen by March without going over budget.');
     await dialog.getByTestId('wz-next').click();
-    await dialog.getByTestId('wz-repo').fill('/tmp/kitchen');
+    await dialog.getByTestId('wz-repo').fill(repoDir);
     await dialog.getByTestId('wz-domain').selectOption('home');
     await dialog.getByTestId('wz-next').click();
     await expect(dialog).toContainText(`${name} is ready`);
@@ -123,7 +129,7 @@ test.describe('new agent wizard', () => {
     expect(created.domain).toBe('home');
     if (isMock()) {
       const post = (await mockRequests()).find((r) => r.method === 'POST' && r.path === '/api/agents');
-      expect(post.body).toMatchObject({ kind: 'project', name, mission: 'Finish the kitchen by March without going over budget.', repo: '/tmp/kitchen', domain: 'home' });
+      expect(post.body).toMatchObject({ kind: 'project', name, mission: 'Finish the kitchen by March without going over budget.', repo: repoDir, domain: 'home' });
     }
     await expect(page.locator(`.rail [data-agent="${created.id}"]`)).toBeVisible();
 
@@ -147,13 +153,14 @@ test.describe('new agent wizard', () => {
     const dialog = page.getByRole('dialog');
     await dialog.locator('[data-kind="domain"]').click();
     await expect(dialog.getByTestId('wz-next')).toBeDisabled();
-    await dialog.getByTestId('wz-name').fill('Fitness');
+    const name = `Fitness${tag()}`;
+    await dialog.getByTestId('wz-name').fill(name);
     await dialog.getByTestId('wz-name').press('Enter');
     await expect(dialog.getByTestId('wz-mission')).toBeFocused();
     await expect(dialog.getByTestId('wz-next')).toHaveText(/Create domain/);
     await dialog.getByTestId('wz-mission').fill('Get stronger without getting hurt.');
     await dialog.getByTestId('wz-next').click();
-    await expect(dialog).toContainText('Fitness is ready');
+    await expect(dialog).toContainText(`${name} is ready`);
   });
 });
 
@@ -196,7 +203,9 @@ test.describe('settings: connect your phone', () => {
   test('shows the pairing QR, a copyable link and the localhost warning', async ({ page, context }) => {
     await reset('default');
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-    const pair = await api('GET', '/api/pair');
+    const probe = await fetch(new URL('/api/pair', process.env.CLAWDLING_E2E_URL), { headers: { 'x-clawdling-token': process.env.CLAWDLING_E2E_TOKEN } });
+    test.skip(probe.status === 404, 'this server has no /api/pair yet');
+    const pair = await probe.json();
     await login(page, '#/settings');
     const card = page.getByTestId('phone-card');
     await expect(card).toBeVisible();

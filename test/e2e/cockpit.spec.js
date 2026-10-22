@@ -2,7 +2,7 @@
 // a collapsible-but-useful rail, home with panes intact, live terminals.
 import { test, expect } from '@playwright/test';
 import {
-  login, seedStandard, row, rowButton, pane, panes, focusedPane, openPanes, termText, sessionBySid, isMock, TOKEN, mockRequests, spawn, api,
+  login, seedStandard, row, rowButton, pane, panes, focusedPane, openPanes, termText, sessionBySid, isMock, TOKEN, mockRequests, spawn, api, sessions,
 } from './helpers.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -330,14 +330,22 @@ test.describe('pane lifecycle', () => {
   });
 
   test('search filters every section', async ({ page }) => {
-    await page.getByTestId('rail-search').fill('dishwasher');
-    await expect(page.locator('.rail .row-wrap[data-sid]')).toHaveCount(1);
+    const all = await sessions();
+    const visibleRows = (list) => list.filter((x) => x.status !== 'ended' || Date.now() - Date.parse(x.ended_at || x.last_activity_at) < 14 * 864e5);
+    const quotes = await sessionBySid(ids.quotes);
+    const word = quotes.title.split(' ').slice(1, 2)[0]; // "dishwasher"
+    await page.getByTestId('rail-search').fill(word);
+    const expected = visibleRows(all).filter((x) => (x.title || '').toLowerCase().includes(word.toLowerCase())).length;
+    await expect(page.locator('.rail .row-wrap[data-sid]')).toHaveCount(expected);
     await expect(row(page, ids.quotes)).toBeVisible();
+    await expect(row(page, ids.brief)).toHaveCount(0);
     await page.getByTestId('rail-search').fill('money');
     await expect(row(page, ids.reconcile)).toBeVisible(); // matches by agent name
     await expect(page.locator('.rail [data-agent="money"]')).toBeVisible();
     await expect(page.locator('.rail [data-agent="work"]')).toHaveCount(0);
     await page.getByTestId('rail-search').press('Escape');
-    await expect(page.locator('.rail .row-wrap[data-sid]')).toHaveCount(6);
+    await expect(page.getByTestId('rail-search')).toHaveValue('');
+    await expect(row(page, ids.brief)).toBeVisible();
+    await expect(page.locator('.rail [data-agent="work"]')).toBeVisible();
   });
 });

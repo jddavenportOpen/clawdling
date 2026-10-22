@@ -7,6 +7,10 @@ import { expect } from '@playwright/test';
 export const BASE = () => process.env.CLAWDLING_E2E_URL;
 export const TOKEN = () => process.env.CLAWDLING_E2E_TOKEN;
 export const isMock = () => (process.env.CLAWDLING_E2E_MODE || 'mock') === 'mock';
+// Real server we booted ourselves (temp home, fake claude): safe to configure channels in.
+export const ownsServer = () => process.env.CLAWDLING_E2E_OWNED === '1';
+// A suffix that keeps names unique when a real server accumulates state across tests.
+export const tag = () => (isMock() ? '' : ` ${Date.now().toString(36).slice(-5)}`);
 
 export async function api(method, path, body) {
   const res = await fetch(new URL(path, BASE()), {
@@ -45,10 +49,22 @@ export async function sessionBySid(sid) {
   return (await sessions()).find((s) => s.sid === sid);
 }
 
+async function waitStarted(sid) {
+  // claude's own SessionStart hook moves a fresh session out of "starting"; apply our hooks
+  // after it, or it would overwrite them.
+  const until = Date.now() + 8000;
+  while (Date.now() < until) {
+    const s = await sessionBySid(sid);
+    if (s && s.status !== 'starting') return;
+    await new Promise((r) => setTimeout(r, 60));
+  }
+}
+
 // Create a session and drive it to a status through the hook contract.
 export async function spawn({ agent, title, status = 'starting', notification, prompt }) {
   const s = unwrap(await api('POST', '/api/sessions', { agent, ...(title ? { title } : {}), ...(prompt ? { prompt } : {}) }), 'session');
   const hook = (event, payload = {}) => api('POST', '/api/hooks', { event, sid: s.sid, payload });
+  if (status !== 'starting') await waitStarted(s.sid);
   if (status === 'working') await hook('UserPromptSubmit', { prompt: title || 'Work on it' });
   if (status === 'ready') { await hook('UserPromptSubmit', { prompt: title || 'Work on it' }); await hook('Stop'); }
   if (status === 'needs_you') await hook('Notification', { message: notification || 'Claude needs your permission to use Bash' });
@@ -58,21 +74,22 @@ export async function spawn({ agent, title, status = 'starting', notification, p
 }
 
 export async function seed(specs) {
+  const sids = await Promise.all(specs.map((spec) => spawn(spec)));
   const out = {};
-  for (const spec of specs) out[spec.key || spec.title] = await spawn(spec);
+  specs.forEach((spec, i) => { out[spec.key || spec.title] = sids[i]; });
   return out;
 }
 
 // A standard set: one of each status, all titled, plus one untitled.
 export async function seedStandard() {
   await reset('empty');
-  const tag = isMock() ? '' : ` ${Date.now().toString(36).slice(-4)}`;
+  const t = tag();
   return seed([
-    { key: 'roadmap', agent: 'work', title: `Draft the Q4 roadmap${tag}`, status: 'needs_you', notification: 'Claude needs your permission to use Bash' },
-    { key: 'brief', agent: 'donna', title: `Morning brief${tag}`, status: 'ready' },
-    { key: 'training', agent: 'health', title: `Plan this week's training${tag}`, status: 'working' },
-    { key: 'quotes', agent: 'home', title: `Compare dishwasher quotes${tag}`, status: 'ready' },
-    { key: 'reconcile', agent: 'money', title: `Reconcile September${tag}`, status: 'ended' },
+    { key: 'roadmap', agent: 'work', title: `Draft the Q4 roadmap${t}`, status: 'needs_you', notification: 'Claude needs your permission to use Bash' },
+    { key: 'brief', agent: 'donna', title: `Morning brief${t}`, status: 'ready' },
+    { key: 'training', agent: 'health', title: `Plan this week's training${t}`, status: 'working' },
+    { key: 'quotes', agent: 'home', title: `Compare dishwasher quotes${t}`, status: 'ready' },
+    { key: 'reconcile', agent: 'money', title: `Reconcile September${t}`, status: 'ended' },
     { key: 'untitled', agent: 'work', status: 'starting' },
   ]);
 }

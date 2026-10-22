@@ -374,7 +374,12 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   // Hook events drive status exactly like the real server's status machine.
   function applyHook(s, event, payload = {}) {
-    if (event === 'SessionStart') { if (s.status === 'ended') setStatus(s, 'starting'); return; }
+    if (event === 'SessionStart') {
+      if (payload.source === 'compact') return;
+      const term = st.terms.get(s.sid);
+      setStatus(s, term && term.pendingPrompt ? 'starting' : 'ready');
+      return;
+    }
     if (event === 'UserPromptSubmit') {
       if (!s.title && payload.prompt) s.title = deriveTitle(payload.prompt);
       setStatus(s, 'working');
@@ -435,9 +440,13 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (Number.isInteger(body.cols) && Number.isInteger(body.rows)) { term.cols = body.cols; term.rows = body.rows; }
     term.buf = `${CLAUDE}✻${RESET} Welcome to ${BOLD}Claude Code${RESET} ${DIM}(mock)${RESET}\r\n${DIM}  /help for help · cwd: ${s.cwd.replace('/Users/ada', '~')}${RESET}\r\n\r\n${DIM}›${RESET} `;
     broadcast('session', s);
-    if (body.prompt) {
-      later(150, () => { out(s, body.prompt); handleLine(s, body.prompt); });
-    }
+    term.pendingPrompt = !!body.prompt;
+    // Like the real claude: SessionStart fires once it is up, then the first prompt (if any) runs.
+    later(180, () => {
+      if (s.status === 'ended') return;
+      applyHook(s, 'SessionStart', { source: 'startup' });
+      if (body.prompt) { term.pendingPrompt = false; out(s, body.prompt); handleLine(s, body.prompt); }
+    });
     return s;
   }
 
@@ -608,7 +617,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
           out(s, `\r\n${DIM}── resumed with claude --resume ${s.sid.slice(0, 8)} ──${RESET}\r\n${DIM}›${RESET} `);
           const term = ensureTerm(s); // viewers still attached get a fresh cut, like core
           for (const ws of term.viewers) if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'snapshot', data: term.buf.replace(/\r\n/g, '\n') }));
-          later(400, () => { if (s.status === 'starting') setStatus(s, 'ready'); });
+          later(400, () => { if (s.status === 'starting') applyHook(s, 'SessionStart', { source: 'resume' }); });
         }
         send(res, 200, s);
         return;
