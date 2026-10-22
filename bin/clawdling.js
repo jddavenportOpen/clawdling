@@ -209,16 +209,9 @@ async function cmdStart(args) {
   try {
     srv = await startServer({ home, port, host });
   } catch (e) {
-    if (e.code === 'EADDRINUSE') {
-      const ctx = { ...context({ home }), port, host: '127.0.0.1' };
-      const h = await serverUp(ctx);
-      if (h?.home === home) {
-        console.log(`Clawdling is already running for ${home} on port ${port}.`);
-        return;
-      }
-      throw new CliError(`port ${port} is in use. Pick another with --port.`);
-    }
-    throw new CliError(e.message);
+    // Nothing was started or written (the server refuses before touching state): exit now.
+    console.error(`clawdling: ${e.message}`);
+    process.exit(1);
   }
   console.log(`\nClawdling ${VERSION}: cockpit for ${srv.org.read().owner}'s org`);
   console.log(`  Open:  ${srv.openUrl}`);
@@ -361,7 +354,9 @@ async function cmdAttach(args) {
   else if (/^cl-[a-z0-9-]+$/.test(ref)) name = ref;
   if (!name) throw new CliError(hits.length > 1 ? `"${ref}" matches several sessions` : `no session matches "${ref}"`);
   const tmux = process.env.CLAWDLING_TMUX_BIN || 'tmux';
-  const socket = tmuxSocketName();
+  // The socket the sessions really live on: the running server's, else the registry's, else env/default.
+  const recorded = readJson(ctx.paths.server, null)?.socket || readJson(ctx.paths.sessions, null)?.socket;
+  const socket = typeof recorded === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(recorded) ? recorded : tmuxSocketName();
   if (process.env.TMUX) console.error('(you are inside tmux already: this attaches a nested client)');
   console.error(`Attaching to ${name}. Detach with Ctrl-b d; the session keeps running.`);
   const env = { ...process.env };
@@ -382,11 +377,12 @@ async function cmdDonna(args) {
     if (!body.token && !args.flags.disable && !args.flags.pair) throw new CliError('usage: clawdling donna telegram --token <token from @BotFather> [--pair] [--disable]');
     const st = await api(ctx, 'POST', '/api/channels/telegram', body);
     if (args.flags.disable) return console.log('Telegram is off. Re-enable with: clawdling donna telegram --pair');
-    console.log(`Telegram is connected${st.bot_username ? ` to @${st.bot_username}` : ''}.`);
+    const bot = st.bot_username ? `@${st.bot_username}` : 'your bot';
+    console.log(`Telegram is connected${st.bot_username ? ` to ${bot}` : ''}.`);
     if (st.pairing_code) {
       console.log(`Pairing code: ${st.pairing_code} (valid for 30 minutes)`);
-      console.log(`On your phone, open your bot in Telegram and send:  /pair ${st.pairing_code}`);
-    } else if (st.paired) console.log(`Paired with chat ${st.chat_id_masked}.`);
+      console.log(`On your phone, open ${bot} in Telegram${st.bot_username ? ` (https://t.me/${st.bot_username})` : ''} and send:  /pair ${st.pairing_code}`);
+    } else if (st.paired) console.log(`${bot} is paired with chat ${st.chat_id_masked}.`);
     if (st.error) console.log(`Note: ${st.error}`);
     return;
   }
@@ -406,7 +402,8 @@ async function cmdDonna(args) {
     const c = await api(ctx, 'GET', '/api/channels');
     if (args.flags.json) return console.log(JSON.stringify(c, null, 2));
     const t = c.telegram;
-    console.log(`Telegram: ${!t.configured ? 'not set up (clawdling donna telegram --token ...)' : t.paired ? `paired with ${t.chat_id_masked}${t.enabled ? '' : ' (off)'}` : `waiting for /pair ${t.pairing_code || '(run --pair for a new code)'}`}${t.error ? ` [${t.error}]` : ''}`);
+    const bot = t.bot_username ? `@${t.bot_username}` : 'your bot';
+    console.log(`Telegram: ${!t.configured ? 'not set up (clawdling donna telegram --token ...)' : t.paired ? `${bot} paired with ${t.chat_id_masked}${t.enabled ? '' : ' (off)'}` : `send /pair ${t.pairing_code || '<code>'} to ${bot}${t.pairing_code ? '' : ' (run clawdling donna telegram --pair for a code)'}`}${t.error ? ` [${t.error}]` : ''}`);
     const i = c.imessage;
     console.log(`iMessage: ${!i.supported ? 'macOS only' : i.enabled ? `on for ${i.handle}` : 'off'}${i.error ? ` [${i.error}]` : ''}`);
     console.log(`Donna's text-message session: ${c.donna.session || 'not started yet'}${c.donna.busy ? ' (working)' : ''}`);
@@ -439,6 +436,7 @@ ${Object.entries(envEntries).map(([k, v]) => `    <key>${esc(k)}</key><string>${
   </dict>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
   <key>LimitLoadToSessionType</key><string>Aqua</string>
   <key>ProcessType</key><string>Interactive</string>
   <key>StandardOutPath</key><string>${esc(logFile)}</string>
@@ -565,18 +563,25 @@ async function cmdDoctor(args) {
   } else fail(`no org at ${ctx.home}: run \`clawdling init\` (or set CLAWDLING_HOME)`);
 
   const h = await serverUp(ctx);
-  if (h) {
+  if (h && h.home === ctx.home) {
     ok(`cockpit running at ${baseUrl(ctx)}${ctx.info ? ` (pid ${ctx.info.pid})` : ''}`);
     try {
       const c = await api(ctx, 'GET', '/api/channels');
-      if (c.telegram.configured) (c.telegram.paired ? ok : warn)(`Telegram: ${c.telegram.paired ? `paired (${c.telegram.chat_id_masked})` : 'waiting for /pair <code>'}${c.telegram.error ? ` [${c.telegram.error}]` : ''}`);
+      const t = c.telegram;
+      const bot = t.bot_username ? `@${t.bot_username}` : 'your bot';
+      if (t.configured && t.paired) ok(`Telegram: ${bot} is paired with chat ${t.chat_id_masked}${t.enabled ? '' : ' (turned off)'}${t.error ? ` [${t.error}]` : ''}`);
+      else if (t.configured) warn(`Telegram: open ${bot} in Telegram and send ${t.pairing_code ? `/pair ${t.pairing_code}` : 'the code from `clawdling donna telegram --pair`'}${t.error ? ` [${t.error}]` : ''}`);
       else warn('Telegram: not set up (optional): clawdling donna telegram --token <token from @BotFather>');
       if (c.imessage.enabled) (c.imessage.error ? fail : ok)(`iMessage: ${c.imessage.error || `on for ${c.imessage.handle}`}`);
     } catch {
       // ignore
     }
+  } else if (h) {
+    fail(`port ${ctx.port} answers for a different org (${h.home}): start this org's cockpit on another port with clawdling start --port <n>`);
+  } else if (ctx.info) {
+    fail(`the cockpit (pid ${ctx.info.pid}) should be on port ${ctx.info.port} but does not answer: stop it and run clawdling start`);
   } else {
-    warn(`cockpit not running on port ${ctx.port}: clawdling start (or clawdling service install)`);
+    fail('the cockpit is not running: clawdling start (or clawdling service install to start it at login)');
   }
   console.log(bad ? `\n${bad} thing(s) to fix.` : '\nAll good.');
   process.exitCode = bad ? 1 : 0;

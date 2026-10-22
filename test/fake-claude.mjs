@@ -76,6 +76,12 @@ for (let i = 0; i < argv.length; i++) {
     case '--append-system-prompt-file':
       opts.appendSystemPromptFile = val();
       break;
+    case '--setting-sources':
+      opts.settingSources = val();
+      break;
+    case '--strict-mcp-config':
+      opts.strictMcpConfig = true;
+      break;
     case '--add-dir':
       while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) opts.addDir.push(argv[++i]);
       break;
@@ -173,34 +179,51 @@ function transcript(type, message, extra = {}) {
   }
 }
 
-async function trustDialog() {
-  if (!fs.existsSync(path.join(process.cwd(), '.fake-claude-trust'))) return true;
-  let sel = 0; // 0 = No, exit (focused first, like the real dialog); 1 = Yes
-  const draw = () => {
-    process.stdout.write('\x1b[2J\x1b[H');
-    process.stdout.write(`Accessing workspace:\r\n${process.cwd()}\r\n\r\n`);
-    process.stdout.write('Quick safety check: Is this a project you created or one you trust?\r\n\r\n');
-    process.stdout.write(`${sel === 0 ? '❯' : ' '} No, exit\r\n`);
-    process.stdout.write(`${sel === 1 ? '❯' : ' '} Yes, I trust this folder\r\n`);
-  };
-  draw();
-  if (process.stdin.isTTY) process.stdin.setRawMode(true);
+/**
+ * A select list drawn like Claude Code's: "❯" on the chosen line, arrows move, Enter chooses.
+ * With numbered choices (permission prompts) a digit chooses at once; the folder-trust dialog
+ * hides its numbers and ignores digits, as the real one does (claude 2.1.283).
+ */
+function select({ header, choices, focus = 0, numbered = false }) {
   return new Promise((resolve) => {
+    let sel = focus;
+    let drawn = 0;
+    const draw = () => {
+      if (drawn) process.stdout.write(`\x1b[${drawn}A\r\x1b[J`);
+      const lines = [...header, ...choices.map((c, i) => ` ${i === sel ? '\u276f' : ' '} ${numbered ? `${i + 1}. ` : ''}${c}`), '', ' Enter to confirm \u00b7 Esc to cancel'];
+      process.stdout.write(lines.join('\r\n') + '\r\n');
+      drawn = lines.length;
+    };
+    draw();
+    const raw = process.stdin.isTTY;
+    if (raw) process.stdin.setRawMode(true);
     const onData = (d) => {
       const s = d.toString('latin1');
-      if (s.includes('\x1b[A') || s.includes('\x1b[B')) {
-        sel = 1 - sel;
+      let chosen = -1;
+      if (s.includes('\x1b[A')) {
+        sel = Math.max(0, sel - 1);
         draw();
-        return;
-      }
-      if (s.includes('\r')) {
-        process.stdin.off('data', onData);
-        if (process.stdin.isTTY) process.stdin.setRawMode(false);
-        resolve(sel === 1);
-      }
+      } else if (s.includes('\x1b[B')) {
+        sel = Math.min(choices.length - 1, sel + 1);
+        draw();
+      } else if (s.includes('\r')) chosen = sel;
+      else if (numbered && /^[1-9]$/.test(s) && Number(s) <= choices.length) chosen = Number(s) - 1;
+      if (chosen === -1) return;
+      process.stdin.off('data', onData);
+      if (raw) process.stdin.setRawMode(false);
+      resolve(chosen);
     };
     process.stdin.on('data', onData);
   });
+}
+
+async function trustDialog() {
+  if (!fs.existsSync(path.join(process.cwd(), '.fake-claude-trust'))) return true;
+  process.stdout.write('\x1b[2J\x1b[H');
+  const header = [' Accessing workspace:', '', ` ${process.cwd()}`, '', ' Quick safety check: Is this a project you created or one you trust?', ''];
+  // Focus starts on "No, exit", like the real dialog.
+  const choice = await select({ header, choices: ['No, exit', 'Yes, I trust this folder'], focus: 0 });
+  return choice === 1;
 }
 
 async function interactive() {
@@ -213,16 +236,10 @@ async function interactive() {
   process.stdout.write(`\x1b[1mFake Claude Code\x1b[0m | ${opts.name || 'unnamed'} | session ${sid}${opts.model ? ` | model ${opts.model}` : ''}\n`);
   process.stdout.write(`cwd ${process.cwd()}\n`);
   await runHook('SessionStart', { source: opts.resume ? 'resume' : 'startup', model: opts.model || 'fake' });
-  let waitingPermission = false;
+  let inSelect = false;
   const handle = async (raw) => {
     const text = raw.replace(/\x1b\[20[01]~/g, '').trim();
     if (!text) return;
-    if (waitingPermission) {
-      waitingPermission = false;
-      process.stdout.write('assistant: permission answered, done\n> ');
-      await runHook('Stop', { stop_hook_active: false, last_assistant_message: 'permission answered, done' });
-      return;
-    }
     if (text === '/exit') {
       await runHook('SessionEnd', { reason: 'prompt_input_exit' });
       process.exit(0);
@@ -233,9 +250,18 @@ async function interactive() {
     if (text.includes('permission?')) {
       transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'text', text: 'I need to run a command.' }, { type: 'tool_use', id: 'toolu_1', name: 'Bash', input: { command: 'echo hi', description: 'Say hi' } }] });
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'hi' }] });
-      waitingPermission = true;
-      process.stdout.write('Claude wants to run: echo hi. Allow? 1) yes 2) no\n');
+      inSelect = true;
+      const asked = select({
+        header: [' Bash command', '   echo hi', '   Say hi', '', ' Do you want to proceed?'],
+        choices: ['Yes', "Yes, and don't ask again for echo commands", 'No, and tell Claude what to do differently (esc)'],
+        numbered: true,
+      });
       await runHook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+      const choice = await asked;
+      inSelect = false;
+      const answer = ['yes', 'yes, always', 'no'][choice];
+      process.stdout.write(`assistant: permission answered (${answer}), done\n> `);
+      await runHook('Stop', { stop_hook_active: false, last_assistant_message: `permission answered (${answer}), done` });
       return;
     }
     process.stdout.write(`assistant: ${text}\n> `);
@@ -246,6 +272,7 @@ async function interactive() {
   if (prompt) chain = chain.then(() => handle(prompt));
   const rl = readline.createInterface({ input: process.stdin });
   rl.on('line', (line) => {
+    if (inSelect) return; // keys meant for a select list, not a prompt
     chain = chain.then(() => handle(line));
   });
   rl.on('close', () => chain.then(() => process.exit(0)));

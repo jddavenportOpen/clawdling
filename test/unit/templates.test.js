@@ -66,6 +66,8 @@ test('init --defaults scaffolds the whole org tree', () => {
     assert.match(read(home, 'donna', 'CLAUDE.md'), /clawdling spawn <agent-id>/);
     assert.ok(read(home, 'donna', 'CLAUDE.md').trimEnd().endsWith('@memory/NOW.md'));
     assert.equal(fs.statSync(path.join(home, '.clawdling')).mode & 0o777, 0o700);
+    // SETUP.md step 6 logs `clawdling start` to .clawdling/logs/start.log on a fresh org.
+    assert.equal(fs.statSync(path.join(home, '.clawdling', 'logs')).mode & 0o777, 0o700);
   } finally {
     rmrf(home);
   }

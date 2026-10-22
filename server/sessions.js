@@ -38,17 +38,78 @@ const WS_HIGH_WATER = 16 * 1024 * 1024;
 
 const TRUST_RE = /Yes, I trust this folder|Quick safety check: Is this a project|Do you trust the files in this folder/i;
 const IMPORTS_RE = /Allow external CLAUDE\.md file imports/i;
-export const TRUST_NOTICE =
-  'Claude Code is asking whether you trust this folder. In the terminal, choose "Yes, I trust this folder" (arrow keys, then Enter). Trust your org folder once from a Scratch session and no agent will ask again.';
-export const IMPORTS_NOTICE = 'Claude Code is asking whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal.';
+/** What to answer when Claude Code's folder-trust dialog is on screen. */
+export function trustNotice(folder) {
+  return (
+    `Claude Code asks whether you trust ${folder}. Answer 2 ("Yes, I trust this folder") to start the session; ` +
+    '1 ("No, exit") ends it. In the terminal: arrow down to "Yes, I trust this folder", then Enter. ' +
+    'Trusting your org folder once covers every agent inside it; a project agent whose code lives elsewhere asks once for its repo.'
+  );
+}
+export const TRUST_NOTICE = trustNotice('this folder');
+export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
 export const STALL_NOTICE = 'Claude Code has not finished starting. It may be waiting for an answer in the terminal.';
 const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
+// Questions POST /api/sessions/:sid/answer may answer: Claude Code's own select lists.
+const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
+const POINTER = '\u276f'; // the "❯" Claude Code puts in front of the selected choice
+const KEY = { up: Buffer.from('\x1b[A'), down: Buffer.from('\x1b[B'), enter: Buffer.from('\r') };
+const DIALOG_ARM_MS = 1500; // Claude Code ignores keys for a moment after a dialog opens
+
+/**
+ * The choices of a Claude Code select list on screen, in screen order, and which one has the
+ * pointer. The live question is the lowest list on screen (older answered ones, or a past prompt
+ * line, can still show a "❯" higher up). Wrapped (deeper-indented) lines continue the choice above
+ * them. Null if no list is on screen.
+ */
+export function parseChoices(screen) {
+  const lines = String(screen || '').split('\n');
+  const pointer = new RegExp(`^\\s*${POINTER}\\s+\\S`);
+  for (let sel = lines.length - 1; sel >= 0; sel--) {
+    if (!pointer.test(lines[sel])) continue;
+    const found = choicesAround(lines, sel);
+    if (found) return found;
+  }
+  return null;
+}
+
+function choicesAround(lines, sel) {
+  const col = lines[sel].indexOf(POINTER);
+  const textCol = lines[sel].slice(col + 1).search(/\S/) + col + 1;
+  const indent = (l) => (l.trim() ? l.search(/\S/) : -1);
+  const kind = (l) => {
+    if (!l || !l.trim()) return 'stop';
+    if (l.indexOf(POINTER) === col && indent(l) === col) return 'option';
+    const i = indent(l);
+    if (i === textCol) return 'option';
+    if (i > textCol) return 'more';
+    return 'stop';
+  };
+  let top = sel;
+  while (top > 0 && kind(lines[top - 1]) !== 'stop') top--;
+  while (top < sel && kind(lines[top]) === 'more') top++;
+  const labels = [];
+  let selected = -1;
+  for (let i = top; i < lines.length; i++) {
+    const k = kind(lines[i]);
+    if (k === 'stop') break;
+    if (k === 'more') {
+      if (labels.length) labels[labels.length - 1] += ` ${lines[i].trim()}`;
+      continue;
+    }
+    if (i === sel) selected = labels.length;
+    labels.push(lines[i].slice(textCol).trim());
+  }
+  if (labels.length < 2 || selected === -1) return null;
+  return { labels, selected };
+}
 
 /** Which startup dialog (if any) a rendered screen shows. Whitespace-insensitive. */
 export function dialogFromScreen(screen) {
   const flat = String(screen || '').replace(/\s+/g, ' ');
   const tight = flat.replace(/ /g, '').toLowerCase();
   if (TRUST_RE.test(flat) || tight.includes('yes,itrustthisfolder') || tight.includes('quicksafetycheck:isthisaproject')) return { waiting: 'trust', notice: TRUST_NOTICE };
+  // (callers replace the generic notice with trustNotice(<session folder>))
   if (IMPORTS_RE.test(flat) || tight.includes('allowexternalclaude.mdfileimports')) return { waiting: 'imports', notice: IMPORTS_NOTICE };
   return null;
 }
@@ -220,7 +281,7 @@ export class SessionManager {
       const rec = this.records.get(sid);
       if (rec) rec.modes = rt.modes.list();
     }
-    writeJson(this.paths.sessions, { version: 1, sessions: [...this.records.values()] }, 0o600);
+    writeJson(this.paths.sessions, { version: 1, socket: this.socket, sessions: [...this.records.values()] }, 0o600);
   }
 
   scheduleSave() {
@@ -247,6 +308,7 @@ export class SessionManager {
       ended_at: rec.ended_at,
       notification: rec.notification,
       waiting_on: rec.status === 'needs_you' ? rec.waiting_on || null : null,
+      choices: rec.status === 'needs_you' && ANSWERABLE.has(rec.waiting_on) && Array.isArray(rec.choices) ? rec.choices : null,
       resumable: rec.status === 'ended',
       last_message: rec.last_message,
       transcript_path: rec.transcript_path,
@@ -341,7 +403,7 @@ export class SessionManager {
       try {
         const e = JSON.parse(line);
         if (isUuid(e.sid) && this.records.has(e.sid) && HOOK_EVENTS.includes(e.event)) {
-          this.applyHook(e.event, e.sid, e.payload || {});
+          this.applyHook(e.event, e.sid, e.payload || {}, e.ts);
           n++;
         }
       } catch {
@@ -619,7 +681,10 @@ export class SessionManager {
       if (d && rec.waiting_on !== d.waiting) {
         rec.status = 'needs_you';
         rec.waiting_on = d.waiting;
-        rec.notification = d.notice;
+        rec.notification = d.waiting === 'trust' ? trustNotice(rec.cwd) : d.notice;
+        const c = parseChoices(screen);
+        rec.choices = c ? c.labels.map((label, i) => ({ option: i + 1, label })) : null;
+        rt.dialogSeenAt = Date.now();
         this.onStatusChange(rec);
       }
     }, 250);
@@ -701,13 +766,28 @@ export class SessionManager {
     this.publish(rec);
   }
 
-  applyHook(event, sid, payload = {}) {
+  /**
+   * Apply one hook event. `ts` is when the hook fired: events older than the newest one already
+   * applied are dropped, so a spooled event replayed after a newer live one (the hook timed out
+   * but the server had in fact received it) cannot roll a session back to "working".
+   */
+  applyHook(event, sid, payload = {}, ts) {
     if (!HOOK_EVENTS.includes(event)) throw badRequest('unknown hook event');
     const rec = this.require(sid);
+    const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
+    if (Number.isFinite(at)) {
+      if (rec.last_hook_ms && at < rec.last_hook_ms) return this.view(rec);
+      rec.last_hook_ms = at;
+    }
     rec.hooked = true;
     const rt = this.runtime.get(sid);
     if (rt) clearTimeout(rt.stallTimer);
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, payload && typeof payload === 'object' ? payload : {});
+    if (event === 'Notification' && rec.waiting_on === 'permission_prompt') {
+      rec.choices = null;
+      if (rt) rt.dialogSeenAt = Date.now();
+      this.captureChoices(rec); // the numbered choices, for clients that answer with buttons
+    }
     if (titleChanged) this.events.record({ type: 'rename', sid, title: rec.title, auto: true });
     if (statusChanged) this.onStatusChange(rec);
     else {
@@ -715,6 +795,21 @@ export class SessionManager {
       this.publish(rec);
     }
     return this.view(rec);
+  }
+
+  captureChoices(rec) {
+    setTimeout(async () => {
+      if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) return;
+      try {
+        const c = parseChoices(await this.tmux.screenText(rec.pane_id || `=${rec.tmux_name}:`));
+        if (c && rec.status === 'needs_you') {
+          rec.choices = c.labels.map((label, i) => ({ option: i + 1, label }));
+          this.publish(rec);
+        }
+      } catch {
+        // the session may be gone
+      }
+    }, 300).unref?.();
   }
 
   rename(sid, title) {
@@ -782,6 +877,60 @@ export class SessionManager {
       if (clean) await sleep(150);
       await this.tmux.sendKeysHex(target, Buffer.from('\r'));
     }
+  }
+
+  /**
+   * Answer the question Claude Code is showing (folder trust, external imports, a permission
+   * prompt) with choice `option` (1-based, in the order shown on screen; see `choices`).
+   *
+   * Claude Code 2.1.283's folder-trust dialog hides its numbers and ignores digit keys (verified),
+   * so the answer is given the way a person would: read the screen, move the pointer with the arrow
+   * keys onto the chosen line, check it is there, then press Enter.
+   */
+  async answer(sid, option) {
+    const rec = this.require(sid);
+    if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) {
+      throw conflict('this session is not waiting on a question that can be answered here');
+    }
+    const n = Number(option);
+    if (!Number.isInteger(n) || n < 1 || n > 9) throw badRequest('option must be the number of a choice (1 or 2)');
+    const rt = this.rt(sid);
+    const target = rec.pane_id || `=${rec.tmux_name}:`;
+    const wait = (rt.dialogSeenAt || 0) + DIALOG_ARM_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    const kind = rec.waiting_on;
+    let chosen = null;
+    for (let attempt = 0; attempt < 8 && !chosen; attempt++) {
+      const c = parseChoices(await this.tmux.screenText(target));
+      if (!c) {
+        if (attempt < 3) {
+          await sleep(250);
+          continue;
+        }
+        throw conflict('the question is no longer on screen');
+      }
+      if (n > c.labels.length) throw badRequest(`there are only ${c.labels.length} choices`);
+      const moves = n - 1 - c.selected;
+      if (moves === 0) {
+        await this.tmux.sendKeysHex(target, KEY.enter);
+        chosen = c.labels[n - 1];
+        break;
+      }
+      const key = moves > 0 ? KEY.down : KEY.up;
+      for (let i = 0; i < Math.abs(moves); i++) await this.tmux.sendKeysHex(target, key);
+      await sleep(200);
+    }
+    if (!chosen) throw new HttpError(500, 'could not move the selection onto that choice');
+    this.events.record({ type: 'answer', sid, agent: rec.agent, question: kind, option: n, label: chosen });
+    rec.choices = null;
+    rec.notification = null;
+    rec.waiting_on = null;
+    // A permission answer lets the turn continue. After a startup dialog Claude Code starts up (the
+    // SessionStart hook moves it to ready) or exits; if the dialog is still there it is re-detected.
+    rec.status = kind === 'permission_prompt' ? 'working' : 'starting';
+    if (kind !== 'permission_prompt') this.detectDialogs(rec, rt);
+    this.onStatusChange(rec);
+    return { ...this.view(rec), answered: { option: n, label: chosen } };
   }
 
   // ---------------------------------------------------------------- terminal viewers

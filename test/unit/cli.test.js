@@ -34,6 +34,11 @@ test('Donna turn argv: headless JSON, dontAsk, narrow allow-list kept last (vari
   assert.equal(a[a.indexOf('--permission-mode') + 1], 'dontAsk');
   assert.equal(a.indexOf('--allowedTools'), a.length - donnaAllowedTools('/h').length - 1, '--allowedTools is last');
   assert.deepEqual(buildDonnaArgs({ sessionId: 'S', resume: true, home: '/h' }).slice(3, 5), ['--resume', 'S']);
+  // A text message never inherits the owner's own Claude Code settings or MCP servers.
+  const ss = a.indexOf('--setting-sources');
+  assert.ok(ss > 0 && a[ss + 1] === 'project,local', 'user settings (allow rules, hooks, plugins) are not loaded');
+  assert.ok(a.includes('--strict-mcp-config'), 'no MCP servers from the user config');
+  assert.ok(ss < a.indexOf('--allowedTools') && a.indexOf('--strict-mcp-config') < a.indexOf('--allowedTools'), 'both come before the variadic --allowedTools');
 });
 
 test('Donna prompt carries the message, roster and live sessions; result parsing', () => {

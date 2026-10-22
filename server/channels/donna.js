@@ -35,6 +35,11 @@ export function buildDonnaArgs({ sessionId, resume, home, ctxFile, model }) {
   a.push('--add-dir', home);
   if (ctxFile) a.push('--append-system-prompt-file', ctxFile);
   a.push('--permission-mode', 'dontAsk');
+  // A text message must not inherit the owner's own Claude Code setup: no user-level allow rules,
+  // hooks or plugins (only donna/.claude/ settings, which Clawdling does not create) and no MCP
+  // servers at all. The allow-list below is then the whole of what Donna can run.
+  a.push('--setting-sources', 'project,local');
+  a.push('--strict-mcp-config');
   a.push('--allowedTools', ...donnaAllowedTools(home)); // variadic: must stay last
   return a;
 }

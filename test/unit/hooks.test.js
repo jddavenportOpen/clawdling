@@ -95,16 +95,50 @@ test('server down: exits 0 at once and spools the event for replay', async () =>
   assert.equal(spooled.at(-1).payload.last_assistant_message, 'done');
 });
 
+test('a server error (5xx, or 503 while it starts) spools the event for replay', async () => {
+  const spoolFile = path.join(home, '.clawdling', 'hook-spool.jsonl');
+  try {
+    fs.unlinkSync(spoolFile);
+  } catch {
+    // none yet
+  }
+  for (const code of [500, 503]) {
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        res.writeHead(code, { 'content-type': 'application/json' });
+        res.end('{"error":"x"}');
+      });
+    });
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    try {
+      const r = await runHook('Stop', { session_id: SID, last_assistant_message: `after ${code}` }, { CLAWDLING_HOME: home, CLAWDLING_SID: SID, CLAWDLING_PORT: String(server.address().port) });
+      assert.equal(r.code, 0);
+      assert.equal(r.stdout, '');
+    } finally {
+      await new Promise((r) => server.close(r));
+    }
+  }
+  const spooled = fs.readFileSync(spoolFile, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(spooled.map((e) => e.payload.last_assistant_message), ['after 500', 'after 503']);
+  assert.ok(spooled.every((e) => typeof e.ts === 'string'), 'events carry their time, for ordered replay');
+});
+
 test('a hanging server cannot hold Claude up: the hook gives up within the deadline', async () => {
   const sockets = [];
   const server = http.createServer(() => {}); // never answers
   server.on('connection', (s) => sockets.push(s));
   await new Promise((r) => server.listen(0, '127.0.0.1', r));
   try {
-    const r = await runHook('Stop', { session_id: SID }, { CLAWDLING_HOME: home, CLAWDLING_SID: SID, CLAWDLING_PORT: String(server.address().port) });
+    const spoolFile = path.join(home, '.clawdling', 'hook-spool.jsonl');
+    const before = fs.existsSync(spoolFile) ? fs.readFileSync(spoolFile, 'utf8').split('\n').filter(Boolean).length : 0;
+    const r = await runHook('Stop', { session_id: SID, last_assistant_message: 'slow server' }, { CLAWDLING_HOME: home, CLAWDLING_SID: SID, CLAWDLING_PORT: String(server.address().port) });
     assert.equal(r.code, 0);
     assert.equal(r.stdout, '');
     assert.ok(r.ms < 3000, `took ${r.ms} ms`);
+    const lines = fs.readFileSync(spoolFile, 'utf8').split('\n').filter(Boolean);
+    assert.equal(lines.length, before + 1, 'a timed-out Stop is spooled, so the session cannot stay stuck on working');
+    assert.equal(JSON.parse(lines.at(-1)).payload.last_assistant_message, 'slow server');
   } finally {
     for (const s of sockets) s.destroy();
     await new Promise((r) => server.close(r));

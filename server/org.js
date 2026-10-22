@@ -201,6 +201,7 @@ export function initOrg({ home, answers, force = false, now = new Date() }) {
   const date = today(now);
   ensureDir(home);
   ensureDir(paths.rt, 0o700);
+  ensureDir(paths.logs, 0o700);
   const backupDir = exists ? path.join(paths.archive, `init-${now.toISOString().replace(/[:.]/g, '-')}`) : null;
 
   const taken = new Set(['donna']);

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { cli, cliResult, killTmux, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
+import { cli, cliResult, killTmux, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
 
 let home;
 let socket;
@@ -111,5 +111,35 @@ test('helpful error when the server is not running', () => {
     assert.match(r.stderr, /isn't running .*clawdling start/);
   } finally {
     rmrf(other);
+  }
+});
+
+test('attach uses the tmux socket the sessions live on (server.json / registry), not the default', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'home' })).body;
+  const logFile = path.join(home, 'fake-tmux.log');
+  const fakeTmux = path.join(home, 'fake-tmux.sh');
+  fs.writeFileSync(fakeTmux, `#!/bin/sh\nprintf '%s\\n' "$@" > '${logFile}'\n`, { mode: 0o755 });
+  const noSocketEnv = { ...env, CLAWDLING_TMUX_BIN: fakeTmux };
+  delete noSocketEnv.CLAWDLING_TMUX_SOCKET;
+  cli(['attach', s.sid.slice(0, 8)], { env: noSocketEnv, home });
+  const argv = fs.readFileSync(logFile, 'utf8').trim().split('\n');
+  assert.deepEqual(argv, ['-L', socket, 'attach-session', '-t', `=${s.tmux_name}`]);
+});
+
+test('the tmux config turns focus events on (Claude Code asks for them)', () => {
+  assert.match(fs.readFileSync(path.join(home, '.clawdling', 'tmux.conf'), 'utf8'), /^set -g focus-events on$/m);
+  assert.match(tmux(socket, 'show-options', '-g', 'focus-events'), /focus-events on/);
+});
+
+test('doctor fails (no "All good") when the cockpit is not running', () => {
+  const down = tempHome();
+  try {
+    cli(['init', '--defaults'], { env, home: down });
+    const r = cliResult(['doctor'], { env: { ...env, CLAWDLING_PORT: '9' }, home: down });
+    assert.equal(r.code, 1);
+    assert.match(r.stdout, /FIX\s+the cockpit is not running/);
+    assert.doesNotMatch(r.stdout, /All good/);
+  } finally {
+    rmrf(down);
   }
 });

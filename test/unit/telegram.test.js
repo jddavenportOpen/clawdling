@@ -49,13 +49,16 @@ test('chunkText splits at paragraph, line or word boundaries under 4000 chars', 
   assert.ok(chunkText('x'.repeat(9000)).every((p) => p.length <= 4000));
 });
 
-test('rejects tokens that are not bot tokens', async () => {
+test('rejects tokens that are not bot tokens, and tokens Telegram itself rejects (nothing stored)', async () => {
   await assert.rejects(gw.configure({ token: 'not a token' }), /BotFather/);
+  await assert.rejects(gw.configure({ token: '111111111:REJECTED_token_abcdefghijklmnopq' }), /rejected that bot token/);
+  assert.equal(gw.token(), null, 'a rejected token is not saved');
 });
 
 test('pairing: only a private chat with the current code pairs; brute force burns the code', async () => {
   const { pairing_code: code } = await gw.configure({ token: TOKEN });
   assert.match(code, /^\d{6}$/);
+  assert.equal(gw.status().bot_username, 'clawdling_test_bot', 'the bot is known as soon as the token is set');
   await waitFor(() => gw.running, { label: 'polling' });
   stub.message(-100, `/pair ${code}`, { type: 'group' });
   for (let i = 0; i < 5; i++) stub.message(666, `/pair ${String((Number(code) + 1 + i) % 1000000).padStart(6, '0')}`);

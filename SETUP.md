@@ -109,9 +109,10 @@ clawdling spawn scratch
 ```
 
 Tell the user: "In the cockpit, open the Scratch session and choose **Yes, I trust this folder**
-(arrow down, then Enter). After that no agent will ask again." Clawdling shows the waiting session
-under **Needs you** until they answer. (Alternative: run `cd ~/clawdling && claude` once in a
-terminal and accept there.)
+(arrow down, then Enter, or the answer button). After that, agents inside your org won't ask
+again; a project agent whose code lives outside the org asks once for its repo, the same way."
+Clawdling shows a waiting session under **Needs you** until they answer, and never answers for
+them. (Alternative: run `cd ~/clawdling && claude` once in a terminal and accept there.)
 
 ## 8. Connect Donna (optional)
 

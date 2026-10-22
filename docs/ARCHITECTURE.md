@@ -68,9 +68,13 @@ SessionStart, UserPromptSubmit, Stop, Notification and SessionEnd. The hook POST
 `/api/hooks` and always exits 0 without output within 1.5 s; if the server is down it appends to
 `.clawdling/hook-spool.jsonl`, which the server replays on start. Before the first hook, the server
 reads the rendered screen (`capture-pane`) to recognise Claude Code's folder-trust dialog and shows
-the session as `needs_you` with instructions.
+the session as `needs_you` with instructions and the choices. `POST /api/sessions/:sid/answer`
+answers it (or a permission prompt) by moving the pointer with arrow keys and pressing Enter once
+the pointer is on the chosen line: the trust dialog ignores digit keys.
 
-**Restart.** On start the server lists `tmux ls`, reattaches every registry row whose tmux session
+**Start.** The server first refuses if `server.json` names a live server for this home, then
+binds its port, and only then writes the hooks file, the shim and the registry; until it is ready
+the API answers 503 and hooks spool. **Restart.** On start the server lists `tmux ls`, reattaches every registry row whose tmux session
 exists, marks the rest `ended` (resumable), adopts tagged orphans (`@clawdling_sid`), then replays
 the hook spool. Hooks read the current port from `.clawdling/server.json`, so sessions started
 before a restart keep reporting to the new server.
@@ -83,7 +87,8 @@ session never had a prompt, so there is no transcript to resume).
 Each message from the paired owner (Telegram chat, iMessage handle, or the app's `/api/donna/chat`)
 joins a serial queue and becomes one headless turn: `claude -p --output-format json`
 (`--session-id` the first time, `--resume` afterwards, persisted as `org.json` `donna_session`),
-cwd `donna/`, `--permission-mode dontAsk` and a narrow `--allowedTools` list
+cwd `donna/`, `--permission-mode dontAsk`, `--setting-sources project,local --strict-mcp-config`
+(the owner's own settings and MCP servers do not apply) and a narrow `--allowedTools` list
 (`Bash(clawdling spawn|send|ls|new|end ...)`, `Read` of the org folder, `Edit(memory/**)`). The prompt
 carries the message plus a roster of agents and live sessions. Donna routes by running the real
 CLI, which talks to the server over HTTP like any other client. Every exchange is logged to

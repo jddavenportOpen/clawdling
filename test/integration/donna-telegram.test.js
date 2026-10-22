@@ -75,6 +75,8 @@ test('pair, ignore strangers, route "can the health agent look at my sleep" to a
   assert.equal(turn.cwd, path.join(home, 'donna'));
   assert.equal(turn.env.CLAWDLING_DONNA, '1');
   assert.equal(turn.opts.permissionMode, 'dontAsk');
+  assert.equal(turn.opts.settingSources, 'project,local', "the owner's user settings are not loaded into Donna's turns");
+  assert.equal(turn.opts.strictMcpConfig, true, 'no MCP servers');
   assert.ok(turn.opts.allowedTools.includes('Bash(clawdling spawn *)'));
   assert.ok(!turn.opts.allowedTools.some((t) => t === 'Bash' || t === 'Bash(*)'), 'no arbitrary shell');
   assert.ok(turn.opts.sessionId, 'first Donna turn uses --session-id');
