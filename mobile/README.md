@@ -23,6 +23,10 @@ npm test                     # unit tests (links, API client, markdown, chat, de
 npm run export:web && npm run e2e   # Playwright against the web build + mock server
 ```
 
+`test/e2e/real-server.spec.mts` runs the same app against the real server (real tmux, the
+server's fake `claude`, its test mode). It runs automatically when `mobile/` sits inside the server
+repo, or with `CLAWDLING_SERVER_DIR=/path/to/clawdling npm run e2e`; otherwise it is skipped.
+
 Screenshots land in `test/screenshots/` (git-ignored). `npm run store-shots` renders the App Store
 set; `npm run icons` re-renders the icon, splash and mark from `assets/brand/mark.svg`.
 
