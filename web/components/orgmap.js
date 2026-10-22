@@ -8,7 +8,7 @@ import { Icon, AgentIcon, hasIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { api } from '../lib/api.js';
 import { startSession, focusSession, navigate, openOverlay } from '../lib/actions.js';
-import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL } from '../lib/model.js';
+import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL, countNeedsYou } from '../lib/model.js';
 import { relTime, clamp, prefersReducedMotion } from '../lib/util.js';
 
 const TAU = Math.PI * 2;
@@ -147,11 +147,8 @@ export function layoutOrg(agents, ownerName) {
 }
 
 function nodeStats(n, sessions) {
-  if (n.kind === 'owner' || n.kind === 'cluster') return { live: 0, needs: 0, working: 0, ready: 0 };
-  const st = agentStats(n.id, sessions);
-  let ready = 0;
-  for (const s of sessions) if (s.agent === n.id && s.status === 'ready') ready += 1;
-  return { ...st, ready };
+  if (n.kind === 'owner' || n.kind === 'cluster') return { live: 0, needs: 0, working: 0 };
+  return agentStats(n.id, sessions); // needs = needs_you + ready
 }
 
 export function OrgMap() {
@@ -255,7 +252,7 @@ export function OrgMap() {
     domains: agents.filter((a) => a.kind === 'domain').length,
     projects: agents.filter((a) => a.kind === 'project').length,
     live: sessions.filter((s) => s.status !== 'ended').length,
-    needs: sessions.filter((s) => s.status === 'needs_you').length,
+    needs: countNeedsYou(sessions), // needs_you + ready, exactly like the rail's "Needs you"
   }), [agents, sessions]);
 
   const focusId = hover || sel;
@@ -279,9 +276,8 @@ export function OrgMap() {
         <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}</p>
       </div>
       <ul class="legend" aria-label="Legend">
-        <li><${StatusGlyph} status="working" label=${false} /> Working</li>
-        <li><${StatusGlyph} status="needs_you" label=${false} /> Needs you</li>
-        <li><${StatusGlyph} status="ready" label=${false} /> Your turn</li>
+        <li><span class="legend-ring ring-working" aria-hidden="true"></span> Working</li>
+        <li title="A session is waiting for your answer or for your next message"><span class="legend-ring ring-needs" aria-hidden="true"></span> Needs you</li>
       </ul>
       <div class="zoom" role="group" aria-label="Zoom">
         <button class="icon-btn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}><span aria-hidden="true" class="zoom-glyph">−</span></button>
@@ -339,7 +335,7 @@ export function OrgMap() {
 function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
   const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}`;
-  const tone = st.needs ? 'needs' : st.working ? 'working' : st.ready ? 'ready' : 'idle';
+  const tone = st.needs ? 'needs' : st.working ? 'working' : 'idle';
   const onKey = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } };
   return html`<g class=${`node kind-${n.kind} tone-${tone} ${selected ? 'is-selected' : ''} ${dim ? 'is-dim' : ''}`}
       transform=${`translate(${n.x} ${n.y})`} role="button" tabindex="0" aria-label=${label} aria-pressed=${selected ? 'true' : 'false'}

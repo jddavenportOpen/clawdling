@@ -115,6 +115,20 @@ for (const vp of [{ w: 1440, h: 900 }, { w: 1024, h: 768 }]) {
   });
 }
 
+test.describe('screens: startup dialog banner', () => {
+  test('trust dialog banner (1440x900)', async ({ page }) => {
+    test.skip(!isMock(), 'uses the mock to raise the dialog');
+    await reset('default');
+    const sids = await liveSids(2);
+    await fetch(new URL('/__mock/dialog', process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sid: sids[1], kind: 'trust' }) });
+    await login(page);
+    await openPanes(page, [sids[0], sids[1]]);
+    await expect(page.getByTestId('pane-dialog')).toBeVisible();
+    await settle(page);
+    await shot(page, 'cockpit-trust-dialog-1440x900');
+  });
+});
+
 test.describe('screens: light theme and phone', () => {
   test('light theme cockpit (1440x900)', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });

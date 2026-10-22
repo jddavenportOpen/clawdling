@@ -116,29 +116,42 @@ function AgentSessions({ live, recent, now, agentsById, name, id }) {
 }
 
 function FileEditor({ id, field, file, value, err, help, onSaved }) {
-  const [text, setText] = useState(value == null ? '' : value);
-  const [base, setBase] = useState(value);
+  if (value == null && !err) return html`<div class="editor"><div class="panel-skel tall" aria-label="Loading"></div></div>`;
+  if (value == null && err) return html`<div class="editor"><p class="form-error" role="alert">Could not load ${file}: ${err}</p></div>`;
+  return html`<${EditorBody} id=${id} field=${field} file=${file} value=${value} help=${help} onSaved=${onSaved} />`;
+}
+
+// Mounted only once the file is loaded, so its first frame already shows the file (no empty
+// frame, no mount-time reset). A later server value is adopted only while there are no unsaved
+// edits, judged from refs that are current at that moment, never from a stale render closure.
+function EditorBody({ id, field, file, value, help, onSaved }) {
+  const [text, setText] = useState(() => value);
+  const [base, setBase] = useState(() => value);
   const [state, setStateLocal] = useState('idle'); // idle | saving | saved | error
   const [msg, setMsg] = useState('');
-  const area = useRef(null);
+  const live = useRef({ text: value, base: value });
+
+  const edit = (t) => { live.current.text = t; setText(t); };
+  const rebase = (b) => { live.current.base = b; setBase(b); };
 
   useEffect(() => {
-    // New server value arrived; adopt it unless the user has unsaved edits.
-    if (value == null) return;
-    if (base == null || text === base) { setText(value); }
-    setBase(value);
+    const cur = live.current;
+    if (value === cur.base) return;
+    if (cur.text === cur.base) edit(value);
+    rebase(value);
   }, [value]);
 
-  const dirty = base != null && text !== base;
+  const dirty = text !== base;
   const size = new Blob([text]).size;
   const tooBig = size > MAX_BYTES;
 
   const save = async () => {
-    if (!dirty || tooBig || state === 'saving') return;
+    const snapshot = live.current.text;
+    if (snapshot === live.current.base || tooBig || state === 'saving') return;
     setStateLocal('saving');
     try {
-      await api.saveContext(id, { [field]: text });
-      setBase(text);
+      await api.saveContext(id, { [field]: snapshot });
+      rebase(snapshot);
       setStateLocal('saved');
       setMsg(`Saved ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`);
       toast(`${file} saved`, { tone: 'ok', ms: 2000 });
@@ -154,20 +167,17 @@ function FileEditor({ id, field, file, value, err, help, onSaved }) {
     if ((e.metaKey || e.ctrlKey) && (e.key === 's' || e.key === 'S')) { e.preventDefault(); save(); }
   };
 
-  if (value == null && !err) return html`<div class="editor"><div class="panel-skel tall" aria-label="Loading"></div></div>`;
-  if (value == null && err) return html`<div class="editor"><p class="form-error" role="alert">Could not load ${file}: ${err}</p></div>`;
-
   return html`<section class="editor" aria-label=${file}>
     <div class="editor-head">
       <h3 class="card-h mono">${file}</h3>
       <span class="editor-state" role="status">${state === 'saving' ? 'Saving…' : dirty ? 'Unsaved changes' : msg}</span>
       <span class="editor-spacer"></span>
-      ${dirty ? html`<button class="btn btn-quiet btn-sm" onClick=${() => { setText(base); setStateLocal('idle'); }}>Revert</button>` : null}
+      ${dirty ? html`<button class="btn btn-quiet btn-sm" onClick=${() => { edit(base); setStateLocal('idle'); }}>Revert</button>` : null}
       <button class="btn btn-primary btn-sm" onClick=${save} disabled=${!dirty || tooBig || state === 'saving'} data-testid=${`save-${field}`}>
         Save <span class="kbd-pair"><kbd>${isMac ? '⌘' : 'Ctrl'}</kbd><kbd>S</kbd></span></button>
     </div>
     <p class="editor-help">${help}</p>
-    <textarea ref=${area} class="editor-area mono" value=${text} spellcheck="false" onInput=${(e) => setText(e.currentTarget.value)}
+    <textarea class="editor-area mono" value=${text} spellcheck="false" onInput=${(e) => edit(e.currentTarget.value)}
       onKeyDown=${onKey} aria-label=${`Edit ${file}`} data-testid=${`editor-${field}`}></textarea>
     ${tooBig ? html`<p class="form-error" role="alert">This file is ${Math.round(size / 1024)} KB; the limit is 200 KB.</p>` : null}
   </section>`;

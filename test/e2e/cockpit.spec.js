@@ -2,8 +2,10 @@
 // a collapsible-but-useful rail, home with panes intact, live terminals.
 import { test, expect } from '@playwright/test';
 import {
-  login, seedStandard, row, rowButton, pane, panes, focusedPane, openPanes, termText, sessionBySid, isMock, TOKEN, mockRequests, spawn, api, sessions,
+  login, seedStandard, row, rowButton, pane, panes, focusedPane, openPanes, termText, sessionBySid, isMock, TOKEN, mockRequests, spawn, api, sessions, ownsServer,
 } from './helpers.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
 
@@ -158,6 +160,15 @@ test.describe('rail and workspace', () => {
     await expect.poll(async () => (await sessionBySid(ids.brief)).title).toBe('Morning brief, Thursday');
   });
 
+  test('rename keeps keystrokes typed the instant the field opens', async ({ page }) => {
+    await openPanes(page, [ids.quotes, ids.brief]);
+    await pane(page, ids.brief).getByTestId('pane-title').dblclick();
+    await page.keyboard.type('Brief, typed fast'); // no wait for focus: the field must already have it
+    await page.keyboard.press('Enter');
+    await expect(row(page, ids.brief).getByTestId('row-title')).toHaveText('Brief, typed fast');
+    await expect.poll(async () => (await sessionBySid(ids.brief)).title).toBe('Brief, typed fast');
+  });
+
   test('ending a session asks first and keeps the other panes', async ({ page }) => {
     await openPanes(page, [ids.roadmap, ids.brief, ids.quotes]);
     await pane(page, ids.brief).getByTestId('pane-end').click();
@@ -286,10 +297,10 @@ test.describe('pane lifecycle', () => {
     await pane(page, ids.brief).getByTestId('pane-attach').click();
     await expect(page.locator('.toast')).toContainText('Attach command copied');
     const s = await sessionBySid(ids.brief);
-    // The server's attach_cmd knows its real tmux socket; without one the default socket is used.
-    const expected = s.attach_cmd || `tmux -L clawdling attach -t ${s.tmux_name}`;
-    expect(expected).toContain(s.tmux_name);
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(expected);
+    // Only the server knows its tmux socket: tooltip and clipboard are exactly its attach_cmd.
+    expect(s.attach_cmd).toContain(s.tmux_name);
+    await expect(pane(page, ids.brief).getByTestId('pane-attach')).toHaveAttribute('title', `Copy: ${s.attach_cmd}`);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(s.attach_cmd);
   });
 
   test('hiding a pane keeps the session running', async ({ page }) => {
@@ -347,5 +358,81 @@ test.describe('pane lifecycle', () => {
     await expect(page.getByTestId('rail-search')).toHaveValue('');
     await expect(row(page, ids.brief)).toBeVisible();
     await expect(page.locator('.rail [data-agent="work"]')).toBeVisible();
+  });
+});
+
+// Claude Code's own startup dialog (folder trust) is answered from the pane.
+async function trustDialogSession(agent, title) {
+  if (isMock()) {
+    const sid = await spawn({ agent, title, status: 'ready' });
+    await fetch(new URL('/__mock/dialog', process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sid, kind: 'trust' }) });
+    return sid;
+  }
+  // A real server we booted: the fake claude shows its trust dialog in a folder holding .fake-claude-trust.
+  const a = await api('GET', `/api/agents/${agent}`);
+  const marker = path.join(a.dir, '.fake-claude-trust');
+  fs.writeFileSync(marker, '');
+  try {
+    const s = await api('POST', '/api/sessions', { agent, title });
+    await expect.poll(async () => (await sessionBySid(s.sid)).waiting_on, { timeout: 15_000 }).toBe('trust');
+    return s.sid;
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+}
+
+test.describe('startup dialogs', () => {
+  test.skip(() => !isMock() && !ownsServer(), 'needs the mock, or a real server this suite booted');
+  let ids;
+
+  test.beforeEach(async () => {
+    ids = await seedStandard();
+    if (!isMock()) {
+      const probe = await fetch(new URL('/api/sessions/00000000-0000-4000-8000-000000000000/answer', process.env.CLAWDLING_E2E_URL), {
+        method: 'POST', headers: { 'x-clawdling-token': TOKEN(), 'content-type': 'application/json' }, body: '{"option":1}',
+      });
+      const body = await probe.json().catch(() => ({}));
+      test.skip(probe.status === 404 && /route/i.test(body.error || ''), 'this server has no /answer route yet');
+    }
+  });
+
+  test('"Yes, trust it" answers the trust dialog; the terminal still takes keys', async ({ page }) => {
+    const sid = await trustDialogSession('home', 'Sort the garage');
+    await login(page);
+    await openPanes(page, [sid]);
+    const banner = pane(page, sid).getByTestId('pane-dialog');
+    await expect(banner).toBeVisible();
+    await expect(banner.getByTestId('pane-dialog-text')).toHaveText('Claude Code is asking whether it can trust this folder.');
+    await expect(banner.getByTestId('dialog-yes')).toHaveText('Yes, trust it');
+    await expect(banner.getByTestId('dialog-no')).toHaveText('No, exit');
+    if (isMock()) {
+      await expect(pane(page, sid).locator('textarea.xterm-helper-textarea')).toBeFocused();
+      await page.keyboard.type('xyz'); // keystrokes still reach the session while the banner is up
+      await expect(termText(page, sid)).toContainText('xyz');
+    }
+    await banner.getByTestId('dialog-yes').click();
+    await expect(pane(page, sid).getByTestId('pane-dialog')).toHaveCount(0);
+    await expect.poll(async () => (await sessionBySid(sid)).status).not.toBe('needs_you');
+    await expect(pane(page, sid)).not.toHaveAttribute('data-status', 'ended');
+    if (isMock()) {
+      const req = (await mockRequests()).find((r) => r.method === 'POST' && r.path === `/api/sessions/${sid}/answer`);
+      expect(req.body).toEqual({ option: 1 });
+    }
+  });
+
+  test('"No, exit" ends the session and the pane offers Resume', async ({ page }) => {
+    const sid = await trustDialogSession('money', 'Look at the budget');
+    await login(page);
+    await openPanes(page, [ids.roadmap, sid]);
+    await pane(page, sid).getByTestId('dialog-no').click();
+    await expect.poll(async () => (await sessionBySid(sid)).status).toBe('ended');
+    await expect(pane(page, sid).getByText(/Session ended/)).toBeVisible();
+    await expect(panes(page)).toHaveCount(2);
+    if (isMock()) {
+      const res = await fetch(new URL(`/api/sessions/${sid}/answer`, process.env.CLAWDLING_E2E_URL), {
+        method: 'POST', headers: { 'x-clawdling-token': TOKEN(), 'content-type': 'application/json' }, body: '{"option":1}',
+      });
+      expect(res.status).toBe(409); // nothing left to answer
+    }
   });
 });

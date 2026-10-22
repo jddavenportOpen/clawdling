@@ -1,7 +1,7 @@
 // One workspace pane: header (status, editable title, agent, model, live
 // activity trace, actions), a needs-you bar, and the live terminal.
 import { html } from '../lib/html.js';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Icon, AgentIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
@@ -9,9 +9,9 @@ import { TerminalView } from './terminal.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
-  closePane, setRenaming,
+  closePane, setRenaming, answerDialog,
 } from '../lib/actions.js';
-import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime } from '../lib/model.js';
+import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand } from '../lib/model.js';
 import { relTime, prefersReducedMotion, MOD } from '../lib/util.js';
 import { getState, setState } from '../lib/store.js';
 
@@ -40,7 +40,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
       const v = terms.get(sid);
       // Never pull the keyboard out of a dialog or menu opened since the jump.
-      const busy = getState().overlay || getState().menu || (document.activeElement && document.activeElement.closest('.modal, .menu'));
+      const st = getState();
+      const busy = st.overlay || st.menu || st.renaming || (document.activeElement && document.activeElement.closest('.modal, .menu, .pane-title-input'));
       if (v && !busy) v.focus();
       setFlash(true);
       setTimeout(() => setFlash(false), 650);
@@ -85,7 +86,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       ${conn === 'reconnecting' && !ended ? html`<span class="pane-conn" role="status">Reconnecting…</span>` : null}
       ${!solo && index < 9 ? html`<span class="pane-index" aria-hidden="true" title=${`Focus with ${MOD}${index + 1}`}>${MOD}${index + 1}</span>` : null}
       <div class="pane-actions">
-        <button class="icon-btn" onClick=${() => copyAttach(s)} aria-label="Copy attach command" title=${`Copy: tmux -L clawdling attach -t ${s.tmux_name || ''}`} data-testid="pane-attach"><${Icon} name="terminal" /></button>
+        ${attachCommand(s) ? html`<button class="icon-btn" onClick=${() => copyAttach(s)} aria-label="Copy attach command" title=${`Copy: ${attachCommand(s)}`} data-testid="pane-attach"><${Icon} name="terminal" /></button>` : null}
         <button class="icon-btn" onClick=${() => closePane(sid)} aria-label="Hide pane (keeps running)" title="Hide pane. The session keeps running." data-testid="pane-hide"><${Icon} name="pane-hide" /></button>
         ${mobile || solo ? null : html`<button class="icon-btn" onClick=${() => toggleMaximize(sid)} aria-label=${maximized ? 'Restore layout' : 'Maximize pane'} aria-pressed=${maximized ? 'true' : 'false'}
           title=${maximized ? 'Restore layout' : 'Maximize'} data-testid="pane-max"><${Icon} name=${maximized ? 'restore' : 'maximize'} /></button>`}
@@ -93,7 +94,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
           : html`<button class="icon-btn icon-danger" onClick=${() => askEndSession(sid)} aria-label="End session" title="End session…" data-testid="pane-end"><${Icon} name="x" /></button>`}
       </div>
     </header>
-    ${s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => { const v = terms.get(sid); if (v) v.focus(); }}>
+    ${s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} />`
+      : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => { const v = terms.get(sid); if (v) v.focus(); }}>
       <${StatusGlyph} status="needs_you" label=${false} /><span class="alert-label">Needs you</span><span class="alert-text">${s.notification || 'Claude is waiting for your answer in the terminal.'}</span>
     </button>` : null}
     <div class="pane-body">
@@ -114,23 +116,29 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
 }
 
 function PaneTitle({ sid, name, title, editing }) {
-  const [value, setValue] = useState(title || '');
+  if (editing) return html`<${TitleEditor} sid=${sid} name=${name} title=${title} />`;
+  return html`<h3 class="pane-title" onDblClick=${() => setRenaming(sid)} title=${`${name} (double-click to rename)`} data-testid="pane-title">
+    <span class="pane-title-text">${name}</span>
+  </h3>`;
+}
+
+// Mounted only while renaming: its value is set synchronously at mount and focus lands in a
+// layout effect (before paint), so the very first keystroke is never overwritten by a late reset.
+function TitleEditor({ sid, name, title }) {
+  const [value, setValue] = useState(() => title || '');
   const input = useRef(null);
   const done = useRef(false);
 
-  useEffect(() => {
-    if (editing) {
-      done.current = false;
-      setValue(title || '');
-      requestAnimationFrame(() => { if (input.current) { input.current.focus(); input.current.select(); } });
-    }
-  }, [editing]);
+  useLayoutEffect(() => {
+    const el = input.current;
+    if (el) { el.focus(); el.select(); }
+  }, []);
 
   const commit = () => {
     if (done.current) return;
     done.current = true;
     setRenaming(null);
-    renameSession(sid, value);
+    renameSession(sid, input.current ? input.current.value : value);
   };
   const cancel = () => {
     done.current = true;
@@ -139,17 +147,37 @@ function PaneTitle({ sid, name, title, editing }) {
     if (v) v.focus();
   };
 
-  if (editing) {
-    return html`<input ref=${input} class="pane-title-input" value=${value} maxLength="120" aria-label="Session title"
-      placeholder=${name} onInput=${(e) => setValue(e.currentTarget.value)} onBlur=${commit} onMouseDown=${(e) => e.stopPropagation()}
-      onKeyDown=${(e) => {
-        if (e.key === 'Enter') { e.preventDefault(); commit(); const v = terms.get(sid); if (v) v.focus(); }
-        else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-      }} data-testid="pane-title-input" />`;
-  }
-  return html`<h3 class="pane-title" onDblClick=${() => setRenaming(sid)} title=${`${name} (double-click to rename)`} data-testid="pane-title">
-    <span class="pane-title-text">${name}</span>
-  </h3>`;
+  return html`<input ref=${input} class="pane-title-input" value=${value} maxLength="120" aria-label="Session title"
+    placeholder=${name} onInput=${(e) => setValue(e.currentTarget.value)} onBlur=${commit} onMouseDown=${(e) => e.stopPropagation()}
+    onKeyDown=${(e) => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); const v = terms.get(sid); if (v) v.focus(); }
+      else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    }} data-testid="pane-title-input" />`;
+}
+
+// Claude Code's own startup dialogs (detected by the server from the screen, before any hook
+// runs). Answered with POST /api/sessions/:sid/answer {option}; the terminal keeps working too.
+export const STARTUP_DIALOGS = {
+  trust: { text: 'Claude Code is asking whether it can trust this folder.', yes: 'Yes, trust it', no: 'No, exit' },
+  imports: { text: 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
+};
+
+function DialogBanner({ s }) {
+  const d = STARTUP_DIALOGS[s.waiting_on];
+  const [busy, setBusy] = useState(0);
+  const answer = async (option) => {
+    setBusy(option);
+    await answerDialog(s.sid, option);
+    setBusy(0);
+  };
+  return html`<div class="pane-dialog" role="group" aria-label="Claude Code is asking" data-testid="pane-dialog" data-dialog=${s.waiting_on}>
+    <${StatusGlyph} status="needs_you" label=${false} />
+    <span class="dialog-text" data-testid="pane-dialog-text">${d.text}</span>
+    <span class="dialog-actions">
+      <button class="btn btn-quiet btn-sm" onClick=${() => answer(2)} disabled=${!!busy} data-testid="dialog-no">${busy === 2 ? 'Answering…' : d.no}</button>
+      <button class="btn btn-primary btn-sm" onClick=${() => answer(1)} disabled=${!!busy} data-testid="dialog-yes">${busy === 1 ? 'Answering…' : d.yes}</button>
+    </span>
+  </div>`;
 }
 
 // Signature detail: a hairline trace of real terminal output over the last 40 s,

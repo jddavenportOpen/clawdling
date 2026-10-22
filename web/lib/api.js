@@ -64,6 +64,7 @@ export const api = {
   rename: async (sid, title) => one(await request('PATCH', `/api/sessions/${enc(sid)}`, { title }), 'session'),
   end: async (sid) => one(await request('DELETE', `/api/sessions/${enc(sid)}`), 'session'),
   resume: async (sid, size) => one(await request('POST', `/api/sessions/${enc(sid)}/resume`, size), 'session'),
+  answer: async (sid, option) => one(await request('POST', `/api/sessions/${enc(sid)}/answer`, { option }), 'session'),
   send: (sid, text, enter = true) => request('POST', `/api/sessions/${enc(sid)}/send`, { text, enter }),
 
   pair: () => request('GET', '/api/pair'),

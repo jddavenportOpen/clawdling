@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { login, reset, api, isMock, mockRequests, spawn, panes, focusedPane, sessionBySid, tag } from './helpers.js';
+import { login, reset, api, isMock, mockRequests, spawn, panes, focusedPane, sessionBySid, tag, sessions } from './helpers.js';
 
 async function orgAgents() {
   const r = await api('GET', '/api/org');
@@ -31,6 +31,25 @@ test.describe('org map', () => {
     await panel.getByTestId('panel-open-agent').click();
     await expect(page).toHaveURL(/#\/agent\/health$/);
     await expect(page.getByTestId('agent-page')).toBeVisible();
+  });
+
+  test('"need you" is one number everywhere, and the amber rings agree with it', async ({ page }) => {
+    await reset('default');
+    await login(page, '#/map');
+    await expect(page.locator('[data-node]').first()).toBeVisible();
+    const all = await sessions();
+    const waiting = all.filter((x) => x.status === 'needs_you' || x.status === 'ready'); // needs you + your turn
+    await expect(page.locator('#sec-needs .sec-count')).toHaveText(String(waiting.length));
+    if (waiting.length) await expect(page.locator('.map-page .page-sub')).toContainText(`${waiting.length} need you`);
+    else await expect(page.locator('.map-page .page-sub')).not.toContainText('need you');
+    const agentsWaiting = new Set(waiting.map((x) => x.agent));
+    for (const a of await orgAgents()) {
+      await expect(page.locator(`[data-node="${a.id}"] .needs-ring`)).toHaveCount(agentsWaiting.has(a.id) ? 1 : 0);
+    }
+    if (isMock()) {
+      expect(agentsWaiting.has('donna')).toBe(true); // Donna's session is "your turn" (ready): still amber
+      await expect(page.locator('[data-node="donna"]')).toHaveClass(/tone-needs/);
+    }
   });
 
   test('New session from the map panel lands focused in the cockpit', async ({ page }) => {
@@ -75,6 +94,22 @@ test.describe('agent page', () => {
       expect(put.body.now_md).toContain(stamp);
       expect(put.body.claude_md).toBeUndefined(); // only the edited file is sent
     }
+  });
+
+  test('the NOW.md editor keeps text typed in its first frame', async ({ page }) => {
+    await reset('default');
+    const original = (await api('GET', '/api/agents/health')).now_md;
+    await login(page, '#/agent/health/memory');
+    const editor = page.getByTestId('editor-now_md');
+    await editor.waitFor({ state: 'attached' });
+    await editor.focus(); // type at once: no waiting for the value to settle
+    await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End');
+    await page.keyboard.type('\n- typed in the first frame');
+    await page.getByTestId('save-now_md').click();
+    await expect(page.locator('.editor-state')).toContainText('Saved');
+    const saved = (await api('GET', '/api/agents/health')).now_md;
+    expect(saved).toContain('- typed in the first frame');
+    expect(saved.startsWith(original.trimEnd())).toBe(true); // typed after the file, not into an empty frame
   });
 
   test('Context tab edits CLAUDE.md with Cmd/Ctrl+S', async ({ page }) => {
