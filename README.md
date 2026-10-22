@@ -10,7 +10,7 @@ click, as a real Claude Code session that already knows its job, its history and
 No session caps and no per-agent fees. Every agent is the official `claude` CLI running on the
 Claude plan you already pay for, so your plan's own usage limits are the only limit.
 
-![The cockpit: every live session by name, what needs you first, panes side by side](docs/img/cockpit.png)
+![The org map: you, Donna, your domains and their projects, with live sessions and what needs you](docs/img/org-map.png)
 
 ## Install it by asking Claude Code (recommended)
 
@@ -39,7 +39,8 @@ node bin/clawdling.js start --open      # the cockpit, at http://127.0.0.1:4747
 
 The first time Claude Code starts in your org it asks whether you trust the folder. Start one
 Scratch session (`node bin/clawdling.js spawn scratch`), answer "Yes" once in the cockpit, and
-every agent folder inside is covered.
+every agent folder inside your org is covered. A project agent whose code lives elsewhere asks
+once for its repo; the cockpit shows a one-click "Yes, trust it" button.
 
 ## What you get
 
@@ -52,7 +53,7 @@ current. Your org is plain files in `~/clawdling`: read them, edit them, put the
 live badges and a ring on anything that needs you. Click an agent to see what it knows and start
 it.
 
-![The org map](docs/img/org-map.png)
+![The cockpit: every live session by name, what needs you first, panes side by side](docs/img/cockpit.png)
 
 **A cockpit that stays out of your way.**
 - The rail lists every session by its real name: what needs you, what is working, what ended
@@ -82,6 +83,8 @@ she can start, message and list sessions and read your org, nothing else.
 **On your phone.** The Clawdling iPhone app (chat only) connects to your own cockpit: see what
 needs you, chat with any session, start one, talk to Donna. Pair it from Settings with a QR
 code. The App Store listing is pending Apple's review.
+
+_Screenshots use sample data._
 
 ## How it works
 
