@@ -1,0 +1,38 @@
+{
+  "name": "clawdling",
+  "version": "1.0.0",
+  "description": "Turn Claude Code into an org of agents: a visual cockpit, domain and project agents with memory, and a chief of staff you can text. Installed by handing Claude Code one link.",
+  "type": "module",
+  "license": "AGPL-3.0-only",
+  "bin": {
+    "clawdling": "bin/clawdling.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node bin/clawdling.js start",
+    "test": "node --test test/unit/ test/integration/",
+    "test:unit": "node --test test/unit/",
+    "test:integration": "node --test test/integration/",
+    "e2e": "playwright test -c test/e2e/playwright.config.js",
+    "smoke:live": "node test/live/smoke-live.mjs"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "htm": "^3.1.1",
+    "preact": "^10.27.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0"
+  },
+  "files": ["bin", "server", "templates", "web", "README.md", "SETUP.md", "LICENSE", "docs"],
+  "keywords": ["claude-code", "agents", "cockpit", "tmux", "personal-ai", "chief-of-staff", "telegram", "imessage"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jddavenportOpen/clawdling.git"
+  }
+}

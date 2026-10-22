@@ -1,0 +1,8 @@
+node_modules/
+.clawdling/
+.env
+test/e2e/screenshots/
+test/e2e/test-results/
+playwright-report/
+*.log
+.DS_Store
