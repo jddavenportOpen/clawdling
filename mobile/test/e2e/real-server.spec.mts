@@ -44,6 +44,9 @@ const test = base.extend<{}, { real: Real }>({
         } catch {
           // no sessions left
         }
+        // kill-server can leave the socket file behind; do not litter the tmux directory.
+        const uid = typeof process.getuid === 'function' ? process.getuid() : 0;
+        fs.rmSync(path.join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${uid}`, socket), { force: true });
         fs.rmSync(home, { recursive: true, force: true });
         fs.rmSync(claudeDir, { recursive: true, force: true });
       }
