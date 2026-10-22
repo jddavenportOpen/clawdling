@@ -170,3 +170,49 @@ test('scratch sessions run at the org root; unknown agents are rejected', async 
   assert.equal((await request(srv, 'POST', '/api/sessions', { agent: '../etc' })).status, 400);
   assert.equal((await request(srv, 'POST', '/api/sessions', { agent: 'health', model: 'x;rm' })).status, 400);
 });
+
+test("Claude Code's folder-trust dialog is surfaced as needs_you and answered like a user would", async () => {
+  fs.writeFileSync(path.join(home, 'domains', 'health', '.fake-claude-trust'), '');
+  try {
+    const s = (await request(srv, 'POST', '/api/sessions', { agent: 'health' })).body;
+    const nu = await waitFor(async () => {
+      const cur = await getSession(s.sid);
+      return cur.status === 'needs_you' ? cur : null;
+    }, { label: 'trust needs_you' });
+    assert.match(nu.notification, /trust this folder/);
+    const sent = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' });
+    assert.equal(sent.status, 409, 'Donna/CLI text is never typed into the trust dialog');
+    const v = await openViewer(srv, s.sid);
+    try {
+      await v.next((m) => m.t === 'snapshot');
+      v.send({ t: 'in', data: '\x1b[B' }); // move to "Yes, I trust this folder"
+      await v.waitOutput(/❯ Yes, I trust this folder/u);
+      v.send({ t: 'in', data: '\r' });
+      const ready = await waitFor(async () => {
+        const cur = await getSession(s.sid);
+        return cur.status === 'ready' ? cur : null;
+      }, { label: 'ready after trust' });
+      assert.equal(ready.notification, null);
+    } finally {
+      v.close();
+    }
+    // Choosing the default ("No, exit") ends the session with a useful notice.
+    const s2 = (await request(srv, 'POST', '/api/sessions', { agent: 'health' })).body;
+    await waitFor(async () => (await getSession(s2.sid)).status === 'needs_you', { label: 'trust again' });
+    const v2 = await openViewer(srv, s2.sid);
+    try {
+      await v2.next((m) => m.t === 'snapshot');
+      v2.send({ t: 'in', data: '\r' });
+      const ended = await waitFor(async () => {
+        const cur = await getSession(s2.sid);
+        return cur.status === 'ended' ? cur : null;
+      }, { label: 'ended after No' });
+      assert.match(ended.notification, /exited right after starting/);
+      assert.equal(ended.resumable, true);
+    } finally {
+      v2.close();
+    }
+  } finally {
+    fs.unlinkSync(path.join(home, 'domains', 'health', '.fake-claude-trust'));
+  }
+});
