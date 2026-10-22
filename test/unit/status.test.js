@@ -77,3 +77,12 @@ test('trust dialog wait is cleared once Claude actually starts', () => {
   assert.equal(r.status, 'ready');
   assert.equal(r.notification, null);
 });
+
+test('startup dialogs are recognised from the rendered screen, whatever the spacing', async () => {
+  const { dialogFromScreen } = await import('../../server/sessions.js');
+  const real = ` Accessing workspace:\n\n /private/var/folders/T/cl-smoke/domains/archive\n\n Quick safety check: Is this a project you created or one you trust? (Like your own code, a well-known open source project, or work from\n your team). If not, take a moment to review what's in this folder first.\n\n ❯ No, exit\n   Yes, I trust this folder\n\n Enter to confirm · Esc to cancel`;
+  assert.equal(dialogFromScreen(real).waiting, 'trust');
+  assert.equal(dialogFromScreen('Yes,I  trust\nthis   folder').waiting, 'trust');
+  assert.equal(dialogFromScreen('Allow external CLAUDE.md file imports?').waiting, 'imports');
+  assert.equal(dialogFromScreen('> hello\nassistant: hi'), null);
+});

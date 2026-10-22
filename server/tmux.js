@@ -212,6 +212,12 @@ export class Tmux {
     }
   }
 
+  /** The rendered screen as plain text (no escapes, wrapped lines joined). */
+  async screenText(target) {
+    const { stdout } = await this.exec(['capture-pane', '-p', '-J', '-t', target]);
+    return stdout;
+  }
+
   async capture(target, history = 2000) {
     const { stdout } = await this.exec(['capture-pane', '-p', '-e', '-J', '-S', `-${history}`, '-t', target]);
     return stdout;

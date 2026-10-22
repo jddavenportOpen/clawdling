@@ -43,6 +43,15 @@ export const TRUST_NOTICE =
 export const IMPORTS_NOTICE = 'Claude Code is asking whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal.';
 export const STALL_NOTICE = 'Claude Code has not finished starting. It may be waiting for an answer in the terminal.';
 
+/** Which startup dialog (if any) a rendered screen shows. Whitespace-insensitive. */
+export function dialogFromScreen(screen) {
+  const flat = String(screen || '').replace(/\s+/g, ' ');
+  const tight = flat.replace(/ /g, '').toLowerCase();
+  if (TRUST_RE.test(flat) || tight.includes('yes,itrustthisfolder') || tight.includes('quicksafetycheck:isthisaproject')) return { waiting: 'trust', notice: TRUST_NOTICE };
+  if (IMPORTS_RE.test(flat) || tight.includes('allowexternalclaude.mdfileimports')) return { waiting: 'imports', notice: IMPORTS_NOTICE };
+  return null;
+}
+
 /**
  * Positional prompts go after `--` so a leading dash is never parsed as an option. A prompt that is
  * one bare word gets a trailing space so it can never be dispatched as a claude subcommand
@@ -574,23 +583,32 @@ export class SessionManager {
     return s.length > max ? s.slice(-max) : s;
   }
 
+  /**
+   * Claude Code's startup dialogs (folder trust, external imports) appear before any hook can
+   * run. Look at the screen tmux actually rendered (Ink draws with cursor moves, so the raw stream
+   * is not reliable text) a moment after output arrives, until the first hook comes in.
+   */
   detectDialogs(rec, rt) {
-    const tail = stripAnsi(this.ringText(rt, 8000));
-    let waiting = null;
-    let notice = null;
-    if (TRUST_RE.test(tail)) {
-      waiting = 'trust';
-      notice = TRUST_NOTICE;
-    } else if (IMPORTS_RE.test(tail)) {
-      waiting = 'imports';
-      notice = IMPORTS_NOTICE;
-    }
-    if (waiting && rec.waiting_on !== waiting) {
-      rec.status = 'needs_you';
-      rec.waiting_on = waiting;
-      rec.notification = notice;
-      this.onStatusChange(rec);
-    }
+    if (rt.dialogTimer) return;
+    rt.dialogTimer = setTimeout(async () => {
+      rt.dialogTimer = null;
+      if (rec.hooked || !(rec.status === 'starting' || rec.status === 'needs_you')) return;
+      let screen;
+      try {
+        screen = await this.tmux.screenText(rec.pane_id || `=${rec.tmux_name}:`);
+      } catch {
+        screen = stripAnsi(this.ringText(rt, 8000));
+      }
+      if (rec.hooked) return;
+      const d = dialogFromScreen(screen);
+      if (d && rec.waiting_on !== d.waiting) {
+        rec.status = 'needs_you';
+        rec.waiting_on = d.waiting;
+        rec.notification = d.notice;
+        this.onStatusChange(rec);
+      }
+    }, 250);
+    rt.dialogTimer.unref?.();
   }
 
   flushOutput(rec, rt) {
@@ -832,7 +850,7 @@ export class SessionManager {
     for (const [sid, rt] of this.runtime) {
       const rec = this.records.get(sid);
       if (rec) this.flushOutput(rec, rt);
-      for (const t of ['flushTimer', 'carryTimer', 'stallTimer', 'resizeTimer']) clearTimeout(rt[t]);
+      for (const t of ['flushTimer', 'carryTimer', 'stallTimer', 'resizeTimer', 'dialogTimer']) clearTimeout(rt[t]);
       rt.control?.close();
       for (const ws of rt.viewers) {
         try {
