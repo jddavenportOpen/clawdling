@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#0d0f12" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f4f5f7" media="(prefers-color-scheme: light)">
+  <title>Clawdling</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="stylesheet" href="/vendor/xterm.css">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "preact": "/vendor/preact.mjs",
+      "preact/hooks": "/vendor/preact-hooks.mjs",
+      "htm": "/vendor/htm.mjs",
+      "@xterm/xterm": "/vendor/xterm.mjs",
+      "@xterm/addon-fit": "/vendor/addon-fit.mjs",
+      "@xterm/addon-web-links": "/vendor/addon-web-links.mjs"
+    }
+  }
+  </script>
+  <link rel="modulepreload" href="/app.js">
+  <link rel="modulepreload" href="/lib/html.js">
+  <link rel="modulepreload" href="/lib/store.js">
+  <link rel="modulepreload" href="/lib/live.js">
+  <link rel="modulepreload" href="/lib/actions.js">
+  <link rel="modulepreload" href="/lib/api.js">
+  <link rel="modulepreload" href="/lib/prefs.js">
+  <link rel="modulepreload" href="/lib/util.js">
+  <link rel="modulepreload" href="/lib/model.js">
+  <link rel="modulepreload" href="/lib/keys.js">
+  <link rel="modulepreload" href="/lib/theme.js">
+  <link rel="modulepreload" href="/lib/term.js">
+  <link rel="modulepreload" href="/components/icons.js">
+  <link rel="modulepreload" href="/components/status.js">
+  <link rel="modulepreload" href="/components/rail.js">
+  <link rel="modulepreload" href="/components/workspace.js">
+  <link rel="modulepreload" href="/components/pane.js">
+  <link rel="modulepreload" href="/components/terminal.js">
+  <link rel="modulepreload" href="/components/dialogs.js">
+  <link rel="modulepreload" href="/components/palette.js">
+  <link rel="modulepreload" href="/components/new-session.js">
+  <link rel="modulepreload" href="/components/wizard.js">
+  <link rel="modulepreload" href="/components/orgmap.js">
+  <link rel="modulepreload" href="/components/agent-page.js">
+  <link rel="modulepreload" href="/components/donna-page.js">
+  <link rel="modulepreload" href="/components/settings-page.js">
+  <link rel="modulepreload" href="/components/auth-screen.js">
+  <link rel="modulepreload" href="/vendor/preact.mjs">
+  <link rel="modulepreload" href="/vendor/preact-hooks.mjs">
+  <link rel="modulepreload" href="/vendor/htm.mjs">
+  <link rel="modulepreload" href="/vendor/xterm.mjs">
+  <link rel="modulepreload" href="/vendor/addon-fit.mjs">
+  <link rel="modulepreload" href="/vendor/addon-web-links.mjs">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="app" class="boot" aria-busy="true"></div>
+  <noscript>Clawdling's cockpit needs JavaScript. Your agents keep running in tmux: <code>tmux -L clawdling ls</code></noscript>
+</body>
+</html>
