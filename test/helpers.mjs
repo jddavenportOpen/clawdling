@@ -166,8 +166,8 @@ export function rmrf(p) {
 }
 
 /** A WebSocket viewer that records every message. */
-export async function openViewer(srv, sid, { origin } = {}) {
-  const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/ws/term/${sid}?t=${srv.token}`, origin ? { headers: { Origin: origin } } : {});
+export async function openViewer(srv, sid, { origin, query } = {}) {
+  const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/ws/term/${sid}?t=${srv.token}${query ? `&${query}` : ''}`, origin ? { headers: { Origin: origin } } : {});
   const messages = [];
   ws.on('message', (raw) => {
     try {

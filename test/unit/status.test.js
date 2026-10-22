@@ -86,3 +86,23 @@ test('startup dialogs are recognised from the rendered screen, whatever the spac
   assert.equal(dialogFromScreen('Allow external CLAUDE.md file imports?').waiting, 'imports');
   assert.equal(dialogFromScreen('> hello\nassistant: hi'), null);
 });
+
+test('SessionStart only moves a starting session to ready; working/ready/waiting sessions keep their status', () => {
+  for (const status of ['working', 'ready']) {
+    const r = rec({ status });
+    assert.equal(applyHookEvent(r, 'SessionStart', { source: 'resume' }).statusChanged, false, status);
+    assert.equal(r.status, status);
+  }
+  const p = rec({ status: 'needs_you', waiting_on: 'permission_prompt', notification: 'Allow Bash?' });
+  applyHookEvent(p, 'SessionStart', { source: 'resume' });
+  assert.equal(p.status, 'needs_you', 'a pending permission prompt is not cleared');
+  assert.equal(p.notification, 'Allow Bash?');
+  const resumed = rec({ status: 'starting' });
+  applyHookEvent(resumed, 'SessionStart', { source: 'resume' });
+  assert.equal(resumed.status, 'ready');
+  // Resumed, then the owner typed before the (late) SessionStart arrived: stays working.
+  const late = rec({ status: 'starting' });
+  applyHookEvent(late, 'UserPromptSubmit', { prompt: 'keep going' });
+  applyHookEvent(late, 'SessionStart', { source: 'resume' });
+  assert.equal(late.status, 'working');
+});

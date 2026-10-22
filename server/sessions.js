@@ -88,6 +88,17 @@ export function buildLauncherScript({ cwd, env = {}, argv, comment = 'Clawdling 
   return lines.join('\n') + '\n';
 }
 
+/** A viewer's terminal size (WS ?cols=&rows= or a resize message), or null if out of range. */
+export function validSize(cols, rows) {
+  const c = Number(cols);
+  const r = Number(rows);
+  if (!Number.isInteger(c) || !Number.isInteger(r)) return null;
+  if (c < 20 || c > 500 || r < 4 || r > 200) return null;
+  return { cols: c, rows: r };
+}
+
+const CLEAR = '\x1b[0m\x1b[H\x1b[2J\x1b[3J';
+
 /** Snapshot = clear + captured lines + cursor position + replayed terminal modes. */
 export function buildSnapshot(lines, cursorInfo, modes) {
   const parts = String(cursorInfo || '').trim().split(/\s+/).map(Number);
@@ -550,6 +561,7 @@ export class SessionManager {
   }
 
   onOutput(rec, rt, raw) {
+    rt.lastOutputAt = Date.now();
     const text = rt.filter.push(raw);
     if (rt.filter.carry && !rt.carryTimer) {
       rt.carryTimer = setTimeout(() => {
@@ -774,7 +786,12 @@ export class SessionManager {
 
   // ---------------------------------------------------------------- terminal viewers
 
-  attachViewer(sid, ws) {
+  /**
+   * Attach a WebSocket viewer. With {cols, rows} (the client's terminal size) the tmux window is
+   * resized first and the snapshot is cut at that geometry: a window taller than the viewer would
+   * otherwise push the real content off the viewer's screen.
+   */
+  attachViewer(sid, ws, { cols, rows } = {}) {
     const rec = this.records.get(sid);
     if (!rec) {
       ws.close(1008, 'no such session');
@@ -791,30 +808,76 @@ export class SessionManager {
         return;
       }
       if (msg?.t === 'in' && typeof msg.data === 'string') this.input(sid, msg.data);
-      else if (msg?.t === 'resize') this.resize(sid, msg.cols, msg.rows);
+      else if (msg?.t === 'resize') this.resize(sid, msg.cols, msg.rows, ws);
     });
-    if (!rt.control || rt.control.closed) {
-      sendWs(ws, { t: 'snapshot', data: '\x1b[0m\x1b[H\x1b[2J\x1b[3J' + this.ringText(rt).replace(/\r?\n/g, '\r\n') });
-      sendWs(ws, { t: 'status', status: rec.status });
-      if (!isLive(rec.status)) sendWs(ws, { t: 'ended' });
-      rt.viewers.add(ws);
+    const size = validSize(cols, rows);
+    if (size && isLive(rec.status) && rt.control && !rt.control.closed) {
+      rt.size = size;
+      this.applySize(rec, rt, size, () => this.snapshotTo(rec, rt, ws, { register: true }));
       return;
     }
     this.snapshotTo(rec, rt, ws, { register: true });
   }
 
+  /**
+   * Make the tmux window `size`. Calls done(changed) once tmux has applied it and the app has had
+   * a moment to redraw for the new size. Everything goes through the control client, so it is
+   * ordered with the snapshot capture that follows.
+   */
+  applySize(rec, rt, { cols, rows }, done) {
+    const cc = rt.control;
+    if (!cc || cc.closed) {
+      done(false);
+      return;
+    }
+    const target = rec.pane_id || `=${rec.tmux_name}:`;
+    cc.command(`display-message -p -t ${target} '#{window_width} #{window_height}'`, (err, lines) => {
+      const [w, h] = String((lines && lines[0]) || '').trim().split(/\s+/).map(Number);
+      if (!err && w === cols && h === rows) {
+        done(false);
+        return;
+      }
+      if (cc.closed) {
+        done(false);
+        return;
+      }
+      cc.command(`resize-window -t =${rec.tmux_name}: -x ${cols} -y ${rows}`);
+      // The reply to the last command means tmux has resized its grid; then let the app redraw.
+      cc.command(`refresh-client -C ${cols}x${rows}`, () => this.settle(rt, () => done(true)));
+    });
+  }
+
+  /** Wait until the pane has been quiet for 50 ms (at least 60 ms, at most 400 ms). */
+  settle(rt, then, { min = 60, quiet = 50, max = 400 } = {}) {
+    const start = Date.now();
+    const tick = () => {
+      const now = Date.now();
+      if (now - start >= max || (now - start >= min && now - (rt.lastOutputAt || 0) >= quiet)) then();
+      else setTimeout(tick, 15);
+    };
+    setTimeout(tick, 15);
+  }
+
   /** Capture through the control client so the snapshot is an exact cut of the output stream. */
   snapshotTo(rec, rt, ws, { register }) {
+    if (ws.readyState !== 1) return;
     const cc = rt.control;
-    if (!cc || cc.closed) return;
+    if (!cc || cc.closed) {
+      sendWs(ws, { t: 'snapshot', data: CLEAR + this.ringText(rt).replace(/\r?\n/g, '\r\n') });
+      sendWs(ws, { t: 'status', status: rec.status });
+      if (!isLive(rec.status)) sendWs(ws, { t: 'ended' });
+      if (register) rt.viewers.add(ws);
+      return;
+    }
     const target = rec.pane_id || `=${rec.tmux_name}:`;
     let captured = null;
     cc.command(`capture-pane -p -e -J -S -2000 -t ${target}`, (err, lines) => {
       captured = err ? null : lines;
     });
     cc.command(`display-message -p -t ${target} '#{cursor_x} #{cursor_y} #{pane_width} #{pane_height} #{cursor_flag} #{alternate_on}'`, (err, lines) => {
+      if (ws.readyState !== 1) return;
       this.flushOutput(rec, rt); // output before the cut goes only to existing viewers
-      const data = captured ? buildSnapshot(captured, err ? '' : lines[0], rt.modes) : '\x1b[0m\x1b[H\x1b[2J\x1b[3J' + this.ringText(rt);
+      const data = captured ? buildSnapshot(captured, err ? '' : lines[0], rt.modes) : CLEAR + this.ringText(rt);
       sendWs(ws, { t: 'snapshot', data });
       sendWs(ws, { t: 'status', status: rec.status });
       if (register) rt.viewers.add(ws);
@@ -834,19 +897,20 @@ export class SessionManager {
     }
   }
 
-  resize(sid, cols, rows) {
+  /** A viewer's explicit resize. If the window size changes, that viewer gets a fresh snapshot. */
+  resize(sid, cols, rows, ws) {
     const rec = this.records.get(sid);
     const rt = this.runtime.get(sid);
     if (!rec || !rt) return;
-    const c = Math.floor(Number(cols));
-    const r = Math.floor(Number(rows));
-    if (!(c >= 10 && c <= 500 && r >= 3 && r <= 200)) return;
-    rt.size = { cols: c, rows: r };
+    const size = validSize(cols, rows);
+    if (!size) return;
+    rt.size = size;
     clearTimeout(rt.resizeTimer);
     rt.resizeTimer = setTimeout(() => {
       if (!isLive(rec.status)) return;
-      this.tmux.resizeWindow(rec.tmux_name, c, r);
-      rt.control?.resize(c, r);
+      this.applySize(rec, rt, size, (changed) => {
+        if (changed && ws && rt.viewers.has(ws)) this.snapshotTo(rec, rt, ws, { register: false });
+      });
     }, 40);
   }
 

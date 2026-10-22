@@ -31,6 +31,8 @@ export function buildHooksSettings({ nodePath, hookScript }) {
 }
 
 export const STATUSES = ['starting', 'working', 'ready', 'needs_you', 'ended'];
+// needs_you states that only happen before Claude Code has started (dialogs on screen, no hook yet).
+const STARTUP_WAITS = new Set(['trust', 'imports', 'startup']);
 const LIVE = new Set(['starting', 'working', 'ready', 'needs_you']);
 export const isLive = (status) => LIVE.has(status);
 
@@ -40,7 +42,8 @@ export const isLive = (status) => LIVE.has(status);
  *
  *   starting --UserPromptSubmit--> working --Stop--> ready
  *   any live --Notification--> needs_you (message kept) --UserPromptSubmit--> working
- *   SessionStart (no first prompt pending) --> ready   (a fresh session is waiting for you)
+ *   starting --SessionStart (no first prompt pending)--> ready   (a fresh session waits for you);
+ *   SessionStart never changes a working, ready or waiting session
  *   SessionEnd (except /clear) or tmux exit --> ended
  */
 export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
@@ -60,12 +63,13 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
 
   switch (event) {
     case 'SessionStart': {
-      if (payload.source === 'compact') break;
+      // Only a session that is still starting becomes ready. A working (or waiting) session that
+      // reports SessionStart again (/resume inside Claude, /clear, a replayed hook) keeps its status.
+      const startingUp = rec.status === 'starting' || (rec.status === 'needs_you' && STARTUP_WAITS.has(rec.waiting_on));
+      if (!startingUp || payload.source === 'compact') break;
       rec.status = rec.pending_prompt ? 'starting' : 'ready';
-      if (rec.waiting_on === 'trust' || rec.waiting_on === 'startup') {
-        rec.waiting_on = null;
-        rec.notification = null;
-      }
+      rec.waiting_on = null;
+      rec.notification = null;
       break;
     }
     case 'UserPromptSubmit': {

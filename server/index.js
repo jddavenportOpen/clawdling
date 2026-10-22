@@ -578,7 +578,8 @@ export async function startServer(opts = {}) {
     if (!tokenEquals(extractToken(req, url, { allowQuery: true }), token)) return reject(401, 'Unauthorized');
     const m = url.pathname.match(/^\/ws\/term\/([^/]+)$/);
     if (!m || !isUuid(m[1]) || !sessions.get(m[1])) return reject(404, 'Not Found');
-    wss.handleUpgrade(req, sock, head, (ws) => sessions.attachViewer(m[1], ws));
+    const size = { cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
+    wss.handleUpgrade(req, sock, head, (ws) => sessions.attachViewer(m[1], ws, size));
   });
 
   await new Promise((resolve, reject) => {
