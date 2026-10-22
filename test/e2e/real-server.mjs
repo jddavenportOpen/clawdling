@@ -54,6 +54,7 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
   }
   const cleanup = () => {
     try { execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' }); } catch { /* no sessions left */ }
+    try { fs.rmSync(path.join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, socket), { force: true }); } catch { /* not there */ }
     fs.rmSync(home, { recursive: true, force: true });
   };
   if (!info) {

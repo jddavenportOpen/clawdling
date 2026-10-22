@@ -92,6 +92,7 @@ function TelegramCard({ t }) {
   const [token, setToken] = useState('');
   const [code, setCode] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
   const configured = !!(t && t.configured);
   const paired = !!(t && t.paired);
   const enabled = !!(t && t.enabled);
@@ -101,6 +102,7 @@ function TelegramCard({ t }) {
 
   const connect = async (withToken) => {
     setBusy(true);
+    setErr('');
     try {
       const body = withToken ? { token: token.trim(), enabled: true } : { enabled: true };
       const r = await api.telegram(body);
@@ -109,7 +111,7 @@ function TelegramCard({ t }) {
       setToken('');
       await refreshChannels();
     } catch (e) {
-      errorToast('Telegram', e);
+      setErr(e.message || 'Could not save the token');
     } finally {
       setBusy(false);
     }
@@ -144,6 +146,7 @@ function TelegramCard({ t }) {
             onInput=${(e) => setToken(e.currentTarget.value)} placeholder=${configured ? 'Token saved. Paste a new one to replace it' : '123456789:AA…'} data-testid="tg-token" />
           <button class="btn btn-primary" type="submit" disabled=${!token.trim() || busy} data-testid="tg-connect">${busy ? 'Saving…' : configured ? 'Replace' : 'Connect'}</button>
         </form>
+        ${err ? html`<p class="form-error" role="alert" data-testid="tg-error"><${Icon} name="alert" size=${14} /> ${err}</p>` : null}
         <span class="step-note">Stored in <code>.env</code> in your org folder with owner-only permissions. Never shown again.</span>
       </li>
       <li class=${paired ? 'is-done' : ''}>

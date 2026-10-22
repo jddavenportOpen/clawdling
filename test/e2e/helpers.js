@@ -28,7 +28,15 @@ export async function api(method, path, body) {
 const unwrap = (r, key) => (r && r[key] && !r.sid && !r.id ? r[key] : r);
 
 export async function reset(fixture = 'empty') {
-  if (!isMock()) return;
+  if (!isMock()) {
+    // A real server we booted ourselves: end what earlier tests left running so the box
+    // never carries dozens of idle sessions. Never touch a server we did not start.
+    if (ownsServer()) {
+      const live = (await sessions()).filter((x) => x.status !== 'ended');
+      await Promise.all(live.map((x) => api('DELETE', `/api/sessions/${x.sid}`).catch(() => {})));
+    }
+    return;
+  }
   const res = await fetch(new URL('/__mock/reset', BASE()), {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fixture }),
   });

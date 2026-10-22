@@ -73,6 +73,11 @@ export class TermView {
     this.sent = { cols: 0, rows: 0 };
     this.buckets = new Array(TRACE_BUCKETS).fill(0);
     this.wantFocus = false;
+    // First connect is a sizing handshake: the server snapshots at the tmux window's current
+    // size, which may not be ours. We send our size, drop that first snapshot, and reconnect
+    // so the snapshot we paint was cut at our geometry (otherwise a taller window's blank rows
+    // scroll the real content off screen).
+    this.sized = false;
 
     this.term = new Terminal({
       fontFamily: MONO,
@@ -116,18 +121,36 @@ export class TermView {
   layout() {
     if (this.disposed || !this.el) return;
     if (this.el.clientWidth < 24 || this.el.clientHeight < 24) return; // hidden pane: wait until shown
+    let first = false;
     if (!this.opened) {
       this.term.open(this.el);
       this.opened = true;
+      first = true;
     }
     // Narrow panes (6-up grids, phones) drop one point so Claude's UI wraps less.
     const base = Number(load('termFontSize', 13)) || 13;
     const size = this.el.clientWidth < 520 ? Math.max(11, base - 1) : base;
     if (this.term.options.fontSize !== size) this.term.options.fontSize = size;
     try { this.fit.fit(); } catch { /* not measurable yet */ }
-    if (this.wantFocus) { this.wantFocus = false; this.term.focus(); }
+    if (this.wantFocus) {
+      this.wantFocus = false;
+      const a = document.activeElement;
+      if (!(a && a.closest && a.closest('.modal, .menu'))) this.term.focus();
+    }
     clearTimeout(this.rt);
     this.rt = setTimeout(() => this.sendResize(), 40);
+    // A pane that was hidden when it connected painted a snapshot cut at someone else's size:
+    // now that we know ours, send it and take a fresh snapshot once.
+    if (first && !this.sized && !this.ended && this.ws && this.ws.readyState === 1) {
+      this.sized = true;
+      setTimeout(() => {
+        this.sendResize(true);
+        const old = this.ws;
+        this.ws = null;
+        try { if (old) old.close(1000, 'resized'); } catch { /* ignore */ }
+        setTimeout(() => this.connect(), 90);
+      }, 0);
+    }
   }
 
   setFontSize() {
@@ -181,26 +204,44 @@ export class TermView {
     clearTimeout(this.timer);
     if (this.ws && this.ws.readyState <= 1) return;
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const sizing = !this.sized && !this.ended && this.opened;
+    const q = this.opened && this.term.cols && this.term.rows ? `?cols=${this.term.cols}&rows=${this.term.rows}` : '';
     let ws;
     try {
-      ws = new WebSocket(`${proto}//${location.host}/ws/term/${encodeURIComponent(this.sid)}`);
+      ws = new WebSocket(`${proto}//${location.host}/ws/term/${encodeURIComponent(this.sid)}${q}`);
     } catch {
       this.scheduleReconnect();
       return;
     }
     this.ws = ws;
     this.setConn(this.attempt ? 'reconnecting' : 'connecting');
+    let sizingTimer = 0;
+    const finishSizing = () => {
+      clearTimeout(sizingTimer);
+      if (this.ws !== ws || this.sized) return;
+      this.sized = true;
+      this.ws = null;
+      try { ws.close(1000, 'resized'); } catch { /* already closed */ }
+      setTimeout(() => this.connect(), 90); // let the server apply our size first
+    };
     ws.onopen = () => {
       if (this.ws !== ws) return;
       this.attempt = 0;
       this.setConn('open');
       this.sendResize(true);
+      if (sizing) sizingTimer = setTimeout(finishSizing, 1500); // no snapshot? carry on anyway
     };
     ws.onmessage = (ev) => {
       if (this.ws !== ws) return;
       let m;
       try { m = JSON.parse(ev.data); } catch { return; }
       if (!m || typeof m !== 'object') return;
+      if (sizing && !this.sized) {
+        if (m.t === 'snapshot') finishSizing();
+        else if (m.t === 'status' && this.hooks.onStatus) this.hooks.onStatus(m.status, m);
+        else if (m.t === 'ended') { this.sized = true; this.markEnded(); }
+        return;
+      }
       if (m.t === 'snapshot') {
         this.term.reset();
         if (m.data) this.term.write(normalizeSnapshot(m.data));

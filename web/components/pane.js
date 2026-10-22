@@ -39,7 +39,9 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     requestAnimationFrame(() => {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
       const v = terms.get(sid);
-      if (v) v.focus();
+      // Never pull the keyboard out of a dialog or menu opened since the jump.
+      const busy = getState().overlay || getState().menu || (document.activeElement && document.activeElement.closest('.modal, .menu'));
+      if (v && !busy) v.focus();
       setFlash(true);
       setTimeout(() => setFlash(false), 650);
     });

@@ -172,7 +172,7 @@ test.describe('donna page', () => {
     await login(page, '#/donna');
     await expect(page.getByTestId('telegram-card')).toContainText('Not set up');
     await expect(page.getByTestId('telegram-card')).toContainText('@BotFather');
-    await page.getByTestId('tg-token').fill('123456789:AAFakeTokenForTests');
+    await page.getByTestId('tg-token').fill('123456789:AAFakeTokenForTests_0123456789');
     await page.getByTestId('tg-connect').click();
     const code = page.getByTestId('pairing-code');
     await expect(code).toBeVisible();
@@ -180,7 +180,7 @@ test.describe('donna page', () => {
     await expect(page.getByTestId('telegram-card')).toContainText('Waiting for /pair');
     if (isMock()) {
       const post = (await mockRequests()).find((r) => r.method === 'POST' && r.path === '/api/channels/telegram');
-      expect(post.body.token).toBe('123456789:AAFakeTokenForTests');
+      expect(post.body.token).toBe('123456789:AAFakeTokenForTests_0123456789');
     }
     // the token never stays on screen
     await expect(page.getByTestId('tg-token')).toHaveValue('');

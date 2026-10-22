@@ -103,7 +103,7 @@ for (const vp of [{ w: 1440, h: 900 }, { w: 1024, h: 768 }]) {
       test.skip(!isMock(), 'stores a bot token');
       await reset('default');
       await login(page, '#/donna');
-      await page.getByTestId('tg-token').fill('123456789:AAFakeTokenForTests');
+      await page.getByTestId('tg-token').fill('123456789:AAFakeTokenForTests_0123456789');
       await page.getByTestId('tg-connect').click();
       await expect(page.getByTestId('pairing-code')).toBeVisible();
       await fetch(new URL('/__mock/channel', process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'Can someone book the dentist for next week?' }) });
