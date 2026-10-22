@@ -246,3 +246,95 @@ test.describe('rail and workspace', () => {
     await expect(row(page, sid)).toContainText('Approve the payment?');
   });
 });
+
+test.describe('pane lifecycle', () => {
+  let ids;
+  test.beforeEach(async ({ page }) => {
+    ids = await seedStandard();
+    await login(page);
+  });
+
+  test('a session that ends on its own shows Resume in its pane', async ({ page }) => {
+    await openPanes(page, [ids.roadmap, ids.quotes]);
+    await api('DELETE', `/api/sessions/${ids.quotes}`); // ended elsewhere (CLI, /exit, tmux)
+    const p = pane(page, ids.quotes);
+    await expect(p.getByText(/Session ended/)).toBeVisible({ timeout: 12_000 });
+    await expect(p).toHaveAttribute('data-status', 'ended');
+    await expect(panes(page)).toHaveCount(2); // it stays put until you close or resume it
+    await p.getByTestId('pane-resume').click();
+    await expect(p.getByText(/Session ended/)).toHaveCount(0);
+    await expect.poll(async () => (await sessionBySid(ids.quotes)).status).not.toBe('ended');
+    await expect(p).toHaveAttribute('data-focused', 'true');
+  });
+
+  test('the terminal reconnects after the socket drops', async ({ page }) => {
+    test.skip(!isMock(), 'needs the mock to cut the socket');
+    await openPanes(page, [ids.quotes]);
+    await expect(termText(page, ids.quotes)).toContainText(/\S/);
+    await fetch(new URL('/__mock/drop', process.env.CLAWDLING_E2E_URL), { method: 'POST' });
+    // Backoff starts at ~0.4 s; the fresh snapshot repaints and input works again.
+    await page.waitForTimeout(1500);
+    await page.keyboard.type('after the blip');
+    await page.keyboard.press('Enter');
+    await expect(termText(page, ids.quotes)).toContainText('You said: after the blip', { timeout: 10_000 });
+    await expect(pane(page, ids.quotes).locator('.pane-conn')).toHaveCount(0);
+  });
+
+  test('copy attach command puts the tmux line on the clipboard', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await openPanes(page, [ids.brief]);
+    await pane(page, ids.brief).getByTestId('pane-attach').click();
+    await expect(page.locator('.toast')).toContainText('Attach command copied');
+    const s = await sessionBySid(ids.brief);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`tmux -L clawdling attach -t ${s.tmux_name}`);
+  });
+
+  test('hiding a pane keeps the session running', async ({ page }) => {
+    await openPanes(page, [ids.roadmap, ids.training]);
+    await pane(page, ids.training).getByTestId('pane-hide').click();
+    await expect(panes(page)).toHaveCount(1);
+    await expect(row(page, ids.training)).toHaveAttribute('data-onscreen', 'false');
+    await expect(row(page, ids.training)).toHaveAttribute('data-section', 'live');
+    expect((await sessionBySid(ids.training)).status).not.toBe('ended');
+  });
+
+  test('the X on a live pane offers "hide, keep running" as the safe choice', async ({ page }) => {
+    await openPanes(page, [ids.roadmap, ids.training]);
+    await pane(page, ids.training).getByTestId('pane-end').click();
+    await page.getByTestId('confirm-hide').click();
+    await expect(panes(page)).toHaveCount(1);
+    expect((await sessionBySid(ids.training)).status).not.toBe('ended');
+  });
+
+  test('rail kebab menu: rename and end from the rail', async ({ page }) => {
+    await openPanes(page, [ids.roadmap, ids.brief]);
+    await row(page, ids.brief).hover();
+    await row(page, ids.brief).locator('.row-more').click();
+    await page.getByRole('menuitem', { name: 'Rename…' }).click();
+    const input = pane(page, ids.brief).getByTestId('pane-title-input');
+    await expect(input).toBeFocused();
+    await input.fill('Brief for Friday');
+    await input.press('Enter');
+    await expect(row(page, ids.brief).getByTestId('row-title')).toHaveText('Brief for Friday');
+
+    await row(page, ids.roadmap).hover();
+    await row(page, ids.roadmap).locator('.row-more').click();
+    await page.getByRole('menuitem', { name: 'End session…' }).click();
+    await page.getByTestId('confirm-end').click();
+    await expect(panes(page)).toHaveCount(1);
+    await expect(pane(page, ids.brief)).toBeVisible();
+    await expect.poll(async () => (await sessionBySid(ids.roadmap)).status).toBe('ended');
+  });
+
+  test('search filters every section', async ({ page }) => {
+    await page.getByTestId('rail-search').fill('dishwasher');
+    await expect(page.locator('.rail .row-wrap[data-sid]')).toHaveCount(1);
+    await expect(row(page, ids.quotes)).toBeVisible();
+    await page.getByTestId('rail-search').fill('money');
+    await expect(row(page, ids.reconcile)).toBeVisible(); // matches by agent name
+    await expect(page.locator('.rail [data-agent="money"]')).toBeVisible();
+    await expect(page.locator('.rail [data-agent="work"]')).toHaveCount(0);
+    await page.getByTestId('rail-search').press('Escape');
+    await expect(page.locator('.rail .row-wrap[data-sid]')).toHaveCount(6);
+  });
+});

@@ -178,14 +178,27 @@ export function OrgMap() {
     return () => ro.disconnect();
   }, []);
 
+  // Below 1100px the side panel floats over the map; fit the org into what is left.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    let mq;
+    try { mq = window.matchMedia('(max-width: 1100px)'); } catch { return undefined; }
+    const f = () => setNarrow(mq.matches);
+    f();
+    mq.addEventListener('change', f);
+    return () => mq.removeEventListener('change', f);
+  }, []);
+  const covered = narrow && sel && box.w > 560 ? 360 : 0;
+
   const fit = useMemo(() => {
     const { minX, maxX, minY, maxY } = L.bounds;
     const cw = maxX - minX;
     const ch = maxY - minY;
     if (!box.w || !box.h) return { k: 1, x: 0, y: 0 };
-    const k = clamp(Math.min((box.w - 48) / cw, (box.h - 48) / ch), 0.35, 1.45);
-    return { k, x: -((minX + maxX) / 2) * k, y: -((minY + maxY) / 2) * k };
-  }, [L, box]);
+    const w = box.w - covered;
+    const k = clamp(Math.min((w - 48) / cw, (box.h - 48) / ch), 0.35, 1.45);
+    return { k, x: -((minX + maxX) / 2) * k - covered / 2, y: -((minY + maxY) / 2) * k };
+  }, [L, box, covered]);
 
   const t = view.auto ? fit : view;
   const statsById = useMemo(() => {

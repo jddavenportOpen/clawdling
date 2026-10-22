@@ -13,6 +13,7 @@ export const PALETTES = {
   dark: {
     background: '#101216', foreground: '#d9dde3', cursor: '#b4a9ff', cursorAccent: '#101216',
     selectionBackground: 'rgba(154, 140, 255, 0.32)', selectionInactiveBackground: 'rgba(154, 140, 255, 0.16)',
+    scrollbarSliderBackground: 'rgba(214, 222, 235, 0.10)', scrollbarSliderHoverBackground: 'rgba(214, 222, 235, 0.18)', scrollbarSliderActiveBackground: 'rgba(214, 222, 235, 0.26)',
     black: '#1c1f24', red: '#f0717a', green: '#5cc98f', yellow: '#e9b949', blue: '#64a8f0', magenta: '#b496f5',
     cyan: '#5cc3c7', white: '#c9ced6', brightBlack: '#666d78', brightRed: '#ff8f97', brightGreen: '#7ddba8',
     brightYellow: '#f5cd6e', brightBlue: '#88bdf5', brightMagenta: '#c9b1fa', brightCyan: '#82d6d9', brightWhite: '#f2f4f7',
@@ -20,6 +21,7 @@ export const PALETTES = {
   light: {
     background: '#fbfbfc', foreground: '#1e2227', cursor: '#5b45e0', cursorAccent: '#fbfbfc',
     selectionBackground: 'rgba(91, 69, 224, 0.22)', selectionInactiveBackground: 'rgba(91, 69, 224, 0.12)',
+    scrollbarSliderBackground: 'rgba(20, 28, 40, 0.12)', scrollbarSliderHoverBackground: 'rgba(20, 28, 40, 0.2)', scrollbarSliderActiveBackground: 'rgba(20, 28, 40, 0.28)',
     black: '#24292f', red: '#c4313b', green: '#1f7a4a', yellow: '#8a6100', blue: '#1d63b8', magenta: '#7a3fc4',
     cyan: '#13757a', white: '#6e7781', brightBlack: '#57606a', brightRed: '#d6454f', brightGreen: '#2a8f5a',
     brightYellow: '#9e7200', brightBlue: '#2f74c8', brightMagenta: '#8d55d6', brightCyan: '#1b878c', brightWhite: '#8c959f',
@@ -97,15 +99,18 @@ export class TermView {
       this.term.open(this.el);
       this.opened = true;
     }
+    // Narrow panes (6-up grids, phones) drop one point so Claude's UI wraps less.
+    const base = Number(load('termFontSize', 13)) || 13;
+    const size = this.el.clientWidth < 520 ? Math.max(11, base - 1) : base;
+    if (this.term.options.fontSize !== size) this.term.options.fontSize = size;
     try { this.fit.fit(); } catch { /* not measurable yet */ }
     if (this.wantFocus) { this.wantFocus = false; this.term.focus(); }
     clearTimeout(this.rt);
     this.rt = setTimeout(() => this.sendResize(), 40);
   }
 
-  setFontSize(px) {
-    this.term.options.fontSize = px;
-    this.layout();
+  setFontSize() {
+    this.layout(); // layout() re-reads the saved size and the pane width
   }
 
   sendResize(force = false) {
@@ -261,6 +266,10 @@ export class TermView {
   recentlyActive() {
     const b = this.buckets;
     return b[b.length - 1] + b[b.length - 2] + b[b.length - 3] > 0;
+  }
+
+  anyActivity() {
+    return this.buckets.some((x) => x > 0);
   }
 
   focus() {

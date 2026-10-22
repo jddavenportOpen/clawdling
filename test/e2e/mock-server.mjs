@@ -620,6 +620,13 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       send(res, 204);
       return;
     }
+    if (p === '/__mock/drop' && req.method === 'POST') {
+      // Simulate a network blip: kill every terminal socket without a close frame.
+      let n = 0;
+      for (const term of st.terms.values()) for (const ws of term.viewers) { ws.terminate(); n += 1; }
+      send(res, 200, { dropped: n });
+      return;
+    }
     if (p === '/__mock/pair' && req.method === 'POST') {
       Object.assign(st.channels.telegram, { paired: true, enabled: true, chat_id_masked: '••4821' });
       send(res, 204);

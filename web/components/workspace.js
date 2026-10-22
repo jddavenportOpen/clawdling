@@ -72,7 +72,7 @@ export function Workspace({ hidden }) {
   return html`<main class=${`workspace ${hidden ? 'is-under' : ''}`} inert=${hidden ? true : undefined} aria-hidden=${hidden ? 'true' : undefined}
       aria-label="Workspace" data-layout=${layout} data-open-count=${open.length}>
     <header class="ws-bar">
-      ${mobile ? html`<button class="icon-btn" aria-label="All sessions" onClick=${() => setState({ mobileView: 'list' })}><${Icon} name="arrow-left" /></button>` : null}
+      ${mobile ? html`<button class="icon-btn" aria-label="Back to sessions" onClick=${() => setState({ mobileView: 'list' })}><${Icon} name="arrow-left" /></button>` : null}
       <h1 class="ws-title">Cockpit</h1>
       <span class="ws-sub" aria-live="polite">${open.length ? `${plural(open.length, 'pane')} open` : 'No panes open'}${needsCount ? html` · <span class="tone-amber-text">${needsCount} waiting on you</span>` : null}</span>
       <span class="ws-spacer"></span>

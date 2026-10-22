@@ -19,7 +19,7 @@ export function SettingsPage() {
   const pickFont = (px) => {
     setFont(px);
     save('termFontSize', px);
-    for (const v of terms.values()) v.setFontSize(px);
+    for (const v of terms.values()) v.setFontSize();
   };
   const ok = (x) => x && (x.ok === true || x.ok === 'true');
 

@@ -72,7 +72,6 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       role="region" aria-label=${`${name} (${agentLabel(s, agentsById)})`}
       onMouseDown=${() => touchFocus(sid)} onFocusIn=${() => touchFocus(sid)}>
     <header class="pane-head">
-      ${mobile ? html`<button class="icon-btn" aria-label="Back to sessions" onClick=${() => setState({ mobileView: 'list' })}><${Icon} name="arrow-left" /></button>` : null}
       <span class="pane-glyph" title=${STATUS_LABEL[s.status] || s.status}><${StatusGlyph} status=${s.status} /></span>
       <${PaneTitle} sid=${sid} name=${name} title=${s.title} editing=${renaming} />
       <span class="pane-chip" title=${agent && agent.mission ? agent.mission : agentLabel(s, agentsById)}>
@@ -160,9 +159,12 @@ function Trace({ sid, status }) {
     const v = terms.get(sid);
     if (!v || !line.current) return;
     line.current.setAttribute('points', v.tracePoints(48, 14));
-    if (wrap.current) wrap.current.classList.toggle('is-active', v.recentlyActive());
+    if (wrap.current) {
+      wrap.current.classList.toggle('is-active', v.recentlyActive());
+      wrap.current.classList.toggle('is-idle', !v.anyActivity());
+    }
   }), [sid]);
-  return html`<span class="pane-trace" ref=${wrap} title="Terminal output, last 40 seconds" aria-hidden="true">
+  return html`<span class="pane-trace is-idle" ref=${wrap} title="Terminal output, last 40 seconds" aria-hidden="true">
     <svg width="48" height="14" viewBox="0 0 48 14" focusable="false">
       <line x1="0" y1="13" x2="48" y2="13" class="trace-base" />
       <polyline ref=${line} points="0,13 48,13" class=${`trace-line st-${status}`} />
