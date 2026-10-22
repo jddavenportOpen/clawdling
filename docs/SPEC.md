@@ -239,3 +239,60 @@ test/unit/*.test.js  test/integration/*.test.js  test/e2e/*.spec.js  test/fake-c
 docs/ARCHITECTURE.md  docs/SECURITY.md (threat model: local token, Origin check, Donna tool allow-list, paired chat only, no credential handling)
 ```
 `npm test` = unit + integration. `npm run e2e` = Playwright. `npm start` = `node bin/clawdling.js start`.
+
+## Contract changes
+
+Written by the core lane while implementing §4. Everything below is additive or a clarification;
+no field or path in §4 was renamed or removed.
+
+**Sessions**
+- Session objects carry extra fields: `name` (`"<Agent>: <title or 'new session'>"`, ready to show),
+  `permission_mode`, `last_message` (first 280 chars of Claude's last reply, from the Stop hook),
+  `transcript_path` (Claude's JSONL transcript, once known), `attach_cmd` (the exact
+  `tmux -L <socket> attach -t <name>` command; the socket name is configurable, so copy this).
+- `GET /api/sessions/:sid` returns one Session.
+- `POST /api/sessions` also accepts optional `cols`/`rows` (initial terminal size) and the
+  pseudo-agent `"scratch"`: a session at the org root, not tied to an agent (`kind: "scratch"`,
+  `agent_name: "Scratch"`). Trusting the org root once in a scratch session covers every agent folder.
+- `POST /api/sessions/:sid/resume` accepts optional `{cols, rows}` and is idempotent (200 with the
+  Session if it is already live).
+- Status: `SessionStart` with no first prompt pending moves `starting` → `ready` (a fresh session is
+  waiting for you). `needs_you` is also used when Claude Code's own folder-trust dialog is on screen
+  (before any hook can run); `notification` then explains what to answer. After a permission
+  prompt, typing Enter/1-9/Esc in the terminal moves `needs_you` → `working`.
+- Agent `needs_you` counts sessions in `needs_you` **or** `ready` (both are "your turn"), matching the rail.
+- `DELETE /api/sessions/:sid` returns the Session with `status: "ended"`, `resumable: true`.
+
+**Terminal WebSocket**
+- A `snapshot` message can arrive again later (after a resume, or after the control client
+  reattaches). Treat every `snapshot` as a full repaint: `term.reset()` then `term.write(data)`.
+- The server strips terminal *queries* (DA, DSR/CPR, DECRQM, XTVERSION, OSC colour queries...) from
+  `out` data: tmux already answered them, and an xterm.js answer would be typed into the session.
+  The snapshot replays the app's terminal modes (bracketed paste, mouse, focus, cursor keys).
+
+**Org / agents**
+- Agent objects include `dir` (absolute folder path).
+- `DELETE /api/agents/:id` → `200 {ok:true, id, archived_to}`; `409` while the agent has live sessions.
+- `GET /api/me` → `{ok:true, version}`. Errors everywhere are `{error: "<message>"}`.
+
+**Channels**
+- `GET /api/channels` → `{telegram:{configured, enabled, paired, chat_id_masked, bot_username,
+  pairing_code, pairing_expires_at, polling, error}, imessage:{supported, enabled, handle, polling,
+  error}, donna:{session, busy}, recent:[{ts, type:"channel", channel, direction:"in"|"out", text} |
+  {ts, type:"channel", channel, event:"paired"|"error", ...}]}`. `pairing_code` is non-null only
+  while a pairing is pending (30 minutes). `recent` is the Donna page's message log.
+- `POST /api/channels/telegram` also accepts `{pair:true}` (issue a fresh pairing code) and returns
+  the telegram status object plus `pairing_code`.
+
+**SSE `/api/events`** (`data: {"type":..., "data":...}`)
+- `session`: data = Session. `org`: data = the full `GET /api/org` payload plus `reason`
+  (`agent_created` | `agent_archived` | `context_updated`) and `id`. `channel`: data =
+  `{channel, direction, text, ts}` for a message, or `{channel, ...GET /api/channels}` for a status change.
+
+**Running the server in tests (web lane e2e)**
+- Set `CLAWDLING_TEST=1`, `CLAWDLING_CLAUDE_BIN=<repo>/test/fake-claude.mjs`, a unique
+  `CLAWDLING_TMUX_SOCKET`, `CLAWDLING_HOME=<temp dir>` (run `clawdling init --defaults` first) and
+  `TELEGRAM_API_BASE=http://127.0.0.1:9` (or a stub). In test mode the server refuses to start with
+  the default socket or the real claude, and never calls the official Telegram API or osascript.
+  `clawdling start --port 0` picks a free port; the actual port is in `.clawdling/server.json`.
+  `CLAWDLING_WEB_DIR` overrides the static directory. `test/helpers.mjs` has `startServerProc()`.
