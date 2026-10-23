@@ -10,9 +10,13 @@ server can type into those sessions, so the server is built to be reachable only
   doctor` asks `claude auth status` for an exit code and discards its output.
 - It never edits `~/.claude.json` or your Claude Code settings. Claude Code's own dialogs (folder
   trust) are shown to you and answered by you.
-- It never builds a shell command or a tmux command from your text. Sessions start from a generated
-  launcher script in which every value is single-quoted; Donna's replies to iMessage are an argv
-  item of `osascript`, never part of the AppleScript source.
+- It never builds a shell command or a tmux command from your text. tmux sessions start from a
+  generated launcher script in which every value is single-quoted; sessions in the built-in
+  terminal (node-pty) are spawned with their argv directly, with no shell on any OS. On Windows the
+  command line is quoted by Clawdling (MSVC rules), an npm `.cmd` shim is bypassed for the program
+  it wraps, and only an unrecognised `.cmd` goes through `cmd.exe /d /s /c` with every argument
+  caret-escaped (no variable expansion, no `&`, `|` or redirection). Donna's replies to iMessage are
+  an argv item of `osascript`, never part of the AppleScript source.
 - No telemetry, no cloud service, no database server.
 
 ## Who can reach the server

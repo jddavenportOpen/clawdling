@@ -21,7 +21,7 @@ Author: JD Davenport. Date: 2026-10-22. Status: shipped as 1.0.0.
 ## 1. Constraints
 
 - Runtime: **Node.js >= 20**, plain **ESM JavaScript** (no TypeScript build step), JSDoc types where useful. One npm package. Runtime deps kept tiny: `ws` only on the server. Frontend libs vendored from npm and served from node_modules: `preact`, `htm`, `@xterm/xterm`, `@xterm/addon-fit` (+ optional `@xterm/addon-web-links`). **No bundler, no build step**: `web/index.html` uses an import map pointing at `/vendor/...` paths the server maps to node_modules files.
-- External tools: **tmux >= 3.2** and the **`claude` CLI >= 2.1** (signed in). macOS and Linux. (Windows: WSL, documented, not tested.)
+- External tools: the **`claude` CLI >= 2.1** (signed in; 2.1.139+ on Windows) and, optionally, **tmux >= 3.2**. macOS, Linux and native Windows (since 1.1: without tmux, sessions run in a pseudo-terminal per session, see "Session backends" in ARCHITECTURE.md).
 - Local-first: binds **127.0.0.1** by default. No cloud services, no database server, no telemetry. State = files.
 - License: **AGPL-3.0-only** (matches the existing public repo).
 - Default port **4747**. Default home **`~/clawdling`** (env `CLAWDLING_HOME` overrides; every test uses a temp home).
@@ -358,3 +358,16 @@ no field or path in §4 was renamed or removed.
 - Donna's headless turns add `--setting-sources project,local --strict-mcp-config` (no user
   settings, no MCP servers). `doctor` fails when the cockpit is down. `clawdling attach` uses the
   socket recorded in `server.json` (or `sessions.json`, which now records `socket`).
+
+## 1.1 addendum: sessions without tmux
+
+1.1 makes tmux optional. `server/backend.js` picks the session backend: `CLAWDLING_BACKEND=tmux|pty`,
+else tmux when tmux >= 3.2 is on PATH and the OS is not Windows, else `pty` (node-pty, an optional
+dependency with prebuilt binaries for macOS and Windows) when it loads, else `clawdling start` and
+`doctor` fail with the one-line fix for the OS. Everything in §3 holds for `pty` except
+persistence: a pty session lives in the server process, so stopping the server ends it (it is
+marked ended with a notice and resumes with `claude --resume`), and `clawdling attach` is a
+terminal client over the server's own WebSocket instead of `tmux attach`. The WebSocket, SSE and
+HTTP contracts are unchanged; `/api/health`, `server.json` and `sessions.json` gain `backend`.
+`clawdling stop` (`POST /api/shutdown`) stops a server cleanly on every OS. Design and the screen
+model: ARCHITECTURE.md, "Session backends".

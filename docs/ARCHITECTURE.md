@@ -1,8 +1,9 @@
 # Clawdling architecture
 
-Clawdling is one Node.js process (no database, no build step) that sits next to tmux and the
-unmodified `claude` CLI. The org is a folder; sessions are tmux sessions; status comes from Claude
-Code hooks.
+Clawdling is one Node.js process (no database, no build step) that runs the unmodified `claude`
+CLI in terminals it owns: tmux sessions when tmux is installed, otherwise pseudo-terminals of its
+own (node-pty). The org is a folder; status comes from Claude Code hooks. It runs on macOS, Linux
+and Windows (natively; no WSL).
 
 ```
  browser cockpit ──HTTP/SSE/WS──┐
@@ -34,12 +35,53 @@ How an agent session gets its context:
 The live smoke test (`npm run smoke:live`) proves a brand-new agent answers with its mission and its
 NOW.md content on the first turn without reading files.
 
-## Sessions (server/sessions.js, server/tmux.js)
+## Session backends (server/backend.js)
+
+`sessions.js` drives a *backend* through one surface (`listSessions`, `hasSession`,
+`newSession`, `setOptions`, `killSession`, `screenText`, `paste`, `sendKeysHex`, `control()`), and
+a control client per live session (`output`/`close` events, `sendBytes`, `fit`, `snapshot`).
+
+| | tmux (`server/tmux.js`) | pty (`server/pty.js`) |
+|---|---|---|
+| Where a session lives | Clawdling's own tmux server (`tmux -L clawdling`) | a pseudo-terminal inside the server process (node-pty; ConPTY on Windows) |
+| Survives a Clawdling restart | yes, reattached on start | no: ended (with a notice) and resumable with `claude --resume` |
+| Screen model | tmux | one `@xterm/headless` terminal per session |
+| Snapshot for a late viewer | `capture-pane` through the control client | `@xterm/addon-serialize` of the model |
+| Input | `send-keys -H` in 8 ms batches | `pty.write` |
+| Launch | a generated `/bin/sh` launcher | the argv directly (no shell on any OS) |
+| Attach from a terminal | `tmux -L clawdling attach -t <name>` | `clawdling attach <sid>` (a WebSocket terminal client, Ctrl-] detaches) |
+
+**Choice.** `CLAWDLING_BACKEND=tmux|pty` overrides. Otherwise tmux when tmux 3.2+ is on PATH and
+this is not Windows, else pty when node-pty loads, else `clawdling start` and `doctor` stop with the
+one-line fix for this OS. The choice is recorded in `server.json`, `sessions.json` and
+`/api/health`.
+
+**The pty screen model.** pty output is written into the session's headless terminal and reaches
+viewers only from the write callback, after the model has parsed it. A snapshot is serialized in
+a write barrier (`term.write('', cb)`), so it is an exact cut of the stream, as tmux's is: the
+viewer gets everything before the cut in the snapshot and everything after it live. The model also
+answers the app's terminal queries (DA1/DA2, cursor position, DECRQM, DECRQSS), which tmux does
+for a tmux pane; the existing query filter still keeps those queries away from browsers. A resize
+resizes the pty at once (the app redraws on SIGWINCH) and the model after the output it already
+sent. Kill = SIGHUP to the session's process group, as a closing terminal would (SIGKILL after
+3 s); ConPTY's kill on Windows.
+
+**Windows.** `claude` is found like `where` finds it (PATH, then PATHEXT: the native
+`claude.exe` before an npm `claude.cmd`). An npm `.cmd` shim is never run through cmd.exe: the
+program it wraps is launched directly, so a prompt with quotes, `%` or newlines reaches Claude
+intact; only an unrecognised `.cmd` goes through `cmd.exe /d /s /c` with every argument
+caret-escaped. The command line is quoted by Clawdling (MSVC rules), not by node-pty. Hooks use
+Claude Code's exec form (`command` + `args`, 2.1.139+), so no shell parses a path whether Claude
+Code runs hooks in Git Bash or PowerShell. Every session gets `clawdling` as an sh shim (Git
+Bash), a `.ps1` (PowerShell) and a `.cmd`, and the allow rules cover the PowerShell tool too.
+
+## Sessions (server/sessions.js, server/tmux.js, server/pty.js)
 
 **Spawn.** `sid = randomUUID()` is also Claude's `--session-id`. The registry row is written to
-`.clawdling/sessions.json` first. Then the server writes `.clawdling/run/<sid>.sh`, a `/bin/sh`
-launcher that `cd`s, exports `CLAWDLING_SID/HOME/PORT`, puts `.clawdling/bin` (a `clawdling` shim)
-first on `PATH`, and `exec`s `claude` with every argument single-quoted. tmux only ever sees our
+`.clawdling/sessions.json` first. With tmux, the server then writes `.clawdling/run/<sid>.sh`, a
+`/bin/sh` launcher that `cd`s, exports `CLAWDLING_SID/HOME/PORT`, puts `.clawdling/bin` (a
+`clawdling` shim) first on `PATH`, and `exec`s `claude` with every argument single-quoted. The pty
+backend spawns `claude` with the same argv and environment directly. tmux only ever sees our
 own safe strings (`new-session -d -s cl-<agent>-<sid6> -x C -y R /bin/sh <launcher>`), because
 tmux's command parser strips a trailing `;` from any argument. The prompt goes after `--`, and a
 one-word prompt gets a trailing space so `claude -- update` can never run `claude update`.
@@ -74,10 +116,12 @@ the pointer is on the chosen line: the trust dialog ignores digit keys.
 
 **Start.** The server first refuses if `server.json` names a live server for this home, then
 binds its port, and only then writes the hooks file, the shim and the registry; until it is ready
-the API answers 503 and hooks spool. **Restart.** On start the server lists `tmux ls`, reattaches every registry row whose tmux session
-exists, marks the rest `ended` (resumable), adopts tagged orphans (`@clawdling_sid`), then replays
-the hook spool. Hooks read the current port from `.clawdling/server.json`, so sessions started
-before a restart keep reporting to the new server.
+the API answers 503 and hooks spool. **Restart.** On start the server lists the backend's live
+sessions (`tmux ls`; none for pty), reattaches every registry row whose session exists, marks the
+rest `ended` (resumable), adopts tagged orphans (`@clawdling_sid`), then replays the hook spool.
+Hooks read the current port from `.clawdling/server.json`, so sessions started before a restart
+keep reporting to the new server. **Stop.** With pty, stopping the server ends its sessions
+(SIGHUP, then marked ended with a notice); a crash leaves the same picture on the next start.
 
 **Resume.** `claude --resume <id>` in the same cwd and tmux name (or `--session-id <sid>` again if the
 session never had a prompt, so there is no transcript to resume).
