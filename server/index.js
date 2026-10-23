@@ -371,7 +371,7 @@ export async function startServer(opts = {}) {
     // The version decides which hooks to register; the help lists the --permission-mode names.
     const [versionLine, helpText] = await Promise.all([claudeVersionLine(), claudeOutput(['--help'])]);
     const modeChoices = parseModeChoices(helpText);
-    writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine) }), 0o600);
+    writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home }), 0o600);
     // `clawdling` on PATH inside every session and Donna turn.
     for (const [name, text] of Object.entries(cliShims({ nodePath, cliPath: path.join(PKG_ROOT, 'bin', 'clawdling.js') }))) {
       writeFileAtomic(path.join(paths.bin, name), text, 0o700);
@@ -500,7 +500,7 @@ export async function startServer(opts = {}) {
         const b = await jsonBody(req);
         return [201, await sessions.spawn({ agent: b.agent, prompt: b.prompt, model: b.model, effort: b.effort, account: b.account, title: b.title, cols: b.cols, rows: b.rows })];
       }],
-      // Model / effort chips: typed into the session as /model or /effort, only between turns.
+      // Model / effort chips: the session restarts on the same conversation (--resume) with the new --model / --effort, only between turns.
       ['POST', /^\/api\/sessions\/([^/]+)\/settings$/, async (req, m) => {
         const sid = sidParam(m);
         const b = await jsonBody(req);

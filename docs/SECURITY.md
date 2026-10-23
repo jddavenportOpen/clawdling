@@ -71,10 +71,15 @@ server can type into those sessions, so the server is built to be reachable only
 
 Agent sessions are ordinary interactive Claude Code sessions: Claude Code's permission system
 applies. Clawdling never answers a permission prompt or a folder-trust question on its own: typed
-text (Donna, the CLI, the API) is refused while one is on screen, and only an explicit
-`POST /api/sessions/:sid/answer` from the owner (cockpit or phone, with the token) picks a choice. Clawdling pre-approves only `clawdling ls/spawn/send/new/end/doctor` (in the generated
+text (Donna, the CLI, the `/send` API) is refused while one is on screen. A choice is picked only
+by someone holding the token: an explicit `POST /api/sessions/:sid/answer` (the cockpit's and
+the phone's buttons), or keys typed into the session's own terminal (`/ws/term`, the cockpit's
+terminal or `clawdling attach`). Clawdling pre-approves only `clawdling ls/spawn/send/new/end/doctor` (in the generated
 `--settings` file and the org `.claude/settings.json`). Agents can read the whole org folder
-(`--add-dir`). Permission mode defaults to "Ask before editing files", passed by name
+(`--add-dir`) except Clawdling's own runtime folder: the same settings deny agents' file tools
+(Read, Edit) on `<org>/.clawdling/`, which holds the token, and Donna's turns get the same rule as
+`--disallowedTools`. A shell command you approve runs as you and can still read it, so treat an
+approved arbitrary command as owner-level (1.2 plans a separate, narrower token for agents). Permission mode defaults to "Ask before editing files", passed by name
 (`--permission-mode manual`, or `default` on a Claude Code that calls it that; the names are read
 from `claude --help` at startup), because a Claude Code started with no mode now opens in auto
 mode. `acceptEdits` is opt-in, `inherit` (no flag: your own Claude Code setting) is opt-in, and
@@ -101,6 +106,8 @@ real Messages database. Tests use a fake `claude`, a stub Bot API, a fixture `ch
 
 Malware running as your user (it can read the token file, as it could read anything else you own);
 anyone you give the token or the pairing QR code to; what your agents do with permissions you grant
-them in Claude Code.
+them in Claude Code (an arbitrary shell command you approve can do anything you can, including
+reading the token). To revoke every paired phone and browser, stop Clawdling, delete
+`.clawdling/token` and start it again: a new token is made and each device pairs again.
 
 Report vulnerabilities privately via GitHub security advisories on the repository.

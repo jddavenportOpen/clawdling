@@ -90,3 +90,28 @@ test('hooks: the mode Claude Code reports is kept as live_mode (it can change wi
   applyHookEvent(rec, 'Stop', { permission_mode: 'not a mode; rm -rf' });
   assert.equal(rec.live_mode, 'acceptEdits', 'junk is ignored');
 });
+
+test('agents\' file tools cannot read or edit <org>/.clawdling (the owner token, the CLI shim), Donna included', async () => {
+  const { buildHooksSettings, runtimeDeny } = await import('../../server/hooks.js');
+  const { buildDonnaArgs } = await import('../../server/channels/donna.js');
+  const s = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/app/bin/clawdling-hook.js', platform: 'linux', home: '/home/sam/clawdling' });
+  assert.deepEqual(s.permissions.deny, ['Read(//home/sam/clawdling/.clawdling/**)', 'Edit(//home/sam/clawdling/.clawdling/**)']);
+  assert.ok(s.permissions.allow.includes('Bash(clawdling spawn *)'), 'the allow-list is unchanged');
+  assert.deepEqual(runtimeDeny('C:\\Users\\Sam\\clawdling', 'win32'), ['Read(//c/Users/Sam/clawdling/.clawdling/**)', 'Edit(//c/Users/Sam/clawdling/.clawdling/**)']);
+  assert.deepEqual(runtimeDeny('/weird(path)/x', 'linux'), [], 'no rule for a path with rule syntax');
+  assert.equal(buildHooksSettings({ nodePath: 'n', hookScript: 'h', platform: 'linux' }).permissions.deny, undefined);
+  if (process.platform !== 'win32') {
+    const a = buildDonnaArgs({ sessionId: 'S', resume: false, home: '/h' });
+    const d = a.indexOf('--disallowedTools');
+    assert.ok(d > 0 && d < a.indexOf('--allowedTools'), 'before the last variadic');
+    assert.deepEqual(a.slice(d + 1, d + 3), ['Read(//h/.clawdling/**)', 'Edit(//h/.clawdling/**)']);
+  }
+  const home = tempHome();
+  try {
+    initOrg({ home, answers: { owner: 'A' } });
+    const org = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.deepEqual(org.permissions.deny, ['Read(/.clawdling/**)', 'Edit(/.clawdling/**)'], 'relative to the org settings file');
+  } finally {
+    rmrf(home);
+  }
+});

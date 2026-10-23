@@ -62,12 +62,33 @@ export function cliAllow(platform = process.platform) {
 }
 
 /**
+ * `//abs/path/**`, Claude Code's absolute-path rule for a folder, or null when the path holds rule
+ * syntax. On Windows paths are matched in POSIX form (C:\\Users\\x -> /c/Users/x).
+ */
+export function absPathRule(tool, dir, platform = process.platform) {
+  const posix = platform === 'win32' ? String(dir).replace(/^([A-Za-z]):[\\/]*/, (m, d) => `/${d.toLowerCase()}/`).replace(/\\/g, '/') : String(dir);
+  if (!/^\/[A-Za-z0-9._/ -]+$/.test(posix)) return null;
+  return `${tool}(/${posix.replace(/\/+$/, '')}/**)`;
+}
+
+/**
+ * Clawdling's own runtime folder (<org>/.clawdling: the owner token, the CLI shim, this settings
+ * file) is off limits to agents' file tools, though they can read the rest of the org folder.
+ * Clawdling's own CLI and hook script read the token as child processes, which no rule touches.
+ */
+export function runtimeDeny(home, platform = process.platform) {
+  if (!home) return [];
+  const rt = `${String(home).replace(/[\\/]+$/, '')}${platform === 'win32' ? '\\' : '/'}.clawdling`;
+  return ['Read', 'Edit'].map((t) => absPathRule(t, rt, platform)).filter(Boolean);
+}
+
+/**
  * The generated --settings file: our hooks plus the clawdling allow-list.
  * macOS / Linux: shell form, every path single-quoted for `sh -c`.
  * Windows: exec form (`command` + `args`, Claude Code 2.1.139+), so no shell parses the paths,
  * whether Claude Code runs hooks in Git Bash or in PowerShell; paths use forward slashes.
  */
-export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false }) {
+export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false, home = null }) {
   const hooks = {};
   for (const ev of HOOK_EVENTS) {
     if (ev === 'StopFailure' && !stopFailure) continue;
@@ -76,7 +97,8 @@ export function buildHooksSettings({ nodePath, hookScript, platform = process.pl
       : { type: 'command', command: `${shq(nodePath)} ${shq(hookScript)} ${ev}`, timeout: 5 };
     hooks[ev] = [{ hooks: [hook] }];
   }
-  return { hooks, permissions: { allow: cliAllow(platform) } };
+  const deny = runtimeDeny(home, platform);
+  return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) } };
 }
 
 export const STATUSES = ['starting', 'working', 'ready', 'needs_you', 'ended'];

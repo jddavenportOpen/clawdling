@@ -9,6 +9,10 @@
       "Bash(clawdling new *)",
       "Bash(clawdling end *)",
       "Bash(clawdling doctor)"
+    ],
+    "deny": [
+      "Read(/.clawdling/**)",
+      "Edit(/.clawdling/**)"
     ]
   }
 }

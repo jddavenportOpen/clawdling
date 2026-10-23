@@ -98,6 +98,11 @@ for (let i = 0; i < argv.length; i++) {
     case '--add-dir':
       while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) opts.addDir.push(argv[++i]);
       break;
+    case '--disallowedTools':
+    case '--disallowed-tools':
+      opts.disallowedTools = [];
+      while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) opts.disallowedTools.push(argv[++i]);
+      break;
     case '--allowedTools':
     case '--allowed-tools':
       while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) opts.allowedTools.push(argv[++i]);
