@@ -691,9 +691,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         if (model && !/^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}$/.test(model)) { send(res, 400, { error: 'invalid model' }); return; }
         if (effort && !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) { send(res, 400, { error: 'effort must be low, medium, high, xhigh or max' }); return; }
         if (s.status !== 'ready') { send(res, 409, { error: 'wait for your turn: model and effort change between turns' }); return; }
-        if (model) { out(s, `/model ${model}\r\n${DIM}  ⎿  Set model to ${model}${RESET}\r\n`); s.model = model; }
-        if (effort) { out(s, `/effort ${effort}\r\n${DIM}  ⎿  Set effort level to ${effort}${RESET}\r\n`); s.effort = effort; }
-        out(s, `${DIM}›${RESET} `);
+        // Like core: the session's claude is resumed with the new session-only flags.
+        if (model) s.model = model;
+        if (effort) s.effort = effort;
+        out(s, `\r\n${DIM}── resumed with claude --resume ${s.sid.slice(0, 8)}${s.model ? ` --model=${s.model}` : ''}${s.effort ? ` --effort=${s.effort}` : ''} ──${RESET}\r\n${DIM}›${RESET} `);
         broadcast('session', s);
         send(res, 200, s);
         return;
