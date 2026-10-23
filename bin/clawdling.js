@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readToken, loadOrCreateToken } from '../server/auth.js';
 import { OrgStore, defaultAnswers, initOrg } from '../server/org.js';
 import { selectBackend } from '../server/backend.js';
@@ -22,6 +23,7 @@ Usage:
                                             create the org (default home ~/clawdling)
   clawdling start [--port 4747] [--host 127.0.0.1] [--open]
                                             run the cockpit server in the foreground
+  clawdling stop                            stop the cockpit (with tmux, sessions keep running)
   clawdling open [--print]                  open the cockpit in your browser (with the token)
   clawdling new domain "<Name>" --mission "..."
   clawdling new project "<Name>" --goal "..." [--repo PATH] [--domain ID]
@@ -172,7 +174,7 @@ function openInBrowser(url) {
   }
 }
 
-const DONNA_FORBIDDEN = new Set(['init', 'start', 'service', 'donna', 'attach', 'open']);
+const DONNA_FORBIDDEN = new Set(['init', 'start', 'stop', 'service', 'donna', 'attach', 'open']);
 
 // ------------------------------------------------------------------------------------- commands
 
@@ -212,8 +214,9 @@ async function cmdStart(args) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new CliError('--port must be a number');
   const host = args.flags.host || '127.0.0.1';
   let srv;
+  let requestStop = () => {};
   try {
-    srv = await startServer({ home, port, host });
+    srv = await startServer({ home, port, host, onShutdown: (why) => requestStop(why) });
   } catch (e) {
     // Nothing was started or written (the server refuses before touching state): exit now.
     console.error(`clawdling: ${e.message}`);
@@ -243,9 +246,22 @@ async function cmdStart(args) {
     await srv.stop().catch(() => {});
     process.exit(0);
   };
+  requestStop = stop;
   process.on('SIGINT', () => stop('SIGINT'));
   process.on('SIGTERM', () => stop('SIGTERM'));
   process.on('SIGHUP', () => stop('SIGHUP'));
+}
+
+async function cmdStop(args) {
+  const ctx = context(args.flags);
+  const h = await serverUp(ctx);
+  if (!h || h.home !== ctx.home) {
+    console.log(`The cockpit is not running for ${ctx.home}.`);
+    return;
+  }
+  const r = await api(ctx, 'POST', '/api/shutdown');
+  for (let i = 0; i < 120 && (await serverUp(ctx)); i++) await new Promise((res) => setTimeout(res, 100));
+  console.log(r?.sessions_keep_running === false ? 'Stopped the cockpit. Its sessions ended; resume them from the cockpit after `clawdling start`.' : 'Stopped the cockpit. Your sessions keep running in tmux.');
 }
 
 async function cmdOpen(args) {
@@ -774,6 +790,7 @@ export async function main(argv = process.argv.slice(2)) {
     doctor: cmdDoctor,
     init: cmdInit,
     start: cmdStart,
+    stop: cmdStop,
     open: cmdOpen,
     new: cmdNew,
     ls: cmdLs,
@@ -792,7 +809,8 @@ export async function main(argv = process.argv.slice(2)) {
 
 const invokedDirectly = (() => {
   try {
-    return fs.realpathSync(process.argv[1]) === fs.realpathSync(new URL(import.meta.url).pathname);
+    // fileURLToPath, not URL.pathname: on Windows the pathname is /C:/... and never matches.
+    return fs.realpathSync(process.argv[1]) === fs.realpathSync(fileURLToPath(import.meta.url));
   } catch {
     return false;
   }

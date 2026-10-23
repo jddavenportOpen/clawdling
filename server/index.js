@@ -425,6 +425,12 @@ export async function startServer(opts = {}) {
         return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, home }];
       }, { public: true }],
       ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
+      // `clawdling stop`: a clean stop on every OS (Windows has no SIGTERM for another process).
+      ['POST', /^\/api\/shutdown$/, () => {
+        if (typeof opts.onShutdown !== 'function') throw new HttpError(501, 'this server cannot be stopped over the API');
+        setImmediate(() => opts.onShutdown('clawdling stop'));
+        return [202, { ok: true, stopping: true, sessions_keep_running: backend.persistent !== false }];
+      }],
       ['GET', /^\/api\/org$/, () => [200, orgView()]],
       ['POST', /^\/api\/agents$/, async (req) => {
         const body = await jsonBody(req);
