@@ -2,7 +2,9 @@ name: ci
 
 # Unit + integration suites on Linux, macOS and Windows, Node 20 and 22, under both session
 # backends: tmux (Linux, macOS) and the built-in terminal, node-pty (everywhere). Playwright e2e
-# of the cockpit against the mock server on Linux. No secrets, no model calls (a fake claude).
+# of the cockpit against the mock server (desktop Chromium, phone Chromium and phone WebKit), and
+# against the real server with the fake claude on Linux (tmux and pty) and Windows (pty).
+# No secrets, no model calls (a fake claude).
 
 on:
   push:
@@ -72,8 +74,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Chromium and WebKit
+        run: npx playwright install --with-deps chromium webkit
 
       - name: Playwright
         run: npm run e2e
@@ -83,5 +85,50 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-results
+          path: test/e2e/test-results
+          retention-days: 7
+
+  e2e-real:
+    name: e2e · real server · ${{ matrix.os }} · ${{ matrix.backend }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, backend: tmux }
+          - { os: ubuntu-latest, backend: pty }
+          - { os: windows-latest, backend: pty }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install tmux
+        if: matrix.backend == 'tmux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q tmux
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium
+        run: npx playwright install ${{ runner.os == 'Linux' && '--with-deps' || '' }} chromium
+
+      # The real server from this checkout in test mode: a temp home, the fake claude, a private
+      # tmux socket (tmux backend), a dead Telegram base. Phone checks run in Chromium here.
+      - name: Playwright against the real server
+        run: npx playwright test -c test/e2e/playwright.config.js --project=desktop --project=phone-chromium
+        env:
+          CLAWDLING_E2E_REAL: '1'
+          CLAWDLING_BACKEND: ${{ matrix.backend }}
+
+      - name: Keep the traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-real-${{ matrix.os }}-${{ matrix.backend }}
           path: test/e2e/test-results
           retention-days: 7
