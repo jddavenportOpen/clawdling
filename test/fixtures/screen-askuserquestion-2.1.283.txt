@@ -1,0 +1,45 @@
+
+ ▐▛███▛█   Claude Code v2.1.283
+▝▜██████▀  Sonnet 5 · Claude API
+ ▝▝   ▝▝   ~/clawdling/domains/health
+
+  Get to finished work sooner with Opus 5.5. Switch anytime with /model.
+
+❯ Ada wants you to look at her sleep — review her sleep data/patterns, flag anything concerning, and report back.
+
+  Searched for 1 pattern
+
+⏺ I checked this agent's folder and there's no sleep data on file yet — this is a freshly created Health agent with no connected data source, and
+  nothing in me.md yet about which app or device Ada uses to track sleep.
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Sleep data source
+
+Where does your sleep data live, so I can review it?
+
+❯ 1. I'll paste/describe it here
+     Ada pastes an export (e.g. CSV/text from Oura, Whoop, Apple Health) or just describes recent sleep/patterns in chat.
+  2. There's a file or export somewhere
+     Ada points me to a file path or folder containing exported sleep data I should read.
+  3. No data yet — just a general check-in
+     No tracked data; Ada wants to talk through recent sleep patterns/concerns qualitatively instead.
+  4. Type something.
+─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+───────────────────────────────────────────────────────────────────────────────────────── Health: Ada wants you to look at her sleep — review… ─

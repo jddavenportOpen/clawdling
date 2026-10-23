@@ -55,7 +55,7 @@ export function trustNotice(folder) {
 }
 export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
-export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer. Open a terminal, run claude, finish signing in, then end this session and start it again.';
+export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer (or not set up yet). Open a terminal, run claude, finish its setup and sign-in, then end this session and start it again.';
 export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
 export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
 // What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
@@ -67,6 +67,8 @@ const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
 const POINTER = '\u276f'; // the "❯" Claude Code puts in front of the selected choice
 const KEY = { up: Buffer.from('\x1b[A'), down: Buffer.from('\x1b[B'), enter: Buffer.from('\r') };
 const DIALOG_ARM_MS = 1500; // Claude Code ignores keys for a moment after a dialog opens
+// When to look for a question's choices after its Notification (ms): the list may draw late.
+const CHOICE_RETRY_MS = [300, 1000, 2500, 5000, 9000];
 
 /**
  * The choices of a Claude Code select list on screen, in screen order, and which one has the
@@ -819,19 +821,30 @@ export class SessionManager {
     return this.view(rec);
   }
 
-  captureChoices(rec) {
-    setTimeout(async () => {
-      if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) return;
-      try {
-        const c = parseChoices(await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`));
-        if (c && rec.status === 'needs_you') {
-          rec.choices = c.labels.map((label, i) => ({ option: i + 1, label }));
-          this.publish(rec);
+  /**
+   * Read the numbered choices off the screen. Claude Code can send the Notification hook before it
+   * has drawn the list (a real AskUserQuestion or permission prompt), so look again a few times.
+   */
+  captureChoices(rec, delays = CHOICE_RETRY_MS) {
+    const asking = () => rec.status === 'needs_you' && ANSWERABLE.has(rec.waiting_on);
+    const attempt = (i) => {
+      if (i >= delays.length) return;
+      setTimeout(async () => {
+        if (!asking() || rec.choices) return;
+        try {
+          const c = parseChoices(await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`));
+          if (c && asking() && !rec.choices) {
+            rec.choices = c.labels.map((label, n) => ({ option: n + 1, label }));
+            this.publish(rec);
+            return;
+          }
+        } catch {
+          // the session may be gone
         }
-      } catch {
-        // the session may be gone
-      }
-    }, 300).unref?.();
+        attempt(i + 1);
+      }, delays[i] - (i ? delays[i - 1] : 0)).unref?.();
+    };
+    attempt(0);
   }
 
   rename(sid, title) {
@@ -889,6 +902,7 @@ export class SessionManager {
     if (!rec.hooked) await this.waitFor(() => rec.hooked || rec.waiting_on || !isLive(rec.status), 15000);
     // Never type into a dialog: Enter would answer it (folder trust defaults to "No, exit"; a
     // permission prompt defaults to "Yes"). Those answers belong to the owner, in the terminal.
+    if (rec.status === 'needs_you' && rec.waiting_on === 'login') throw conflict(LOGIN_NOTICE); // nothing to answer here
     if (rec.status === 'needs_you' && ANSWER_IN_TERMINAL.has(rec.waiting_on)) {
       throw conflict(`the session is waiting for your answer in the terminal (${rec.notification || rec.waiting_on}); answer it in the cockpit first`);
     }
@@ -1073,7 +1087,7 @@ export class SessionManager {
       const rec = this.records.get(sid);
       if (rec) this.flushOutput(rec, rt);
       for (const t of ['flushTimer', 'carryTimer', 'stallTimer', 'resizeTimer', 'dialogTimer']) clearTimeout(rt[t]);
-      rt.control?.close();
+      rt.control?.close(true); // now: the process exits right after this
       for (const ws of rt.viewers) {
         try {
           ws.close(1001, persistent ? 'Clawdling is restarting; sessions keep running' : 'Clawdling stopped; resume the session to continue');
