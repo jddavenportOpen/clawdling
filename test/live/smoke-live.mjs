@@ -136,6 +136,12 @@ async function main() {
   const okMission = answer.toLowerCase().includes(token);
   const okMarker = answer.includes(marker) && raw.includes(marker);
   if (toolUses.length) findings.push(`WARNING: the model used tools (${toolUses.map((t) => t.name).join(', ')}) so preload is not strictly proven`);
+  // "Ask before editing files" (the default) must be the mode Claude Code is really in: with no
+  // --permission-mode, 2.1.283+ opens in auto mode. Its footer and its hooks both say which.
+  const footer = capture();
+  const shown = /auto mode on/i.test(footer) ? 'auto' : /manual mode on/i.test(footer) ? 'manual' : 'not shown';
+  const okMode = shown !== 'auto' && cur.live_mode !== 'auto';
+  findings.push(`Permission mode: footer ${shown}, hooks report ${cur.live_mode || 'nothing'} (wanted: asks before editing).`);
 
   // Skills: type "/handof" (no Enter) and look at Claude Code's own autocomplete.
   keys('/handof');
@@ -151,6 +157,7 @@ async function main() {
   log(`mission phrase in answer: ${okMission ? 'yes' : 'NO'}; NOW.md marker in answer: ${okMarker ? 'yes' : 'NO'}`);
   for (const f of findings) log(f);
   if (!okMission || !okMarker) throw new Error('context/memory preload NOT proven');
+  if (!okMode) throw new Error('the session runs in auto mode, though the agent asks before editing files');
   log('PASS: the agent knew its mission (CLAUDE.md) and its memory (memory/NOW.md) on the first turn');
 }
 

@@ -22,7 +22,7 @@ export function useTrustStep() {
   const sessions = useStore((s) => s.sessions);
   const list = Object.values(sessions);
   const show = !!sessionsLoaded && !orgError && (orgTrusted === null || orgTrusted === undefined ? list.length === 0 : !orgTrusted);
-  const pending = show && home ? list.find((s) => s.cwd === home && s.status === 'needs_you' && s.waiting_on === 'trust') || null : null;
+  const pending = show && home ? list.find((s) => s.cwd === home && !s.account && s.status === 'needs_you' && s.waiting_on === 'trust') || null : null;
   return { show, pending };
 }
 

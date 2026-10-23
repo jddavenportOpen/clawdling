@@ -410,9 +410,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   // Hook events drive status exactly like the real server's status machine.
   function applyHook(s, event, payload = {}) {
+    if (typeof payload.permission_mode === 'string') s.live_mode = payload.permission_mode; // like core's hooks
     if (event === 'SessionStart') {
       // Started in the org folder itself: Claude Code trusts it now (core's markOrgTrusted).
-      if (s.cwd === HOME && !st.orgTrusted) { st.orgTrusted = true; publishOrg('org_trusted'); }
+      if (s.cwd === HOME && !s.account && !st.orgTrusted) { st.orgTrusted = true; publishOrg('org_trusted'); }
       if (payload.source === 'compact') return;
       const term = st.terms.get(s.sid);
       setStatus(s, term && term.pendingPrompt ? 'starting' : 'ready');

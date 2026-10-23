@@ -169,6 +169,11 @@ test.describe('agent page', () => {
     await reset('empty');
     await login(page, '#/agent/home');
     await expect(page.getByTestId('agent-permissions')).toHaveText('Permissions: Ask before editing files');
+    // A running session in another mode (Shift+Tab, or one 1.1.0 started in auto mode) is named.
+    const sid = await spawn({ agent: 'home', title: 'Plan the move', status: 'working' });
+    await api('POST', '/api/hooks', { event: 'UserPromptSubmit', sid, payload: { prompt: 'go', permission_mode: 'auto' } });
+    await page.reload();
+    await expect(page.getByTestId('agent-permissions')).toHaveText('Permissions: Ask before editing files (now: auto mode)');
   });
 });
 

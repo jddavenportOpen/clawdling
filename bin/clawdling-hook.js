@@ -77,6 +77,7 @@ async function main() {
     last_assistant_message: clip(payload.last_assistant_message, 1000),
     error: clip(payload.error, 80),
     error_details: clip(payload.error_details, 500),
+    permission_mode: clip(payload.permission_mode, 40), // the mode the session is in now
   };
   const record = { event, sid, payload: slim, ts: new Date().toISOString(), ...(process.env.CLAWDLING_LAUNCH ? { launch: process.env.CLAWDLING_LAUNCH } : {}) };
   let token = '';

@@ -192,8 +192,10 @@ function EditorBody({ id, field, file, value, help, onSaved }) {
 // say what a running session reports it is in (Claude Code's own hooks), when one does.
 function PermissionMeta({ mode, live }) {
   const setting = permissionSetting(mode);
-  const reported = live.map((s) => s.live_mode).find(Boolean);
-  const now = setting === 'inherit' && reported ? ` (now: ${liveModeLabel(reported)})` : '';
+  // A running session in another mode than the setting (Shift+Tab, or one started by 1.1.0 in auto mode).
+  const same = { ask: ['manual', 'default'], acceptEdits: ['acceptEdits'], plan: ['plan'] }[setting] || [];
+  const reported = live.map((s) => s.live_mode).find((m) => m && !same.includes(m));
+  const now = reported ? ` (now: ${liveModeLabel(reported)})` : '';
   const title = setting === 'inherit'
     ? 'Clawdling passes no permission mode, so your own Claude Code setting applies. New Claude Code versions start in auto mode unless you changed it.'
     : 'Clawdling starts every session of this agent in this mode. Shift+Tab in the terminal changes it for one session.';

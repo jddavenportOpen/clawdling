@@ -118,6 +118,15 @@ test('accounts: only the default login until one is added; an added one is passe
   assert.equal(launched(signin.body.sid).env.CLAUDE_CONFIG_DIR, dir);
   assert.equal((await request(srv, 'POST', '/api/accounts/nope/signin', {})).status, 404);
 
+  // 1.1.1: folder trust is saved per Claude login, so a second account's session starting in the
+  // org folder does not mark it trusted; one on the default login does (and it persists).
+  await waitFor(async () => (await status(signin.body.sid)) === 'ready', { label: 'sign-in session ready' });
+  assert.equal((await request(srv, 'GET', '/api/org')).body.org_trusted, false, 'not by the work account');
+  const own0 = (await request(srv, 'POST', '/api/sessions', { agent: 'scratch' })).body;
+  await waitFor(async () => (await status(own0.sid)) === 'ready', { label: 'default scratch ready' });
+  await waitFor(async () => (await request(srv, 'GET', '/api/org')).body.org_trusted === true, { label: 'org trusted' });
+  assert.ok(JSON.parse(fs.readFileSync(path.join(home, '.clawdling', 'trust.json'), 'utf8')).trusted_at);
+
   // Clawdling only made the folder: it never wrote a login or settings file into it.
   const own = fs.readdirSync(dir).filter((f) => f !== 'projects');
   assert.ok(!own.some((f) => /credential|settings|\.claude\.json/i.test(f)), `unexpected files: ${own.join(', ')}`);

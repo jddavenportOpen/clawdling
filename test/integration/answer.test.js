@@ -4,18 +4,20 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { cli, killTmux, openViewer, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
+import { cli, killTmux, openViewer, readLog, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
 
 let home;
 let socket;
 let srv;
 let repo;
+let fakeLog;
 
 before(async () => {
   home = tempHome();
   socket = uniqueSocket();
   repo = tempHome('cl-outside-repo-');
-  const env = testEnv({ CLAWDLING_TMUX_SOCKET: socket });
+  fakeLog = path.join(home, 'fake-claude.log');
+  const env = testEnv({ CLAWDLING_TMUX_SOCKET: socket, FAKE_CLAUDE_LOG: fakeLog });
   cli(['init', '--defaults'], { env, home });
   cli(['new', 'project', 'Store', '--goal', 'Ship the store', '--repo', repo], { env, home });
   fs.writeFileSync(path.join(repo, '.fake-claude-trust'), ''); // code outside the org: Claude Code asks
@@ -143,6 +145,30 @@ test('a Claude Code that is not signed in: "login" at once, a plain notice, and 
     await request(srv, 'DELETE', `/api/sessions/${signin.body.sid}`);
   } finally {
     fs.rmSync(marker, { force: true });
+  }
+});
+
+test('Start again after a Resume that stopped at the sign-in resumes the conversation, and sends nothing twice (1.1.1)', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'home', prompt: 'first words' })).body;
+  await until(s.sid, (x) => x.status === 'ready' && x.last_message === 'first words', 'ready');
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+  await until(s.sid, (x) => x.status === 'ended', 'ended');
+  const marker = path.join(home, 'domains', 'home', '.fake-claude-login');
+  fs.writeFileSync(marker, '');
+  try {
+    assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/resume`, {})).status, 200);
+    await until(s.sid, (x) => x.status === 'needs_you' && x.waiting_on === 'login', 'the resumed claude is not signed in');
+    fs.rmSync(marker, { force: true });
+    assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/restart`, {})).status, 200);
+    await until(s.sid, (x) => x.status === 'ready', 'ready after Start again');
+    const runs = readLog(fakeLog).filter((e) => e.mode === 'interactive' && (e.opts.sessionId === s.sid || e.opts.resume === s.sid));
+    const last = runs[runs.length - 1];
+    assert.equal(runs.length, 3, 'spawn, resume, Start again');
+    assert.equal(last.opts.resume, s.sid, 'resumed: the conversation exists, so not a fresh --session-id');
+    assert.equal(last.prompt, '', 'the first message is not sent a second time');
+  } finally {
+    fs.rmSync(marker, { force: true });
+    await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
   }
 });
 

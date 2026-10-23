@@ -59,6 +59,8 @@ export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
 export { LOGIN_NOTICE };
 export const SIGNED_IN_NOTICE = 'Claude Code is signed in now. Start this session again to use it.';
+// A "Sign in" session is where the signing in happens: no Sign in button to point at.
+export const SIGNIN_NOTICE = "Sign in to Claude in this session: follow Claude Code's own steps (or type /login).";
 export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
 export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
 // What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
@@ -286,7 +288,7 @@ export class SessionManager {
     this.orgTrusted = !!readJson(this.paths.trust, {})?.trusted_at;
     // An org from before 1.1.1 has no trust.json: a session in the org folder that ever sent a hook
     // got past the trust question (Claude Code runs no hook before that), so the folder is trusted.
-    if (!this.orgTrusted && [...this.records.values()].some((r) => r.cwd === this.home && (r.last_hook_ms || r.transcript_path))) {
+    if (!this.orgTrusted && [...this.records.values()].some((r) => r.cwd === this.home && !r.account && (r.last_hook_ms || r.transcript_path))) {
       this.markOrgTrusted('a session in the org folder had started');
     }
   }
@@ -632,6 +634,7 @@ export class SessionManager {
     const rt = this.rt(rec.sid);
     rt.gen++;
     rt.launchedAt = Date.now();
+    rt.resumed = !!resume;
     if (!resume) rt.firstPrompt = prompt || ''; // in memory only, for "Start again" (restart())
     rt.size = { cols: c, rows: r };
     // A control client of the previous run may still be open (ConPTY reports an exit about a second
@@ -760,7 +763,9 @@ export class SessionManager {
       if (d && rec.waiting_on !== d.waiting) {
         rec.status = 'needs_you';
         rec.waiting_on = d.waiting;
-        rec.notification = d.waiting === 'trust' ? trustNotice(rec.cwd) : d.notice;
+        rec.notification = d.waiting === 'trust' ? trustNotice(rec.cwd)
+          : d.waiting === 'login' && rec.purpose === 'signin' ? SIGNIN_NOTICE
+          : d.notice;
         const c = parseChoices(screen);
         rec.choices = c ? c.labels.map((label, i) => ({ option: i + 1, label })) : null;
         rt.dialogSeenAt = Date.now();
@@ -865,7 +870,8 @@ export class SessionManager {
     if (rt) clearTimeout(rt.stallTimer);
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, payload && typeof payload === 'object' ? payload : {});
     if (event === 'Notification' && payload && payload.notification_type === 'auth_success') this.signedIn(rec);
-    if (event === 'SessionStart' && rec.cwd === this.home) this.markOrgTrusted(`session ${sid} started in the org folder`);
+    // Trust is saved per Claude login (its own config folder): only the default login's counts.
+    if (event === 'SessionStart' && rec.cwd === this.home && !rec.account) this.markOrgTrusted(`session ${sid} started in the org folder`);
     if (event === 'Notification' && rec.waiting_on === 'permission_prompt') {
       rec.choices = null;
       if (rt) rt.dialogSeenAt = Date.now();
@@ -1009,7 +1015,7 @@ export class SessionManager {
     }
     // A claude that never started (stopped at its own first-run sign-in) has no conversation to
     // resume: start it fresh on the same session id, with the first message it never got to.
-    const fresh = !rec.hooked;
+    const fresh = !rec.hooked && !this.runtime.get(sid)?.resumed;
     const prompt = fresh ? this.runtime.get(sid)?.firstPrompt || '' : '';
     const reason = rec.waiting_on || 'login';
     await this.stopForRelaunch(rec);
@@ -1017,6 +1023,7 @@ export class SessionManager {
     if (!fresh) return this.resume(sid, { cols, rows });
     this.resolveTarget(rec.agent); // the agent must still exist
     rec.pending_prompt = !!prompt;
+    rec.prompted = !!prompt; // nothing ran: a later Resume must not --resume a conversation that does not exist
     await this.launch(rec, { prompt, resume: false, cols, rows });
     this.publish(rec);
     return this.view(rec);
