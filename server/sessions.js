@@ -573,6 +573,9 @@ export class SessionManager {
     rt.launchedAt = Date.now();
     rt.size = { cols: c, rows: r };
     this.attachControl(rec);
+    // One look at the screen even if no output follows: a dialog drawn in the few ms before the
+    // control client attached produces no output event (seen on fast Linux CI runners).
+    this.detectDialogs(rec, rt);
     clearTimeout(rt.stallTimer);
     rt.stallTimer = setTimeout(() => {
       if (!rec.hooked && rec.status === 'starting') {
