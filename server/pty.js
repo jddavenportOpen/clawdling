@@ -56,7 +56,13 @@ export function loadPtyModules({ requireFn = requireHere, platform = process.pla
   try {
     const pkgFile = requireFn.resolve('node-pty/package.json');
     const version = JSON.parse(fs.readFileSync(pkgFile, 'utf8')).version;
-    if (platform !== 'win32') ensureSpawnHelper(path.dirname(pkgFile), { platform, arch });
+    if (platform === 'darwin') {
+      ensureSpawnHelper(path.dirname(pkgFile), { platform, arch });
+      const helper = path.join(path.dirname(pkgFile), 'prebuilds', `${platform}-${arch}`, 'spawn-helper');
+      if (fs.existsSync(helper) && (fs.statSync(helper).mode & 0o111) !== 0o111) {
+        throw new Error(`node-pty's helper is not executable and could not be fixed: chmod +x "${helper}"`);
+      }
+    } else if (platform !== 'win32') ensureSpawnHelper(path.dirname(pkgFile), { platform, arch });
     const pty = requireFn('node-pty');
     // On Windows node-pty loads its native ConPTY module lazily, at the first spawn: load it now so
     // a broken install shows up in `clawdling doctor`, not as a session that cannot start.
