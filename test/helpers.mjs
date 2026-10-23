@@ -132,12 +132,28 @@ export async function startServerProc({ home, env, port = 0 }) {
 }
 
 export async function request(srv, method, p, body, headers = {}) {
-  const res = await fetch(srv.url + p, {
+  const init = {
     method,
     headers: { 'x-clawdling-token': srv.token, ...(body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
     body: body !== undefined ? JSON.stringify(body) : undefined,
     redirect: 'manual',
-  });
+  };
+  let res;
+  try {
+    res = await fetch(srv.url + p, init);
+  } catch (err) {
+    // "fetch failed" is a connection error, not an answer. The usual one is a kept-alive socket the
+    // server closed (keepAliveTimeout 5 s) while this process sat in execFileSync / rmSync, reused
+    // anyway (seen on Windows CI). A read is safe to send again (undici dropped the dead socket); anything
+    // else fails loud, with the socket error named.
+    const code = err?.cause?.code || err?.cause?.message || '';
+    if (!['GET', 'HEAD'].includes(method)) throw new Error(`${method} ${p}: fetch failed (${code})`, { cause: err });
+    try {
+      res = await fetch(srv.url + p, init);
+    } catch (err2) {
+      throw new Error(`${method} ${p}: fetch failed twice (${code}; ${err2?.cause?.code || err2?.cause?.message || ''})`, { cause: err2 });
+    }
+  }
   const text = await res.text();
   let json = null;
   try {

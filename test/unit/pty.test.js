@@ -245,11 +245,12 @@ const mods = loadPtyModules();
 const realPty = mods.ok ? false : `node-pty did not load here (${mods.error})`;
 
 // A tiny TUI: draws, turns on bracketed paste, logs its size on resize, echoes lines.
+// Raw mode and the listeners come BEFORE the banner: the test types as soon as it sees the banner,
+// and a byte that lands while the tty is still cooked is echoed by the tty and its \r turned into
+// \n (ICRNL), so the app never sees the Enter and never prints "echo:" (the CI flake on a slow runner).
 const APP = `
-process.stdout.write('\\x1b[1mREAL PTY\\x1b[0m ' + process.stdout.columns + 'x' + process.stdout.rows + '\\r\\n');
-process.stdout.write('\\x1b[?2004h> ');
-process.stdout.on('resize', () => process.stdout.write('[resized ' + process.stdout.columns + 'x' + process.stdout.rows + ']\\r\\n> '));
 process.stdin.setRawMode(true);
+process.stdout.on('resize', () => process.stdout.write('[resized ' + process.stdout.columns + 'x' + process.stdout.rows + ']\\r\\n> '));
 let line = '';
 process.stdin.on('data', (d) => {
   for (const ch of d.toString('utf8').replace(/\\x1b\\[20[01]~/g, '')) {
@@ -257,6 +258,8 @@ process.stdin.on('data', (d) => {
     else { line += ch; process.stdout.write(ch); }
   }
 });
+process.stdout.write('\\x1b[1mREAL PTY\\x1b[0m ' + process.stdout.columns + 'x' + process.stdout.rows + '\\r\\n');
+process.stdout.write('\\x1b[?2004h> ');
 `;
 
 test('real node-pty: spawn, screen, snapshot, resize, input, paste, exit', { skip: realPty }, async () => {
