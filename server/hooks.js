@@ -57,6 +57,7 @@ export const isLive = (status) => LIVE.has(status);
  *
  *   starting --UserPromptSubmit--> working --Stop--> ready
  *   any live --Notification--> needs_you (message kept) --UserPromptSubmit--> working
+ *   ready --Notification(idle_prompt)--> ready (a finished turn is still your turn)
  *   starting --SessionStart (no first prompt pending)--> ready   (a fresh session waits for you);
  *   SessionStart never changes a working, ready or waiting session
  *   SessionEnd (except /clear) or tmux exit --> ended
@@ -115,6 +116,9 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
     case 'Notification': {
       const type = typeof payload.notification_type === 'string' ? payload.notification_type : null;
       if (type === 'auth_success') break;
+      // "Claude is waiting for your input" (a minute after a finished turn): still your turn, not a
+      // question that blocks the session. It stays `ready`, so the cockpit keeps it green.
+      if (type === 'idle_prompt' && rec.status === 'ready') break;
       rec.status = 'needs_you';
       rec.notification = oneLine(payload.message || payload.title || 'Claude Code needs your attention', 300);
       rec.waiting_on = type || 'notification';

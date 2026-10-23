@@ -37,11 +37,19 @@ test('Notification -> needs_you keeps the message; next prompt clears it', () =>
   assert.equal(r.notification, null);
 });
 
-test('auth_success notifications do not change status; idle notices do', () => {
-  const r = rec({ status: 'ready' });
+test('auth_success and idle notices on a finished turn do not change status; a question does', () => {
+  const r = rec({ status: 'ready', last_message: 'done' });
   assert.equal(applyHookEvent(r, 'Notification', { notification_type: 'auth_success', message: 'ok' }).statusChanged, false);
-  applyHookEvent(r, 'Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
+  // Real Claude Code sends this a minute after every finished turn: it is still "your turn".
+  assert.equal(applyHookEvent(r, 'Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }).statusChanged, false);
+  assert.equal(r.status, 'ready');
+  assert.equal(r.waiting_on ?? null, null);
+  applyHookEvent(r, 'Notification', { notification_type: 'permission_prompt', message: 'Claude needs your permission' });
   assert.equal(r.status, 'needs_you');
+  // An idle notice while working (no Stop seen) still says Claude is waiting on you.
+  const w = rec({ status: 'working' });
+  applyHookEvent(w, 'Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
+  assert.equal(w.status, 'needs_you');
 });
 
 test('SessionEnd ends the session except for /clear; ended sessions ignore hooks', () => {

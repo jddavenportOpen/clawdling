@@ -105,7 +105,11 @@ test('a Claude Code that is not signed in: "login" at once, a plain notice, and 
     assert.match(q.notification, /not signed in on this computer/);
     assert.equal(q.choices, null, 'not answered with buttons');
     // Enter would pick a login method: typed text must never reach that screen.
-    assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' })).status, 409);
+    const refused = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' });
+    assert.equal(refused.status, 409);
+    // The refusal says what to do (sign in), not "answer it in the cockpit", which is impossible here.
+    assert.match(refused.body.error, /not signed in on this computer/);
+    assert.doesNotMatch(refused.body.error, /answer it in the cockpit/);
     assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 })).status, 409);
     await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
   } finally {

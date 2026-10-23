@@ -95,7 +95,7 @@ test('replay never rolls a session back: spooled events older than the last appl
     assert.equal(sm.replaySpool(), 1);
     assert.equal(sm.get(A).status, 'ready', 'the stale prompt event did not flip it back to working');
     // A newer spooled event still applies.
-    fs.writeFileSync(paths.hookSpool, JSON.stringify({ event: 'Notification', sid: A, payload: { message: 'Claude is waiting for your input', notification_type: 'idle_prompt' }, ts: '2026-10-22T10:01:05.000Z' }) + '\n');
+    fs.writeFileSync(paths.hookSpool, JSON.stringify({ event: 'Notification', sid: A, payload: { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' }, ts: '2026-10-22T10:01:05.000Z' }) + '\n');
     sm.replaySpool();
     assert.equal(sm.get(A).status, 'needs_you');
     assert.equal(JSON.parse(fs.readFileSync(paths.sessions, 'utf8')).socket, 's', 'the registry records its tmux socket');
