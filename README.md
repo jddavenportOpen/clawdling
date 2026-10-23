@@ -10,7 +10,8 @@ project. Then it gives you a cockpit where you see the whole thing and open any 
 click, as a real Claude Code session that already knows its job, its history and its tools.
 
 No session caps and no per-agent fees. Every agent is the official `claude` CLI running on the
-Claude plan you already pay for, so your plan's own usage limits are the only limit.
+Claude plan you already pay for. Clawdling adds no limits of its own: your Claude plan's usage
+limits, and your machine, are the limit.
 
 ![The org map: you, Donna, your domains and their projects, with live sessions and what needs you](docs/img/org-map.png)
 

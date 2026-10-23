@@ -8,8 +8,9 @@ import { StatusGlyph } from './status.js';
 import { api } from '../lib/api.js';
 import { refreshChannels } from '../lib/live.js';
 import { startSession, focusSession, toast, errorToast } from '../lib/actions.js';
-import { copyText, relTime, toMs } from '../lib/util.js';
+import { copyText, relTime, toMs, cliCmd } from '../lib/util.js';
 import { sessionName, statusText } from '../lib/model.js';
+import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 function pairingCodeOf(r) {
   if (!r || typeof r !== 'object') return null;
@@ -38,6 +39,7 @@ export function DonnaPage() {
   const donnaSessions = useMemo(() => Object.values(sessionsMap).filter((s) => s.agent === donnaId)
     .sort((a, b) => toMs(b.last_activity_at || b.created_at) - toMs(a.last_activity_at || a.created_at)), [sessionsMap, donnaId]);
   const liveDonna = donnaSessions.find((s) => s.status !== 'ended');
+  const blocked = useStartBlocked();
 
   return html`<div class="page donna-page" data-testid="donna-page">
     <header class="agent-hero">
@@ -50,7 +52,8 @@ export function DonnaPage() {
       <div class="hero-actions">
         ${liveDonna ? html`<button class="btn btn-quiet" onClick=${() => focusSession(liveDonna.sid)} data-testid="donna-session">
             <${StatusGlyph} status=${liveDonna.status} label=${false} /> Open ${sessionName(liveDonna, agentsById)}</button>`
-          : html`<button class="btn btn-quiet" onClick=${() => startSession(donnaId).catch(() => {})} data-testid="donna-session"><${Icon} name="plus" /> Start a session with ${donna ? donna.name : 'Donna'}</button>`}
+          : html`<button class="btn btn-quiet" onClick=${() => startSession(donnaId).catch(() => {})} data-testid="donna-session"
+              disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> Start a session with ${donna ? donna.name : 'Donna'}</button>`}
       </div>
     </header>
     <div class="donna-grid">
@@ -89,6 +92,7 @@ function StatusPill({ tone, children }) {
 }
 
 function TelegramCard({ t }) {
+  const health = useStore((s) => s.health);
   const [token, setToken] = useState('');
   const [code, setCode] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -139,7 +143,7 @@ function TelegramCard({ t }) {
       <li class=${configured ? 'is-done' : ''}>
         <span class="step-title">Give Clawdling the token</span>
         <span class="step-text">Paste it here, or run this in your terminal:</span>
-        <${CopyLine} text="clawdling donna telegram --token <TOKEN>" label="Copy the clawdling donna telegram command" />
+        <${CopyLine} text=${cliCmd('donna telegram --token <TOKEN>', health)} label="Copy the command that connects Telegram" />
         <form class="inline-form" onSubmit=${(e) => { e.preventDefault(); if (token.trim()) connect(true); }}>
           <label class="sr-only" for="tg-token">Bot token</label>
           <input id="tg-token" class="mono" type="password" autocomplete="off" spellcheck="false" value=${token}
@@ -150,7 +154,7 @@ function TelegramCard({ t }) {
         <span class="step-note">Stored in <code>.env</code> in your org folder with owner-only permissions. Never shown again.</span>
       </li>
       <li class=${paired ? 'is-done' : ''}>
-        <span class="step-title">Pair your phone</span>
+        <span class="step-title">Pair your Telegram chat</span>
         ${pending && !paired ? html`<span class="step-text">Send this to ${bot} from your phone:</span>
             <div class="pair-code" data-testid="pairing-code"><span class="pair-cmd">/pair</span> <span class="pair-digits">${pending}</span>
               <button class="icon-btn icon-btn-sm" aria-label="Copy pairing message" onClick=${async () => { const ok = await copyText(`/pair ${pending}`); toast(ok ? 'Copied' : `/pair ${pending}`, { tone: 'ok', ms: 1600 }); }}><${Icon} name="copy" size=${14} /></button></div>
@@ -169,6 +173,7 @@ function TelegramCard({ t }) {
 }
 
 function IMessageCard({ m }) {
+  const health = useStore((s) => s.health);
   const [handle, setHandle] = useState((m && m.handle) || '');
   const [busy, setBusy] = useState(false);
   const supported = !m || m.supported !== false;
@@ -196,7 +201,7 @@ function IMessageCard({ m }) {
     </header>
     ${supported ? html`<ol class="steps">
       <li><span class="step-title">Let Clawdling read Messages</span>
-        <span class="step-text">System Settings → Privacy & Security → <strong>Full Disk Access</strong>: turn it on for the terminal app that runs <code>clawdling start</code>.</span></li>
+        <span class="step-text">System Settings → Privacy & Security → <strong>Full Disk Access</strong>: turn it on for the terminal app you run <code>${cliCmd('start', health)}</code> in.</span></li>
       <li><span class="step-title">Let it send replies</span>
         <span class="step-text">The first time Donna replies, macOS asks to let your terminal control <strong>Messages</strong> (Automation). Allow it.</span></li>
       <li><span class="step-title">Use a second Apple ID on this Mac</span>

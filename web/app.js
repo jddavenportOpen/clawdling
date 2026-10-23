@@ -6,7 +6,7 @@ import { setState, getState, useStore } from './lib/store.js';
 import { initialState, parseRoute, togglePalette, toggleRail, focusPaneIndex, closeOverlay, goHome } from './lib/actions.js';
 import { boot } from './lib/live.js';
 import { initTheme } from './lib/theme.js';
-import { shortcutOf, eventInTerminal } from './lib/keys.js';
+import { shortcutOf, eventInTerminal, isTypingTarget } from './lib/keys.js';
 import { terms } from './lib/term.js';
 import { Rail } from './components/rail.js';
 import { Workspace } from './components/workspace.js';
@@ -20,6 +20,7 @@ import { NewSessionDialog } from './components/new-session.js';
 import { Wizard } from './components/wizard.js';
 import { EndDialog, Menu, Toasts } from './components/dialogs.js';
 import { Icon, Mark } from './components/icons.js';
+import { HealthBanner } from './components/health-banner.js';
 
 setState({ ...initialState(), route: parseRoute(), booting: true });
 initTheme();
@@ -50,13 +51,23 @@ function App() {
   const mobileView = useStore((s) => s.mobileView);
   const rail = useStore((s) => s.rail);
 
-  // Coming back to the cockpit: the keyboard goes back to the focused terminal.
+  // Coming back to the cockpit: the keyboard goes back to the focused terminal. Going to a page:
+  // focus moves to its heading, so a screen reader announces where you are and Tab starts there.
   useEffect(() => {
-    if (route.name !== 'cockpit') return;
+    if (route.name !== 'cockpit') {
+      const id = requestAnimationFrame(() => {
+        const h = document.querySelector('.page-layer h1');
+        if (!h || (document.activeElement && document.activeElement.closest('.page-layer'))) return;
+        h.setAttribute('tabindex', '-1');
+        h.focus({ preventScroll: true });
+      });
+      return () => cancelAnimationFrame(id);
+    }
     const sid = getState().focused;
     const v = sid && terms.get(sid);
     if (v) setTimeout(() => v.focus(), 0);
-  }, [route.name]);
+    return undefined;
+  }, [route.name, route.id]);
 
   if (auth !== 'ok') {
     if (booting) return html`<div class="splash" aria-label="Loading Clawdling"><span class="splash-mark"><${Mark} size=${28} /></span></div>`;
@@ -64,6 +75,7 @@ function App() {
   }
   const page = route.name !== 'cockpit';
   return html`<div class=${`app ${mobile ? 'is-mobile' : ''} rail-${rail}`} data-route=${route.name} data-mobile-view=${mobileView}>
+    <${HealthBanner} />
     <${Rail} />
     <div class="stage">
       <${Workspace} hidden=${page} />
@@ -83,7 +95,8 @@ window.addEventListener('hashchange', () => setState({ route: parseRoute(), menu
 // App shortcuts run in the capture phase so they beat xterm's own key handling.
 window.addEventListener('keydown', (e) => {
   if (getState().auth !== 'ok') return;
-  const sc = shortcutOf(e, { inTerminal: eventInTerminal(e) });
+  const inTerminal = eventInTerminal(e);
+  const sc = shortcutOf(e, { inTerminal, inText: !inTerminal && isTypingTarget(e.target) });
   if (!sc) return;
   e.preventDefault();
   e.stopPropagation();

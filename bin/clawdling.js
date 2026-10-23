@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { readToken, loadOrCreateToken } from '../server/auth.js';
 import { OrgStore, defaultAnswers, initOrg } from '../server/org.js';
 import { selectBackend } from '../server/backend.js';
+import { cliInvocation } from '../server/hints.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
 import { readJson, shq } from '../server/util.js';
@@ -202,10 +203,12 @@ async function cmdInit(args) {
   console.log(`Created ${res.owner}'s org at ${home}`);
   console.log(`Agents: ${res.agents.join(', ')}`);
   if (res.backupDir) console.log(`Previous versions of re-rendered files: ${res.backupDir}`);
+  // Spelled the way this computer runs this install (no bare `clawdling` unless it is on PATH).
+  const cli = cliInvocation({ home });
   console.log('\nNext:');
-  console.log(`  clawdling start --open${args.flags.home ? ` --home ${shq(home)}` : ''}`);
-  if (res.channel === 'telegram') console.log('  clawdling donna telegram --token <token from @BotFather>');
-  if (res.channel === 'imessage') console.log('  clawdling donna imessage --handle <the phone number or email you text from>');
+  console.log(`  ${cli} start --open`);
+  if (res.channel === 'telegram') console.log(`  ${cli} donna telegram --token <token from @BotFather>`);
+  if (res.channel === 'imessage') console.log(`  ${cli} donna imessage --handle <the phone number or email you text from>`);
 }
 
 async function cmdStart(args) {

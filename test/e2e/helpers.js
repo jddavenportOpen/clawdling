@@ -48,6 +48,28 @@ export async function mockRequests() {
   return res.json();
 }
 
+// Mock-only control routes (see test/e2e/mock-server.mjs).
+export async function mock(route, body = {}) {
+  const res = await fetch(new URL(`/__mock/${route}`, BASE()), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  if (!res.ok) throw new Error(`mock ${route} failed: ${res.status}`);
+}
+
+export async function health() {
+  const res = await fetch(new URL('/api/health', BASE()));
+  return res.json();
+}
+
+// WCAG 2.x contrast ratio of two CSS colours (rgb()/rgba() strings from getComputedStyle).
+export function contrast(fg, bg) {
+  const parse = (c) => (String(c).match(/[\d.]+/g) || []).map(Number);
+  const lum = ([r, g, b]) => {
+    const f = (v) => { const x = v / 255; return x <= 0.04045 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const [a, b] = [lum(parse(fg)), lum(parse(bg))].sort((x, y) => y - x);
+  return (a + 0.05) / (b + 0.05);
+}
+
 export async function sessions() {
   const r = await api('GET', '/api/sessions');
   return Array.isArray(r) ? r : (r && r.sessions) || [];
@@ -69,12 +91,13 @@ async function waitStarted(sid) {
 }
 
 // Create a session and drive it to a status through the hook contract.
-export async function spawn({ agent, title, status = 'starting', notification, prompt }) {
+export async function spawn({ agent, title, status = 'starting', notification, prompt, lastMessage }) {
   const s = unwrap(await api('POST', '/api/sessions', { agent, ...(title ? { title } : {}), ...(prompt ? { prompt } : {}) }), 'session');
   const hook = (event, payload = {}) => api('POST', '/api/hooks', { event, sid: s.sid, payload });
   if (status !== 'starting') await waitStarted(s.sid);
   if (status === 'working') await hook('UserPromptSubmit', { prompt: title || 'Work on it' });
-  if (status === 'ready') { await hook('UserPromptSubmit', { prompt: title || 'Work on it' }); await hook('Stop'); }
+  // A finished turn carries Claude's last message (Claude Code sends it with Stop): "your turn".
+  if (status === 'ready') { await hook('UserPromptSubmit', { prompt: title || 'Work on it' }); await hook('Stop', { last_assistant_message: lastMessage || 'Done. Tell me what to do next.' }); }
   if (status === 'needs_you') await hook('Notification', { message: notification || 'Claude needs your permission to use Bash' });
   if (status === 'ended') await api('DELETE', `/api/sessions/${s.sid}`);
   if (title) await api('PATCH', `/api/sessions/${s.sid}`, { title }); // a prompt hook may have derived a different one
@@ -107,7 +130,9 @@ export async function login(page, hash = '') {
   await expect(page.locator('[data-rail]')).toBeVisible();
   if (hash) {
     await page.goto(`/${hash}`);
-    await expect(page.locator('[data-rail]')).toBeVisible();
+    // On a phone the rail hides on every page but the cockpit list; the shell is always there.
+    await expect(page.locator('.app[data-route]')).toBeVisible();
+    await expect(page.locator('[data-rail]')).toBeAttached();
   }
 }
 

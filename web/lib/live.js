@@ -3,6 +3,7 @@
 import { api, ApiError, setUnauthorizedHandler } from './api.js';
 import { getState, setState } from './store.js';
 import { applySessionList, mergeSession } from './actions.js';
+import { save } from './prefs.js';
 
 let es = null;
 let esRetry = 1000;
@@ -19,7 +20,7 @@ function indexAgents(agents) {
 
 function applyOrg(r) {
   const agents = Array.isArray(r && r.agents) ? r.agents : [];
-  const patch = { org: (r && r.org) || {}, agents, agentsById: indexAgents(agents) };
+  const patch = { org: (r && r.org) || {}, agents, agentsById: indexAgents(agents), orgError: '' };
   if (r && r.channels) {
     patch.channels = r.channels;
     if (Array.isArray(r.channels.recent) && !getState().channelLog.length) patch.channelLog = r.channels.recent.slice(-50);
@@ -31,7 +32,11 @@ export async function refreshOrg() {
   try {
     applyOrg(await api.org());
   } catch (e) {
-    if (!(e instanceof ApiError && e.status === 401)) console.warn('[clawdling] org refresh failed', e);
+    if (e instanceof ApiError && e.status === 401) return;
+    console.warn('[clawdling] org refresh failed', e);
+    // Never read at all: say so in place of the agent grid (a failed read is not an empty org).
+    // A later refresh that fails keeps the org already on screen.
+    if (getState().org == null) setState({ orgError: (e && e.message) || 'unknown error' });
   }
 }
 
@@ -55,8 +60,17 @@ export async function refreshChannels() {
   } catch { /* channels are optional on a fresh org */ }
 }
 
+// /api/health is public, so this also works on the sign-in screen. The CLI spelling is kept in
+// this browser so the "server unreachable" screen can still print a command that runs.
 export async function refreshHealth() {
-  try { setState({ health: await api.health() }); } catch { /* shown as unknown */ }
+  try {
+    const health = await api.health();
+    setState({ health });
+    if (health && typeof health.cli === 'string') save('cli', health.cli);
+    return health;
+  } catch {
+    return null; /* shown as unknown */
+  }
 }
 
 function parse(data) {
@@ -114,6 +128,7 @@ function connectEvents() {
     esRetry = 1000;
     setState({ conn: 'live' });
     refreshSessions();
+    if (getState().orgError) refreshOrg(); // the server is back: try the org again
   };
   src.onmessage = (e) => {
     const m = parse(e.data);
@@ -184,6 +199,7 @@ export async function boot() {
   const r = await probeAuth();
   if (!r.ok) {
     setState({ auth: r.error ? 'error' : 'denied', authError: r.error || '' });
+    if (!r.error) refreshHealth(); // the sign-in screen prints commands with the server's CLI spelling
     return false;
   }
   setState({ auth: 'ok', me: r.me });

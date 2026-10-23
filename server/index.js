@@ -21,6 +21,7 @@ import { IMessageGateway } from './channels/imessage.js';
 import { TelegramGateway } from './channels/telegram.js';
 import { EventBus } from './events.js';
 import { BACKEND_LABEL, createBackend } from './backend.js';
+import { cliParts } from './hints.js';
 import { buildHooksSettings } from './hooks.js';
 import { OrgStore } from './org.js';
 import {
@@ -133,18 +134,6 @@ function makeLogger({ quiet = false, file } = {}) {
   };
 }
 
-/**
- * How a person runs this install's CLI from their own terminal, for the `clawdling attach` hint:
- * {cli, homeFlag} ("clawdling" when it is on PATH, else node and the script's path).
- */
-export function cliInvocation({ home, env = process.env }) {
-  const q = (p) => (/[\s"'$&|;<>()]/.test(p) ? `"${p}"` : p);
-  const onPath = which('clawdling', env.PATH || '');
-  const cli = onPath ? 'clawdling' : `node ${q(path.join(PKG_ROOT, 'bin', 'clawdling.js'))}`;
-  const homeFlag = path.resolve(home) !== resolveHome(undefined, {}) ? ` --home ${q(home)}` : '';
-  return { cli, homeFlag };
-}
-
 /** The `clawdling` command inside sessions: a POSIX sh shim, plus .cmd and .ps1 ones on Windows. */
 export function cliShims({ nodePath, cliPath, platform = process.platform }) {
   if (platform !== 'win32') {
@@ -253,7 +242,15 @@ export function pairingInfo({ host, port, token, lan = lanAddresses() }) {
   if (host === '0.0.0.0' || host === '::') url = lanUrls[0] || `http://127.0.0.1:${port}`;
   else if (isLoopback(host)) url = `http://127.0.0.1:${port}`;
   else url = `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
-  return { url, token, link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`, lan: lanUrls, bind: host };
+  return {
+    url,
+    token,
+    link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`,
+    // Opens the cockpit in a phone's browser already signed in (the server swaps ?t= for a cookie).
+    browser_link: `${url}/?t=${token}`,
+    lan: lanUrls,
+    bind: host,
+  };
 }
 
 /** SVG QR code for a string, via the MIT `qrcode-generator` package (server-side only). */
@@ -344,8 +341,10 @@ export async function startServer(opts = {}) {
   async function initServer() {
     const cEnv = childEnv(env);
     // tmux when it is installed (sessions survive restarts), else a pty per session (server/backend.js).
-    const { cli, homeFlag } = cliInvocation({ home, env: cEnv });
-    const backend = await createBackend({ env, childEnv: cEnv, paths, socket, logger, attachPrefix: cli, attachSuffix: homeFlag });
+    // How a person types this install's CLI (attach hints, and every command the cockpit prints).
+    const { cli: cliCmd, homeFlag } = cliParts({ home, envPath: cEnv.PATH || '' });
+    const cli = cliCmd + homeFlag;
+    const backend = await createBackend({ env, childEnv: cEnv, paths, socket, logger, attachPrefix: cliCmd, attachSuffix: homeFlag });
 
     // The --settings file every session gets: our hooks + the clawdling allow-list.
     const hookScript = path.join(PKG_ROOT, 'bin', 'clawdling-hook.js');
@@ -377,7 +376,10 @@ export async function startServer(opts = {}) {
     const versions = { at: 0, claude: null, tmux: null };
     const backendInfo = { ...backend.describe(), reason: backend.reason || null, label: BACKEND_LABEL[backend.kind] || backend.kind };
     async function toolVersions() {
-      if (Date.now() - versions.at < 60000 && versions.claude) return versions;
+      // A failed check is cached for 3 s, not 60: "Check again" in the cockpit must see a fix.
+      // tmux only counts when it runs the sessions; with the pty backend it is optional.
+      const healthy = versions.claude?.ok && (versions.tmux?.ok || versions.tmux?.optional);
+      if (versions.claude && Date.now() - versions.at < (healthy ? 60000 : 3000)) return versions;
       // With the pty backend tmux is optional: report what the start-up probe found.
       const probe = backend.tmuxProbe || {};
       const tv = backend.kind === 'tmux' ? await backend.version() : { ok: !!probe.ok, version: probe.version || null, ...(probe.ok ? {} : { error: probe.error || 'not installed' }), optional: true };
@@ -426,7 +428,7 @@ export async function startServer(opts = {}) {
     const routes = [
       ['GET', /^\/api\/health$/, async () => {
         const v = await toolVersions();
-        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, home }];
+        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, home, cli, platform: process.platform }];
       }, { public: true }],
       ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
       // `clawdling stop`: a clean stop on every OS (Windows has no SIGTERM for another process).
@@ -547,10 +549,12 @@ export async function startServer(opts = {}) {
         return [200, { messages: donna.messages(Number.isInteger(limit) ? limit : 50) }];
       }],
       ['GET', /^\/api\/pair$/, () => [200, pairingInfo({ host, port, token })]],
-      ['GET', /^\/api\/pair\/qr\.svg$/, (req, m, res) => {
+      ['GET', /^\/api\/pair\/qr\.svg$/, (req, m, res, url) => {
         let svg;
         try {
-          svg = qrSvg(pairingInfo({ host, port, token }).link);
+          const info = pairingInfo({ host, port, token });
+          // ?target=browser: the link that opens the cockpit in a phone's browser. Default: the app's link.
+          svg = qrSvg(url.searchParams.get('target') === 'browser' ? info.browser_link : info.link);
         } catch (err) {
           throw new HttpError(503, `QR code unavailable (${err.code === 'MODULE_NOT_FOUND' ? 'run npm install' : err.message})`);
         }

@@ -10,10 +10,11 @@ import { TerminalView } from './terminal.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
-  closePane, setRenaming, answerDialog,
+  closePane, setRenaming, answerDialog, toast, errorToast,
 } from '../lib/actions.js';
+import { api } from '../lib/api.js';
 import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand } from '../lib/model.js';
-import { relTime, prefersReducedMotion, MOD } from '../lib/util.js';
+import { relTime, prefersReducedMotion, paneKey, tildify, coarsePointer } from '../lib/util.js';
 import { getState, setState } from '../lib/store.js';
 
 export function Pane({ sid, index, hidden, order, span, layout, solo }) {
@@ -43,7 +44,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       // Never pull the keyboard out of a dialog or menu opened since the jump.
       const st = getState();
       const busy = st.overlay || st.menu || st.renaming || (document.activeElement && document.activeElement.closest('.modal, .menu, .pane-title-input'));
-      if (v && !busy) v.focus();
+      // On a phone, focusing the terminal raises the keyboard over it: typing goes through the composer.
+      if (v && !busy && !st.mobile && !coarsePointer()) v.focus();
       setFlash(true);
       setTimeout(() => setFlash(false), 650);
     });
@@ -85,7 +87,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       <${Trace} sid=${sid} status=${s.status} />
       <span class="pane-spacer"></span>
       ${conn === 'reconnecting' && !ended ? html`<span class="pane-conn" role="status">Reconnecting…</span>` : null}
-      ${!solo && index < 9 ? html`<span class="pane-index" aria-hidden="true" title=${`Focus with ${MOD}${index + 1}`}>${MOD}${index + 1}</span>` : null}
+      ${!solo && index < 9 ? html`<span class="pane-index" aria-hidden="true" title=${`Focus with ${paneKey(index + 1)}`}>${paneKey(index + 1)}</span>` : null}
       <div class="pane-actions">
         ${attachCommand(s) ? html`<button class="icon-btn" onClick=${() => copyAttach(s)} aria-label="Copy attach command" title=${`Copy: ${attachCommand(s)}`} data-testid="pane-attach"><${Icon} name="terminal" /></button>` : null}
         <button class="icon-btn" onClick=${() => closePane(sid)} aria-label="Hide pane (keeps running)" title="Hide pane. The session keeps running." data-testid="pane-hide"><${Icon} name="pane-hide" /></button>
@@ -95,7 +97,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
           : html`<button class="icon-btn icon-danger" onClick=${() => askEndSession(sid)} aria-label="End session" title="End session…" data-testid="pane-end"><${Icon} name="x" /></button>`}
       </div>
     </header>
-    ${s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} />`
+    ${s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
+      : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => { const v = terms.get(sid); if (v) v.focus(); }}>
       <${StatusGlyph} status="needs_you" label=${false} /><span class="alert-label">Needs you</span><span class="alert-text">${s.notification || 'Claude is waiting for your answer in the terminal.'}</span>
     </button>` : null}
@@ -113,6 +116,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
         </div>
       </div>` : null}
     </div>
+    ${mobile && !ended ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
   </section>`;
 }
 
@@ -156,31 +160,122 @@ function TitleEditor({ sid, name, title }) {
     }} data-testid="pane-title-input" />`;
 }
 
-// Claude Code's own startup dialogs (detected by the server from the screen, before any hook
-// runs). Answered with POST /api/sessions/:sid/answer {option}, where option is the choice's place
-// on screen (the server's `choices`); the terminal keeps working too.
+// Claude Code's own startup screens (detected by the server from the screen, before any hook
+// runs). Dialogs with choices are answered with POST /api/sessions/:sid/answer {option}, where
+// option is the choice's place on screen (the server's `choices`, in screen order: 2.1.283 lists
+// "No, exit" first); the terminal keeps working too. `note` = no buttons, just what to do.
 export const STARTUP_DIALOGS = {
-  trust: { text: 'Claude Code is asking whether it can trust this folder.', yes: 'Yes, trust it', no: 'No, exit' },
-  imports: { text: 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
+  trust: {
+    text: (s) => `Claude Code asks whether you trust ${tildify(s.cwd) || 'this folder'}. "No, exit" ends this session.`,
+    yes: 'Yes, trust it',
+    no: 'No, exit',
+  },
+  imports: { text: () => 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
+  login: {
+    text: () => 'Claude Code is not signed in on this computer.',
+    note: html`Run <code>claude</code> in a terminal and sign in, then start this session again.`,
+  },
 };
 
-function DialogBanner({ s }) {
+// Does this session's pane show a question with answer buttons? Only the focused pane fills its
+// default answer (one accent per screen); the others show the same buttons, quiet.
+export function paneAsksWithButtons(s) {
+  if (!s || s.status !== 'needs_you') return false;
+  if (s.waiting_on === 'permission_prompt') return Array.isArray(s.choices) && s.choices.length > 0;
   const d = STARTUP_DIALOGS[s.waiting_on];
-  const opts = dialogAnswers(s.choices);
+  return !!d && !d.note && !!dialogAnswers(s.choices);
+}
+
+function DialogBanner({ s, mobile, accent }) {
+  const d = STARTUP_DIALOGS[s.waiting_on];
+  const opts = d.note ? null : dialogAnswers(s.choices);
   const [busy, setBusy] = useState(0);
   const answer = async (option, yes) => {
     setBusy(option);
-    await answerDialog(s.sid, option, { focus: yes });
+    const answered = await answerDialog(s.sid, option, { focus: yes && !mobile });
     setBusy(0);
+    if (answered && yes && s.waiting_on === 'trust') {
+      toast(`Trusted ${tildify(s.cwd) || 'this folder'}. Sessions in it won't ask again.`, { tone: 'ok', ms: 4200 });
+    }
   };
   return html`<div class="pane-dialog" role="group" aria-label="Claude Code is asking" data-testid="pane-dialog" data-dialog=${s.waiting_on}>
     <${StatusGlyph} status="needs_you" label=${false} />
-    <span class="dialog-text" data-testid="pane-dialog-text">${d.text}</span>
-    ${opts ? html`<span class="dialog-actions">
+    <span class="dialog-text" data-testid="pane-dialog-text">${d.text(s)}</span>
+    ${d.note ? html`<span class="dialog-note" data-testid="pane-dialog-note">${d.note}</span>`
+      : opts ? html`<span class="dialog-actions">
       <button class="btn btn-quiet btn-sm" onClick=${() => answer(opts.no, false)} disabled=${!!busy} data-testid="dialog-no">${busy === opts.no ? 'Answering…' : d.no}</button>
-      <button class="btn btn-primary btn-sm" onClick=${() => answer(opts.yes, true)} disabled=${!!busy} data-testid="dialog-yes">${busy === opts.yes ? 'Answering…' : d.yes}</button>
+      <button class=${`btn ${accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${() => answer(opts.yes, true)} disabled=${!!busy} data-testid="dialog-yes">${busy === opts.yes ? 'Answering…' : d.yes}</button>
     </span>` : html`<span class="dialog-note" data-testid="pane-dialog-terminal">Answer it in the terminal below.</span>`}
   </div>`;
+}
+
+// A permission prompt ("Do you want to proceed?"): one button per choice, in screen order, so it
+// can be answered with one tap on a phone. In the focused pane the first choice (Claude Code's
+// own default) is filled.
+const QUESTION_MAX = 3;
+const choiceLabel = (c) => String((c && c.label) || '').replace(/^\s*\d+[.)]\s*/, '');
+
+function QuestionBanner({ s, mobile, accent }) {
+  const [busy, setBusy] = useState(0);
+  const shown = s.choices.slice(0, QUESTION_MAX);
+  const answer = async (option) => {
+    setBusy(option);
+    await answerDialog(s.sid, option, { focus: !mobile });
+    setBusy(0);
+  };
+  return html`<div class="pane-dialog pane-question" role="group" aria-label="Claude Code is asking" data-testid="pane-question" data-dialog=${s.waiting_on}>
+    <${StatusGlyph} status="needs_you" label=${false} />
+    <span class="dialog-text" data-testid="pane-question-text">${s.notification || 'Claude Code is asking for your permission.'}</span>
+    <span class="dialog-actions">
+      ${shown.map((c, i) => html`<button key=${c.option} class=${`btn ${i === 0 && accent ? 'btn-primary' : 'btn-quiet'} btn-sm dialog-choice`} title=${choiceLabel(c)}
+        onClick=${() => answer(c.option)} disabled=${!!busy} data-option=${c.option} data-testid="question-choice">
+        <span class="choice-label">${busy === c.option ? 'Answering…' : choiceLabel(c)}</span></button>`)}
+      ${s.choices.length > QUESTION_MAX ? html`<span class="dialog-note">More choices in the terminal.</span>` : null}
+    </span>
+  </div>`;
+}
+
+// The phone has no hardware keyboard, and typing into xterm through the iOS keyboard fights
+// autocorrect and the hidden textarea. A plain composer sends the text with POST /send.
+const ANSWER_FIRST = new Set(['trust', 'imports', 'login', 'startup', 'permission_prompt', 'elicitation_dialog']);
+const COMPOSER_MAX_LINES = 5;
+
+function Composer({ s, agent }) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const area = useRef(null);
+  const waiting = s.status === 'needs_you' && ANSWER_FIRST.has(s.waiting_on);
+  const grow = () => {
+    const el = area.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    const line = parseFloat(getComputedStyle(el).lineHeight) || 22;
+    el.style.height = `${Math.min(el.scrollHeight, line * COMPOSER_MAX_LINES + 18)}px`;
+  };
+  const submit = async (e) => {
+    if (e) e.preventDefault();
+    const t = text.trim();
+    if (!t || busy || waiting) return;
+    setBusy(true);
+    try {
+      await api.send(s.sid, t, true);
+      setText('');
+      requestAnimationFrame(grow);
+    } catch (err) {
+      if (err && err.status === 409) toast('Answer the question above first.', { ms: 3600 });
+      else errorToast('Could not send the message', err);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return html`<form class="pane-composer" onSubmit=${submit} data-testid="pane-composer">
+    <textarea ref=${area} rows="1" value=${text} onInput=${(e) => { setText(e.currentTarget.value); grow(); }}
+      onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } }}
+      placeholder=${waiting ? 'Answer the question above first' : `Message ${agent}…`} aria-label=${`Message ${agent}`}
+      enterkeyhint="send" disabled=${waiting} data-testid="composer-input"></textarea>
+    <button class="btn btn-primary composer-send" type="submit" aria-label="Send" disabled=${waiting || busy || !text.trim()} data-testid="composer-send">
+      <${Icon} name="send" /></button>
+  </form>`;
 }
 
 // Signature detail: a hairline trace of real terminal output over the last 40 s,

@@ -42,6 +42,9 @@ const WS_HIGH_WATER = 16 * 1024 * 1024;
 
 const TRUST_RE = /Yes, I trust this folder|Quick safety check: Is this a project|Do you trust the files in this folder/i;
 const IMPORTS_RE = /Allow external CLAUDE\.md file imports/i;
+// Claude Code 2.1.283 before it is signed in: the first-run setup ("Let's get started.", then
+// "Select login method:"), or a sign-in error ("Not logged in · Please run /login", "Invalid API key").
+const LOGIN_RE = /Select login method|Let['’]s get started\.|Please run \/login|Not logged in|Invalid API key/i;
 /** What to answer when Claude Code's folder-trust dialog is on screen. */
 export function trustNotice(folder) {
   return (
@@ -52,12 +55,13 @@ export function trustNotice(folder) {
 }
 export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
-export const STALL_NOTICE = 'Claude Code has not finished starting. It may be waiting for an answer in the terminal.';
+export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer. Open a terminal, run claude, finish signing in, then end this session and start it again.';
+export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
 export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
 // What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
 // one `clawdling start` ran in, so these are not passed on (tmux sets its own).
 const TERMINAL_IDENTITY = /^(TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|TERMINAL_EMULATOR|COLORFGBG|ITERM_[A-Z_]+|LC_TERMINAL(_VERSION)?|WT_SESSION|WT_PROFILE_ID|KITTY_[A-Z_]+|ALACRITTY_[A-Z_]+|WEZTERM_[A-Z_]+|GHOSTTY_[A-Z_]+|KONSOLE_[A-Z_]+|VTE_VERSION|VSCODE_[A-Z_]+|TMUX|TMUX_PANE|STY|WINDOWID)$/;
-const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
+const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'login', 'startup', 'permission_prompt', 'elicitation_dialog']);
 // Questions POST /api/sessions/:sid/answer may answer: Claude Code's own select lists.
 const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
 const POINTER = '\u276f'; // the "❯" Claude Code puts in front of the selected choice
@@ -119,6 +123,7 @@ export function dialogFromScreen(screen) {
   if (TRUST_RE.test(flat) || tight.includes('yes,itrustthisfolder') || tight.includes('quicksafetycheck:isthisaproject')) return { waiting: 'trust', notice: TRUST_NOTICE };
   // (callers replace the generic notice with trustNotice(<session folder>))
   if (IMPORTS_RE.test(flat) || tight.includes('allowexternalclaude.mdfileimports')) return { waiting: 'imports', notice: IMPORTS_NOTICE };
+  if (LOGIN_RE.test(flat) || tight.includes('selectloginmethod')) return { waiting: 'login', notice: LOGIN_NOTICE };
   return null;
 }
 

@@ -10,6 +10,8 @@ import { api } from '../lib/api.js';
 import { startSession, focusSession, navigate, openOverlay } from '../lib/actions.js';
 import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL, countNeedsYou } from '../lib/model.js';
 import { relTime, clamp, prefersReducedMotion } from '../lib/util.js';
+import { OrgError } from './first-run.js';
+import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const TAU = Math.PI * 2;
 const R_OWNER = 30;
@@ -126,12 +128,14 @@ export function layoutOrg(agents, ownerName) {
       minY = Math.min(minY, n.ly - 18, n.y - n.r - 12);
       maxY = Math.max(maxY, n.ly + 18, n.y + n.r + 12);
     } else if (n.kind === 'chief') {
-      n.lx = n.x + n.r + 10;
-      n.ly = n.y - 2;
-      n.anchor = 'start';
-      n.base = 'middle';
-      maxX = Math.max(maxX, n.lx + w + 30);
-      minY = Math.min(minY, n.y - n.r - 14);
+      // Above the node: to its right, the label and "Chief of staff" crossed the first spokes.
+      n.lx = n.x;
+      n.ly = n.y - n.r - 30; // clear of the needs and selection rings (r + 9)
+      n.anchor = 'middle';
+      n.base = 'auto';
+      minX = Math.min(minX, n.x - w / 2 - 8);
+      maxX = Math.max(maxX, n.x + w / 2 + 8);
+      minY = Math.min(minY, n.ly - 32);
     } else {
       n.lx = n.x;
       n.ly = n.y + n.r + 15;
@@ -147,8 +151,8 @@ export function layoutOrg(agents, ownerName) {
 }
 
 function nodeStats(n, sessions) {
-  if (n.kind === 'owner' || n.kind === 'cluster') return { live: 0, needs: 0, working: 0 };
-  return agentStats(n.id, sessions); // needs = needs_you + ready
+  if (n.kind === 'owner' || n.kind === 'cluster') return { live: 0, blocked: 0, turn: 0, needs: 0, working: 0 };
+  return agentStats(n.id, sessions); // needs = blocked (Claude asked) + turn (your reply)
 }
 
 export function OrgMap() {
@@ -156,6 +160,8 @@ export function OrgMap() {
   const sessionsMap = useStore((s) => s.sessions);
   const org = useStore((s) => s.org);
   const me = useStore((s) => s.me);
+  const orgError = useStore((s) => s.orgError);
+  const mobile = useStore((s) => s.mobile);
   const sessions = useMemo(() => Object.values(sessionsMap), [sessionsMap]);
   const owner = (org && (org.owner || org.name)) || (me && me.owner) || 'You';
   const ownerName = org && org.owner ? org.owner : owner;
@@ -252,7 +258,7 @@ export function OrgMap() {
     domains: agents.filter((a) => a.kind === 'domain').length,
     projects: agents.filter((a) => a.kind === 'project').length,
     live: sessions.filter((s) => s.status !== 'ended').length,
-    needs: countNeedsYou(sessions), // needs_you + ready, exactly like the rail's "Needs you"
+    needs: countNeedsYou(sessions), // blocked + your turn, exactly like the rail's "Needs you"
   }), [agents, sessions]);
 
   const focusId = hover || sel;
@@ -273,11 +279,12 @@ export function OrgMap() {
     <header class="page-bar">
       <div class="page-bar-main">
         <h1 class="page-title">Org map</h1>
-        <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}</p>
+        <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}${agents.length && !orgError ? ` · ${mobile ? 'Tap' : 'Click'} an agent to see what it knows` : ''}</p>
       </div>
       <ul class="legend" aria-label="Legend">
         <li><span class="legend-ring ring-working" aria-hidden="true"></span> Working</li>
-        <li title="A session is waiting for your answer or for your next message"><span class="legend-ring ring-needs" aria-hidden="true"></span> Needs you</li>
+        <li title="Claude Code asked something and waits for your answer"><span class="legend-ring ring-needs" aria-hidden="true"></span> Needs you</li>
+        <li title="Claude finished and waits for your next message"><span class="legend-ring ring-ready" aria-hidden="true"></span> Your turn</li>
       </ul>
       <div class="zoom" role="group" aria-label="Zoom">
         <button class="icon-btn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}><span aria-hidden="true" class="zoom-glyph">−</span></button>
@@ -324,7 +331,8 @@ export function OrgMap() {
             </g>
           </g>
         </svg>` : null}
-        ${agents.length <= 1 ? html`<div class="map-hint"><p>Your org is just you and Donna so far.</p>
+        ${orgError ? html`<div class="map-hint map-error"><${OrgError} /></div>`
+          : agents.length <= 1 ? html`<div class="map-hint"><p>Your org is just you and Donna so far.</p>
           <button class="btn btn-primary" onClick=${() => openOverlay({ type: 'wizard' })}><${Icon} name="user-plus" /> Add a domain or project</button></div>` : null}
       </div>
       ${selNode ? html`<${MapPanel} n=${selNode} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName} />` : null}
@@ -335,14 +343,16 @@ export function OrgMap() {
 function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
   const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}`;
-  const tone = st.needs ? 'needs' : st.working ? 'working' : 'idle';
+  // Amber only when Claude asked something; green when it is your turn; blue while working.
+  const tone = st.blocked ? 'needs' : st.turn ? 'ready' : st.working ? 'working' : 'idle';
+  const count = tone === 'needs' || tone === 'ready' ? st.needs : st.live;
   const onKey = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } };
   return html`<g class=${`node kind-${n.kind} tone-${tone} ${selected ? 'is-selected' : ''} ${dim ? 'is-dim' : ''}`}
       transform=${`translate(${n.x} ${n.y})`} role="button" tabindex="0" aria-label=${label} aria-pressed=${selected ? 'true' : 'false'}
       data-node=${n.id} data-kind=${n.kind} onClick=${(e) => { e.stopPropagation(); onSelect(); }} onKeyDown=${onKey}
       onMouseEnter=${() => onHover(true)} onMouseLeave=${() => onHover(false)} onFocus=${() => onHover(true)} onBlur=${() => onHover(false)}>
     ${st.working && !reduced ? html`<circle class="pulse" r=${n.r + 2} />` : null}
-    ${st.needs ? html`<circle class="needs-ring" r=${n.r + 5} />` : null}
+    ${st.blocked ? html`<circle class="needs-ring" r=${n.r + 5} />` : st.turn ? html`<circle class="ready-ring" r=${n.r + 5} />` : null}
     <circle class="sel-ring" r=${n.r + (st.needs ? 9 : 5)} />
     <circle class="node-disc" r=${n.r} />
     <g class="node-icon" transform=${`translate(${-iconSize / 2} ${-iconSize / 2})`}>
@@ -351,11 +361,11 @@ function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
         : hasIcon(n.agent && n.agent.icon) ? html`<${Icon} name=${n.agent.icon} size=${iconSize} />`
         : html`<text class="node-initial" x=${iconSize / 2} y=${iconSize / 2 + 1}>${(n.label || '?').charAt(0).toUpperCase()}</text>`}
     </g>
-    ${st.live ? html`<g class=${`badge-g tone-${tone}`} transform=${`translate(${n.r * 0.74} ${-n.r * 0.74})`}>
-      <rect x=${st.live > 9 ? -11 : -8} y="-8" width=${st.live > 9 ? 22 : 16} height="16" rx="8" />
-      <text y="0.5">${st.live}</text></g>` : null}
+    ${count ? html`<g class=${`badge-g tone-${tone}`} transform=${`translate(${n.r * 0.74} ${-n.r * 0.74})`}>
+      <rect x=${count > 9 ? -11 : -8} y="-8" width=${count > 9 ? 22 : 16} height="16" rx="8" />
+      <text y="0.5">${count}</text></g>` : null}
     <text class="node-label" x=${n.lx - n.x} y=${n.ly - n.y} text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.text}</text>
-    ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (n.kind === 'chief' ? 15 : 16)}
+    ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (n.kind === 'chief' ? 14 : 16)}
       text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.sub}</text>` : null}
   </g>`;
 }
@@ -365,6 +375,7 @@ function MapPanel({ n, sessions, onClose, agents, ownerName }) {
   const [err, setErr] = useState('');
   const now = useStore((s) => s.now);
   const agentsById = useStore((s) => s.agentsById);
+  const blocked = useStartBlocked();
   const isAgent = n.kind !== 'owner' && n.kind !== 'cluster';
   const panel = useRef(null);
 
@@ -402,7 +413,8 @@ function MapPanel({ n, sessions, onClose, agents, ownerName }) {
     body = html`
       ${a && a.mission ? html`<p class="panel-mission">${a.mission}</p>` : null}
       <div class="panel-actions">
-        <button class="btn btn-primary" onClick=${() => startSession(n.id).catch(() => {})} data-testid="panel-new-session"><${Icon} name="plus" /> New session</button>
+        <button class="btn btn-quiet" onClick=${() => startSession(n.id).catch(() => {})} data-testid="panel-new-session"
+          disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> New session</button>
         <button class="btn btn-quiet" onClick=${() => navigate(`#/agent/${encodeURIComponent(n.id)}`)} data-testid="panel-open-agent">Open agent page</button>
       </div>
       <h3 class="panel-h">Live sessions <span class="sec-count">${mine.length}</span></h3>

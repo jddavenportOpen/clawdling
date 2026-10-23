@@ -172,3 +172,24 @@ test('parseChoices takes the live (lowest) list, not an answered one or a past p
   ].join('\n');
   assert.deepEqual(parseChoices(screen), { labels: ['1. Yes', '2. Yes, always', '3. No'], selected: 2 });
 });
+
+test('a Claude Code that is not signed in is recognised at startup, not after a 20 s stall (P1-13)', async () => {
+  const { dialogFromScreen, LOGIN_NOTICE, STALL_NOTICE } = await import('../../server/sessions.js');
+  // Claude Code 2.1.283's own strings: first-run setup, the login list, and the sign-in errors.
+  const login = ' Claude Code can be used with your Claude subscription or billed based on API usage through your Console account.\n\n Select login method:\n\n ❯ 1. Claude account with subscription · Pro, Max, Team, or Enterprise\n   2. Anthropic Console account · API usage billing';
+  for (const screen of [login, " Let's get started.\n\n Choose the text style that looks best with your terminal", '> hi\n  ⎿  Not logged in · Please run /login', 'Invalid API key · Please run /login']) {
+    const d = dialogFromScreen(screen);
+    assert.equal(d && d.waiting, 'login', screen);
+    assert.equal(d.notice, LOGIN_NOTICE);
+  }
+  assert.match(LOGIN_NOTICE, /not signed in on this computer/);
+  assert.match(STALL_NOTICE, /sign in/);
+  assert.equal(dialogFromScreen('Welcome to Claude Code\n> how do I log in to my bank?'), null);
+});
+
+test('signing in from the pane clears the login wait once Claude Code starts', () => {
+  const r = rec({ status: 'needs_you', waiting_on: 'login', notification: 'not signed in' });
+  applyHookEvent(r, 'SessionStart', { source: 'startup' });
+  assert.equal(r.status, 'ready');
+  assert.equal(r.waiting_on, null);
+});

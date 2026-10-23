@@ -8,6 +8,7 @@ import {
   closeOverlay, endSession, closePane, closeMenu, focusSession, setRenaming, copyAttach, resumeSession, askEndSession,
 } from '../lib/actions.js';
 import { sessionName, attachCommand } from '../lib/model.js';
+import { coarsePointer } from '../lib/util.js';
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
@@ -23,7 +24,10 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
     const list = () => [...node.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el === document.activeElement);
     requestAnimationFrame(() => {
       const el = node.querySelector('[data-autofocus]') || list()[0];
-      if (el) el.focus();
+      // On a touch screen a focused text field raises the keyboard over the dialog the moment it
+      // opens: focus the dialog itself and let the person tap the field when they want to type.
+      if (el && coarsePointer() && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) node.focus();
+      else if (el) el.focus();
     });
     // On the document, not the dialog: focus can fall to <body> when the content swaps
     // (a wizard step, a removed button) and Escape/Tab must still work.
@@ -50,7 +54,7 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
   }, []);
   return html`<div class=${`modal-backdrop align-${align}`} onMouseDown=${(e) => { if (e.target === e.currentTarget) close.current(); }}>
     <div ref=${ref} class=${`modal modal-${size} ${cls}`} role="dialog" aria-modal="true" aria-label=${labelledby ? undefined : label}
-      aria-labelledby=${labelledby}>${children}</div>
+      aria-labelledby=${labelledby} tabindex="-1">${children}</div>
   </div>`;
 }
 
@@ -73,9 +77,9 @@ export function EndDialog({ sid }) {
       <p class="modal-text">The Claude Code process for this session stops. The conversation stays on disk, so you can resume it from Recent.</p>
     </div>
     <div class="modal-foot">
-      <button class="btn btn-quiet" onClick=${closeOverlay}>Cancel</button>
+      <button class="btn btn-quiet" onClick=${closeOverlay} data-autofocus data-testid="confirm-cancel">Cancel</button>
       ${isOpen ? html`<button class="btn btn-quiet" onClick=${() => { closePane(sid); closeOverlay(); }} data-testid="confirm-hide">Hide pane, keep running</button>` : null}
-      <button class="btn btn-danger" onClick=${end} disabled=${busy} data-autofocus data-testid="confirm-end">${busy ? 'Ending…' : 'End session'}</button>
+      <button class="btn btn-danger" onClick=${end} disabled=${busy} data-testid="confirm-end">${busy ? 'Ending…' : 'End session'}</button>
     </div>
   </${Modal}>`;
 }

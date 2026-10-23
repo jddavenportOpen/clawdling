@@ -17,6 +17,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
+// The real server's own words, so the suite asserts what real users see.
+import { IMPORTS_NOTICE, LOGIN_NOTICE, trustNotice } from '../../server/sessions.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -49,10 +51,22 @@ const RESET = '\x1b[0m';
 const GREEN = '\x1b[32m';
 const CYAN = '\x1b[36m';
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
-const STARTUP_DIALOG_KINDS = new Set(['trust', 'imports']);
-// Same wording as the real server's notices.
-const TRUST_NOTICE = 'Claude Code is asking whether you trust this folder. In the terminal, choose "Yes, I trust this folder" (arrow keys, then Enter). Trust your org folder once from a Scratch session and no agent will ask again.';
-const IMPORTS_NOTICE = 'Claude Code is asking whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal.';
+const STARTUP_DIALOG_KINDS = new Set(['trust', 'imports', 'login']);
+// Questions POST /answer may answer (the real server's ANSWERABLE), and the waits during which
+// POST /send is refused with 409 (its ANSWER_IN_TERMINAL).
+const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
+const ANSWER_FIRST = new Set(['trust', 'imports', 'login', 'startup', 'permission_prompt', 'elicitation_dialog']);
+// A Claude Code permission prompt as the real server reads it off the screen (numbered labels).
+const permissionChoices = (what = 'npm') => ['1. Yes', `2. Yes, and don't ask again for ${what} commands in this project`, '3. No, and tell Claude what to do differently (esc)']
+  .map((label, i) => ({ option: i + 1, label }));
+const HOME = '/Users/ada/clawdling';
+// What /api/health reports; /__mock/health overrides parts of it until the next reset.
+const baseHealth = () => ({
+  ok: true, version: '1.1.0-mock',
+  backend: { kind: 'tmux', socket: 'clawdling', persistent: true, reason: 'tmux 3.6a is installed', label: 'tmux (sessions keep running when Clawdling stops)' },
+  tmux: { ok: true, version: '3.6a' }, claude: { ok: true, version: '2.1.0 (mock)' }, home: HOME,
+  cli: 'node ~/clawdling-app/bin/clawdling.js', platform: 'darwin',
+});
 
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
 
@@ -126,13 +140,14 @@ function sess(agentsById, agent, title, status, opts = {}) {
   return {
     sid, agent, agent_name: a ? a.name : agent, kind: a ? a.kind : 'domain', title: title || null, status,
     model: opts.model || (a && a.model) || null,
-    cwd: a ? (a.repo || `/Users/ada/clawdling/${a.kind === 'chief' ? a.id : a.kind === 'project' ? `projects/${a.id}` : `domains/${a.id}`}`) : '/Users/ada/clawdling',
+    cwd: a ? (a.repo || `${HOME}/${a.kind === 'chief' ? a.id : a.kind === 'project' ? `projects/${a.id}` : `domains/${a.id}`}`) : HOME,
     tmux_name: `cl-${agent}-${sid.slice(0, 6)}`,
     created_at: iso((opts.age ?? last) + 20 * MIN),
     last_activity_at: iso(ended ? (opts.ended ?? last) : last),
     ended_at: ended ? iso(opts.ended ?? 2 * HOUR) : null,
     notification: opts.notification || null,
     waiting_on: status === 'needs_you' ? (opts.waiting_on || 'notification') : null,
+    choices: status === 'needs_you' && opts.choices ? opts.choices : null,
     resumable: opts.resumable ?? true,
     permission_mode: null,
     last_message: opts.last_message || null,
@@ -152,10 +167,10 @@ const FIXTURES = {
     const by = Object.fromEntries(agents.map((a) => [a.id, a]));
     const sessions = [
       sess(by, 'health', "Plan this week's training", 'working', { last: 15e3 }),
-      sess(by, 'work', 'Draft the Q4 roadmap', 'needs_you', { last: 2 * MIN, notification: 'Claude needs your permission to use Bash' }),
-      sess(by, 'donna', 'Morning brief', 'ready', { last: 6 * MIN }),
+      sess(by, 'work', 'Draft the Q4 roadmap', 'needs_you', { last: 2 * MIN, notification: 'Claude needs your permission to use Bash', waiting_on: 'permission_prompt', choices: permissionChoices() }),
+      sess(by, 'donna', 'Morning brief', 'ready', { last: 6 * MIN, last_message: 'Morning brief sent: three things need you today.' }),
       sess(by, 'site', 'Fix the hero layout on mobile', 'working', { last: 4e3, model: 'sonnet' }),
-      sess(by, 'home', 'Compare dishwasher quotes', 'ready', { last: 40 * MIN }),
+      sess(by, 'home', 'Compare dishwasher quotes', 'ready', { last: 40 * MIN, last_message: 'Three quotes compared. The Bosch one is cheapest to run.' }),
       sess(by, 'work', null, 'starting', { last: 50e3 }),
       sess(by, 'money', 'Reconcile September', 'ended', { ended: 2 * HOUR }),
       sess(by, 'money', 'Tax documents checklist', 'ended', { ended: 3 * DAY }),
@@ -199,17 +214,22 @@ const FIXTURES = {
     const sessions = [
       sess(by, 'health', "Plan this week's training", 'working', { last: 15e3 }),
       sess(by, 'work', 'Draft the Q4 roadmap', 'needs_you', { last: 2 * MIN, notification: 'Claude needs your permission to use Bash' }),
-      sess(by, 'donna', 'Morning brief', 'ready', { last: 6 * MIN }),
+      sess(by, 'donna', 'Morning brief', 'ready', { last: 6 * MIN, last_message: 'Morning brief sent.' }),
       sess(by, 'pricing-page', 'Compare three pricing layouts', 'working', { last: 8e3 }),
-      sess(by, 'summer-trip-to-lisbon', 'Find flights for July', 'ready', { last: 30 * MIN }),
+      sess(by, 'summer-trip-to-lisbon', 'Find flights for July', 'ready', { last: 30 * MIN, last_message: 'Two flights fit your dates.' }),
       sess(by, 'spanish-b1', 'Daily practice', 'working', { last: 3e3 }),
       sess(by, 'tax-return-2026', 'Collect the 1099s', 'needs_you', { last: 9 * MIN, notification: 'Which brokerage accounts should I include?' }),
-      sess(by, 'newsletter', 'Draft issue 14', 'ready', { last: 52 * MIN }),
+      sess(by, 'newsletter', 'Draft issue 14', 'ready', { last: 52 * MIN, last_message: 'Draft 1 is in drafts/14.md.' }),
     ];
     return { agents, sessions };
   },
   empty() {
     return { agents: baseAgents(), sessions: [] };
+  },
+  // A brand-new install: no session yet and no folder trusted, so Claude Code asks about every
+  // folder it opens in, unless a folder above it was trusted already (like the real CLI).
+  fresh() {
+    return { agents: baseAgents(), sessions: [], trustSim: true };
   },
 };
 
@@ -240,7 +260,7 @@ function bannerFor(s, agent) {
     lines.push(`${DIM}  ⎿  Read memory/NOW.md (14 lines)${RESET}`);
   }
   if (s.status === 'needs_you') {
-    lines.push('', `${BOLD}Bash command${RESET}`, `   ${CYAN}npm run build${RESET}`, '', ` Do you want to proceed?`, ` ${CLAUDE}❯${RESET} 1. Yes`, '   2. No, and tell Claude what to do differently', '');
+    lines.push('', `${BOLD}Bash command${RESET}`, `   ${CYAN}npm run build${RESET}`, '', ` Do you want to proceed?`, ...permissionChoices().map((c, i) => `${i ? '  ' : ` ${CLAUDE}❯${RESET}`} ${c.label}`), '');
   } else if (s.status === 'ready') {
     lines.push(`${CLAUDE}⏺${RESET} Done. Summary is in NOW.md; tell me what to do next.`, '');
   }
@@ -269,7 +289,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   const st = {
     org: null, agents: [], sessions: new Map(), terms: new Map(), requests: [],
     channels: { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } },
-    pairing: null,
+    pairing: null, health: baseHealth(), trustSim: false, trusted: [], fail: {},
   };
   const sse = new Set();
   const timers = new Set();
@@ -291,6 +311,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.pairing = null;
     st.recent = [];
     st.bind = '127.0.0.1';
+    st.health = baseHealth();
+    st.trustSim = !!fx.trustSim;
+    st.trusted = [];
+    st.fail = {};
     st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
     for (const s of fx.sessions) ensureTerm(s);
@@ -396,7 +420,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (event === 'Notification') {
-      setStatus(s, 'needs_you', { notification: payload.message || 'Claude needs your attention', waiting_on: payload.notification_type || 'notification' });
+      const kind = payload.notification_type || 'notification';
+      setStatus(s, 'needs_you', { notification: payload.message || 'Claude needs your attention', waiting_on: kind,
+        choices: kind === 'permission_prompt' ? (payload.choices || permissionChoices()) : null });
       return;
     }
     if (event === 'SessionEnd') setStatus(s, 'ended');
@@ -412,8 +438,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     later(500, () => out(s, `${DIM}  ⎿  (mock) echoing your message back${RESET}\r\n`));
     later(800, () => {
       if (/permission\?/i.test(text)) {
-        out(s, `\r\n${BOLD}Bash command${RESET}\r\n   ${CYAN}rm -rf build/${RESET}\r\n\r\n Do you want to proceed?\r\n ${CLAUDE}❯${RESET} 1. Yes\r\n   2. No\r\n`);
-        applyHook(s, 'Notification', { message: 'Claude needs your permission to use Bash' });
+        out(s, `\r\n${BOLD}Bash command${RESET}\r\n   ${CYAN}rm -rf build/${RESET}\r\n\r\n Do you want to proceed?\r\n ${CLAUDE}❯${RESET} 1. Yes\r\n   2. Yes, and don't ask again for rm commands in this project\r\n   3. No, and tell Claude what to do differently (esc)\r\n`);
+        applyHook(s, 'Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt', choices: permissionChoices('rm') });
       } else {
         applyHook(s, 'Stop', { last_assistant_message: `You said: ${text}` });
         out(s, `${DIM}›${RESET} `);
@@ -455,12 +481,37 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     broadcast('session', s);
     term.pendingPrompt = !!body.prompt;
     // Like the real claude: SessionStart fires once it is up, then the first prompt (if any) runs.
+    // On a fresh install it first asks whether to trust the folder.
     later(180, () => {
       if (s.status === 'ended') return;
+      if (st.trustSim && !trustedFor(s.cwd)) {
+        term.afterTrust = body.prompt || null;
+        raiseDialog(s, 'trust');
+        return;
+      }
       applyHook(s, 'SessionStart', { source: 'startup' });
       if (body.prompt) { term.pendingPrompt = false; out(s, body.prompt); handleLine(s, body.prompt); }
     });
     return s;
+  }
+
+  function trustedFor(cwd) {
+    return st.trusted.some((t) => cwd === t || cwd.startsWith(`${t}/`));
+  }
+
+  // Claude Code's own startup screens, shaped like 2.1.283: the trust dialog hides its numbers and
+  // lists "No, exit" first with the pointer on it. `choices` is what core reads off that screen.
+  function raiseDialog(s, kind) {
+    const labels = kind === 'trust' ? ['No, exit', 'Yes, I trust this folder']
+      : kind === 'imports' ? ['Yes, allow external imports', 'No, disable external imports'] : null;
+    const screen = kind === 'trust'
+      ? `\x1b[2J\x1b[HAccessing workspace:\r\n${s.cwd}\r\n\r\nQuick safety check: Is this a project you created or one you trust?\r\n\r\n ${CLAUDE}❯${RESET} ${labels[0]}\r\n   ${labels[1]}\r\n`
+      : kind === 'imports'
+        ? `\x1b[2J\x1b[HAllow external CLAUDE.md file imports?\r\n\r\n ${CLAUDE}❯${RESET} 1. ${labels[0]}\r\n   2. ${labels[1]}\r\n`
+        : `\x1b[2J\x1b[H Select login method:\r\n\r\n ${CLAUDE}❯${RESET} 1. Claude account with subscription\r\n   2. Anthropic Console account\r\n`;
+    out(s, screen);
+    const notice = kind === 'trust' ? trustNotice(s.cwd) : kind === 'imports' ? IMPORTS_NOTICE : LOGIN_NOTICE;
+    setStatus(s, 'needs_you', { waiting_on: kind, notification: notice, choices: labels ? labels.map((label, i) => ({ option: i + 1, label })) : null });
   }
 
   function sessionList() {
@@ -533,7 +584,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const p = url.pathname;
     const m = req.method;
     if (p === '/api/health' && m === 'GET') {
-      send(res, 200, { ok: true, version: '1.1.0-mock', backend: { kind: 'tmux', socket: 'clawdling', persistent: true, reason: 'tmux 3.6a is installed' }, tmux: { ok: true, version: '3.6a' }, claude: { ok: true, version: '2.1.0 (mock)' }, home: '/Users/ada/clawdling' });
+      send(res, 200, st.health);
       return;
     }
     if (!authed(req, null)) { send(res, 401, { error: 'unauthorized' }); return; }
@@ -543,6 +594,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (m !== 'GET') st.requests.push({ method: m, path: p, body, at: Date.now() });
 
     if (p === '/api/me' && m === 'GET') { send(res, 200, { ok: true, owner: st.org.owner, org: st.org.name, version: '1.0.0-mock' }); return; }
+    if (st.fail[p]) { send(res, st.fail[p].status || 500, { error: st.fail[p].error || 'internal error' }); return; }
     if (p === '/api/org' && m === 'GET') { send(res, 200, orgView()); return; }
     if (p === '/api/events' && m === 'GET') {
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
@@ -638,26 +690,37 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       if (mm[2] === '/answer' && m === 'POST') {
         const option = body.option;
         if (!Number.isInteger(option) || option < 1 || option > 9) { send(res, 400, { error: 'option must be the number of a choice (1 or 2)' }); return; }
-        if (s.status !== 'needs_you' || !STARTUP_DIALOG_KINDS.has(s.waiting_on)) { send(res, 409, { error: 'no dialog is waiting for an answer' }); return; }
+        if (s.status !== 'needs_you' || !ANSWERABLE.has(s.waiting_on)) { send(res, 409, { error: 'no dialog is waiting for an answer' }); return; }
         const choice = (s.choices || []).find((c) => c.option === option);
         if (!choice) { send(res, 400, { error: `there are only ${(s.choices || []).length} choices` }); return; }
         const kind = s.waiting_on;
-        const no = /^no\b/i.test(choice.label);
+        const no = /^(\d+\.\s*)?no\b/i.test(choice.label);
         s.choices = null;
         out(s, `\r\n${DIM}(${choice.label})${RESET}\r\n`);
-        if (kind === 'trust' && no) {
+        if (kind === 'permission_prompt') {
+          setStatus(s, 'working');
+          later(400, () => { if (s.status === 'working') applyHook(s, 'Stop', { last_assistant_message: `Permission answered (${choice.label.replace(/^\d+\.\s*/, '')}).` }); });
+        } else if (kind === 'trust' && no) {
           out(s, `${DIM}Exiting.${RESET}\r\n`);
           setStatus(s, 'ended');
         } else {
+          if (kind === 'trust' && st.trustSim) st.trusted.push(s.cwd);
           s.waiting_on = null;
           s.notification = null;
           out(s, `${CLAUDE}✻${RESET} Welcome to ${BOLD}Claude Code${RESET} ${DIM}(mock)${RESET}\r\n${DIM}›${RESET} `);
+          const term = ensureTerm(s);
+          const prompt = term.afterTrust;
+          term.afterTrust = null;
+          term.pendingPrompt = !!prompt;
           applyHook(s, 'SessionStart', { source: 'startup' });
+          if (prompt) { term.pendingPrompt = false; out(s, prompt); handleLine(s, prompt); }
         }
         send(res, 200, s);
         return;
       }
       if (mm[2] === '/send' && m === 'POST') {
+        if (s.status === 'ended') { send(res, 409, { error: 'that session has ended; resume it first' }); return; }
+        if (s.status === 'needs_you' && ANSWER_FIRST.has(s.waiting_on)) { send(res, 409, { error: 'the session is waiting for your answer in the terminal; answer it in the cockpit first' }); return; }
         feedInput(s, `${String(body.text || '')}${body.enter === false ? '' : '\r'}`);
         send(res, 204);
         return;
@@ -675,12 +738,12 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const port = (req.headers.host || '').split(':')[1] || '4747';
       const lan = [`http://192.168.1.20:${port}`];
       const url = st.bind === '127.0.0.1' ? `http://127.0.0.1:${port}` : lan[0];
-      send(res, 200, { url, token, link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`, lan, bind: st.bind });
+      send(res, 200, { url, token, link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`, browser_link: `${url}/?t=${token}`, lan, bind: st.bind });
       return;
     }
     if (p === '/api/pair/qr.svg' && m === 'GET') {
       res.writeHead(200, { 'content-type': 'image/svg+xml', 'cache-control': 'no-store' });
-      res.end(placeholderQr(token));
+      res.end(placeholderQr(url.searchParams.get('target') === 'browser' ? `browser:${token}` : token));
       return;
     }
     if (p === '/api/channels' && m === 'GET') { send(res, 200, channelStatus()); return; }
@@ -733,15 +796,22 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const body = await readBody(req);
       const sess1 = st.sessions.get(body.sid);
       if (!sess1) { send(res, 404, { error: 'no such session' }); return; }
-      const kind = body.kind || 'trust';
-      // Shaped like Claude Code 2.1.283: the trust dialog hides its numbers and lists "No, exit"
-      // first, with the pointer on it. `choices` is what core reads off that screen, in screen order.
-      const labels = kind === 'trust' ? ['No, exit', 'Yes, I trust this folder'] : ['Yes, allow external imports', 'No, disable external imports'];
-      const screen = kind === 'trust'
-        ? `\x1b[2J\x1b[HAccessing workspace:\r\n${sess1.cwd}\r\n\r\nQuick safety check: Is this a project you created or one you trust?\r\n\r\n ${CLAUDE}❯${RESET} ${labels[0]}\r\n   ${labels[1]}\r\n`
-        : `\x1b[2J\x1b[HAllow external CLAUDE.md file imports?\r\n\r\n ${CLAUDE}❯${RESET} 1. ${labels[0]}\r\n   2. ${labels[1]}\r\n`;
-      out(sess1, screen);
-      setStatus(sess1, 'needs_you', { waiting_on: kind, notification: kind === 'trust' ? TRUST_NOTICE : IMPORTS_NOTICE, choices: labels.map((label, i) => ({ option: i + 1, label })) });
+      raiseDialog(sess1, body.kind || 'trust');
+      send(res, 204);
+      return;
+    }
+    if (p === '/__mock/health' && req.method === 'POST') {
+      // Merge a partial /api/health (e.g. {claude: {ok: false, ...}}) until the next reset.
+      const body = await readBody(req);
+      st.health = { ...st.health, ...body };
+      send(res, 204);
+      return;
+    }
+    if (p === '/__mock/fail' && req.method === 'POST') {
+      // Make one API path answer with an error ({path, status, error}); {path, off: true} clears it.
+      const body = await readBody(req);
+      if (body.off) delete st.fail[body.path];
+      else st.fail[body.path] = { status: body.status || 500, error: body.error || 'internal error' };
       send(res, 204);
       return;
     }

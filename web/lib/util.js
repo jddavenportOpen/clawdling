@@ -1,5 +1,22 @@
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
 export const MOD = isMac ? '⌘' : 'Ctrl';
+// Pane shortcuts use Option/Alt: browsers keep ⌘/Ctrl+1..9 for their own tabs.
+export const ALT = isMac ? '⌥' : 'Alt';
+export const paneKey = (n) => (isMac ? `⌥${n}` : `Alt+${n}`);
+
+// A folder for display: "/Users/ada/clawdling/donna" -> "~/clawdling/donna" (macOS, Linux, Windows).
+export function tildify(p) {
+  if (typeof p !== 'string' || !p) return '';
+  return p.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, '~').replace(/^[A-Za-z]:\\Users\\[^\\]+(?=\\|$)/, '~');
+}
+
+// The Clawdling CLI as this computer runs it, from the server's /api/health `cli` (for example
+// "node ~/clawdling-app/bin/clawdling.js" for a by-hand install without `npm link`). Never assume a
+// bare `clawdling` is on PATH. `health` may be the live health or the last one this browser saw.
+export function cliCmd(sub, health) {
+  const cli = health && typeof health.cli === 'string' && health.cli.trim() ? health.cli.trim() : 'clawdling';
+  return sub ? `${cli} ${sub}` : cli;
+}
 
 export function prefersReducedMotion() {
   try { return window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
@@ -90,4 +107,9 @@ export function plural(n, one, many = `${one}s`) {
 
 export function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+// A touch screen is the main pointer (phones, tablets): no keyboard should pop up on its own.
+export function coarsePointer() {
+  try { return window.matchMedia('(pointer: coarse)').matches; } catch { return false; }
 }

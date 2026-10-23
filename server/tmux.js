@@ -13,6 +13,7 @@ import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { tmuxInstallHint } from './hints.js';
 import { which } from './paths.js';
 import { buildSnapshot } from './termfilter.js';
 import { execFileP, writeFileAtomic } from './util.js';
@@ -136,7 +137,7 @@ export class Tmux {
 
   /** Why a session cannot start right now (null when it can). */
   missing(envPath = this.env.PATH || '') {
-    return which(this.bin, envPath) ? null : 'tmux not found on PATH: install tmux 3.2 or newer (brew install tmux)';
+    return which(this.bin, envPath) ? null : `tmux not found on PATH: install tmux 3.2 or newer (${tmuxInstallHint()}), or restart Clawdling to run sessions in its built-in terminal`;
   }
 
   /** What `clawdling attach` / the cockpit's "copy attach command" runs. */

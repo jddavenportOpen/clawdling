@@ -27,7 +27,7 @@ async function request(method, path, body, { quiet401 = false } = {}) {
   try {
     res = await fetch(path, opts);
   } catch {
-    throw new ApiError(0, 'The Clawdling server is not reachable. Is `clawdling start` still running?');
+    throw new ApiError(0, 'The Clawdling server is not reachable.');
   }
   if (res.status === 401) {
     if (!quiet401) onUnauthorized();
