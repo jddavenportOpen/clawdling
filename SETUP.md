@@ -56,12 +56,15 @@ a minute):
 
 Run it only after the user says yes. Never install Claude Code with `sudo` or `npm -g`. Then:
 1. Check it with `~/.local/bin/claude --version` (Windows: `& "$HOME\.local\bin\claude.exe" --version`).
-2. Sign it in. `claude auth status` exits 1 and says `"loggedIn": false` when it is not signed in.
-   Tell the user a browser page will open and they should sign in with the same Claude account they
-   use in the app, then run `claude auth login` (with the full path if needed; it uses their Claude subscription by
-   default). If that cannot open
-   a browser from here, go on: the first session in the cockpit shows Claude Code's own sign-in,
-   and the user signs in there once (the **Raw** view shows it).
+2. Sign it in **now, before the cockpit starts** (a session that is not signed in only shows
+   "Claude Code is not signed in", which a non-technical user cannot fix from the cockpit).
+   `claude auth status` exits 1 and says `"loggedIn": false` when it is not signed in. Tell the
+   user: "A Claude sign-in page will open in your browser. Sign in with the same account you use
+   in the app, then come back here." Run `claude auth login` (full path if needed; it uses their
+   Claude subscription by default) with a timeout of several minutes, or in the background, since
+   it waits until they finish. If no browser opens, it prints a sign-in link: show it to them as
+   a link to click. Then check `claude auth status` again, and do not go on until it says
+   `"loggedIn": true`.
 3. Say that the installer adds `~/.local/bin` to their PATH for new terminals, so `claude` works
    in a new terminal window.
 

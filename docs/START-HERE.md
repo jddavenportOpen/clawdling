@@ -132,6 +132,10 @@ you.
 - **"The cockpit page says the site can't be reached."** The cockpit is not running (for example
   after a restart). Tell Claude Code: "Start my Clawdling cockpit and open it." To have it start by
   itself when you log in, tell Claude Code: "Make Clawdling start automatically at login."
+- **"An assistant says Claude Code is not signed in."** The `claude` command Clawdling uses has
+  its own sign-in. Tell Claude Code: "Sign in the claude command for Clawdling with
+  `claude auth login`." Sign in on the page that opens, then end the assistant's session in the
+  cockpit and start a new one.
 - **"An assistant says I hit my usage limit."** That is your Claude plan's limit, not Clawdling.
   It says when it resets; the assistants wait until then. Fewer assistants at once uses it more
   slowly.
