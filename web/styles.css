@@ -964,6 +964,27 @@ h3.chat-h { font-size: 16.5px; }
 
 /* ── Model and effort chips, voice input ─────────────────────────────────── */
 
+.pane-picks { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 1; min-width: 0; }
+.pane-pick-wrap { display: inline-flex; min-width: 0; }
+.pane-pick { display: inline-flex; align-items: center; height: 22px; max-width: 120px; padding: 0 7px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: transparent; color: var(--text-3); font-family: var(--font-mono); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.pane-pick:hover:not([aria-disabled="true"]) { color: var(--text); background: var(--surface-3); }
+.pane-pick:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 2px var(--accent-soft); }
+.pane-pick[aria-disabled="true"] { cursor: default; opacity: 0.6; }
+.pane-pick[aria-expanded="true"] { color: var(--text); border-color: var(--line-2); background: var(--surface-3); }
+.pane-pick.is-static { cursor: default; border-color: transparent; padding: 0 2px; }
+.pick-menu { min-width: 150px; }
+.pick-menu .menu-item { font-family: var(--font-mono); font-size: 12px; }
+.pick-check { display: inline-flex; width: 14px; color: var(--accent); }
+@container pane (max-width: 420px) { .pane-pick-effort { display: none; } }
+@media (pointer: coarse) { .pane-pick { height: 44px; padding: 0 10px; } }
+.composer-mic { width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
+.composer-mic[aria-pressed="true"] { color: var(--danger); border-color: var(--danger); }
+.composer-note { flex-basis: 100%; margin: 0; color: var(--text-3); font-size: 12px; }
+.ns-pickers { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.ns-pickers .field-inline select { min-width: 0; max-width: 200px; }
+
 
 /* ── end chips and voice ── */
 
