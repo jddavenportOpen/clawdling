@@ -45,7 +45,21 @@ export function ensureDir(dir, mode) {
   return dir;
 }
 
-/** Write a file via a temp file + rename so readers never see a half-written file. */
+/** Block for `ms` without spinning (used between rename retries on Windows). */
+function pauseSync(ms) {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // no SharedArrayBuffer: retry at once
+  }
+}
+
+/**
+ * Write a file via a temp file + rename so readers never see a half-written file. File modes are
+ * POSIX only (Windows keeps just the read-only bit), so a chmod that cannot apply is ignored. On
+ * Windows a rename onto a file another process has open (a hook reading server.json, a virus
+ * scanner) fails for a moment with EPERM/EBUSY, so it is retried briefly.
+ */
 export function writeFileAtomic(file, data, mode = 0o644) {
   const tmp = `${file}.${process.pid}.${crypto.randomBytes(4).toString('hex')}.tmp`;
   fs.writeFileSync(tmp, data, { mode });
@@ -54,7 +68,22 @@ export function writeFileAtomic(file, data, mode = 0o644) {
   } catch {
     // best effort
   }
-  fs.renameSync(tmp, file);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      fs.renameSync(tmp, file);
+      return;
+    } catch (err) {
+      if (process.platform !== 'win32' || attempt >= 20 || !['EPERM', 'EACCES', 'EBUSY'].includes(err.code)) {
+        try {
+          fs.unlinkSync(tmp);
+        } catch {
+          // already gone
+        }
+        throw err;
+      }
+      pauseSync(25 + attempt * 10);
+    }
+  }
 }
 
 export function readJson(file, fallback = null) {
@@ -76,10 +105,10 @@ export function shq(value) {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
-/** Promise wrapper around execFile (argv only, never a shell). */
-export function execFileP(cmd, args, { timeout = 10000, input, cwd, env, maxBuffer = 32 * 1024 * 1024 } = {}) {
+/** Promise wrapper around execFile (argv only, never a shell). `spawn` adds child_process options. */
+export function execFileP(cmd, args, { timeout = 10000, input, cwd, env, maxBuffer = 32 * 1024 * 1024, spawn: extra = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const child = execFile(cmd, args, { timeout, cwd, env, maxBuffer, encoding: 'utf8' }, (err, stdout, stderr) => {
+    const child = execFile(cmd, args, { windowsHide: true, ...extra, timeout, cwd, env, maxBuffer, encoding: 'utf8' }, (err, stdout, stderr) => {
       if (err) {
         err.stdout = stdout;
         err.stderr = stderr;

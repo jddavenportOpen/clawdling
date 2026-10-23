@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { envGet, findExecutable, normalizePathKey } from './platform.js';
 
 export const PKG_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const VERSION = JSON.parse(fs.readFileSync(path.join(PKG_ROOT, 'package.json'), 'utf8')).version;
@@ -72,30 +73,12 @@ export function isTestMode(env = process.env) {
   return env.CLAWDLING_TEST === '1';
 }
 
-/** Find an executable on PATH (or check an explicit path). Returns an absolute path or null. */
-export function which(cmd, envPath = process.env.PATH || '') {
-  if (!cmd) return null;
-  if (cmd.includes('/')) {
-    try {
-      fs.accessSync(cmd, fs.constants.X_OK);
-      return path.resolve(cmd);
-    } catch {
-      return null;
-    }
-  }
-  for (const dir of envPath.split(path.delimiter)) {
-    if (!dir) continue;
-    const candidate = path.join(dir, cmd);
-    try {
-      if (fs.statSync(candidate).isFile()) {
-        fs.accessSync(candidate, fs.constants.X_OK);
-        return candidate;
-      }
-    } catch {
-      // keep looking
-    }
-  }
-  return null;
+/**
+ * Find an executable on PATH (or check an explicit path). Returns an absolute path or null.
+ * On Windows this follows PATHEXT like `where` does (claude.exe, then claude.cmd, ...).
+ */
+export function which(cmd, envPath = envGet(process.env, 'PATH') || '', opts = {}) {
+  return findExecutable(cmd, { envPath, env: process.env, platform: process.platform, ...opts });
 }
 
 // Variables a parent Claude Code session sets for its own child processes. If Clawdling is
@@ -124,7 +107,7 @@ export const SCRUBBED_ENV = [
  * /opt/homebrew/bin/node) over a versioned install path that disappears on upgrade.
  */
 export function stableNodePath(env = process.env) {
-  const onPath = which('node', env.PATH || '');
+  const onPath = which('node', envGet(env, 'PATH') || '');
   try {
     if (onPath && fs.realpathSync(onPath) === fs.realpathSync(process.execPath)) return onPath;
   } catch {
@@ -135,7 +118,7 @@ export function stableNodePath(env = process.env) {
 
 /** A copy of the environment that is safe to hand to tmux and claude child processes. */
 export function childEnv(env = process.env) {
-  const out = { ...env };
+  const out = normalizePathKey(env); // Windows: one PATH key, so env.PATH works everywhere below
   for (const k of SCRUBBED_ENV) delete out[k];
   return out;
 }
