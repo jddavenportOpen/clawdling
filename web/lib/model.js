@@ -150,3 +150,11 @@ export function sortAgents(agents) {
   const rank = { chief: 0, domain: 1, project: 2 };
   return [...agents].sort((a, b) => (rank[a.kind] ?? 3) - (rank[b.kind] ?? 3));
 }
+
+// Model and effort choices offered at spawn and on the pane chips: the claude CLI's own values
+// (`claude --help`, 2.1.283). Empty = the user's own Claude Code default.
+export const MODEL_CHOICES = ['opus', 'sonnet', 'haiku', 'fable'];
+export const EFFORT_CHOICES = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** Between turns (your turn, or ready for a first message): the only time a chip may type a slash command. */
+export const isIdle = (s) => !!s && s.status === 'ready';

@@ -899,3 +899,25 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   .glyph .spin, .pulse { animation: none !important; }
 }
+
+
+/* ── Chat view (pane Chat | Raw) ──────────────────────────────────────────── */
+
+
+/* ── end chat view ── */
+
+
+
+
+/* ── Model and effort chips, voice input ─────────────────────────────────── */
+
+
+/* ── end chips and voice ── */
+
+
+
+
+/* ── Accounts ─────────────────────────────────────────────────────────────── */
+
+
+/* ── end accounts ── */

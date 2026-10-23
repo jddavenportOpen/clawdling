@@ -7,6 +7,9 @@ import { Icon, AgentIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { dialogAnswers } from '../lib/dialogs.js';
 import { TerminalView } from './terminal.js';
+import { Composer } from './composer.js';
+import { PaneChips } from './chips.js';
+import { ChatView } from './chat-view.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
@@ -83,7 +86,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       <span class="pane-chip" title=${agent && agent.mission ? agent.mission : agentLabel(s, agentsById)}>
         <span class="chip-icon" aria-hidden="true"><${AgentIcon} agent=${agent || { name: agentLabel(s, agentsById) }} size=${12} /></span>${agentLabel(s, agentsById)}
       </span>
-      ${s.model ? html`<span class="pane-model" title="Model">${s.model}</span>` : null}
+      <${PaneChips} s=${s} />
       <${Trace} sid=${sid} status=${s.status} />
       <span class="pane-spacer"></span>
       ${conn === 'reconnecting' && !ended ? html`<span class="pane-conn" role="status">Reconnecting…</span>` : null}
@@ -233,49 +236,6 @@ function QuestionBanner({ s, mobile, accent }) {
       ${s.choices.length > QUESTION_MAX ? html`<span class="dialog-note">More choices in the terminal.</span>` : null}
     </span>
   </div>`;
-}
-
-// The phone has no hardware keyboard, and typing into xterm through the iOS keyboard fights
-// autocorrect and the hidden textarea. A plain composer sends the text with POST /send.
-const ANSWER_FIRST = new Set(['trust', 'imports', 'login', 'startup', 'permission_prompt', 'elicitation_dialog']);
-const COMPOSER_MAX_LINES = 5;
-
-function Composer({ s, agent }) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const area = useRef(null);
-  const waiting = s.status === 'needs_you' && ANSWER_FIRST.has(s.waiting_on);
-  const grow = () => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 22;
-    el.style.height = `${Math.min(el.scrollHeight, line * COMPOSER_MAX_LINES + 18)}px`;
-  };
-  const submit = async (e) => {
-    if (e) e.preventDefault();
-    const t = text.trim();
-    if (!t || busy || waiting) return;
-    setBusy(true);
-    try {
-      await api.send(s.sid, t, true);
-      setText('');
-      requestAnimationFrame(grow);
-    } catch (err) {
-      if (err && err.status === 409) toast('Answer the question above first.', { ms: 3600 });
-      else errorToast('Could not send the message', err);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return html`<form class="pane-composer" onSubmit=${submit} data-testid="pane-composer">
-    <textarea ref=${area} rows="1" value=${text} onInput=${(e) => { setText(e.currentTarget.value); grow(); }}
-      onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } }}
-      placeholder=${waiting ? 'Answer the question above first' : `Message ${agent}…`} aria-label=${`Message ${agent}`}
-      enterkeyhint="send" disabled=${waiting} data-testid="composer-input"></textarea>
-    <button class="btn btn-primary composer-send" type="submit" aria-label="Send" disabled=${waiting || busy || !text.trim()} data-testid="composer-send">
-      <${Icon} name="send" /></button>
-  </form>`;
 }
 
 // Signature detail: a hairline trace of real terminal output over the last 40 s,

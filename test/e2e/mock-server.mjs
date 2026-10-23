@@ -152,6 +152,9 @@ function sess(agentsById, agent, title, status, opts = {}) {
     permission_mode: null,
     last_message: opts.last_message || null,
     transcript_path: null,
+    effort: opts.effort || null,
+    account: opts.account || null,
+    purpose: null,
     attach_cmd: `tmux -L clawdling attach -t cl-${agent}-${sid.slice(0, 6)}`,
     get name() { return `${this.agent_name}: ${this.title || 'new session'}`; },
   };
@@ -289,7 +292,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   const st = {
     org: null, agents: [], sessions: new Map(), terms: new Map(), requests: [],
     channels: { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } },
-    pairing: null, health: baseHealth(), trustSim: false, trusted: [], fail: {},
+    pairing: null, health: baseHealth(), trustSim: false, trusted: [], fail: {}, transcripts: new Map(), accounts: [],
   };
   const sse = new Set();
   const timers = new Set();
@@ -315,6 +318,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.trustSim = !!fx.trustSim;
     st.trusted = [];
     st.fail = {};
+    st.transcripts = new Map();
+    st.accounts = [];
     st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
     for (const s of fx.sessions) ensureTerm(s);
@@ -435,6 +440,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (text === '/exit') { out(s, `${DIM}Goodbye.${RESET}\r\n`); applyHook(s, 'SessionEnd'); return; }
     applyHook(s, 'UserPromptSubmit', { prompt: text });
     later(250, () => out(s, `${CLAUDE}⏺${RESET} You said: ${text}\r\n`));
+    const chat = st.transcripts.get(s.sid);
+    if (chat) {
+      chat.push({ n: chat.length, role: 'user', text, tools: [], ts: new Date().toISOString() });
+      later(300, () => chat.push({ n: chat.length, role: 'assistant', text: `You said: **${text}**`, tools: [], ts: new Date().toISOString(), model: 'claude-sonnet-5' }));
+    }
     later(500, () => out(s, `${DIM}  ⎿  (mock) echoing your message back${RESET}\r\n`));
     later(800, () => {
       if (/permission\?/i.test(text)) {
@@ -472,6 +482,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const a = scratch ? { id: 'scratch', kind: 'scratch', name: 'Scratch', model: null, repo: '/Users/ada/clawdling' } : agentById(body.agent);
     if (!a) return null;
     const s = sess({ [a.id]: a }, a.id, body.title || (body.prompt ? deriveTitle(body.prompt) : null), 'starting', { last: 0, age: 0, model: body.model });
+    s.effort = body.effort || null;
+    s.account = body.account || null;
+    s.purpose = body.purpose || null;
     s.created_at = new Date().toISOString();
     s.last_activity_at = s.created_at;
     st.sessions.set(s.sid, s);
@@ -657,6 +670,55 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       send(res, 201, s);
       return;
     }
+    mm = p.match(/^\/api\/sessions\/([^/]+)\/(messages|settings)$/);
+    if (mm) {
+      const s = st.sessions.get(decodeURIComponent(mm[1]));
+      if (!s) { send(res, 404, { error: 'no such session' }); return; }
+      if (mm[2] === 'messages' && m === 'GET') {
+        const raw = url.searchParams.get('after');
+        const after = raw === null || raw === '' ? -1 : Number(raw);
+        if (!Number.isInteger(after) || after < -1) { send(res, 400, { error: 'after must be an integer >= -1' }); return; }
+        const all = st.transcripts.get(s.sid) || [];
+        const page = all.filter((e) => e.n > after).slice(0, 200);
+        const next = page.length ? page[page.length - 1].n : after;
+        send(res, 200, { messages: page, next, more: all.length > 0 && all[all.length - 1].n > next, status: s.status });
+        return;
+      }
+      if (mm[2] === 'settings' && m === 'POST') {
+        const model = body.model ? String(body.model) : null;
+        const effort = body.effort ? String(body.effort) : null;
+        if (!model && !effort) { send(res, 400, { error: 'send {model} or {effort}' }); return; }
+        if (model && !/^[A-Za-z0-9][A-Za-z0-9._:\[\]-]{0,79}$/.test(model)) { send(res, 400, { error: 'invalid model' }); return; }
+        if (effort && !['low', 'medium', 'high', 'xhigh', 'max'].includes(effort)) { send(res, 400, { error: 'effort must be low, medium, high, xhigh or max' }); return; }
+        if (s.status !== 'ready') { send(res, 409, { error: 'wait for your turn: model and effort change between turns' }); return; }
+        if (model) { out(s, `/model ${model}\r\n${DIM}  ⎿  Set model to ${model}${RESET}\r\n`); s.model = model; }
+        if (effort) { out(s, `/effort ${effort}\r\n${DIM}  ⎿  Set effort level to ${effort}${RESET}\r\n`); s.effort = effort; }
+        out(s, `${DIM}›${RESET} `);
+        broadcast('session', s);
+        send(res, 200, s);
+        return;
+      }
+    }
+    if (p === '/api/accounts' && m === 'GET') {
+      send(res, 200, { accounts: [{ id: 'default', name: 'Your Claude login', default: true, dir: null },
+        ...st.accounts.map((id) => ({ id, name: id, default: false, dir: `~/.clawdling-accounts/${id}` }))] });
+      return;
+    }
+    if (p === '/api/accounts' && m === 'POST') {
+      const id = String(body.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 32);
+      if (!id || id === 'default') { send(res, 400, { error: 'give the account a name, like "work"' }); return; }
+      if (st.accounts.includes(id)) { send(res, 409, { error: `there is already an account called "${id}"` }); return; }
+      st.accounts.push(id);
+      send(res, 201, { id, name: id, default: false, dir: `~/.clawdling-accounts/${id}` });
+      return;
+    }
+    mm = p.match(/^\/api\/accounts\/([^/]+)\/signin$/);
+    if (mm && m === 'POST') {
+      const id = decodeURIComponent(mm[1]);
+      if (!st.accounts.includes(id)) { send(res, 404, { error: `no account called "${id}"` }); return; }
+      send(res, 201, createSession({ agent: 'scratch', title: `Sign in: ${id}`, account: id, purpose: 'signin' }));
+      return;
+    }
     mm = p.match(/^\/api\/sessions\/([^/]+)(\/resume|\/send|\/answer)?$/);
     if (mm) {
       const s = st.sessions.get(decodeURIComponent(mm[1]));
@@ -777,6 +839,20 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (p === '/__mock/requests') { send(res, 200, st.requests); return; }
+    if (p === '/__mock/transcript' && req.method === 'POST') {
+      // A chat transcript for one session: [{role, text, tools?, model?}] (what the server reads from Claude Code's JSONL).
+      const b = await readBody(req);
+      const list = (Array.isArray(b.messages) ? b.messages : []).map((e, n) => ({ n, role: e.role, text: e.text || '', tools: e.tools || [], ts: e.ts || new Date().toISOString(), model: e.model || null }));
+      st.transcripts.set(b.sid, list);
+      send(res, 200, { ok: true, n: list.length });
+      return;
+    }
+    if (p === '/__mock/accounts' && req.method === 'POST') {
+      const b = await readBody(req);
+      st.accounts = Array.isArray(b.accounts) ? b.accounts.map(String) : [];
+      send(res, 200, { ok: true });
+      return;
+    }
     if (p === '/__mock/channel' && req.method === 'POST') {
       const body = await readBody(req);
       const msg = { channel: body.channel || 'telegram', direction: body.direction || 'in', text: body.text || '', ts: new Date().toISOString() };

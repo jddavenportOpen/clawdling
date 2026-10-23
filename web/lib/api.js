@@ -66,6 +66,15 @@ export const api = {
   resume: async (sid, size) => one(await request('POST', `/api/sessions/${enc(sid)}/resume`, size), 'session'),
   answer: async (sid, option) => one(await request('POST', `/api/sessions/${enc(sid)}/answer`, { option }), 'session'),
   send: (sid, text, enter = true) => request('POST', `/api/sessions/${enc(sid)}/send`, { text, enter }),
+  // The session's chat, read from Claude Code's own transcript: {messages:[{n, role, text, tools, ts, model}], next, more, status}.
+  messages: (sid, after = -1) => request('GET', `/api/sessions/${enc(sid)}/messages?after=${enc(String(after))}`),
+  // Switch model / effort between turns ({model?, effort?}); 409 unless it is the owner's turn.
+  sessionSettings: async (sid, body) => one(await request('POST', `/api/sessions/${enc(sid)}/settings`, body), 'session'),
+
+  // Claude logins: [{id: 'default', name, default: true}, {id, name, dir}...]. Clawdling only passes CLAUDE_CONFIG_DIR.
+  accounts: async () => list(await request('GET', '/api/accounts'), 'accounts'),
+  addAccount: (name) => request('POST', '/api/accounts', { name }),
+  signIn: async (id) => one(await request('POST', `/api/accounts/${enc(id)}/signin`, {}), 'session'),
 
   pair: () => request('GET', '/api/pair'),
   channels: () => request('GET', '/api/channels'),
