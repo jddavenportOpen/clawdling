@@ -65,9 +65,13 @@ test('init --defaults scaffolds the whole org tree', () => {
     assert.equal(donna.kind, 'chief');
     assert.match(read(home, 'donna', 'CLAUDE.md'), /clawdling spawn <agent-id>/);
     assert.ok(read(home, 'donna', 'CLAUDE.md').trimEnd().endsWith('@memory/NOW.md'));
-    assert.equal(fs.statSync(path.join(home, '.clawdling')).mode & 0o777, 0o700);
     // SETUP.md step 6 logs `clawdling start` to .clawdling/logs/start.log on a fresh org.
-    assert.equal(fs.statSync(path.join(home, '.clawdling', 'logs')).mode & 0o777, 0o700);
+    assert.ok(fs.statSync(path.join(home, '.clawdling', 'logs')).isDirectory());
+    if (process.platform !== 'win32') {
+      // POSIX modes (Windows has no such thing: the folder is private to the user by its ACL)
+      assert.equal(fs.statSync(path.join(home, '.clawdling')).mode & 0o777, 0o700);
+      assert.equal(fs.statSync(path.join(home, '.clawdling', 'logs')).mode & 0o777, 0o700);
+    }
   } finally {
     rmrf(home);
   }

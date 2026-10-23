@@ -26,7 +26,10 @@ const NASTY = [
   '',
 ];
 
-test('shq round-trips every nasty string through /bin/sh', () => {
+// The /bin/sh launcher is the tmux backend's (macOS / Linux); Windows never runs a shell script.
+const POSIX = process.platform === 'win32' ? 'POSIX shell only' : false;
+
+test('shq round-trips every nasty string through /bin/sh', { skip: POSIX }, () => {
   for (const s of NASTY) {
     const out = spawnSync('/bin/sh', ['-c', `printf '%s' ${shq(s)}`], { encoding: 'utf8' }).stdout;
     assert.equal(out, s, JSON.stringify(s));
@@ -34,7 +37,7 @@ test('shq round-trips every nasty string through /bin/sh', () => {
   assert.throws(() => shq('nul\0byte'), /NUL/);
 });
 
-test('the launcher script delivers argv and env byte-for-byte and never evaluates them', () => {
+test('the launcher script delivers argv and env byte-for-byte and never evaluates them', { skip: POSIX }, () => {
   const dir = tempHome('cl-launch-');
   try {
     const dump = path.join(dir, 'dump.mjs');

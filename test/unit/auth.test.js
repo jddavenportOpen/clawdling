@@ -8,7 +8,7 @@ import WebSocket from 'ws';
 import { allowedHosts, extractToken, hostAllowed, originAllowed, parseCookies, tokenEquals } from '../../server/auth.js';
 import { startServer } from '../../server/index.js';
 import { initOrg, defaultAnswers } from '../../server/org.js';
-import { ROOT, killTmux, rmrf, tempHome, testEnv, uniqueSocket } from '../helpers.mjs';
+import { BACKEND, ROOT, killTmux, rmrf, tempHome, testEnv, uniqueSocket } from '../helpers.mjs';
 
 test('tokenEquals is exact and length-safe', () => {
   const t = 'a'.repeat(64);
@@ -91,7 +91,10 @@ test('API needs the token; /api/health does not', async () => {
   assert.equal(h.ok, true);
   assert.equal(h.home, home);
   assert.equal(h.claude.ok, true, 'fake claude answers --version');
-  assert.ok(h.tmux.version.startsWith('tmux'));
+  assert.equal(h.backend.kind, BACKEND, 'the session backend in use');
+  assert.equal(h.backend.persistent, BACKEND === 'tmux');
+  if (BACKEND === 'tmux') assert.ok(h.tmux.version.startsWith('tmux'));
+  else assert.equal(h.tmux.optional, true, 'with the built-in terminal tmux is optional');
 });
 
 test('/?t=<token> sets an HttpOnly SameSite=Strict cookie and redirects; a wrong token does not', async () => {

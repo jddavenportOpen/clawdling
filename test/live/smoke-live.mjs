@@ -2,20 +2,25 @@
 // Opt-in live smoke test (`npm run smoke:live`): the REAL `claude` CLI, the cheapest model.
 //
 // Proves the anti-amnesia contract end to end: a brand-new domain agent, spawned through the
-// Clawdling server into tmux, answers with the mission from its CLAUDE.md and the marker from its
-// memory/NOW.md without reading any files, i.e. both were preloaded into the session's context.
-// It also reports what the real CLI showed on the way (folder-trust dialog, skills).
+// Clawdling server (tmux, or the built-in terminal with CLAWDLING_BACKEND=pty), answers with the
+// mission from its CLAUDE.md and the marker from its memory/NOW.md without reading any files, i.e.
+// both were preloaded into the session's context. It also reports what the real CLI showed on the
+// way (folder-trust dialog, skills). Everything goes through the server's own API and terminal
+// WebSocket, the way the cockpit does it, so the same script proves either backend.
 //
 // Costs a few cents of your Claude plan. Everything it starts is cleaned up; Claude Code keeps its
 // own transcript of the run under ~/.claude/projects/ like for any other session.
 import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import WebSocket from 'ws';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const { Terminal } = createRequire(import.meta.url)('@xterm/headless');
 const CLI = path.join(ROOT, 'bin', 'clawdling.js');
 const MODEL = process.env.SMOKE_MODEL || 'haiku';
 const TIMEOUT_MS = Number(process.env.SMOKE_TIMEOUT_MS) || 240000;
@@ -39,6 +44,9 @@ const env = { ...process.env, CLAWDLING_HOME: home, CLAWDLING_TMUX_SOCKET: socke
 for (const k of ['CLAWDLING_TEST', 'CLAWDLING_CLAUDE_BIN', 'CLAWDLING_SID', 'CLAWDLING_PORT']) delete env[k];
 
 let server;
+let backend = null;
+const COLS = 140;
+const ROWS = 40;
 const findings = [];
 
 async function main() {
@@ -72,14 +80,17 @@ async function main() {
     return text ? JSON.parse(text) : null;
   };
   const health = await api('GET', '/api/health');
-  log(`server up on ${base}: claude ${health.claude.version}, ${health.tmux.version}`);
+  backend = health.backend?.kind || 'tmux';
+  log(`server up on ${base}: claude ${health.claude.version}; sessions: ${backend}${backend === 'tmux' ? ` (${health.tmux.version})` : ` (${health.backend.version}, ${health.backend.reason})`}`);
 
-  const s = await api('POST', '/api/sessions', { agent: 'archive', model: MODEL, prompt: PROMPT });
+  const s = await api('POST', '/api/sessions', { agent: 'archive', model: MODEL, prompt: PROMPT, cols: COLS, rows: ROWS });
   if (!s?.sid) throw new Error(`spawn failed: ${JSON.stringify(s)}`);
-  log(`spawned ${s.tmux_name} (sid ${s.sid}) titled "${s.title}"`);
+  log(`spawned ${s.tmux_name} (sid ${s.sid}) titled "${s.title}"; attach: ${s.attach_cmd}`);
 
-  const capture = () => execFileSync('tmux', ['-L', socket, 'capture-pane', '-p', '-t', `=${s.tmux_name}:`], { encoding: 'utf8' });
-  const keys = (...k) => execFileSync('tmux', ['-L', socket, 'send-keys', '-t', `=${s.tmux_name}:`, ...k]);
+  // A viewer like the cockpit's, rendered into a headless terminal: the screen, on either backend.
+  const view = await openScreen(info.port, tok, s.sid);
+  const capture = () => view.screen();
+  const keys = (text) => view.ws.send(JSON.stringify({ t: 'in', data: text }));
   const seen = new Set();
   let trustAnswered = false;
   const started = Date.now();
@@ -94,17 +105,15 @@ async function main() {
     }
     if (cur.status === 'ended') throw new Error(`session ended: ${cur.notification || '(no notice)'}\n${serverOut}`);
     if (cur.status === 'needs_you' && /trust this folder/.test(cur.notification || '') && !trustAnswered) {
-      findings.push('Claude Code showed its folder-trust dialog for the new org folder; Clawdling surfaced it as needs_you and the smoke answered it in the terminal like a user (it never edits ~/.claude.json).');
-      await sleep(1500); // the dialog ignores keys for a moment after it opens
-      for (let i = 0; i < 4; i++) {
-        const screen = capture();
-        const sel = screen.split('\n').find((l) => l.includes('❯'));
-        if (sel && /Yes, I trust this folder/.test(sel)) break;
-        keys('Down');
-        await sleep(400);
+      const yes = (cur.choices || []).find((c) => /yes, i trust this folder/i.test(c.label));
+      if (!yes) {
+        await sleep(300); // the choices arrive a moment after the status
+        continue;
       }
-      log(`trust dialog, answering on:\n${capture().split('\n').filter((l) => /trust|exit|❯/i.test(l)).join('\n')}`);
-      keys('Enter');
+      findings.push(`Claude Code showed its folder-trust dialog for the new org folder; Clawdling surfaced it as needs_you with choices ${JSON.stringify(cur.choices.map((c) => c.label))} and the smoke answered "${yes.label}" through POST /api/sessions/:sid/answer, the cockpit's button (it never edits ~/.claude.json).`);
+      log(`trust dialog on screen:\n${capture().split('\n').filter((l) => /trust|exit|❯/i.test(l)).join('\n')}`);
+      const r = await api('POST', `/api/sessions/${s.sid}/answer`, { option: yes.option });
+      log(`answered option ${yes.option}: ${JSON.stringify(r.answered || r)}`);
       trustAnswered = true;
       continue;
     }
@@ -129,13 +138,14 @@ async function main() {
   if (toolUses.length) findings.push(`WARNING: the model used tools (${toolUses.map((t) => t.name).join(', ')}) so preload is not strictly proven`);
 
   // Skills: type "/handof" (no Enter) and look at Claude Code's own autocomplete.
-  keys('-l', '/handof');
+  keys('/handof');
   await sleep(1500);
   const skillScreen = capture();
   const skillOk = /handoff/.test(skillScreen.split('\n').filter((l) => !l.includes('/handof│') && !/^\s*>\s*\/handof\s*$/.test(l)).join('\n'));
   findings.push(skillOk ? 'The /handoff skill shows up in the domain agent session (autocomplete).' : 'WARNING: /handoff did not show up in autocomplete for the domain agent session.');
-  keys('Escape');
-  keys('C-u');
+  keys('\x1b');
+  keys('\x15');
+  view.ws.close();
 
   await api('DELETE', `/api/sessions/${s.sid}`);
   log(`mission phrase in answer: ${okMission ? 'yes' : 'NO'}; NOW.md marker in answer: ${okMarker ? 'yes' : 'NO'}`);
@@ -144,21 +154,48 @@ async function main() {
   log('PASS: the agent knew its mission (CLAUDE.md) and its memory (memory/NOW.md) on the first turn');
 }
 
+/** A terminal viewer over the server's WebSocket, rendered into a headless terminal. */
+async function openScreen(port, tok, sid) {
+  const term = new Terminal({ cols: COLS, rows: ROWS, scrollback: 2000, allowProposedApi: true });
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws/term/${sid}?t=${tok}&cols=${COLS}&rows=${ROWS}`);
+  ws.on('message', (raw) => {
+    try {
+      const m = JSON.parse(String(raw));
+      if ((m.t === 'snapshot' || m.t === 'out') && typeof m.data === 'string') term.write(m.data);
+    } catch {
+      // ignore
+    }
+  });
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+  });
+  const screen = () => {
+    const b = term.buffer.active;
+    const out = [];
+    for (let i = 0; i < term.rows; i++) out.push(b.getLine(b.baseY + i)?.translateToString(true) ?? '');
+    return out.join('\n');
+  };
+  return { ws, screen };
+}
+
 async function cleanup() {
   if (server && server.exitCode === null) {
     server.kill('SIGTERM');
     await Promise.race([new Promise((r) => server.once('exit', r)), sleep(5000)]);
     if (server.exitCode === null) server.kill('SIGKILL');
   }
-  try {
-    execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' });
-  } catch {
-    // already gone
-  }
-  try {
-    fs.unlinkSync(`${process.env.TMUX_TMPDIR || '/tmp'}/tmux-${process.getuid()}/${socket}`);
-  } catch {
-    // gone
+  if (backend !== 'pty') {
+    try {
+      execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' });
+    } catch {
+      // already gone
+    }
+    try {
+      fs.unlinkSync(`${process.env.TMUX_TMPDIR || '/tmp'}/tmux-${process.getuid()}/${socket}`);
+    } catch {
+      // gone
+    }
   }
   fs.rmSync(home, { recursive: true, force: true });
 }

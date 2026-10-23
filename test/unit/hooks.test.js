@@ -31,8 +31,8 @@ function runHook(event, payload, env) {
   });
 }
 
-test('generated settings register all five hooks with safely quoted paths', () => {
-  const s = buildHooksSettings({ nodePath: "/opt/my node/bin/node", hookScript: "/Users/o'brien/app/bin/clawdling-hook.js" });
+test('generated settings register all five hooks with safely quoted paths (macOS / Linux shell form)', () => {
+  const s = buildHooksSettings({ nodePath: "/opt/my node/bin/node", hookScript: "/Users/o'brien/app/bin/clawdling-hook.js", platform: 'linux' });
   assert.deepEqual(Object.keys(s.hooks), HOOK_EVENTS);
   for (const ev of HOOK_EVENTS) {
     const h = s.hooks[ev][0].hooks[0];
@@ -41,8 +41,10 @@ test('generated settings register all five hooks with safely quoted paths', () =
     assert.ok(h.timeout >= 2);
   }
   // The quoting survives a real shell.
-  const out = spawnSync('/bin/sh', ['-c', `printf '%s\\n' ${s.hooks.Stop[0].hooks[0].command}`], { encoding: 'utf8' }).stdout;
-  assert.equal(out, "/opt/my node/bin/node\n/Users/o'brien/app/bin/clawdling-hook.js\nStop\n");
+  if (process.platform !== 'win32') {
+    const out = spawnSync('/bin/sh', ['-c', `printf '%s\\n' ${s.hooks.Stop[0].hooks[0].command}`], { encoding: 'utf8' }).stdout;
+    assert.equal(out, "/opt/my node/bin/node\n/Users/o'brien/app/bin/clawdling-hook.js\nStop\n");
+  }
   assert.ok(s.permissions.allow.includes('Bash(clawdling spawn *)'));
   assert.ok(!s.permissions.allow.includes('Bash(clawdling *)'), 'agents cannot run init/service/donna without a prompt');
 });

@@ -117,10 +117,14 @@ export async function startServerProc({ home, env, port = 0 }) {
     token,
     url: `http://127.0.0.1:${info.port}`,
     log: () => out,
+    /** A clean stop: SIGTERM, or on Windows (where that would be TerminateProcess) the API. */
     async stop() {
       if (child.exitCode !== null) return;
-      child.kill('SIGTERM');
-      await Promise.race([new Promise((r) => child.once('exit', r)), sleep(6000)]);
+      const exited = new Promise((r) => child.once('exit', r));
+      if (IS_WIN) {
+        await fetch(`http://127.0.0.1:${info.port}/api/shutdown`, { method: 'POST', headers: { 'x-clawdling-token': token } }).catch(() => {});
+      } else child.kill('SIGTERM');
+      await Promise.race([exited, sleep(10000)]);
       if (child.exitCode === null) child.kill('SIGKILL');
     },
   };

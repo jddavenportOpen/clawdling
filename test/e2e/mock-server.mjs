@@ -533,7 +533,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const p = url.pathname;
     const m = req.method;
     if (p === '/api/health' && m === 'GET') {
-      send(res, 200, { ok: true, version: '1.0.0-mock', tmux: { ok: true, version: '3.6a' }, claude: { ok: true, version: '2.1.0 (mock)' }, home: '/Users/ada/clawdling' });
+      send(res, 200, { ok: true, version: '1.1.0-mock', backend: { kind: 'tmux', socket: 'clawdling', persistent: true, reason: 'tmux 3.6a is installed' }, tmux: { ok: true, version: '3.6a' }, claude: { ok: true, version: '2.1.0 (mock)' }, home: '/Users/ada/clawdling' });
       return;
     }
     if (!authed(req, null)) { send(res, 401, { error: 'unauthorized' }); return; }
