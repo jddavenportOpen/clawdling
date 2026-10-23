@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.1.0 (2026-10-23)
+
+Clawdling now works for a stranger on any OS: macOS, Linux and **native Windows** (no WSL), with
+or without tmux.
+
+- **tmux is optional.** Without tmux 3.2+ (always on Windows, and on a Mac without Homebrew),
+  sessions run in Clawdling's built-in terminal: a pseudo-terminal per session from node-pty (the
+  library VS Code's terminal uses; ConPTY on Windows) with a server-side screen model
+  (`@xterm/headless`). The cockpit, the phone app, Donna, hooks, snapshots for late viewers, and
+  the folder-trust and permission buttons work the same. The honest difference: these sessions
+  end when the cockpit stops; they come back as ended with a notice and resume where they left
+  off with one click (`claude --resume`). With tmux, nothing changes: sessions keep running.
+- **Backend choice:** tmux when tmux 3.2+ is installed (not on Windows), else the built-in
+  terminal, else `clawdling start` and `doctor` stop with the one-line fix for your OS.
+  `CLAWDLING_BACKEND=tmux|pty` overrides. The choice is in `/api/health`, `server.json`,
+  `sessions.json`, `clawdling start`'s banner and the cockpit's Settings.
+- **`clawdling doctor` per OS:** names the OS and how sessions will run, with exact fix commands
+  for brew, apt, dnf, pacman, zypper, apk and winget; tmux shown as optional; Git for Windows as
+  recommended; Claude Code's own installer per OS.
+- **Windows:** `claude` is found like `where` finds it (`claude.exe` before an npm `claude.cmd`);
+  an npm `.cmd` shim is bypassed for the program it wraps, so prompts with quotes, `%` or newlines
+  reach Claude intact; hooks use Claude Code's exec form (2.1.139+), so they run whether Claude
+  Code uses Git Bash or PowerShell; `clawdling` is on PATH inside sessions for Git Bash, PowerShell
+  and cmd; allow rules cover the PowerShell tool; `service install` adds a Startup-folder launcher
+  (no admin rights). iMessage stays macOS-only and the cockpit says so.
+- **`clawdling attach` without tmux:** a terminal client over the cockpit's own WebSocket
+  (Ctrl-] detaches). **`clawdling stop`** stops the cockpit cleanly on every OS.
+- **Fixes:** the CLI did nothing when run natively on Windows (its entry check compared a
+  `/C:/...` URL path); a folder-trust dialog drawn before tmux's control client attached was not
+  detected until the 20 s stall notice.
+- **Install and setup:** README and SETUP.md (the playbook Claude Code follows) now cover each OS,
+  install missing prerequisites only after you agree, and never set up WSL.
+- **CI:** GitHub Actions on Ubuntu, macOS and Windows, Node 20 and 22, with the unit and
+  integration suites under both backends, plus the Playwright cockpit suite.
+
 ## 1.0.0 (2026-10-22)
 
 First release of the rebuilt Clawdling: an org of Claude Code agents with a cockpit and a chief of
