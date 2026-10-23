@@ -6,6 +6,7 @@ import { after, before, test } from 'node:test';
 import { spawn } from 'node:child_process';
 import { BACKEND, CLI, cli, cliResult, killTmux, onlyPty, onlyTmux, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
 import { cliInvocation } from '../../server/hints.js';
+import { envGet } from '../../server/platform.js';
 
 let home;
 let socket;
@@ -19,7 +20,7 @@ before(async () => {
   const out = cli(['init', '--defaults'], { env, home });
   assert.match(out, /Created .*'s org at/);
   // "Next:" is spelled the way this computer runs this install (no bare `clawdling` off PATH).
-  assert.ok(out.includes(`\n  ${cliInvocation({ home, envPath: env.PATH || '' })} start --open\n`), out);
+  assert.ok(out.includes(`\n  ${cliInvocation({ home, envPath: envGet(env, 'PATH') || '' })} start --open\n`), out);
   srv = await startServerProc({ home, env });
 });
 
@@ -45,7 +46,7 @@ test('spawn / ls / send / end / resume by short id', async () => {
   const sid = m[1];
   const short = sid.slice(0, 8);
   // Hints are spelled the way THIS computer runs this install (no bare `clawdling` off PATH).
-  const me = cliInvocation({ home, envPath: env.PATH || '' });
+  const me = cliInvocation({ home, envPath: envGet(env, 'PATH') || '' });
   assert.ok(out.includes(`in a terminal: ${me} attach ${short}`), out);
   await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${sid}`)).body.status === 'ready', { label: 'ready' });
   const list = JSON.parse(cli(['ls', '--json'], { env, home }));
@@ -118,7 +119,7 @@ test('helpful error when the server is not running', () => {
     const r = cliResult(['spawn', 'work'], { env: { ...env, CLAWDLING_PORT: '9' }, home: other });
     assert.equal(r.code, 1);
     assert.match(r.stderr, /isn't running /);
-    assert.ok(r.stderr.includes(`Start it with: ${cliInvocation({ home: other, envPath: env.PATH || '' })} start`), r.stderr);
+    assert.ok(r.stderr.includes(`Start it with: ${cliInvocation({ home: other, envPath: envGet(env, 'PATH') || '' })} start`), r.stderr);
   } finally {
     rmrf(other);
   }

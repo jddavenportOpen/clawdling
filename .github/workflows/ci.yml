@@ -2,8 +2,8 @@ name: ci
 
 # Unit + integration suites on Linux, macOS and Windows, Node 20 and 22, under both session
 # backends: tmux (Linux, macOS) and the built-in terminal, node-pty (everywhere). Playwright e2e
-# of the cockpit against the mock server (desktop Chromium, phone Chromium and phone WebKit), and
-# against the real server with the fake claude on Linux (tmux and pty) and Windows (pty).
+# of the cockpit against the mock server (desktop and phone Chromium on Linux, phone WebKit on
+# macOS), and against the real server with the fake claude on Linux (tmux and pty) and Windows (pty).
 # No secrets, no model calls (a fake claude).
 
 on:
@@ -74,17 +74,50 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Chromium and WebKit
-        run: npx playwright install --with-deps chromium webkit
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
 
+      # WebKit's Linux system packages are a slow apt download; the phone checks in WebKit run on
+      # macOS instead (job e2e-webkit).
       - name: Playwright
         run: npm run e2e
+        env:
+          CLAWDLING_E2E_WEBKIT: '0'
 
       - name: Keep the traces of failed tests
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-results
+          path: test/e2e/test-results
+          retention-days: 7
+
+  e2e-webkit:
+    name: e2e · phone checks in WebKit (Safari's engine, macOS)
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install WebKit
+        run: npx playwright install webkit
+
+      - name: Playwright (phone-webkit)
+        run: npx playwright test -c test/e2e/playwright.config.js --project=phone-webkit
+
+      - name: Keep the traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-webkit
           path: test/e2e/test-results
           retention-days: 7
 

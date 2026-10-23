@@ -60,7 +60,8 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
       try { execFileSync('pkill', ['-KILL', '-f', `tmux -L ${socket} `], { stdio: 'ignore' }); } catch { /* nothing left */ }
     }
     try { fs.rmSync(path.join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, socket), { force: true }); } catch { /* not there */ }
-    fs.rmSync(home, { recursive: true, force: true });
+    // Windows: a session process that is still exiting can hold its folder for a moment (EBUSY).
+    try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch (e) { console.warn(`could not remove ${home}: ${e.message}`); }
   };
   if (!info) {
     proc.kill('SIGKILL');
@@ -74,6 +75,15 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
     home,
     socket,
     close: async () => {
+      // A clean stop first (`clawdling stop`): it ends pty sessions and their processes, which a
+      // signal cannot do on Windows (there it is TerminateProcess, and children are orphaned).
+      if (proc.exitCode === null) {
+        await fetch(`http://127.0.0.1:${info.port}/api/shutdown`, { method: 'POST', headers: { 'x-clawdling-token': token } }).catch(() => {});
+        await new Promise((r) => {
+          const t = setTimeout(r, 8000);
+          proc.once('exit', () => { clearTimeout(t); r(); });
+        });
+      }
       if (proc.exitCode === null) {
         proc.kill('SIGTERM');
         await new Promise((r) => {

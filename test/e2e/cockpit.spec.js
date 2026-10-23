@@ -415,7 +415,7 @@ test.describe('startup dialogs', () => {
     await expect(banner).toBeVisible();
     // It names the folder and says what "No, exit" does (P0-4).
     const cwd = (await sessionBySid(sid)).cwd;
-    await expect(banner.getByTestId('pane-dialog-text')).toHaveText(`Claude Code asks whether you trust ${cwd.replace(/^\/(Users|home)\/[^/]+/, '~')}. "No, exit" ends this session.`);
+    await expect(banner.getByTestId('pane-dialog-text')).toHaveText(`Claude Code asks whether you trust ${cwd.replace(/^\/(Users|home)\/[^/]+/, '~').replace(/^[A-Za-z]:\\Users\\[^\\]+/, '~')}. "No, exit" ends this session.`);
     // Buttons follow the server's choices in screen order (2.1.283 lists "No, exit" first).
     await expect(banner.locator('button')).toHaveText(['No, exit', 'Yes, trust it']);
     await expect(banner.getByTestId('dialog-yes')).toHaveText('Yes, trust it');
