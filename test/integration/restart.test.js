@@ -91,7 +91,7 @@ test('pty: stopping the server ends its sessions honestly; they come back ended 
   const a = await start();
   const keep = (await request(a, 'POST', '/api/sessions', { agent: 'work', title: 'Survivor' })).body;
   await waitFor(async () => (await status(a, keep.sid)).status === 'ready', { label: 'ready' });
-  assert.match(keep.attach_cmd, /attach [0-9a-f]{8}$/, 'attach goes through the CLI, not tmux');
+  assert.match(keep.attach_cmd, /attach [0-9a-f]{8}( --home .+)?$/, 'attach goes through the CLI, not tmux');
   const v = await openViewer(a, keep.sid);
   v.send({ t: 'in', data: 'before the stop\r' });
   await v.waitOutput(/assistant: before the stop/);
