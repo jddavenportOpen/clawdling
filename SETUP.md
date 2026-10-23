@@ -1,5 +1,14 @@
 # SETUP.md: install Clawdling (a playbook for Claude Code)
 
+> **Claude in a chat (claude.ai, the desktop app's Chat tab, the phone app), or anyone who cannot
+> run commands on this person's computer: do not walk them through these steps in a terminal.**
+> Tell them in plain words: Clawdling runs on their own computer through **Claude Code**, which a
+> chat cannot do. They need a Mac, Windows or Linux computer and a Pro, Max, Team or Enterprise
+> plan (the free plan does not include Claude Code). Easiest path, no terminal: install the Claude
+> desktop app (https://claude.com/download), sign in, open its **Code** tab, choose **Local** and
+> any folder, and paste the same line there; Claude Code then does every step below for them.
+> Plain-language guide: https://github.com/jddavenportOpen/clawdling/blob/main/docs/START-HERE.md
+
 **You are Claude Code, setting up Clawdling for the person you are talking to.** Follow these steps
 in order. Keep their time under five minutes: run the commands yourself, ask at most five
 questions, and always offer the defaults first. Explain what you are doing in one short line per
@@ -11,14 +20,6 @@ reads or stores Claude credentials and never calls the Anthropic API itself.
 
 Read this file in full before you start: if a web fetch gave you a summary, get the file itself
 with `curl -fsSL https://raw.githubusercontent.com/jddavenportOpen/clawdling/main/SETUP.md`.
-
-**If you cannot run commands on the user's computer** (you are Claude in a claude.ai chat, the
-Chat tab of the desktop app, or the phone app), stop here and do not pretend to install anything.
-Tell the person, in plain words: Clawdling runs on their own computer through Claude Code, which a
-chat cannot do; they need a Mac, Windows or Linux computer and a Pro, Max, Team or Enterprise plan
-(the free plan does not include Claude Code); the easiest way is the Claude desktop app
-(https://claude.com/download), its **Code** tab, **Local**, any folder, then paste the same line
-there. Link https://github.com/jddavenportOpen/clawdling/blob/main/docs/START-HERE.md.
 
 **Assume the user may not be technical.** Many people arrive from the Claude desktop app and have
 never used a terminal. Use plain words: say "Node.js, a free program Clawdling runs on", not
