@@ -3,6 +3,7 @@
 // Every Clawdling session is started with `--settings <hooks-settings.json>`. That file registers
 // bin/clawdling-hook.js for five lifecycle events; the hook script POSTs them to /api/hooks.
 // Status is driven by these events, never by scraping the screen.
+import { portablePath } from './platform.js';
 import { deriveTitle } from './titles.js';
 import { isUuid, nowIso, oneLine, shq } from './util.js';
 
@@ -21,13 +22,27 @@ export const CLI_ALLOW = [
   'Bash(clawdling doctor)',
 ];
 
-/** The generated --settings file: our hooks plus the clawdling allow-list. */
-export function buildHooksSettings({ nodePath, hookScript }) {
+/** On Windows an agent's shell may be PowerShell (no Git for Windows): same rules for that tool. */
+export function cliAllow(platform = process.platform) {
+  if (platform !== 'win32') return [...CLI_ALLOW];
+  return [...CLI_ALLOW, ...CLI_ALLOW.map((r) => r.replace(/^Bash\(/, 'PowerShell('))];
+}
+
+/**
+ * The generated --settings file: our hooks plus the clawdling allow-list.
+ * macOS / Linux: shell form, every path single-quoted for `sh -c`.
+ * Windows: exec form (`command` + `args`, Claude Code 2.1.139+), so no shell parses the paths,
+ * whether Claude Code runs hooks in Git Bash or in PowerShell; paths use forward slashes.
+ */
+export function buildHooksSettings({ nodePath, hookScript, platform = process.platform }) {
   const hooks = {};
   for (const ev of HOOK_EVENTS) {
-    hooks[ev] = [{ hooks: [{ type: 'command', command: `${shq(nodePath)} ${shq(hookScript)} ${ev}`, timeout: 5 }] }];
+    const hook = platform === 'win32'
+      ? { type: 'command', command: portablePath(nodePath, 'win32'), args: [portablePath(hookScript, 'win32'), ev], timeout: 5 }
+      : { type: 'command', command: `${shq(nodePath)} ${shq(hookScript)} ${ev}`, timeout: 5 };
+    hooks[ev] = [{ hooks: [hook] }];
   }
-  return { hooks, permissions: { allow: [...CLI_ALLOW] } };
+  return { hooks, permissions: { allow: cliAllow(platform) } };
 }
 
 export const STATUSES = ['starting', 'working', 'ready', 'needs_you', 'ended'];

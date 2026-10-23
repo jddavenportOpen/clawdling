@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cliAllow } from './hooks.js';
 import { PKG_ROOT, runtimePaths } from './paths.js';
 import {
   HttpError,
@@ -79,6 +80,15 @@ export function renderTemplate(src, vars) {
 }
 
 const today = (d = new Date()) => d.toISOString().slice(0, 10);
+
+/** The org's .claude/settings.json; on Windows the allow-list also covers the PowerShell tool. */
+export function orgSettings(platform = process.platform) {
+  const text = readTemplate('org/claude/settings.json');
+  if (platform !== 'win32') return text;
+  const json = JSON.parse(text);
+  json.permissions.allow = cliAllow('win32');
+  return JSON.stringify(json, null, 2) + '\n';
+}
 
 function writeIfMissing(file, content) {
   if (fs.existsSync(file)) return false;
@@ -236,7 +246,7 @@ export function initOrg({ home, answers, force = false, now = new Date() }) {
   backupThenWrite(paths.orgClaudeMd, renderTemplate(readTemplate('org/CLAUDE.md'), orgVars), backupDir, home);
   if (!exists || answers?.about || force) backupThenWrite(paths.meMd, renderTemplate(readTemplate('org/me.md'), orgVars), backupDir, home);
   writeIfMissing(path.join(home, '.gitignore'), readTemplate('org/gitignore'));
-  backupThenWrite(path.join(home, '.claude', 'settings.json'), readTemplate('org/claude/settings.json'), backupDir, home);
+  backupThenWrite(path.join(home, '.claude', 'settings.json'), orgSettings(), backupDir, home);
   installSkills(home, backupDir, home);
 
   const donna = {
