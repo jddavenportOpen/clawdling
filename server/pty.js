@@ -345,13 +345,13 @@ export class PtyBackend {
    * @param {{pty: object, Terminal: Function, SerializeAddon: Function, version?: string,
    *   platform?: string, logger?: object, attachPrefix?: string}} opts
    */
-  constructor({ pty, Terminal, SerializeAddon, version = null, platform = process.platform, logger = null, attachPrefix = 'clawdling', scrollback = 5000, killGroup = signalGroup }) {
+  constructor({ pty, Terminal, SerializeAddon, version = null, platform = process.platform, logger = null, attachPrefix = 'clawdling', attachSuffix = '', scrollback = 5000, killGroup = signalGroup }) {
     this.kind = 'pty';
     this.persistent = false; // sessions end when the Clawdling server stops
     this.launcher = false; // sessions are spawned directly: no shell ever parses an argument
     this.bin = null;
     this.socket = null;
-    Object.assign(this, { pty, Terminal, SerializeAddon, ptyVersion: version, platform, logger, attachPrefix, scrollback, killGroup });
+    Object.assign(this, { pty, Terminal, SerializeAddon, ptyVersion: version, platform, logger, attachPrefix, attachSuffix, scrollback, killGroup });
     this.sessions = new Map();
   }
 
@@ -362,7 +362,7 @@ export class PtyBackend {
   }
 
   attachCommand(rec) {
-    return `${this.attachPrefix} attach ${rec.sid.slice(0, 8)}`;
+    return `${this.attachPrefix} attach ${rec.sid.slice(0, 8)}${this.attachSuffix}`;
   }
 
   describe() {

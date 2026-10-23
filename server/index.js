@@ -133,13 +133,16 @@ function makeLogger({ quiet = false, file } = {}) {
   };
 }
 
-/** How a person runs this install's CLI from their own terminal (for `clawdling attach` hints). */
+/**
+ * How a person runs this install's CLI from their own terminal, for the `clawdling attach` hint:
+ * {cli, homeFlag} ("clawdling" when it is on PATH, else node and the script's path).
+ */
 export function cliInvocation({ home, env = process.env }) {
   const q = (p) => (/[\s"'$&|;<>()]/.test(p) ? `"${p}"` : p);
   const onPath = which('clawdling', env.PATH || '');
-  let cli = onPath ? 'clawdling' : `node ${q(path.join(PKG_ROOT, 'bin', 'clawdling.js'))}`;
-  if (path.resolve(home) !== resolveHome(undefined, {})) cli += ` --home ${q(home)}`;
-  return cli;
+  const cli = onPath ? 'clawdling' : `node ${q(path.join(PKG_ROOT, 'bin', 'clawdling.js'))}`;
+  const homeFlag = path.resolve(home) !== resolveHome(undefined, {}) ? ` --home ${q(home)}` : '';
+  return { cli, homeFlag };
 }
 
 /** The `clawdling` command inside sessions: a POSIX sh shim, plus .cmd and .ps1 ones on Windows. */
@@ -341,7 +344,8 @@ export async function startServer(opts = {}) {
   async function initServer() {
     const cEnv = childEnv(env);
     // tmux when it is installed (sessions survive restarts), else a pty per session (server/backend.js).
-    const backend = await createBackend({ env, childEnv: cEnv, paths, socket, logger, attachPrefix: cliInvocation({ home, env: cEnv }) });
+    const { cli, homeFlag } = cliInvocation({ home, env: cEnv });
+    const backend = await createBackend({ env, childEnv: cEnv, paths, socket, logger, attachPrefix: cli, attachSuffix: homeFlag });
 
     // The --settings file every session gets: our hooks + the clawdling allow-list.
     const hookScript = path.join(PKG_ROOT, 'bin', 'clawdling-hook.js');

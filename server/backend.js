@@ -94,7 +94,7 @@ export function selectBackend({ env = process.env, childEnv = env, platform = pr
 }
 
 /** The backend instance the server uses. Throws (code ENOBACKEND) with the fix when there is none. */
-export async function createBackend({ env, childEnv, paths, socket, logger, attachPrefix, platform = process.platform }) {
+export async function createBackend({ env, childEnv, paths, socket, logger, attachPrefix, attachSuffix, platform = process.platform }) {
   const choice = selectBackend({ env, childEnv, platform });
   if (choice.error) {
     const e = new Error(`${choice.error}. Fix: ${choice.fix}`);
@@ -105,7 +105,7 @@ export async function createBackend({ env, childEnv, paths, socket, logger, atta
   if (choice.kind === 'tmux') {
     backend = new Tmux({ bin: env.CLAWDLING_TMUX_BIN || 'tmux', socket, conf: paths.tmuxConf, env: childEnv });
   } else {
-    const r = createPtyBackend({ logger, attachPrefix, platform });
+    const r = createPtyBackend({ logger, attachPrefix, attachSuffix, platform });
     if (r.error) {
       const e = new Error(`node-pty did not load (${r.error}). Fix: ${choice.fixes.pty}`);
       e.code = 'ENOBACKEND';
