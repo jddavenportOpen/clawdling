@@ -31,8 +31,8 @@ function runHook(event, payload, env) {
   });
 }
 
-test('generated settings register all five hooks with safely quoted paths (macOS / Linux shell form)', () => {
-  const s = buildHooksSettings({ nodePath: "/opt/my node/bin/node", hookScript: "/Users/o'brien/app/bin/clawdling-hook.js", platform: 'linux' });
+test('generated settings register every hook with safely quoted paths (macOS / Linux shell form)', () => {
+  const s = buildHooksSettings({ nodePath: "/opt/my node/bin/node", hookScript: "/Users/o'brien/app/bin/clawdling-hook.js", platform: 'linux', stopFailure: true });
   assert.deepEqual(Object.keys(s.hooks), HOOK_EVENTS);
   for (const ev of HOOK_EVENTS) {
     const h = s.hooks[ev][0].hooks[0];

@@ -293,6 +293,14 @@ async function interactive() {
       await runHook('Stop', { stop_hook_active: false, last_assistant_message: `permission answered (${answer}), done` });
       return;
     }
+    // "fail: <error>" ends the turn the way an API error does in Claude Code 2.1.229+: StopFailure, no Stop.
+    const failed = /^fail: (\w+)/.exec(text);
+    if (failed) {
+      const message = failed[1] === 'authentication_failed' ? 'Not logged in · Please run /login' : `API Error: ${failed[1]}`;
+      process.stdout.write(`  ⎿  ${message}\n> `);
+      await runHook('StopFailure', { error: failed[1], ...(failed[1] === 'rate_limit' ? { error_details: "You've hit your limit · resets 3pm" } : {}), last_assistant_message: message });
+      return;
+    }
     process.stdout.write(`assistant: ${text}\n> `);
     transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'thinking', thinking: 'hidden' }, { type: 'text', text: `assistant: ${text}` }] });
     await runHook('Stop', { stop_hook_active: false, last_assistant_message: text });

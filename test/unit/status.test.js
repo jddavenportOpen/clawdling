@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applyHookEvent } from '../../server/hooks.js';
+import { HOOK_EVENTS, LOGIN_NOTICE, applyHookEvent, buildHooksSettings, stopFailureNotice, supportsStopFailure } from '../../server/hooks.js';
 
 const rec = (over = {}) => ({ sid: '11111111-1111-4111-8111-111111111111', status: 'starting', title: null, pending_prompt: false, prompted: false, notification: null, waiting_on: null, ...over });
 const SID2 = '22222222-2222-4222-8222-222222222222';
@@ -200,4 +200,51 @@ test('signing in from the pane clears the login wait once Claude Code starts', (
   applyHookEvent(r, 'SessionStart', { source: 'startup' });
   assert.equal(r.status, 'ready');
   assert.equal(r.waiting_on, null);
+});
+
+test('a turn that ends on an API error (StopFailure) says why instead of Working forever (D11)', () => {
+  // Not signed in: the payload real Claude Code 2.1.283 sends (captured 2026-10-23).
+  const a = rec({ status: 'working' });
+  applyHookEvent(a, 'StopFailure', { hook_event_name: 'StopFailure', error: 'authentication_failed', last_assistant_message: 'Not logged in · Please run /login' });
+  assert.equal(a.status, 'needs_you');
+  assert.equal(a.waiting_on, 'login');
+  assert.equal(a.notification, LOGIN_NOTICE);
+  assert.equal(a.last_message, 'Not logged in · Please run /login');
+  // A minute later Claude Code's idle notice must not replace the reason.
+  applyHookEvent(a, 'Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' });
+  assert.equal(a.waiting_on, 'login');
+  assert.equal(a.notification, LOGIN_NOTICE);
+  // Signed in from inside the session (/login): your turn again.
+  applyHookEvent(a, 'Notification', { notification_type: 'auth_success', message: 'Login successful' });
+  assert.equal(a.status, 'ready');
+  assert.equal(a.waiting_on, null);
+
+  // A usage limit: what failed, the details, and that sending again retries.
+  const r = rec({ status: 'working' });
+  applyHookEvent(r, 'StopFailure', { error: 'rate_limit', error_details: "You've hit your limit · resets 3pm" });
+  assert.equal(r.status, 'needs_you');
+  assert.equal(r.waiting_on, 'error');
+  assert.equal(r.notification, "Claude Code stopped: your Claude plan hit a usage or rate limit: You've hit your limit · resets 3pm. Send your message again to retry.");
+  applyHookEvent(r, 'UserPromptSubmit', { prompt: 'try again' });
+  assert.equal(r.status, 'working');
+  assert.equal(r.notification, null);
+  // An error Clawdling has no words for still says what it was.
+  assert.equal(stopFailureNotice('something_new'), 'Claude Code stopped: the turn failed (something_new). Send your message again to retry.');
+});
+
+test('an idle notice never replaces an open question (its buttons stay)', () => {
+  const r = rec({ status: 'needs_you', waiting_on: 'permission_prompt', notification: 'Claude needs your permission to use Bash' });
+  assert.equal(applyHookEvent(r, 'Notification', { notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }).statusChanged, false);
+  assert.equal(r.waiting_on, 'permission_prompt');
+  assert.equal(r.notification, 'Claude needs your permission to use Bash');
+});
+
+test('StopFailure is registered only for a Claude Code that has it (2.1.229+)', () => {
+  assert.ok(HOOK_EVENTS.includes('StopFailure'), 'the server accepts it');
+  for (const v of ['2.1.229 (Claude Code)', '2.1.283 (Claude Code)', '2.2.0', '3.0.1 (Claude Code)']) assert.equal(supportsStopFailure(v), true, v);
+  for (const v of ['2.1.228 (Claude Code)', '2.0.999', '1.9.0', '', null, 'claude: command not found']) assert.equal(supportsStopFailure(v), false, String(v));
+  const args = { nodePath: '/usr/bin/node', hookScript: '/app/bin/clawdling-hook.js', platform: 'linux' };
+  assert.deepEqual(Object.keys(buildHooksSettings(args).hooks), ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd']);
+  const withIt = buildHooksSettings({ ...args, stopFailure: true }).hooks;
+  assert.ok(withIt.StopFailure[0].hooks[0].command.endsWith(" 'StopFailure'") || withIt.StopFailure[0].hooks[0].command.endsWith(' StopFailure'), withIt.StopFailure[0].hooks[0].command);
 });

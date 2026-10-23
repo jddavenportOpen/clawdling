@@ -8,7 +8,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HOOK_EVENTS, applyHookEvent, isLive } from './hooks.js';
+import { HOOK_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { prependPath } from './platform.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
@@ -55,7 +55,7 @@ export function trustNotice(folder) {
 }
 export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
-export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer (or not set up yet). Open a terminal, run claude, finish its setup and sign-in, then end this session and start it again.';
+export { LOGIN_NOTICE };
 export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
 export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
 // What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
