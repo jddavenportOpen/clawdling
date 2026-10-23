@@ -944,6 +944,9 @@ export class SessionManager {
     if (e && !isValidEffort(e)) throw badRequest('effort must be low, medium, high, xhigh or max');
     if (rec.status !== 'ready') throw conflict('wait for your turn: model and effort change between turns');
     await this.end(sid);
+    // resume() re-attaches to a session that still exists, so wait until the old claude is gone.
+    for (let i = 0; i < 50 && (await this.backend.hasSession(rec.tmux_name)); i++) await sleep(100);
+    if (await this.backend.hasSession(rec.tmux_name)) throw new HttpError(500, 'the session did not stop; try again');
     if (m) rec.model = m;
     if (e) rec.effort = e;
     this.events.record({ type: 'settings', sid, agent: rec.agent, ...(m ? { model: m } : {}), ...(e ? { effort: e } : {}) });
