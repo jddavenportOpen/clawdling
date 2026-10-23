@@ -42,8 +42,9 @@ Usage:
                                             systemd, Windows Startup folder)
 
 Global: --home PATH (or CLAWDLING_HOME). Session ids can be shortened to their first 8 characters.
-Sessions run in tmux when tmux 3.2+ is installed (they survive cockpit restarts), else in a
-built-in terminal (node-pty; they end with the cockpit and resume). CLAWDLING_BACKEND=tmux|pty.
+Sessions run in tmux when tmux 3.2+ is installed (macOS, Linux; they survive cockpit restarts),
+else in a built-in terminal (node-pty; they end with the cockpit and resume). CLAWDLING_BACKEND
+picks one (tmux or pty).
 `;
 
 // ------------------------------------------------------------------------------------- args
