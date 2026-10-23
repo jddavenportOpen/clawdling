@@ -164,6 +164,12 @@ test.describe('agent page', () => {
     await expect(page.locator('.page-layer')).toHaveCount(0);
     await expect(focusedPane(page)).toHaveAttribute('data-pane', ended);
   });
+
+  test('says what the agent may do without asking: "Ask before editing files" unless set otherwise (1.1.1)', async ({ page }) => {
+    await reset('empty');
+    await login(page, '#/agent/home');
+    await expect(page.getByTestId('agent-permissions')).toHaveText('Permissions: Ask before editing files');
+  });
 });
 
 test.describe('new agent wizard', () => {

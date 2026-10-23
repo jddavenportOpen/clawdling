@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 // The real server's own words, so the suite asserts what real users see.
-import { IMPORTS_NOTICE, LOGIN_NOTICE, trustNotice } from '../../server/sessions.js';
+import { IMPORTS_NOTICE, LOGIN_NOTICE, SIGNED_IN_NOTICE, trustNotice } from '../../server/sessions.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -292,7 +292,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   const st = {
     org: null, agents: [], sessions: new Map(), terms: new Map(), requests: [],
     channels: { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } },
-    pairing: null, health: baseHealth(), trustSim: false, trusted: [], fail: {}, transcripts: new Map(), accounts: [],
+    pairing: null, health: baseHealth(), trustSim: false, trusted: [], orgTrusted: true, fail: {}, transcripts: new Map(), accounts: [],
   };
   const sse = new Set();
   const timers = new Set();
@@ -317,6 +317,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.health = baseHealth();
     st.trustSim = !!fx.trustSim;
     st.trusted = [];
+    // Like core's trust.json: a brand-new org has not trusted its folder; a used one has.
+    st.orgTrusted = !(name === 'empty' || name === 'fresh');
     st.fail = {};
     st.transcripts = new Map();
     st.accounts = [];
@@ -347,7 +349,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   const claudeMd = (a) => a._claude || defaultClaudeMd(a, st.org.owner);
   const nowMd = (a) => (a._now != null ? a._now : defaultNow(a));
 
-  const orgView = () => ({ org: st.org, agents: st.agents.map(agentWithStats), channels: channelStatus() });
+  const orgView = () => ({ org: st.org, agents: st.agents.map(agentWithStats), channels: channelStatus(), org_trusted: st.orgTrusted });
   const publishOrg = (reason, id) => broadcast('org', { reason, id, ...orgView() });
 
   function broadcast(type, data) {
@@ -409,6 +411,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   // Hook events drive status exactly like the real server's status machine.
   function applyHook(s, event, payload = {}) {
     if (event === 'SessionStart') {
+      // Started in the org folder itself: Claude Code trusts it now (core's markOrgTrusted).
+      if (s.cwd === HOME && !st.orgTrusted) { st.orgTrusted = true; publishOrg('org_trusted'); }
       if (payload.source === 'compact') return;
       const term = st.terms.get(s.sid);
       setStatus(s, term && term.pendingPrompt ? 'starting' : 'ready');
@@ -426,6 +430,18 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     }
     if (event === 'Notification') {
       const kind = payload.notification_type || 'notification';
+      // Signed in from inside a session (/login): that session goes on, and every other session of
+      // the same login stuck on "not signed in" can be started again (like core's signedIn()).
+      if (kind === 'auth_success') {
+        if (s.status === 'needs_you' && s.waiting_on === 'login') setStatus(s, 'ready');
+        for (const o of st.sessions.values()) {
+          if (o === s || (o.account || null) !== (s.account || null) || o.status !== 'needs_you' || o.waiting_on !== 'login') continue;
+          o.signed_in = true;
+          o.notification = SIGNED_IN_NOTICE;
+          broadcast('session', o);
+        }
+        return;
+      }
       setStatus(s, 'needs_you', { notification: payload.message || 'Claude needs your attention', waiting_on: kind,
         choices: kind === 'permission_prompt' ? (payload.choices || permissionChoices()) : null });
       return;
@@ -716,11 +732,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     mm = p.match(/^\/api\/accounts\/([^/]+)\/signin$/);
     if (mm && m === 'POST') {
       const id = decodeURIComponent(mm[1]);
-      if (!st.accounts.includes(id)) { send(res, 404, { error: `no account called "${id}"` }); return; }
-      send(res, 201, createSession({ agent: 'scratch', title: `Sign in: ${id}`, account: id, purpose: 'signin' }));
+      if (id !== 'default' && !st.accounts.includes(id)) { send(res, 404, { error: `no account called "${id}"` }); return; }
+      send(res, 201, createSession({ agent: 'scratch', title: id === 'default' ? 'Sign in' : `Sign in: ${id}`, account: id === 'default' ? null : id, purpose: 'signin' }));
       return;
     }
-    mm = p.match(/^\/api\/sessions\/([^/]+)(\/resume|\/send|\/answer)?$/);
+    mm = p.match(/^\/api\/sessions\/([^/]+)(\/resume|\/send|\/answer|\/restart)?$/);
     if (mm) {
       const s = st.sessions.get(decodeURIComponent(mm[1]));
       if (!s) { send(res, 404, { error: 'no such session' }); return; }
@@ -747,6 +763,18 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
           for (const ws of term.viewers) if (ws.readyState === 1) ws.send(JSON.stringify({ t: 'snapshot', data: term.buf.replace(/\r\n/g, '\n') }));
           later(400, () => { if (s.status === 'starting') applyHook(s, 'SessionStart', { source: 'resume' }); });
         }
+        send(res, 200, s);
+        return;
+      }
+      if (mm[2] === '/restart' && m === 'POST') {
+        if (!(s.status === 'needs_you' && (s.waiting_on === 'login' || s.waiting_on === 'startup'))) {
+          send(res, 409, { error: 'only a session waiting for a sign-in (or stuck starting) can be started again' });
+          return;
+        }
+        s.signed_in = false;
+        setStatus(s, 'starting');
+        out(s, `\r\n${DIM}── started again ──${RESET}\r\n${DIM}›${RESET} `);
+        later(400, () => { if (s.status === 'starting') applyHook(s, 'SessionStart', { source: 'startup' }); });
         send(res, 200, s);
         return;
       }

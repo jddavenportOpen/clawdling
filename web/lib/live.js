@@ -21,6 +21,7 @@ function indexAgents(agents) {
 function applyOrg(r) {
   const agents = Array.isArray(r && r.agents) ? r.agents : [];
   const patch = { org: (r && r.org) || {}, agents, agentsById: indexAgents(agents), orgError: '' };
+  if (r && typeof r.org_trusted === 'boolean') patch.orgTrusted = r.org_trusted;
   if (r && r.channels) {
     patch.channels = r.channels;
     if (Array.isArray(r.channels.recent) && !getState().channelLog.length) patch.channelLog = r.channels.recent.slice(-50);

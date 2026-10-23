@@ -35,6 +35,13 @@ if (argv[0] === '--version' || argv[0] === '-v') {
   process.exit(0);
 }
 if (argv[0] === 'auth') process.exit(0);
+// The --permission-mode line of `claude --help`, as 2.1.283 prints it. FAKE_CLAUDE_MODES picks
+// the choices (comma-separated), to test a Claude Code that names them differently.
+if (argv[0] === '--help' || argv[0] === '-h') {
+  const modes = (process.env.FAKE_CLAUDE_MODES || 'acceptEdits,auto,bypassPermissions,manual,dontAsk,plan').split(',');
+  console.log(`Usage: claude [options] [command] [prompt]\n\nOptions:\n  --permission-mode <mode>              Permission mode to use for the session\n                                        (choices: ${modes.map((m) => `"${m}"`).join(', ')})\n  -h, --help                            Display help for command`);
+  process.exit(0);
+}
 
 // ------------------------------------------------------------------ parse argv like the real CLI
 const opts = { addDir: [], allowedTools: [] };

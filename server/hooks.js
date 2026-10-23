@@ -22,7 +22,8 @@ export function supportsStopFailure(version) {
   return true;
 }
 
-export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer (or not set up yet). Open a terminal, run claude, finish its setup and sign-in, then end this session and start it again.';
+// Read where a desktop-app user has no terminal in mind: the cockpit's own Sign in comes first.
+export const LOGIN_NOTICE = "Claude Code isn't signed in yet. Click Sign in on this session in the cockpit, then follow the browser steps, then Start again. (In a terminal, claude auth login does the same.)";
 const AUTH_ERRORS = new Set(['authentication_failed', 'oauth_org_not_allowed', 'cloud_credential_error']);
 const FAILURE_TEXT = {
   rate_limit: 'your Claude plan hit a usage or rate limit',
@@ -109,6 +110,10 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
   }
   if (typeof payload.transcript_path === 'string' && payload.transcript_path.length < 4096) {
     rec.transcript_path = payload.transcript_path;
+  }
+  // The mode Claude Code reports it is in (it can change with Shift+Tab inside the session).
+  if (typeof payload.permission_mode === 'string' && /^[A-Za-z]{1,40}$/.test(payload.permission_mode)) {
+    rec.live_mode = payload.permission_mode;
   }
   rec.last_activity_at = now;
 

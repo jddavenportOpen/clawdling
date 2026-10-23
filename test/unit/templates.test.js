@@ -125,7 +125,7 @@ test('answers validation', () => {
   assert.equal(n.owner, 'Ada Lovelace');
   assert.equal(n.domains[0].name, 'Work');
   assert.match(n.domains[0].mission, /Ada Lovelace's work/);
-  assert.equal(n.permission_mode, 'default');
+  assert.equal(n.permission_mode, 'ask');
 });
 
 test('OrgStore: create agents, reject duplicates, reserved ids and bad repos; never escape the home', () => {

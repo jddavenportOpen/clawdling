@@ -24,6 +24,7 @@ export function initialState() {
     channelLog: [],
     health: null,
     orgError: '',
+    orgTrusted: null, // has Claude Code trusted the org folder? (server org view; null = not told)
     sessions: {},
     sessionsLoaded: false,
     open: Array.isArray(open) ? open.filter((x) => typeof x === 'string') : [],
@@ -310,6 +311,40 @@ export async function resumeSession(sid) {
 
 // Answer Claude Code's startup dialog in a session. `option` is the choice's place on screen (see
 // the session's `choices`; Claude Code decides the order). 409 = nothing to answer.
+// Not signed in: open a "Sign in" session for that session's login (the default one, or a second
+// account), a plain claude where the user follows Claude Code's own sign-in. Clawdling never sees it.
+export async function signInFor(s) {
+  const account = (s && s.account) || 'default';
+  try {
+    const signin = await api.signIn(account);
+    if (signin && signin.sid) {
+      mergeSession(signin);
+      focusSession(signin.sid);
+    }
+    toast('Follow the steps in the new session: Claude Code opens your browser to sign in.', { tone: 'ok', ms: 5200 });
+    return signin;
+  } catch (e) {
+    errorToast('Could not start the sign-in', e);
+    return null;
+  }
+}
+
+// After signing in: start a session that was stuck on "not signed in" again, on the same session.
+export async function restartSession(sid) {
+  try {
+    const v = terms.get(sid);
+    const size = v && v.term.cols > 0 ? { cols: v.term.cols, rows: v.term.rows } : undefined;
+    const s = await api.restart(sid, size);
+    mergeSession(s && s.sid ? s : { sid, status: 'starting', waiting_on: null });
+    focusSession((s && s.sid) || sid);
+    return s;
+  } catch (e) {
+    if (e && e.status === 409) toast('This session is no longer waiting for a sign-in.', { ms: 3600 });
+    else errorToast('Could not start the session again', e);
+    return null;
+  }
+}
+
 export async function answerDialog(sid, option, { focus = false } = {}) {
   try {
     const s = await api.answer(sid, option);

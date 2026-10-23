@@ -62,7 +62,7 @@ $CLAWDLING_HOME/                  (default ~/clawdling)
   "repo": null,            // project agents only: absolute path of the code repo (optional)
   "domain": null,          // project agents only: optional parent domain id (for the map)
   "model": null,           // optional default model alias for this agent's sessions (e.g. "sonnet")
-  "permission_mode": null, // optional: "default" | "acceptEdits" | "plan" (NEVER default to bypass)
+  "permission_mode": null, // null/"ask"/"default" = ask before edits (passed by name), "acceptEdits", "plan", "inherit" = no flag (NEVER bypass)
   "created_at":"ISO" }
 ```
 Agent ids: `^[a-z0-9][a-z0-9-]{0,39}$`. Reject anything else (path traversal guard). Names are free text.

@@ -12,7 +12,7 @@ import { gridShape } from '../lib/layout.js';
 import { sessionName, groupSessions, sortAgents, KIND_LABEL, agentStats, statusText, agentLabel, countNeedsYou } from '../lib/model.js';
 import { MOD, plural, paneKey } from '../lib/util.js';
 import { setState } from '../lib/store.js';
-import { FirstTrust, OrgError } from './first-run.js';
+import { FirstTrust, OrgError, useTrustStep } from './first-run.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const LAYOUT_OPTS = [
@@ -116,13 +116,13 @@ function EmptyState() {
   const waiting = [...g.needs, ...g.live];
   const first = list.length === 0;
   const mobile = useStore((s) => s.mobile);
-  const trustStep = first && !orgError;
+  const trustStep = useTrustStep().show; // until the org folder is trusted, not only before the first session
 
   return html`<div class="empty" data-testid="empty-state">
     <div class="empty-inner">
       <h2 class="empty-title">${first ? 'Start your first session' : 'Pick an agent to start a session'}</h2>
       <p class="empty-sub">${first
-        ? 'Every agent is the real claude CLI, opened in its own folder with its own CLAUDE.md and memory.'
+        ? 'Every agent is a real Claude Code session that already knows its job and remembers what it did.'
         : 'Open panes come back when you reload. Live sessions keep running even with no pane open.'}</p>
       ${trustStep && !mobile ? html`<div class="empty-block"><${FirstTrust} /></div>` : null}
       ${waiting.length ? html`<div class="empty-block">

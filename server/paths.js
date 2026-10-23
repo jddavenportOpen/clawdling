@@ -56,6 +56,7 @@ export function runtimePaths(home) {
     telegramState: path.join(rt, 'telegram.json'),
     imessageState: path.join(rt, 'imessage.json'),
     donnaChat: path.join(rt, 'donna-chat.jsonl'),
+    trust: path.join(rt, 'trust.json'),
   };
 }
 

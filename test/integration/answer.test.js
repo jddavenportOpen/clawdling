@@ -99,19 +99,48 @@ test('a Claude Code that is not signed in: "login" at once, a plain notice, and 
   fs.writeFileSync(marker, '');
   try {
     const started = Date.now();
-    const s = (await request(srv, 'POST', '/api/sessions', { agent: 'money' })).body;
+    const s = (await request(srv, 'POST', '/api/sessions', { agent: 'money', prompt: 'plan my budget' })).body;
     const q = await until(s.sid, (x) => x.status === 'needs_you' && x.waiting_on === 'login', 'login screen');
     assert.ok(Date.now() - started < 10000, 'seen long before the 20 s startup stall');
-    assert.match(q.notification, /not signed in on this computer/);
+    assert.match(q.notification, /isn't signed in yet\. Click Sign in/);
+    assert.doesNotMatch(q.notification, /Open a terminal/, 'no dead end for someone with no terminal (1.1.1)');
     assert.equal(q.choices, null, 'not answered with buttons');
+    assert.equal(q.signed_in, false);
     // Enter would pick a login method: typed text must never reach that screen.
     const refused = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' });
     assert.equal(refused.status, 409);
     // The refusal says what to do (sign in), not "answer it in the cockpit", which is impossible here.
-    assert.match(refused.body.error, /not signed in on this computer/);
+    assert.match(refused.body.error, /isn't signed in yet/);
     assert.doesNotMatch(refused.body.error, /answer it in the cockpit/);
     assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 })).status, 409);
+
+    // 1.1.1: "Sign in" for the DEFAULT login opens a plain claude in the org folder for /login.
+    const signin = await request(srv, 'POST', '/api/accounts/default/signin', {});
+    assert.equal(signin.status, 201, signin.text);
+    assert.equal(signin.body.purpose, 'signin');
+    assert.equal(signin.body.account, null, 'the default login: no CLAUDE_CONFIG_DIR');
+    assert.equal(signin.body.title, 'Sign in');
+    assert.equal(signin.body.agent, 'scratch');
+    await until(signin.body.sid, (x) => x.status === 'ready', 'the sign-in session is up');
+    // Signing in there (Claude Code's auth_success) tells the stuck session it can start again.
+    fs.rmSync(marker, { force: true });
+    const ok = await request(srv, 'POST', '/api/hooks', { event: 'Notification', sid: signin.body.sid, payload: { notification_type: 'auth_success', message: 'Login successful' } });
+    assert.equal(ok.status, 204);
+    const told = await until(s.sid, (x) => x.signed_in === true, 'signed in elsewhere');
+    assert.equal(told.waiting_on, 'login');
+    assert.match(told.notification, /signed in now\. Start this session again/);
+    // Start again: a new claude on the same session, which now gets past the sign-in.
+    const again = await request(srv, 'POST', `/api/sessions/${s.sid}/restart`, {});
+    assert.equal(again.status, 200, again.text);
+    // That claude never started, so it starts fresh, with the first message it never got.
+    const up = await until(s.sid, (x) => x.status === 'ready', 'ready after Start again');
+    assert.equal(up.signed_in, false);
+    assert.equal(up.sid, s.sid, 'the same session');
+    assert.equal(up.last_message, 'plan my budget');
+    // Only a session stuck on a sign-in (or a stalled start) can be started again.
+    assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/restart`, {})).status, 409);
     await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+    await request(srv, 'DELETE', `/api/sessions/${signin.body.sid}`);
   } finally {
     fs.rmSync(marker, { force: true });
   }
@@ -135,7 +164,7 @@ test('a turn that ends on an API error says why, and sending again retries (Stop
   await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'fail: authentication_failed' });
   const login = await until(s.sid, (x) => x.status === 'needs_you', 'not signed in');
   assert.equal(login.waiting_on, 'login');
-  assert.match(login.notification, /not signed in on this computer/);
+  assert.match(login.notification, /isn't signed in yet/);
   assert.equal(login.last_message, 'Not logged in · Please run /login');
 });
 

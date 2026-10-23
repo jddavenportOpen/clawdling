@@ -23,6 +23,7 @@ import { EventBus } from './events.js';
 import { BACKEND_LABEL, createBackend } from './backend.js';
 import { cliParts } from './hints.js';
 import { buildHooksSettings, supportsStopFailure } from './hooks.js';
+import { parseModeChoices } from './permissions.js';
 import { OrgStore } from './org.js';
 import {
   DEFAULT_HOST,
@@ -343,12 +344,17 @@ export async function startServer(opts = {}) {
     const cEnv = childEnv(env);
     /** `claude --version`'s first line, or null (not found, or it failed). */
     async function claudeVersionLine() {
+      const out = await claudeOutput(['--version']);
+      return out ? out.trim().split('\n')[0] || null : null;
+    }
+    /** stdout of `claude <args>`, or null (not found, or it failed). */
+    async function claudeOutput(args) {
       const bin = which(claudeBin, cEnv.PATH || '');
       if (!bin) return null;
       try {
-        const cmd = commandFor(bin, ['--version'], { env: cEnv });
+        const cmd = commandFor(bin, args, { env: cEnv });
         const { stdout } = await execFileP(cmd.file, cmd.args, { timeout: 8000, env: cEnv, spawn: spawnOptions(cmd) });
-        return stdout.trim().split('\n')[0] || null;
+        return stdout;
       } catch {
         return null;
       }
@@ -362,7 +368,10 @@ export async function startServer(opts = {}) {
     // The --settings file every session gets: our hooks + the clawdling allow-list.
     const hookScript = path.join(PKG_ROOT, 'bin', 'clawdling-hook.js');
     const nodePath = stableNodePath(env);
-    writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(await claudeVersionLine()) }), 0o600);
+    // The version decides which hooks to register; the help lists the --permission-mode names.
+    const [versionLine, helpText] = await Promise.all([claudeVersionLine(), claudeOutput(['--help'])]);
+    const modeChoices = parseModeChoices(helpText);
+    writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine) }), 0o600);
     // `clawdling` on PATH inside every session and Donna turn.
     for (const [name, text] of Object.entries(cliShims({ nodePath, cliPath: path.join(PKG_ROOT, 'bin', 'clawdling.js') }))) {
       writeFileAtomic(path.join(paths.bin, name), text, 0o700);
@@ -372,7 +381,7 @@ export async function startServer(opts = {}) {
     const org = new OrgStore(paths, { events });
     const accounts = new Accounts({ env });
     const sessions = new SessionManager({
-      paths, org, events, backend, claudeBin, socket, shimDir: paths.bin, env: cEnv, logger, getPort: () => port, accounts,
+      paths, org, events, backend, claudeBin, socket, shimDir: paths.bin, env: cEnv, logger, getPort: () => port, accounts, modeChoices,
     });
     await sessions.init();
 
@@ -426,7 +435,7 @@ export async function startServer(opts = {}) {
       const o = org.read();
       const stats = sessions.agentStats();
       const agents = org.agents().map((a) => ({ ...a, live: stats[a.id]?.live || 0, needs_you: stats[a.id]?.needs_you || 0, last_activity_at: stats[a.id]?.last_activity_at || null }));
-      return { org: o, agents, channels: channelsStatus() };
+      return { org: o, agents, channels: channelsStatus(), org_trusted: sessions.orgTrusted };
     }
 
     function publishOrg(reason, id) {
@@ -436,13 +445,15 @@ export async function startServer(opts = {}) {
         logger.warn(`org event failed: ${err.message}`);
       }
     }
+    // The first-run "Trust my org folder" card stays until this flips (sessions.markOrgTrusted).
+    sessions.onOrgTrust = () => publishOrg('org_trusted');
     telegram.onChange = () => events.publish('channel', { channel: 'telegram', ...channelsStatus() });
     imessage.onChange = () => events.publish('channel', { channel: 'imessage', ...channelsStatus() });
 
     const routes = [
       ['GET', /^\/api\/health$/, async () => {
         const v = await toolVersions();
-        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, home, cli, platform: process.platform }];
+        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, permission_modes: modeChoices, home, cli, platform: process.platform }];
       }, { public: true }],
       ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
       // `clawdling stop`: a clean stop on every OS (Windows has no SIGTERM for another process).
@@ -507,7 +518,14 @@ export async function startServer(opts = {}) {
         const id = decodeURIComponent(m[1]);
         const b = await jsonBody(req).catch(() => ({}));
         accounts.configDir(id);
-        return [201, await sessions.spawn({ agent: 'scratch', account: id, purpose: 'signin', title: `Sign in: ${id}`, cols: b.cols, rows: b.rows })];
+        const title = !id || id === 'default' ? 'Sign in' : `Sign in: ${id}`; // default = your own Claude login
+        return [201, await sessions.spawn({ agent: 'scratch', account: id, purpose: 'signin', title, cols: b.cols, rows: b.rows })];
+      }],
+      // "Start again" for a session stuck on "not signed in" (or a stalled start): a new claude.
+      ['POST', /^\/api\/sessions\/([^/]+)\/restart$/, async (req, m) => {
+        const sid = sidParam(m);
+        const b = await jsonBody(req).catch(() => ({}));
+        return [200, await sessions.restart(sid, { cols: b.cols, rows: b.rows })];
       }],
       ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, sessions.view(sessions.require(sidParam(m)))]],
       ['PATCH', /^\/api\/sessions\/([^/]+)$/, async (req, m) => {

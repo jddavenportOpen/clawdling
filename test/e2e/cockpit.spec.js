@@ -259,6 +259,28 @@ test.describe('rail and workspace', () => {
     expect(s.agent).toBe('health');
   });
 
+  test('an agent card start that lands behind New session still gets the keyboard after Escape', async ({ page }) => {
+    // Hold the card's spawn so it finishes while the New session dialog is open.
+    await page.route('**/api/sessions', async (route) => {
+      if (route.request().method() === 'POST') await new Promise((r) => setTimeout(r, 1200));
+      await route.continue();
+    });
+    await page.locator('[data-agent-card]').first().click();
+    await page.getByTestId('new-session').first().click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    await expect(panes(page)).toHaveCount(1, { timeout: 5_000 });
+    // The pane never pulls the keyboard out of the open dialog.
+    await expect(dialog.getByTestId('ns-filter')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    const sid = await focusedPane(page).getAttribute('data-pane');
+    await expect(pane(page, sid).locator('.xterm-helper-textarea')).toBeFocused();
+    await page.keyboard.type('first message');
+    await page.keyboard.press('Enter');
+    await expect(termText(page, sid)).toContainText(isMock() ? 'You said: first message' : 'first message', { timeout: 10_000 });
+  });
+
   test('live status changes reach the rail without a reload', async ({ page }) => {
     const sid = await spawn({ agent: 'money', title: 'Pay the water bill', status: 'working' });
     await expect(row(page, sid)).toHaveAttribute('data-section', 'live', { timeout: 12_000 });

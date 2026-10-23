@@ -13,7 +13,7 @@ import { ChatView, useTranscript } from './chat-view.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
-  closePane, setRenaming, answerDialog, toast, errorToast,
+  closePane, setRenaming, answerDialog, toast, errorToast, signInFor, restartSession,
 } from '../lib/actions.js';
 import { api } from '../lib/api.js';
 import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand } from '../lib/model.js';
@@ -26,6 +26,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const agentsById = useStore((st) => st.agentsById);
   const focused = useStore((st) => st.focused === sid);
   const focusTick = useStore((st) => st.focusTick);
+  const held = useStore((st) => !!(st.overlay || st.menu));
   const renaming = useStore((st) => st.renaming === sid);
   const mobile = useStore((st) => st.mobile);
   const now = useStore((st) => st.now);
@@ -34,6 +35,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const el = useRef(null);
   // A pane that mounts already focused (just opened, or restored on reload) takes the keyboard too.
   const lastTick = useRef(focused ? -1 : focusTick);
+  // A jump whose keyboard a dialog or menu held back (see below); paid once that closes.
+  const owed = useRef(false);
   // Chat | Raw, remembered per pane. Chat shows once the transcript has messages; until then the
   // raw terminal shows with a note. The terminal stays mounted under the chat either way.
   const [view, setViewState] = useState(() => (load(`view.${sid}`, 'chat') === 'raw' ? 'raw' : 'chat'));
@@ -51,26 +54,47 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
 
   // A rail click / palette jump / ⌘N targets this pane: reveal it, flash it,
   // and put the keyboard in its terminal. Nothing else in the workspace moves.
+  const takeKeyboard = () => {
+    const node = el.current;
+    const st = getState();
+    // On a phone, focusing the terminal raises the keyboard over it: typing goes through the composer.
+    if (!node || st.mobile || coarsePointer()) return;
+    const v = terms.get(sid);
+    const box = chatRef.current ? node.querySelector('.chat-view textarea') : null;
+    if (box) { if (!box.disabled) box.focus(); } else if (v) v.focus();
+  };
   useEffect(() => {
+    if (!focused) owed.current = false;
     if (!focused || focusTick === lastTick.current) { lastTick.current = focusTick; return; }
     lastTick.current = focusTick;
     const node = el.current;
     if (!node) return;
     requestAnimationFrame(() => {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
-      const v = terms.get(sid);
-      const box = chatRef.current ? node.querySelector('.chat-view textarea') : null;
       // Never pull the keyboard out of a dialog or menu opened since the jump.
       const st = getState();
       const busy = st.overlay || st.menu || st.renaming || (document.activeElement && document.activeElement.closest('.modal, .menu, .pane-title-input'));
-      // On a phone, focusing the terminal raises the keyboard over it: typing goes through the composer.
-      if (!busy && !st.mobile && !coarsePointer()) {
-        if (box) { if (!box.disabled) box.focus(); } else if (v) v.focus();
-      }
+      owed.current = !!(st.overlay || st.menu);
+      if (!busy) takeKeyboard();
       setFlash(true);
       setTimeout(() => setFlash(false), 650);
     });
   }, [focused, focusTick]);
+
+  // The jump landed while a dialog or menu was up (an agent card's start finishing behind New
+  // session). When that closes and the keyboard is left on nothing, this pane takes it: the
+  // dialog itself does not hand focus back once a jump has happened, so without this the first
+  // thing typed after Escape went nowhere.
+  useEffect(() => {
+    if (held || !owed.current) return undefined;
+    owed.current = false;
+    if (!focused) return undefined;
+    const id = requestAnimationFrame(() => {
+      const a = document.activeElement;
+      if (getState().focused === sid && (!a || a === document.body || a === document.documentElement)) takeKeyboard();
+    });
+    return () => cancelAnimationFrame(id);
+  }, [held]);
 
   if (!s) {
     return html`<section class=${`pane is-missing ${hidden ? 'is-hidden' : ''}`} data-pane=${sid} style=${{ order: String(order) }}>
@@ -124,7 +148,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
           : html`<button class="icon-btn icon-danger" onClick=${() => askEndSession(sid)} aria-label="End session" title="End session…" data-testid="pane-end"><${Icon} name="x" /></button>`}
       </div>
     </header>
-    ${s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
+    ${needsSignIn(s) ? html`<${LoginBanner} s=${s} accent=${focused || solo} />`
+      : s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => {
         const focusTerm = () => { const v = terms.get(sid); if (v) v.focus(); };
@@ -204,17 +229,46 @@ export const STARTUP_DIALOGS = {
   },
   imports: { text: () => 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
   login: {
-    // A "Sign in" session (Settings -> Accounts) is exactly where signing in happens.
-    text: (s) => (s.purpose === 'signin' ? 'Sign in to this Claude account in the terminal below.' : 'Claude Code is not signed in on this computer.'),
-    note: (s) => (s.purpose === 'signin' ? html`Follow Claude Code's own steps (or type <code>/login</code>). Clawdling never sees the login.`
-      : html`Run <code>claude</code> in a terminal and sign in, then start this session again.`),
+    // A "Sign in" session is exactly where signing in happens. Any other session gets LoginBanner.
+    text: () => 'Sign in to Claude in the terminal below.',
+    note: () => html`Follow Claude Code's own steps (or type <code>/login</code>). Clawdling never sees the login.`,
   },
 };
+
+// Not signed in, in a session that is not itself a "Sign in" session.
+export const needsSignIn = (s) => !!s && s.status === 'needs_you' && s.waiting_on === 'login' && s.purpose !== 'signin';
+
+// One click to sign in, for people who have no terminal in mind (the desktop app's Code tab):
+// Sign in opens a "Sign in" session for this session's login, where Claude Code runs its own
+// browser sign-in; Start again then starts this session over with the new login.
+function LoginBanner({ s, accent }) {
+  const [busy, setBusy] = useState('');
+  const run = async (what, fn) => {
+    setBusy(what);
+    await fn();
+    setBusy('');
+  };
+  const done = !!s.signed_in;
+  return html`<div class="pane-dialog pane-login" role="group" aria-label="Claude Code is not signed in" data-testid="pane-dialog" data-dialog="login">
+    <${StatusGlyph} status="needs_you" label=${false} />
+    <span class="dialog-text" data-testid="pane-dialog-text">${done
+      ? 'Claude Code is signed in now. Start this session again to use it.'
+      : "Claude Code isn't signed in yet. Click Sign in, then follow the browser steps."}</span>
+    ${done ? null : html`<span class="dialog-note" data-testid="pane-dialog-note">Then click Start again. In a terminal, <code>claude auth login</code> does the same.</span>`}
+    <span class="dialog-actions">
+      <button class=${`btn ${!done && accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${() => run('signin', () => signInFor(s))}
+        disabled=${!!busy} data-testid="login-signin">${busy === 'signin' ? 'Starting…' : 'Sign in'}</button>
+      <button class=${`btn ${done && accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${() => run('restart', () => restartSession(s.sid))}
+        disabled=${!!busy} data-testid="login-restart">${busy === 'restart' ? 'Starting…' : 'Start again'}</button>
+    </span>
+  </div>`;
+}
 
 // Does this session's pane show a question with answer buttons? Only the focused pane fills its
 // default answer (one accent per screen); the others show the same buttons, quiet.
 export function paneAsksWithButtons(s) {
   if (!s || s.status !== 'needs_you') return false;
+  if (needsSignIn(s)) return true;
   if (s.waiting_on === 'permission_prompt') return Array.isArray(s.choices) && s.choices.length > 0;
   const d = STARTUP_DIALOGS[s.waiting_on];
   return !!d && !d.note && !!dialogAnswers(s.choices);

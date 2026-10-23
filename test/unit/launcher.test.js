@@ -66,8 +66,10 @@ test('claude argv: session id, name, settings, model, permission mode, add-dir, 
   const sid = '99999999-9999-4999-8999-999999999999';
   const a = buildClaudeArgs({ sid, name: 'Health: -x', settingsPath: '/s.json', model: 'haiku', permissionMode: 'acceptEdits', addDirs: ['/org'], appendSystemPromptFile: '/ctx.md', prompt: '-p rm' });
   assert.deepEqual(a, ['--session-id', sid, '--name=Health: -x', '--settings', '/s.json', '--model=haiku', '--permission-mode', 'acceptEdits', '--add-dir', '/org', '--append-system-prompt-file', '/ctx.md', '--', '-p rm']);
-  const r = buildClaudeArgs({ sid, resume: true, resumeId: sid, permissionMode: 'default' });
-  assert.deepEqual(r, ['--resume', sid], '"default" permission mode passes no flag');
+  const r = buildClaudeArgs({ sid, resume: true, resumeId: sid, permissionMode: null });
+  assert.deepEqual(r, ['--resume', sid], 'no permission mode (the owner\'s own Claude Code setting) passes no flag');
+  const d = buildClaudeArgs({ sid, resume: true, resumeId: sid, permissionMode: 'default' });
+  assert.deepEqual(d, ['--resume', sid, '--permission-mode', 'default'], 'an old Claude Code\'s ask-first mode is named, not dropped');
   assert.equal(safePositional('update'), 'update ', 'a bare word cannot become a claude subcommand');
   const e = buildClaudeArgs({ sid, model: 'opus', effort: 'xhigh' });
   assert.deepEqual(e, ['--session-id', sid, '--model=opus', '--effort=xhigh'], 'effort is the CLI\'s own --effort flag');

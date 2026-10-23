@@ -251,8 +251,9 @@ install runs it.
 - **"Clawdling can't find the `claude` command"** (a banner in the cockpit). The server's PATH
   cannot see Claude Code, usually because it was started at login. Start it from a terminal where
   `which claude` (Windows: `where claude`) prints a path, or run `service install` from there.
-- **"Claude Code is not signed in on this computer (or not set up yet)."** Run `claude` once in
-  a terminal, pick a theme and sign in, then end the session in the cockpit and start it again.
+- **"Claude Code isn't signed in yet."** Click **Sign in** on that session: a Sign in session
+  opens and Claude Code walks you through its own sign-in in your browser. Then click **Start
+  again** on the first session. (In a terminal, `claude auth login` does the same.)
 - **Every agent asks whether to trust its folder.** Trust the org folder once: the cockpit's
   "Trust my org folder" button on first run, or `clawdling spawn scratch` and answer "Yes". Claude
   Code then notes that the folder pre-approves a few `clawdling` commands (ls, spawn, send, new,

@@ -758,7 +758,7 @@ async function cmdDoctor(args) {
     // Ask the CLI itself; Clawdling never reads credential files. Output is discarded.
     const a = runClaude(claudeBin, ['auth', 'status'], env, { stdio: 'ignore', timeout: 20000 });
     if (a.status === 0) ok('claude reports it is signed in');
-    else warn('could not confirm claude is signed in: run `claude` once and log in if sessions fail to start');
+    else warn('could not confirm claude is signed in: run `claude auth login` (or click Sign in on a session in the cockpit)');
   }
 
   if (fs.existsSync(ctx.paths.orgJson)) {

@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { HOOK_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
+import { cliPermissionMode } from './permissions.js';
 import { prependPath } from './platform.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
 import { cleanTitle, deriveTitle } from './titles.js';
@@ -57,6 +58,7 @@ export function trustNotice(folder) {
 export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
 export { LOGIN_NOTICE };
+export const SIGNED_IN_NOTICE = 'Claude Code is signed in now. Start this session again to use it.';
 export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
 export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
 // What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
@@ -147,7 +149,7 @@ export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsP
   if (settingsPath) a.push('--settings', settingsPath);
   if (model) a.push(`--model=${model}`);
   if (effort) a.push(`--effort=${effort}`);
-  if (permissionMode && permissionMode !== 'default') a.push('--permission-mode', permissionMode);
+  if (permissionMode) a.push('--permission-mode', permissionMode); // see cliPermissionMode()
   for (const d of addDirs) a.push('--add-dir', d);
   if (appendSystemPromptFile) a.push('--append-system-prompt-file', appendSystemPromptFile);
   if (prompt) a.push('--', safePositional(prompt));
@@ -247,8 +249,10 @@ function sendWs(ws, msg) {
 }
 
 export class SessionManager {
-  constructor({ paths, org, events, backend, tmux, claudeBin, socket, shimDir, env, logger, getPort, accounts }) {
+  constructor({ paths, org, events, backend, tmux, claudeBin, socket, shimDir, env, logger, getPort, accounts, modeChoices }) {
     this.accounts = accounts || null;
+    // The --permission-mode names the installed claude lists (`claude --help`), or null if unknown.
+    this.modeChoices = modeChoices || null;
     this.paths = paths;
     this.home = paths.home;
     this.org = org;
@@ -264,6 +268,9 @@ export class SessionManager {
     this.runtime = new Map();
     this.closing = false;
     this.saveTimer = null;
+    // Has Claude Code trusted the org folder? The first-run card stays until it has (markOrgTrusted).
+    this.orgTrusted = false;
+    this.onOrgTrust = null;
   }
 
   // ---------------------------------------------------------------- persistence
@@ -276,6 +283,27 @@ export class SessionManager {
       if (r.status === 'ended' && r.ended_at && Date.parse(r.ended_at) < cutoff) continue;
       this.records.set(r.sid, { ...newRecord(r), ...r });
     }
+    this.orgTrusted = !!readJson(this.paths.trust, {})?.trusted_at;
+    // An org from before 1.1.1 has no trust.json: a session in the org folder that ever sent a hook
+    // got past the trust question (Claude Code runs no hook before that), so the folder is trusted.
+    if (!this.orgTrusted && [...this.records.values()].some((r) => r.cwd === this.home && (r.last_hook_ms || r.transcript_path))) {
+      this.markOrgTrusted('a session in the org folder had started');
+    }
+  }
+
+  /**
+   * The org folder is trusted: a session in the org folder itself got past Claude Code's trust
+   * question (its SessionStart hook). Trust covers every folder inside it, so no agent asks again.
+   */
+  markOrgTrusted(how) {
+    if (this.orgTrusted) return;
+    this.orgTrusted = true;
+    try {
+      writeJson(this.paths.trust, { trusted_at: nowIso(), how }, 0o600);
+    } catch (err) {
+      this.logger?.warn?.(`could not save trust.json: ${err.message}`);
+    }
+    if (this.onOrgTrust) this.onOrgTrust();
   }
 
   save() {
@@ -310,6 +338,7 @@ export class SessionManager {
       account: rec.account || null,
       purpose: rec.purpose || null,
       permission_mode: rec.permission_mode,
+      live_mode: rec.live_mode || null,
       cwd: rec.cwd,
       tmux_name: rec.tmux_name,
       created_at: rec.created_at,
@@ -317,6 +346,7 @@ export class SessionManager {
       ended_at: rec.ended_at,
       notification: rec.notification,
       waiting_on: rec.status === 'needs_you' ? rec.waiting_on || null : null,
+      signed_in: rec.status === 'needs_you' && rec.waiting_on === 'login' && !!rec.signed_in,
       choices: rec.status === 'needs_you' && ANSWERABLE.has(rec.waiting_on) && Array.isArray(rec.choices) ? rec.choices : null,
       resumable: rec.status === 'ended',
       last_message: rec.last_message,
@@ -545,7 +575,7 @@ export class SessionManager {
       settingsPath: this.paths.hooksSettings,
       model: rec.model,
       effort: rec.effort,
-      permissionMode: rec.permission_mode,
+      permissionMode: cliPermissionMode(rec.permission_mode, this.modeChoices),
       addDirs: rec.cwd === this.home ? [] : [this.home],
       appendSystemPromptFile: ctxFile,
       prompt,
@@ -591,6 +621,7 @@ export class SessionManager {
     rec.ended_at = null;
     rec.notification = null;
     rec.waiting_on = null;
+    rec.signed_in = false;
     rec.hooked = false;
     rec.launched_at = nowIso();
     await this.backend.setOptions(rec.tmux_name, [
@@ -601,6 +632,7 @@ export class SessionManager {
     const rt = this.rt(rec.sid);
     rt.gen++;
     rt.launchedAt = Date.now();
+    if (!resume) rt.firstPrompt = prompt || ''; // in memory only, for "Start again" (restart())
     rt.size = { cols: c, rows: r };
     // A control client of the previous run may still be open (ConPTY reports an exit about a second
     // late): drop it, or attachControl would keep it and the new process would have no viewers.
@@ -832,6 +864,8 @@ export class SessionManager {
     const rt = this.runtime.get(sid);
     if (rt) clearTimeout(rt.stallTimer);
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, payload && typeof payload === 'object' ? payload : {});
+    if (event === 'Notification' && payload && payload.notification_type === 'auth_success') this.signedIn(rec);
+    if (event === 'SessionStart' && rec.cwd === this.home) this.markOrgTrusted(`session ${sid} started in the org folder`);
     if (event === 'Notification' && rec.waiting_on === 'permission_prompt') {
       rec.choices = null;
       if (rt) rt.dialogSeenAt = Date.now();
@@ -949,14 +983,59 @@ export class SessionManager {
     if (m && !isValidModel(m)) throw badRequest('invalid model');
     if (e && !isValidEffort(e)) throw badRequest('effort must be low, medium, high, xhigh or max');
     if (rec.status !== 'ready') throw conflict('wait for your turn: model and effort change between turns');
-    await this.end(sid);
-    // resume() re-attaches to a session that still exists, so wait until the old claude is gone.
-    for (let i = 0; i < 50 && (await this.backend.hasSession(rec.tmux_name)); i++) await sleep(100);
-    if (await this.backend.hasSession(rec.tmux_name)) throw new HttpError(500, 'the session did not stop; try again');
+    await this.stopForRelaunch(rec);
     if (m) rec.model = m;
     if (e) rec.effort = e;
     this.events.record({ type: 'settings', sid, agent: rec.agent, ...(m ? { model: m } : {}), ...(e ? { effort: e } : {}) });
     return this.resume(sid);
+  }
+
+  /** End a session's claude and wait until it is gone, so resume() starts a new one. */
+  async stopForRelaunch(rec) {
+    await this.end(rec.sid);
+    // resume() re-attaches to a session that still exists, so wait until the old claude is gone.
+    for (let i = 0; i < 50 && (await this.backend.hasSession(rec.tmux_name)); i++) await sleep(100);
+    if (await this.backend.hasSession(rec.tmux_name)) throw new HttpError(500, 'the session did not stop; try again');
+  }
+
+  /**
+   * "Start again": a session stuck before Claude Code could start (not signed in, or a startup
+   * that stalled) gets a new claude on the same session, which picks up a login made since.
+   */
+  async restart(sid, { cols, rows } = {}) {
+    const rec = this.require(sid);
+    if (!(rec.status === 'needs_you' && (rec.waiting_on === 'login' || rec.waiting_on === 'startup'))) {
+      throw conflict('only a session waiting for a sign-in (or stuck starting) can be started again');
+    }
+    // A claude that never started (stopped at its own first-run sign-in) has no conversation to
+    // resume: start it fresh on the same session id, with the first message it never got to.
+    const fresh = !rec.hooked;
+    const prompt = fresh ? this.runtime.get(sid)?.firstPrompt || '' : '';
+    const reason = rec.waiting_on || 'login';
+    await this.stopForRelaunch(rec);
+    this.events.record({ type: 'restart', sid, agent: rec.agent, reason });
+    if (!fresh) return this.resume(sid, { cols, rows });
+    this.resolveTarget(rec.agent); // the agent must still exist
+    rec.pending_prompt = !!prompt;
+    await this.launch(rec, { prompt, resume: false, cols, rows });
+    this.publish(rec);
+    return this.view(rec);
+  }
+
+  /**
+   * A sign-in finished in one session (Claude Code's auth_success): every other session of the
+   * same login that is stuck on "not signed in" can now be started again, and says so.
+   */
+  signedIn(from) {
+    const account = from.account || null;
+    for (const rec of this.records.values()) {
+      if (rec === from || (rec.account || null) !== account) continue;
+      if (rec.status !== 'needs_you' || rec.waiting_on !== 'login') continue;
+      rec.signed_in = true;
+      rec.notification = SIGNED_IN_NOTICE;
+      this.publish(rec);
+    }
+    this.scheduleSave();
   }
 
   /** Type text into a session (Donna routing, the CLI). A paste, so multi-line text is one paste. */

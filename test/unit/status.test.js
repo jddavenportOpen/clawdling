@@ -190,7 +190,8 @@ test('a Claude Code that is not signed in is recognised at startup, not after a 
     assert.equal(d && d.waiting, 'login', screen);
     assert.equal(d.notice, LOGIN_NOTICE);
   }
-  assert.match(LOGIN_NOTICE, /not signed in on this computer/);
+  assert.match(LOGIN_NOTICE, /isn't signed in yet\. Click Sign in/);
+  assert.doesNotMatch(LOGIN_NOTICE, /Open a terminal/, 'the cockpit Sign in comes first (1.1.1)');
   assert.match(STALL_NOTICE, /sign in/);
   assert.equal(dialogFromScreen('Welcome to Claude Code\n> how do I log in to my bank?'), null);
 });

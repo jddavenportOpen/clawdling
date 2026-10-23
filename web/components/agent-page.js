@@ -8,7 +8,7 @@ import { StatusGlyph } from './status.js';
 import { api } from '../lib/api.js';
 import { startSession, focusSession, resumeSession, navigate, toast, errorToast, openOverlay } from '../lib/actions.js';
 import { refreshOrg } from '../lib/live.js';
-import { sessionName, statusText, KIND_LABEL, agentFolder, groupSessions, sessionTime } from '../lib/model.js';
+import { sessionName, statusText, KIND_LABEL, agentFolder, groupSessions, sessionTime, permissionLabel, permissionSetting, liveModeLabel } from '../lib/model.js';
 import { relTime, longTime, isMac } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
@@ -57,6 +57,7 @@ export function AgentPage({ id, tab = 'sessions' }) {
           <span class="mono" title=${info.dir || ''}>${info.dir ? info.dir.replace(/^\/(Users|home)\/[^/]+/, '~') : agentFolder(info)}</span>
           ${info.repo ? html`<span class="mono" title="Sessions open in this repo">${info.repo}</span>` : null}
           ${info.model ? html`<span>Model: <span class="mono">${info.model}</span></span>` : null}
+          <${PermissionMeta} mode=${info.permission_mode} live=${live} />
         </p>
       </div>
       <div class="hero-actions">
@@ -185,4 +186,16 @@ function EditorBody({ id, field, file, value, help, onSaved }) {
       onKeyDown=${onKey} aria-label=${`Edit ${file}`} data-testid=${`editor-${field}`}></textarea>
     ${tooBig ? html`<p class="form-error" role="alert">This file is ${Math.round(size / 1024)} KB; the limit is 200 KB.</p>` : null}
   </section>`;
+}
+
+// What the agent's sessions may do without asking. "Your Claude Code setting" passes no mode, so
+// say what a running session reports it is in (Claude Code's own hooks), when one does.
+function PermissionMeta({ mode, live }) {
+  const setting = permissionSetting(mode);
+  const reported = live.map((s) => s.live_mode).find(Boolean);
+  const now = setting === 'inherit' && reported ? ` (now: ${liveModeLabel(reported)})` : '';
+  const title = setting === 'inherit'
+    ? 'Clawdling passes no permission mode, so your own Claude Code setting applies. New Claude Code versions start in auto mode unless you changed it.'
+    : 'Clawdling starts every session of this agent in this mode. Shift+Tab in the terminal changes it for one session.';
+  return html`<span title=${title} data-testid="agent-permissions">Permissions: ${permissionLabel(mode)}${now}</span>`;
 }

@@ -156,7 +156,8 @@ CLI, which talks to the server over HTTP like any other client. Every exchange i
   `=name:` works; each command written to a control client gets its own `%begin/%end` block
   (flags=1), and `cmd1 ; cmd2` gets two.
 - claude 2.1.283: `--session-id`, `--resume`, `--name`, `--settings`, `--model`, `--permission-mode`
-  (`acceptEdits|auto|bypassPermissions|manual|dontAsk|plan`; Clawdling passes no flag for
-  "default"), `--add-dir`, `--append-system-prompt-file` (hidden in `--help` but supported), `-p`,
+  (`acceptEdits|auto|bypassPermissions|manual|dontAsk|plan`; with no flag a session opens in
+  auto mode, so "Ask before editing files" passes `manual`, or `default` on a claude whose
+  `--help` lists that instead: `server/permissions.js`), `--add-dir`, `--append-system-prompt-file` (hidden in `--help` but supported), `-p`,
   `--output-format json`, `--allowedTools` (variadic, so it goes last). The folder-trust dialog
   defaults to "No, exit"; trust is inherited from a trusted parent folder.

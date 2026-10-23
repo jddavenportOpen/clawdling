@@ -70,6 +70,7 @@ test('spawn with a first prompt: title, hooks drive starting -> working -> ready
   assert.equal(inter.env.PATH0, path.join(home, '.clawdling', 'bin'), 'clawdling shim is first on PATH');
   assert.ok(inter.opts.settings.endsWith('hooks-settings.json'));
   assert.deepEqual(inter.opts.addDir, [home]);
+  assert.equal(inter.opts.permissionMode, 'manual', '"Ask before editing files" is passed by name: no flag would be auto mode');
   assert.ok(fs.readFileSync(inter.opts.appendSystemPromptFile, 'utf8').includes('About '), 'context file includes me.md');
   // The fake logs a hook after the hook process exits, which can be just after the server saw it.
   const statuses = await waitFor(() => {

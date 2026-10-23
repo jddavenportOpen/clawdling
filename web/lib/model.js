@@ -158,3 +158,17 @@ export const EFFORT_CHOICES = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 /** Between turns (your turn, or ready for a first message): the only time a chip may type a slash command. */
 export const isIdle = (s) => !!s && s.status === 'ready';
+
+// An agent's permission setting (server/permissions.js): null, 'ask', 'default' and 'manual' all
+// mean ask before editing files, passed to claude by name; 'inherit' passes no mode at all.
+const SETTING_LABEL = { ask: 'Ask before editing files', acceptEdits: 'Auto-accept file edits', plan: 'Plan mode', inherit: 'Your Claude Code setting' };
+export function permissionSetting(mode) {
+  return mode === 'acceptEdits' || mode === 'plan' || mode === 'inherit' ? mode : 'ask';
+}
+export const permissionLabel = (mode) => SETTING_LABEL[permissionSetting(mode)];
+// The mode a running Claude Code reports in its hooks (live_mode), in plain words.
+const LIVE_LABEL = {
+  manual: 'asks before editing', default: 'asks before editing', acceptEdits: 'auto-accepts edits', plan: 'plan mode',
+  auto: 'auto mode', dontAsk: "doesn't ask", bypassPermissions: 'skips permission checks',
+};
+export const liveModeLabel = (mode) => (mode ? LIVE_LABEL[mode] || mode : null);

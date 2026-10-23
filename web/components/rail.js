@@ -15,7 +15,7 @@ import {
 } from '../lib/model.js';
 import { relTime, matches, MOD, longTime } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
-import { FirstTrust } from './first-run.js';
+import { FirstTrust, useTrustStep } from './first-run.js';
 import { paneAsksWithButtons } from './pane.js';
 
 const RECENT_LIMIT = 8;
@@ -62,12 +62,14 @@ function ExpandedRail() {
   const sortedAgents = sortAgents(agents).filter((a) => matches(query, a.name, a.id, a.mission, KIND_LABEL[a.kind]));
   const searching = !!query.trim();
   const nothing = searching && !needs.length && !live.length && !recentAll.length && !sortedAgents.length;
-  const firstRun = sessionsLoaded && list.length === 0 && !orgError;
+  const firstRun = useTrustStep().show; // the trust card is up until the org folder is trusted
   // One filled accent per screen: the first-run "Trust my org folder", or the focused pane's own
   // question ("Yes, trust it", "Yes"), outranks New session while it is on screen.
   const onCockpit = route.name === 'cockpit';
   const paneOnScreen = onCockpit && !(mobile && mobileView === 'list');
-  const accentElsewhere = (firstRun && onCockpit) || (paneOnScreen && open.includes(focused) && paneAsksWithButtons(sessions[focused]));
+  // The card shows in the empty workspace (no pane open) or, on a phone, in this list.
+  const trustCardUp = firstRun && (mobile ? mobileView === 'list' : open.length === 0);
+  const accentElsewhere = (trustCardUp && onCockpit) || (paneOnScreen && open.includes(focused) && paneAsksWithButtons(sessions[focused]));
 
   const row = (s, section) => html`<${SessionRow} key=${s.sid} s=${s} section=${section} agentsById=${agentsById}
     onScreen=${open.includes(s.sid)} focused=${focused === s.sid && open.includes(s.sid)} now=${now} />`;

@@ -3,7 +3,7 @@
 // commands spelled the way this computer runs them, and the P2 polish checks.
 import { test, expect } from '@playwright/test';
 import {
-  login, reset, seedStandard, isMock, mock, health, sessions, sessionBySid, mockRequests, openPanes, pane, panes, focusedPane, contrast,
+  login, reset, seedStandard, isMock, mock, health, sessions, sessionBySid, mockRequests, openPanes, pane, panes, focusedPane, contrast, api,
 } from './helpers.js';
 
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control';
@@ -104,6 +104,55 @@ test.describe('first run (P0-4)', () => {
     await expect(pane(page, work).getByTestId('pane-dialog')).toHaveCount(0);
   });
 
+  test('the first screen speaks plainly: no "claude CLI", no CLAUDE.md (1.1.1)', async ({ page }) => {
+    await reset('fresh');
+    await login(page);
+    const sub = page.getByTestId('empty-state').locator('.empty-sub');
+    await expect(sub).toHaveText('Every agent is a real Claude Code session that already knows its job and remembers what it did.');
+    await expect(page.getByTestId('empty-state')).not.toContainText('CLAUDE.md');
+    await expect(page.getByTestId('empty-state')).not.toContainText('claude CLI');
+  });
+
+  test('the trust card stays until the org folder is trusted, even after a reload (1.1.1)', async ({ page }) => {
+    await reset('fresh');
+    await login(page);
+    await page.getByTestId('first-trust-go').click();
+    await expect(panes(page)).toHaveCount(1);
+    const sid = await focusedPane(page).getAttribute('data-pane');
+    await expect(pane(page, sid).getByTestId('pane-dialog')).toBeVisible();
+    // Hide the pane and reload before answering: the card now points at the waiting question.
+    await pane(page, sid).getByTestId('pane-hide').click();
+    await page.reload();
+    const card = page.getByTestId('first-trust');
+    await expect(card).toBeVisible();
+    await expect(card).toHaveAttribute('data-pending', sid);
+    await expect(card).toContainText('Claude Code is waiting: do you trust your org folder?');
+    await expect(page.locator('.rail').getByTestId('new-session')).toHaveClass(/btn-quiet/); // still the one accent
+    // "Show the question" opens that session; hide it again and answer from the card instead.
+    await card.getByTestId('first-trust-show').click();
+    await expect(focusedPane(page)).toHaveAttribute('data-pane', sid);
+    await pane(page, sid).getByTestId('pane-hide').click();
+    await page.getByTestId('first-trust-yes').click();
+    await expect(page.locator('.toast')).toContainText('Trusted ~/clawdling');
+    await expect.poll(async () => (await sessionBySid(sid)).status).toBe('ready');
+    await expect(page.getByTestId('first-trust')).toHaveCount(0);
+    await page.reload();
+    await expect(page.getByTestId('empty-state')).toBeVisible();
+    await expect(page.getByTestId('first-trust')).toHaveCount(0);
+  });
+
+  test('an org that already has sessions but never trusted its folder still shows the card (1.1.1)', async ({ page }) => {
+    await reset('fresh');
+    await login(page);
+    await page.locator('[data-agent-card="work"]').click(); // trusts only domains/work
+    const sid = await focusedPane(page).getAttribute('data-pane');
+    await pane(page, sid).getByTestId('dialog-yes').click();
+    await expect.poll(async () => (await sessionBySid(sid)).status).toBe('ready');
+    await pane(page, sid).getByTestId('pane-hide').click();
+    await expect(page.getByTestId('first-trust')).toBeVisible();
+    await expect(page.getByTestId('first-trust-go')).toHaveText('Trust my org folder');
+  });
+
   test('without that step, each agent asks about its own folder (what the step saves you)', async ({ page }) => {
     await reset('fresh');
     await login(page);
@@ -116,16 +165,34 @@ test.describe('first run (P0-4)', () => {
 test.describe('questions in a pane', () => {
   test.skip(() => !isMock(), 'uses the mock to raise the screens');
 
-  test('not signed in: the pane says so at once, with what to do and no buttons (P1-13)', async ({ page }) => {
+  test('not signed in: one click opens Sign in for your own login, then Start again picks it up (1.1.1)', async ({ page }) => {
     const ids = await seedStandard();
     await mock('dialog', { sid: ids.quotes, kind: 'login' });
     await login(page);
     await openPanes(page, [ids.quotes]);
     const banner = pane(page, ids.quotes).getByTestId('pane-dialog');
-    await expect(banner.getByTestId('pane-dialog-text')).toHaveText('Claude Code is not signed in on this computer.');
-    await expect(banner.getByTestId('pane-dialog-note')).toHaveText('Run claude in a terminal and sign in, then start this session again.');
-    await expect(banner.locator('button')).toHaveCount(0);
-    expect((await sessionBySid(ids.quotes)).notification).toMatch(/not signed in/);
+    // Plain words for someone with no terminal in mind (the desktop app's Code tab).
+    await expect(banner.getByTestId('pane-dialog-text')).toHaveText("Claude Code isn't signed in yet. Click Sign in, then follow the browser steps.");
+    await expect(banner.getByTestId('pane-dialog-note')).toHaveText('Then click Start again. In a terminal, claude auth login does the same.');
+    await expect(banner).not.toContainText('Open a terminal');
+    await expect(banner.locator('button')).toHaveText(['Sign in', 'Start again']);
+    expect((await sessionBySid(ids.quotes)).notification).toMatch(/isn't signed in yet\. Click Sign in/);
+
+    await banner.getByTestId('login-signin').click();
+    await expect.poll(async () => (await mockRequests()).some((r) => r.method === 'POST' && r.path === '/api/accounts/default/signin')).toBe(true);
+    const signin = (await sessions()).find((x) => x.title === 'Sign in');
+    expect(signin).toBeTruthy();
+    expect(signin.purpose).toBe('signin');
+    expect(signin.account).toBe(null);
+    await expect(focusedPane(page)).toHaveAttribute('data-pane', signin.sid);
+
+    // Signing in there (Claude Code's auth_success) tells the first session; Start again restarts it.
+    await api('POST', '/api/hooks', { event: 'Notification', sid: signin.sid, payload: { notification_type: 'auth_success', message: 'Login successful' } });
+    await expect(banner.getByTestId('pane-dialog-text')).toHaveText('Claude Code is signed in now. Start this session again to use it.');
+    await banner.getByTestId('login-restart').click();
+    await expect.poll(async () => (await mockRequests()).some((r) => r.method === 'POST' && r.path === `/api/sessions/${ids.quotes}/restart`)).toBe(true);
+    await expect.poll(async () => (await sessionBySid(ids.quotes)).status).toBe('ready');
+    await expect(pane(page, ids.quotes).getByTestId('pane-dialog')).toHaveCount(0);
   });
 
   test('a permission prompt is answered with one click, choices in screen order (P1-8)', async ({ page }) => {

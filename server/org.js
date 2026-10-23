@@ -23,7 +23,9 @@ import {
 export const TEMPLATES_DIR = path.join(PKG_ROOT, 'templates');
 export const CONTEXT_MAX_BYTES = 200 * 1024;
 export const RESERVED_IDS = new Set(['donna', 'scratch']);
-const PERMISSION_MODES = new Set(['default', 'acceptEdits', 'plan']);
+// Stored agent permission modes (null = ask; see permissions.js). 'default' is Claude Code's own
+// name for asking first, kept from 1.1.0.
+const PERMISSION_MODES = new Set(['ask', 'default', 'acceptEdits', 'plan', 'inherit']);
 const KIND_DIRS = { domain: 'domains', project: 'projects' };
 
 const PALETTE = ['#E5484D', '#30A46C', '#0091FF', '#F76B15', '#8E4EC6', '#12A594', '#D6409F', '#FFB224', '#3E63DD', '#AB4ABA'];
@@ -184,11 +186,16 @@ export function normalizeAnswers(raw = {}) {
     }
     return { name, goal, repo, domain: p?.domain ? String(p.domain) : null };
   });
-  const channel = raw.donna?.channel ?? 'none';
-  if (!['telegram', 'imessage', 'none'].includes(channel)) throw new Error('answers.donna.channel must be telegram, imessage or none');
-  let permission_mode = raw.permission_mode ?? 'default';
-  if (permission_mode === 'ask') permission_mode = 'default';
-  if (!['default', 'acceptEdits'].includes(permission_mode)) throw new Error('answers.permission_mode must be default or acceptEdits');
+  // "Later" is how the interview words "not now": the same as none (Claude Code writes the JSON).
+  let channel = raw.donna?.channel ?? 'none';
+  if (typeof channel === 'string') channel = channel.trim().toLowerCase();
+  if (channel === 'later' || channel === '' || channel === null) channel = 'none';
+  if (!['telegram', 'imessage', 'none'].includes(channel)) throw new Error('answers.donna.channel must be telegram, imessage or none (or later)');
+  // ask = "Ask before editing files" ("default" and "manual" are Claude Code's own names for it,
+  // and 1.1.0's SETUP wrote "default"); inherit = the owner's own Claude Code setting, no flag.
+  let permission_mode = raw.permission_mode ?? 'ask';
+  if (permission_mode === 'default' || permission_mode === 'manual') permission_mode = 'ask';
+  if (!['ask', 'acceptEdits', 'inherit'].includes(permission_mode)) throw new Error('answers.permission_mode must be ask, acceptEdits or inherit');
   return { owner, about, domains, projects, donna: { channel }, permission_mode };
 }
 
@@ -221,7 +228,7 @@ export function initOrg({ home, answers, force = false, now = new Date() }) {
   const projectAgents = a.projects.map((p) => ({ ...p, id: uniqueId(slugify(p.name, 'project'), taken) }));
   const agentIds = [...domainAgents.map((d) => d.id), ...projectAgents.map((p) => p.id)];
   const created = now.toISOString();
-  const pm = a.permission_mode === 'default' ? null : a.permission_mode;
+  const pm = a.permission_mode === 'ask' ? null : a.permission_mode; // null = ask (permissions.js)
 
   const prev = exists ? readJson(paths.orgJson, {}) : {};
   const org = {

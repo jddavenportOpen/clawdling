@@ -169,8 +169,9 @@ Otherwise ask, one question each:
    fine answer.
 4. **How should Donna, your chief of staff, reach you?** Telegram / iMessage (only on a Mac: do not
    offer it on Windows or Linux) / Later.
-5. **Permissions:** "Ask before editing files" (recommended, Claude Code's normal mode) or
-   "Auto-accept file edits" (`acceptEdits`). Never offer to skip permission checks.
+5. **Permissions:** "Ask before editing files" (recommended: agents ask before they change a
+   file or run a command) or "Auto-accept file edits" (`acceptEdits`). Never offer to skip
+   permission checks. Only if they ask to keep their own Claude Code setting, use `inherit`.
 
 ## 4. Create the org
 
@@ -183,7 +184,7 @@ Write the answers to a temporary JSON file and run init:
   "domains": [{ "name": "Bakery", "mission": "Keep the bakery profitable and running" }, { "name": "Family" }],
   "projects": [{ "name": "Online store", "goal": "Launch online ordering", "repo": "/Users/sam/code/store", "domain": "bakery" }],
   "donna": { "channel": "telegram" },
-  "permission_mode": "default"
+  "permission_mode": "ask"
 }
 ```
 
@@ -194,8 +195,9 @@ clawdling init --answers /tmp/clawdling-answers.json   # or: clawdling init --de
 
 `mission` may be left out (a sensible one is filled in). `repo` must be an absolute path
 (on Windows, write it with forward slashes or doubled backslashes in JSON: `"C:/Users/sam/code/store"`).
-`permission_mode` is `default` or `acceptEdits`. `donna.channel` is `telegram`, `imessage` or
-`none` (write `none` when they chose "Later"). The org is created in `~/clawdling`
+`permission_mode` is `ask` ("Ask before editing files"), `acceptEdits` or `inherit` (no mode:
+their own Claude Code setting, which on current Claude Code is auto mode). `donna.channel` is
+`telegram`, `imessage` or `none` ("Later" means `none`; `later` is accepted too). The org is created in `~/clawdling`
 (set `CLAWDLING_HOME` or pass `--home` to put it elsewhere). Delete the temporary file afterwards.
 
 ## 5. Personalise (you write the prose)

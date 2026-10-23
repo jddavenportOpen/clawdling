@@ -74,8 +74,11 @@ applies. Clawdling never answers a permission prompt or a folder-trust question 
 text (Donna, the CLI, the API) is refused while one is on screen, and only an explicit
 `POST /api/sessions/:sid/answer` from the owner (cockpit or phone, with the token) picks a choice. Clawdling pre-approves only `clawdling ls/spawn/send/new/end/doctor` (in the generated
 `--settings` file and the org `.claude/settings.json`). Agents can read the whole org folder
-(`--add-dir`). Permission mode defaults to Claude Code's normal "ask"; `acceptEdits` is opt-in and
-`bypassPermissions` is never offered.
+(`--add-dir`). Permission mode defaults to "Ask before editing files", passed by name
+(`--permission-mode manual`, or `default` on a Claude Code that calls it that; the names are read
+from `claude --help` at startup), because a Claude Code started with no mode now opens in auto
+mode. `acceptEdits` is opt-in, `inherit` (no flag: your own Claude Code setting) is opt-in, and
+`bypassPermissions` and `auto` are never offered.
 
 Agent ids must match `^[a-z0-9][a-z0-9-]{0,39}$` before any path is built from them; session ids
 must be UUIDs. Static files are served only from inside `web/`.
