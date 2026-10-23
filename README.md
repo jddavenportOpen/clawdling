@@ -16,16 +16,34 @@ limits, and your machine, are the limit.
 <!-- Hero: docs/img/demo.gif (keep this path; swap the file for a newer demo GIF any time). -->
 ![Clawdling: the org map and the cockpit, with live sessions and what needs you](docs/img/demo.gif)
 
+> **New to Claude Code, or never used a terminal?** Read [Start here](docs/START-HERE.md): what
+> you need, what each step looks like, and plain-language fixes.
+
+## What you need
+
+- **A Mac, Windows PC or Linux computer.** Clawdling runs on your computer, not on a phone or in a
+  browser tab.
+- **A paid Claude plan: Pro, Max, Team or Enterprise.** Clawdling runs on Claude Code, and the
+  free plan does not include Claude Code. **Pro works**: it has the smallest usage allowance and
+  every agent draws from it, so run one or two agents at a time. Max has much more room.
+- **Claude Code**, in either form:
+
+| You use | Do this |
+|---|---|
+| Claude Code in a terminal (`claude`) | Paste the line below into it. |
+| The **Claude desktop app** | Open its **Code** tab (choose **Local** and any folder) and paste the line below there. The app has Claude Code inside it but not the `claude` command Clawdling starts; Claude installs that with [Anthropic's official installer](https://code.claude.com/docs/en/setup) once you say OK. No admin password needed. |
+| Only **claude.ai in a browser**, or the phone app | Chat cannot install anything on your computer. Get the [Claude desktop app](https://claude.com/download), sign in with the same account and use its Code tab ([how](docs/START-HERE.md#step-1-get-claude-code)). |
+
 ## Install it by asking Claude Code (recommended)
 
-Open Claude Code anywhere and paste:
+Open Claude Code anywhere (a terminal, or the desktop app's Code tab) and paste:
 
 ```
 Set up Clawdling for me from https://github.com/jddavenportOpen/clawdling and follow SETUP.md
 ```
 
 Claude checks your machine (macOS, Linux or Windows; no WSL needed), installs what is missing
-once you say OK, clones this repo, asks up to five questions (or you pick "Use defaults"),
+(usually Node.js, and the `claude` command if you use the desktop app) once you say OK, clones this repo, asks up to five questions (or you pick "Use defaults"),
 creates your org, starts the cockpit and opens it. [SETUP.md](SETUP.md) is the playbook it
 follows; it never edits your Claude settings and never skips permission checks.
 
@@ -180,6 +198,15 @@ first message. Details and the threat model are in [docs/SECURITY.md](docs/SECUR
 
 ## FAQ
 
+**Does it work on the Pro plan?** Yes. Every agent session uses your plan's usage allowance, and
+Pro has the smallest one, so keep one or two agents busy at a time. When you hit the limit,
+Claude Code says when it resets and the sessions wait. The free plan does not include Claude Code,
+so it cannot run Clawdling.
+
+**I only use claude.ai in my browser. Can I use it?** Not from the browser alone: Clawdling runs
+on your computer and starts Claude Code there. Install the [Claude desktop app](https://claude.com/download)
+and use its Code tab, as in [Start here](docs/START-HERE.md).
+
 **Is it unlimited?** Clawdling adds no caps and no fees. Every session uses your Claude plan,
 so your plan's usage limits are the real limit. Run as many agents as your plan and your
 machine allow.
@@ -194,6 +221,20 @@ reachable on your Wi-Fi (the token is still required); away from home, use Tails
 Claude Code understands in them.
 
 ## Troubleshooting
+
+Not a terminal person? [Start here](docs/START-HERE.md#when-something-goes-wrong-plain-language-fixes)
+has the same fixes in plain language, each one a sentence you can paste into Claude Code.
+
+- **Claude says it cannot run commands or install software.** You pasted the line into a chat
+  (claude.ai, or the desktop app's Chat tab). Use Claude Code: the desktop app's **Code** tab, or
+  `claude` in a terminal.
+- **`claude: command not found`, and you use the desktop app.** Expected: the app has Claude Code
+  inside it but does not install the `claude` command. Install it with Anthropic's official
+  installer (`curl -fsSL https://claude.ai/install.sh | bash` on macOS and Linux,
+  `irm https://claude.ai/install.ps1 | iex` in Windows PowerShell; no admin rights, no Node), open
+  a new terminal, check `claude --version`, and sign in once with `claude auth login`. It lands in
+  `~/.local/bin`; if your terminal still cannot find it, see Anthropic's
+  [Fix your PATH](https://code.claude.com/docs/en/troubleshoot-install).
 
 `node ~/.clawdling-app/bin/clawdling.js doctor` (or `clawdling doctor`) checks everything below
 and prints the fix for this computer. The cockpit and the CLI spell every command the way your

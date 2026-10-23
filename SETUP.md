@@ -12,6 +12,21 @@ reads or stores Claude credentials and never calls the Anthropic API itself.
 Read this file in full before you start: if a web fetch gave you a summary, get the file itself
 with `curl -fsSL https://raw.githubusercontent.com/jddavenportOpen/clawdling/main/SETUP.md`.
 
+**If you cannot run commands on the user's computer** (you are Claude in a claude.ai chat, the
+Chat tab of the desktop app, or the phone app), stop here and do not pretend to install anything.
+Tell the person, in plain words: Clawdling runs on their own computer through Claude Code, which a
+chat cannot do; they need a Mac, Windows or Linux computer and a Pro, Max, Team or Enterprise plan
+(the free plan does not include Claude Code); the easiest way is the Claude desktop app
+(https://claude.com/download), its **Code** tab, **Local**, any folder, then paste the same line
+there. Link https://github.com/jddavenportOpen/clawdling/blob/main/docs/START-HERE.md.
+
+**Assume the user may not be technical.** Many people arrive from the Claude desktop app and have
+never used a terminal. Use plain words: say "Node.js, a free program Clawdling runs on", not
+"the runtime". Before each install, say in one or two sentences what it is, why Clawdling needs it,
+roughly how long it takes, and whether it needs their computer's admin password (prefer the way
+that does not). Then ask, and wait for a yes. If they ask "what is that?", answer before asking
+again.
+
 ## 1. Check the prerequisites
 
 Clawdling runs natively on **macOS, Linux and Windows** (Windows 10 1809+ or 11, in PowerShell or
@@ -21,9 +36,38 @@ you found in your first line. Then check:
 | | macOS / Linux | Windows (PowerShell) |
 |---|---|---|
 | Node 20+ | `node -v` | `node -v` |
-| Claude Code 2.1+ (Windows: 2.1.139+) | `claude --version` | `claude --version` |
+| Claude Code 2.1+ (Windows: 2.1.139+) | `claude --version`, else `~/.local/bin/claude --version` | `claude --version`, else `& "$HOME\.local\bin\claude.exe" --version` |
+| signed in | `claude auth status` (JSON `"loggedIn": true`; exit 1 when signed out) | same |
 | tmux 3.2+ (optional) | `tmux -V` | not used |
 | git | `git --version` | `git --version` |
+
+**No `claude` command.** This is normal when you are running inside the **Claude desktop app**:
+the app has Claude Code built in, but it does not install the `claude` command, and Clawdling
+starts every agent with that command. If `claude` is not on the PATH but `~/.local/bin/claude`
+(Windows: `$HOME\.local\bin\claude.exe`) exists, it is installed and only the PATH is missing:
+use the full path in this session, and prefix every `clawdling` command below with
+`PATH="$HOME/.local/bin:$PATH"` (Windows: `$env:Path = "$HOME\.local\bin;$env:Path"`) so the
+cockpit can find it. Otherwise, explain this in one line and offer Anthropic's official native
+installer (from https://code.claude.com/docs/en/setup; no admin rights, no Node needed, takes about
+a minute):
+- macOS / Linux: `curl -fsSL https://claude.ai/install.sh | bash`
+- Windows PowerShell: `irm https://claude.ai/install.ps1 | iex`
+
+Run it only after the user says yes. Never install Claude Code with `sudo` or `npm -g`. Then:
+1. Check it with `~/.local/bin/claude --version` (Windows: `& "$HOME\.local\bin\claude.exe" --version`).
+2. Sign it in. `claude auth status` exits 1 and says `"loggedIn": false` when it is not signed in.
+   Tell the user a browser page will open and they should sign in with the same Claude account they
+   use in the app, then run `claude auth login` (with the full path if needed; it uses their Claude subscription by
+   default). If that cannot open
+   a browser from here, go on: the first session in the cockpit shows Claude Code's own sign-in,
+   and the user signs in there once (the **Raw** view shows it).
+3. Say that the installer adds `~/.local/bin` to their PATH for new terminals, so `claude` works
+   in a new terminal window.
+
+**Plan.** Claude Code needs a Pro, Max, Team or Enterprise plan; the free plan cannot run it. If
+the user is on **Pro**, say once: Pro works; every agent shares the plan's usage allowance, which
+is the smallest on Pro, so keep one or two agents busy at a time; when the limit is reached,
+Claude Code says when it resets and the sessions wait.
 
 **How sessions will run.** With tmux 3.2+ (macOS, Linux) every agent session lives in Clawdling's
 own tmux server and keeps running when the cockpit stops. Without tmux (always on Windows, and on
@@ -33,12 +77,20 @@ the user which one they will get, in one line. tmux is a recommendation, never a
 
 If something is missing, say what, and install it only once the user says OK. Never use `sudo`
 (or a Windows admin prompt) without saying so first and getting a yes. Do not update or reinstall
-Claude Code itself.
+a Claude Code that is already installed; installing the `claude` command where there is none (above)
+is the one exception.
+
+**No Node.js.** Say: "Clawdling runs on Node.js, a free program. It isn't on this computer yet."
+Then offer the option for their OS below that needs no admin password, and say how long it takes
+(about a minute, plus a download).
 
 **macOS**
 - Node: `brew install node` if Homebrew is there (`brew --version`). Without Homebrew, install
   Node 22 without admin rights through nvm: `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash`,
-  then `. ~/.nvm/nvm.sh && nvm install 22`. (Or point them to the installer at https://nodejs.org.)
+  then `. ~/.nvm/nvm.sh && nvm install 22`. Your shell may not keep that between commands: start
+  each later `node`, `npm` or `clawdling` command with `. ~/.nvm/nvm.sh &&`. Do not install
+  Homebrew just for this: it needs the admin password. (Or point them to the installer at
+  https://nodejs.org, which asks for the admin password: say so.)
 - tmux (optional, recommended): `brew install tmux` if Homebrew is there. Without Homebrew, skip
   it: do not install Homebrew just for this (it needs an admin password). The built-in terminal
   is used and needs nothing else on a Mac.
@@ -152,9 +204,11 @@ Using what the user told you:
 ## 6. Start the cockpit
 
 Ask whether the cockpit should start automatically at login.
-- Yes (recommended): `clawdling service install`. macOS: a LaunchAgent. Windows: a launcher in
-  the Startup folder (no admin rights) that starts the cockpit minimized. Both also start it now.
-  Linux: it prints a systemd user unit and the two commands to enable it; run them with the
+- Yes (recommended, and the right choice when you are running inside the Claude desktop app, where
+  a background command may stop with this conversation): `clawdling service install`. It records
+  the current PATH, so run it with the PATH that finds `node` and `claude` (see step 1). macOS: a
+  LaunchAgent. Windows: a launcher in the Startup folder (no admin rights) that starts the
+  cockpit minimized. Both also start it now. Linux: it prints a systemd user unit and the two commands to enable it; run them with the
   user's OK.
 - No: start it in the background so this session can continue.
   macOS / Linux: `nohup clawdling start > ~/clawdling/.clawdling/logs/start.log 2>&1 &`
@@ -211,6 +265,11 @@ clawdling spawn <first-domain-id> "Introduce yourself in two lines and ask me th
 ```
 
 Show the user the cockpit (`clawdling open`), where that session is live, and finish with a short
-summary: the agents created, how to start a session (click an agent), that every agent keeps
-memory in `memory/NOW.md` and updates it with `/handoff`, and how to reach Donna. Mention that
-sessions are normal Claude Code sessions on their own plan, so their plan's usage limits apply.
+summary in plain words: the agents created, how to start a session (click an agent, then **New
+session**), the **Chat** and **Raw** buttons at the top of each session (Raw shows the real Claude
+Code screen), that every agent keeps memory in `memory/NOW.md` and updates it with `/handoff`, and
+how to reach Donna. Mention that sessions are normal Claude Code sessions on their own plan, so
+their plan's usage limits apply (on Pro: one or two agents at a time). Tell them how to open the
+cockpit again later: bookmark it, or ask Claude Code "open my Clawdling cockpit"
+(`clawdling open`), and that the plain-language help is
+https://github.com/jddavenportOpen/clawdling/blob/main/docs/START-HERE.md.
