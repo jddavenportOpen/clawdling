@@ -7,7 +7,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { readToken, loadOrCreateToken } from '../server/auth.js';
 import { OrgStore, defaultAnswers, initOrg } from '../server/org.js';
+import { selectBackend } from '../server/backend.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
+import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
 import { readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
@@ -15,7 +17,7 @@ class CliError extends Error {}
 const HELP = `clawdling ${VERSION}: an org of Claude Code agents, with a cockpit and a chief of staff.
 
 Usage:
-  clawdling doctor                          check node, tmux, claude, the org and the server
+  clawdling doctor                          check node, claude, the session backend, the org and the server
   clawdling init [--answers FILE | --defaults] [--force]
                                             create the org (default home ~/clawdling)
   clawdling start [--port 4747] [--host 127.0.0.1] [--open]
@@ -26,16 +28,20 @@ Usage:
   clawdling ls [--all] [--json]             list sessions
   clawdling spawn <agent> ["first message"] [--model M] [--title T] [--cols N --rows N] [--json]
   clawdling send <sid> "text" [--no-enter]  type into a live session
-  clawdling attach <sid|tmux-name>          attach this terminal to a session (detach: Ctrl-b d)
+  clawdling attach <sid|tmux-name>          attach this terminal to a session (detach: Ctrl-b d with
+                                            tmux, Ctrl-] with the built-in terminal)
   clawdling end <sid>                       end a session (it stays resumable)
   clawdling resume <sid>                    resume an ended session
   clawdling donna telegram --token <T>      connect Donna to a Telegram bot, print a pairing code
   clawdling donna imessage --handle <you>   let Donna answer your iMessages (macOS, experimental)
   clawdling donna status
   clawdling service install|uninstall [--dry-run]
-                                            start the cockpit at login (launchd / systemd)
+                                            start the cockpit at login (macOS launchd, Linux
+                                            systemd, Windows Startup folder)
 
 Global: --home PATH (or CLAWDLING_HOME). Session ids can be shortened to their first 8 characters.
+Sessions run in tmux when tmux 3.2+ is installed (they survive cockpit restarts), else in a
+built-in terminal (node-pty; they end with the cockpit and resume). CLAWDLING_BACKEND=tmux|pty.
 `;
 
 // ------------------------------------------------------------------------------------- args
@@ -158,7 +164,7 @@ function openInBrowser(url) {
   const cmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'cmd' : 'xdg-open';
   const args = process.platform === 'win32' ? ['/c', 'start', '', url] : [url];
   try {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true });
     child.on('error', () => console.log(`Open this link: ${url}`));
     child.unref();
   } catch {
@@ -213,11 +219,13 @@ async function cmdStart(args) {
     console.error(`clawdling: ${e.message}`);
     process.exit(1);
   }
+  const persistent = srv.backend.persistent !== false;
   console.log(`\nClawdling ${VERSION}: cockpit for ${srv.org.read().owner}'s org`);
-  console.log(`  Open:  ${srv.openUrl}`);
-  console.log(`  Org:   ${home}`);
-  console.log(`  tmux:  tmux -L ${srv.socket} ls`);
-  console.log('Ctrl-C stops the cockpit. Your sessions keep running in tmux.\n');
+  console.log(`  Open:      ${srv.openUrl}`);
+  console.log(`  Org:       ${home}`);
+  if (persistent) console.log(`  Sessions:  tmux (tmux -L ${srv.socket} ls)`);
+  else console.log(`  Sessions:  built-in terminal (${srv.backend.describe().version}). Install tmux 3.2+ to keep them running across restarts.`);
+  console.log(persistent ? 'Ctrl-C stops the cockpit. Your sessions keep running in tmux.\n' : 'Ctrl-C stops the cockpit and ends its sessions; each one resumes where it left off.\n');
   if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
     console.log(`WARNING: --host ${host} makes the cockpit reachable from other devices on your network.`);
     console.log('  Every page and API still needs your token, but anyone on this network can reach the login page.');
@@ -229,8 +237,8 @@ async function cmdStart(args) {
   const stop = async (sig) => {
     if (stopping) return;
     stopping = true;
-    console.error(`\n${sig}: stopping the cockpit (sessions keep running)`);
-    const force = setTimeout(() => process.exit(0), 5000);
+    console.error(`\n${sig}: stopping the cockpit (${persistent ? 'sessions keep running' : 'ending its sessions; they stay resumable'})`);
+    const force = setTimeout(() => process.exit(0), 8000);
     force.unref();
     await srv.stop().catch(() => {});
     process.exit(0);
@@ -347,6 +355,9 @@ async function cmdAttach(args) {
   const ctx = context(args.flags);
   const ref = args._[1];
   if (!ref) throw new CliError('usage: clawdling attach <sid|tmux-name>');
+  // Which backend the sessions live in: the running server's, else the registry's (1.0 = tmux).
+  const backend = readJson(ctx.paths.server, null)?.backend || readJson(ctx.paths.sessions, null)?.backend || 'tmux';
+  if (backend === 'pty') return attachPty(ctx, ref);
   let name = null;
   const rows = readJson(ctx.paths.sessions, { sessions: [] })?.sessions || [];
   const hits = rows.filter((s) => s.sid === ref || s.tmux_name === ref || (ref.length >= 4 && s.sid.startsWith(ref)));
@@ -364,6 +375,87 @@ async function cmdAttach(args) {
   const r = spawnSync(tmux, ['-L', socket, 'attach-session', '-t', `=${name}`], { stdio: 'inherit', env });
   if (r.error) throw new CliError(`could not run tmux: ${r.error.message}`);
   process.exitCode = r.status ?? 0;
+}
+
+// Modes a session may have turned on in this terminal; reset on detach so the shell is usable.
+const RESET_MODES = '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b[?2004l\x1b[?1004l\x1b[?1l\x1b>\x1b[?25h\x1b[0m';
+
+/**
+ * Attach to a session of the built-in terminal backend: a small terminal client over the cockpit's
+ * own WebSocket (the same stream the browser gets). Raw keys go in, the screen comes out, in the
+ * terminal's alternate screen so your scrollback is left alone. Ctrl-] detaches.
+ */
+async function attachPty(ctx, ref) {
+  const s = await resolveSid(ctx, ref);
+  if (s.status === 'ended') throw new CliError(`that session has ended. Resume it first: clawdling resume ${s.sid.slice(0, 8)}`);
+  const { default: WebSocket } = await import('ws');
+  const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
+  const size = tty && process.stdout.columns && process.stdout.rows ? `&cols=${process.stdout.columns}&rows=${process.stdout.rows}` : '';
+  const host = ctx.host.includes(':') ? `[${ctx.host}]` : ctx.host;
+  const ws = new WebSocket(`ws://${host}:${ctx.port}/ws/term/${s.sid}?t=${ctx.token}${size}`);
+  const decoder = new TextDecoder('utf-8');
+  console.error(`Attaching to ${s.agent} session ${s.sid.slice(0, 8)} (${s.title || 'new session'}). Detach with Ctrl-]; the session keeps running.`);
+  await new Promise((resolve) => {
+    let done = false;
+    let raw = false;
+    const send = (msg) => {
+      if (ws.readyState === 1) ws.send(JSON.stringify(msg));
+    };
+    const onResize = () => send({ t: 'resize', cols: process.stdout.columns, rows: process.stdout.rows });
+    const onKey = (buf) => {
+      const i = buf.indexOf(0x1d); // Ctrl-]
+      if (i !== -1) {
+        if (i > 0) send({ t: 'in', data: decoder.decode(buf.subarray(0, i)) });
+        finish(0, 'Detached. The session keeps running.');
+        return;
+      }
+      const text = decoder.decode(buf, { stream: true });
+      if (text) send({ t: 'in', data: text });
+    };
+    const finish = (code, msg) => {
+      if (done) return;
+      done = true;
+      process.stdin.off('data', onKey);
+      process.stdout.off('resize', onResize);
+      if (raw) {
+        process.stdout.write(`${RESET_MODES}\x1b[?1049l`);
+        process.stdin.setRawMode(false);
+      }
+      process.stdin.pause();
+      process.stdin.unref?.(); // a paused pipe would still hold the process open
+      if (msg) console.error(msg);
+      try {
+        ws.close();
+      } catch {
+        // closed
+      }
+      process.exitCode = code;
+      resolve();
+    };
+    ws.on('open', () => {
+      if (tty) {
+        process.stdout.write('\x1b[?1049h\x1b[H\x1b[2J');
+        process.stdin.setRawMode(true);
+        raw = true;
+        process.stdout.on('resize', onResize);
+      }
+      process.stdin.on('data', onKey);
+      process.stdin.resume();
+    });
+    ws.on('message', (data) => {
+      let m;
+      try {
+        m = JSON.parse(String(data));
+      } catch {
+        return;
+      }
+      // A snapshot clears the screen; never let it clear this terminal's scrollback too.
+      if ((m.t === 'snapshot' || m.t === 'out') && typeof m.data === 'string') process.stdout.write(m.t === 'snapshot' ? m.data.replace(/\x1b\[3J/g, '') : m.data);
+      else if (m.t === 'ended') finish(0, `The session ended. Resume it with: clawdling resume ${s.sid.slice(0, 8)}`);
+    });
+    ws.on('close', (code, reason) => finish(code === 1000 || code === 1005 ? 0 : 1, code === 1001 ? `The cockpit stopped (${String(reason) || 'shutting down'}).` : null));
+    ws.on('error', (err) => finish(1, `could not attach: ${err.message}`));
+  });
 }
 
 async function cmdDonna(args) {
@@ -412,9 +504,14 @@ async function cmdDonna(args) {
   throw new CliError('usage: clawdling donna telegram|imessage|status');
 }
 
-export function launchdPlist({ label, node, cli, home, port, logFile, envPath, socket }) {
+export function launchdPlist({ label, node, cli, home, port, logFile, envPath, socket, backend }) {
   const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-  const envEntries = { PATH: envPath, CLAWDLING_HOME: home, ...(socket && socket !== 'clawdling' ? { CLAWDLING_TMUX_SOCKET: socket } : {}) };
+  const envEntries = {
+    PATH: envPath,
+    CLAWDLING_HOME: home,
+    ...(socket && socket !== 'clawdling' ? { CLAWDLING_TMUX_SOCKET: socket } : {}),
+    ...(backend ? { CLAWDLING_BACKEND: backend } : {}),
+  };
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -446,7 +543,7 @@ ${Object.entries(envEntries).map(([k, v]) => `    <key>${esc(k)}</key><string>${
 `;
 }
 
-export function systemdUnit({ node, cli, home, port, envPath }) {
+export function systemdUnit({ node, cli, home, port, envPath, backend }) {
   return `[Unit]
 Description=Clawdling cockpit
 After=network.target
@@ -455,11 +552,32 @@ After=network.target
 ExecStart=${node} ${cli} start --home ${home} --port ${port}
 Environment=PATH=${envPath}
 Environment=CLAWDLING_HOME=${home}
-Restart=on-failure
+${backend ? `Environment=CLAWDLING_BACKEND=${backend}\n` : ''}Restart=on-failure
 
 [Install]
 WantedBy=default.target
 `;
+}
+
+/**
+ * Windows: a launcher in the Startup folder (no admin rights, no scheduled task). It starts the
+ * cockpit in its own minimized console window; closing that window stops the cockpit.
+ */
+export function windowsStartupScript({ node, cli, home, port, backend }) {
+  const q = (v) => `"${String(v).replace(/"/g, '')}"`;
+  return [
+    '@echo off',
+    'rem Starts the Clawdling cockpit when you sign in to Windows.',
+    'rem Written by `clawdling service install`; `clawdling service uninstall` (or deleting this file) removes it.',
+    ...(backend ? [`set "CLAWDLING_BACKEND=${backend}"`] : []),
+    `start "Clawdling cockpit" /min ${q(node)} ${q(cli)} start --home ${q(home)} --port ${port}`,
+    '',
+  ].join('\r\n');
+}
+
+export function windowsStartupDir(env = process.env) {
+  const appData = env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
+  return path.join(appData, 'Microsoft', 'Windows', 'Start Menu', 'Programs', 'Startup');
 }
 
 async function cmdService(args) {
@@ -470,12 +588,39 @@ async function cmdService(args) {
   const node = stableNodePath();
   const cli = path.join(PKG_ROOT, 'bin', 'clawdling.js');
   const envPath = process.env.PATH || '/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin';
+  const backend = ['tmux', 'pty'].includes(process.env.CLAWDLING_BACKEND) ? process.env.CLAWDLING_BACKEND : null;
+  if (process.platform === 'win32') {
+    const file = path.join(windowsStartupDir(), 'Clawdling cockpit.cmd');
+    if (sub === 'install') {
+      const script = windowsStartupScript({ node, cli, home, port, backend });
+      if (args.flags['dry-run']) return console.log(`# would write ${file}\n${script}`);
+      if (!fs.existsSync(runtimePaths(home).orgJson)) throw new CliError(`No org at ${home}. Run \`clawdling init\` first.`);
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, script);
+      const running = context({ home }).info;
+      if (!running) {
+        const child = spawn(node, [cli, 'start', '--home', home, '--port', port], { detached: true, stdio: 'ignore', windowsHide: true, env: { ...process.env, ...(backend ? { CLAWDLING_BACKEND: backend } : {}) } });
+        child.unref();
+      }
+      console.log(`Installed ${file}. The cockpit starts when you sign in to Windows${running ? ' (it is already running now)' : ' and is starting now'} on port ${port}.`);
+      console.log('Open it with: clawdling open');
+    } else {
+      if (args.flags['dry-run']) return console.log(`# would remove ${file}`);
+      try {
+        fs.unlinkSync(file);
+      } catch {
+        // not installed
+      }
+      console.log('Removed the login item. A cockpit that is running now keeps running until you stop it.');
+    }
+    return;
+  }
   if (process.platform === 'darwin') {
     const label = 'com.clawdling.cockpit';
     const plistPath = path.join(os.homedir(), 'Library', 'LaunchAgents', `${label}.plist`);
     const uid = process.getuid();
     if (sub === 'install') {
-      const plist = launchdPlist({ label, node, cli, home, port, logFile: path.join(runtimePaths(home).logs, 'launchd.log'), envPath, socket: process.env.CLAWDLING_TMUX_SOCKET });
+      const plist = launchdPlist({ label, node, cli, home, port, logFile: path.join(runtimePaths(home).logs, 'launchd.log'), envPath, socket: process.env.CLAWDLING_TMUX_SOCKET, backend });
       if (args.flags['dry-run']) return console.log(`# would write ${plistPath}\n${plist}`);
       if (!fs.existsSync(runtimePaths(home).orgJson)) throw new CliError(`No org at ${home}. Run \`clawdling init\` first.`);
       fs.mkdirSync(path.dirname(plistPath), { recursive: true });
@@ -494,23 +639,34 @@ async function cmdService(args) {
       } catch {
         // not installed
       }
-      console.log('Removed the login item. Your sessions keep running in tmux until you end them.');
+      console.log('Removed the login item. With tmux your sessions keep running until you end them.');
     }
     return;
   }
   const unitPath = path.join(os.homedir(), '.config', 'systemd', 'user', 'clawdling.service');
   if (sub === 'install') {
     console.log(`# Save this as ${unitPath}, then run:\n#   systemctl --user daemon-reload && systemctl --user enable --now clawdling\n`);
-    console.log(systemdUnit({ node, cli, home, port, envPath }));
+    console.log(systemdUnit({ node, cli, home, port, envPath, backend }));
   } else {
     console.log(`Run: systemctl --user disable --now clawdling && rm ${unitPath}`);
   }
 }
 
-function versionAtLeast(v, major, minor) {
-  const m = String(v || '').match(/(\d+)\.(\d+)/);
+export function versionAtLeast(v, major, minor, patch = 0) {
+  const m = String(v || '').match(/(\d+)\.(\d+)(?:\.(\d+))?/);
   if (!m) return false;
-  return Number(m[1]) > major || (Number(m[1]) === major && Number(m[2]) >= minor);
+  const got = [Number(m[1]), Number(m[2]), Number(m[3] || 0)];
+  const want = [major, minor, patch];
+  for (let i = 0; i < 3; i++) if (got[i] !== want[i]) return got[i] > want[i];
+  return true;
+}
+
+const OS_NAME = { darwin: 'macOS', linux: 'Linux', win32: 'Windows' };
+
+/** Run claude (resolving a Windows .cmd shim) with the given args; spawnSync result. */
+function runClaude(bin, args, env, opts = {}) {
+  const cmd = commandFor(bin, args, { env });
+  return spawnSync(cmd.file, cmd.args, spawnOptions(cmd, { env, ...opts }));
 }
 
 async function cmdDoctor(args) {
@@ -522,32 +678,48 @@ async function cmdDoctor(args) {
     bad++;
     console.log(`  FIX   ${m}`);
   };
-  console.log(`clawdling ${VERSION} doctor\n`);
+  const platform = process.platform;
+  const env = childEnv();
+  const pm = packageManager({ platform, has: (b) => !!which(b, env.PATH || '') });
+  console.log(`clawdling ${VERSION} doctor (${OS_NAME[platform] || platform} ${process.arch})\n`);
+
   const nodeMajor = Number(process.versions.node.split('.')[0]);
   if (nodeMajor >= 20) ok(`node ${process.version}`);
-  else fail(`node ${process.version} is too old: install Node 20 or newer (brew install node)`);
+  else fail(`node ${process.version} is too old: install Node 20 or newer: ${installCommand('node', pm) || 'https://nodejs.org'}`);
 
-  const env = childEnv();
-  const tmuxBin = which(process.env.CLAWDLING_TMUX_BIN || 'tmux');
-  if (!tmuxBin) fail('tmux not found: brew install tmux (macOS) or apt install tmux (Linux)');
+  // Sessions: tmux when it is there (they survive restarts), else the built-in terminal (node-pty).
+  const b = selectBackend({ env: process.env, childEnv: env, platform });
+  const forced = process.env.CLAWDLING_BACKEND ? ` (CLAWDLING_BACKEND=${process.env.CLAWDLING_BACKEND})` : '';
+  if (b.error) fail(`${b.error}: ${b.fix}`);
+  else if (b.kind === 'tmux') ok(`sessions: ${b.tmux.version}: they keep running when the cockpit stops${forced}`);
   else {
-    const r = spawnSync(tmuxBin, ['-V'], { encoding: 'utf8', env });
-    const v = (r.stdout || '').trim();
-    if (versionAtLeast(v.replace(/^tmux\s+/, ''), 3, 2)) ok(v);
-    else fail(`${v || 'tmux'} is too old: Clawdling needs tmux 3.2 or newer`);
+    ok(`sessions: built-in terminal (node-pty ${b.pty.version}): they end when the cockpit stops and resume from where they left off${forced}`);
+    if (platform !== 'win32') {
+      const tmuxFix = b.fixes.tmux;
+      if (b.tmux.found && !b.tmux.ok) warn(`${b.tmux.version} is older than 3.2; with tmux 3.2+ sessions keep running across cockpit restarts: ${tmuxFix}`);
+      else if (!b.tmux.ok) warn(`tmux is optional (recommended: sessions keep running across cockpit restarts): ${tmuxFix}`);
+    }
+  }
+
+  if (platform === 'win32') {
+    const bash = findGitBash({ env });
+    if (bash) ok(`Git for Windows: ${bash} (agents use the Bash tool)`);
+    else warn('Git for Windows not found (recommended, so agents get the Bash tool; without it Claude Code uses PowerShell): winget install --id Git.Git -e');
   }
 
   const claudeName = process.env.CLAWDLING_CLAUDE_BIN || 'claude';
   const claudeBin = which(claudeName);
-  if (!claudeBin) fail('claude CLI not found: install Claude Code, then run `claude` once to sign in');
+  if (!claudeBin) fail(`claude CLI not found: install Claude Code: ${claudeInstallCommand(platform, pm)}, then run \`claude\` once to sign in`);
   else {
-    const r = spawnSync(claudeBin, ['--version'], { encoding: 'utf8', env, timeout: 15000 });
+    const r = runClaude(claudeBin, ['--version'], env, { encoding: 'utf8', timeout: 15000 });
     const v = (r.stdout || '').trim().split('\n')[0];
-    if (r.status === 0 && versionAtLeast(v, 2, 1)) ok(`claude ${v}`);
-    else if (r.status === 0) warn(`claude ${v}: Clawdling is tested with 2.1 or newer`);
-    else fail('`claude --version` failed: reinstall Claude Code');
+    // Windows hooks use exec form (command + args), which Claude Code supports from 2.1.139.
+    const [min, minLabel] = platform === 'win32' ? [[2, 1, 139], '2.1.139'] : [[2, 1, 0], '2.1'];
+    if (r.status === 0 && versionAtLeast(v, ...min)) ok(`claude ${v}`);
+    else if (r.status === 0) (platform === 'win32' ? fail : warn)(`claude ${v}: Clawdling needs ${minLabel} or newer${platform === 'win32' ? ' on Windows (hooks): claude update' : ''}`);
+    else fail(`\`claude --version\` failed: reinstall Claude Code: ${claudeInstallCommand(platform, pm)}`);
     // Ask the CLI itself; Clawdling never reads credential files. Output is discarded.
-    const a = spawnSync(claudeBin, ['auth', 'status'], { stdio: 'ignore', env, timeout: 20000 });
+    const a = runClaude(claudeBin, ['auth', 'status'], env, { stdio: 'ignore', timeout: 20000 });
     if (a.status === 0) ok('claude reports it is signed in');
     else warn('could not confirm claude is signed in: run `claude` once and log in if sessions fail to start');
   }
@@ -564,7 +736,8 @@ async function cmdDoctor(args) {
 
   const h = await serverUp(ctx);
   if (h && h.home === ctx.home) {
-    ok(`cockpit running at ${baseUrl(ctx)}${ctx.info ? ` (pid ${ctx.info.pid})` : ''}`);
+    const sessions = h.backend ? `, sessions: ${h.backend.kind}` : '';
+    ok(`cockpit running at ${baseUrl(ctx)}${ctx.info ? ` (pid ${ctx.info.pid}${sessions})` : ''}`);
     try {
       const c = await api(ctx, 'GET', '/api/channels');
       const t = c.telegram;
