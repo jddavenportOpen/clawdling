@@ -1,13 +1,45 @@
 // Claude Code hooks → session status.
 //
 // Every Clawdling session is started with `--settings <hooks-settings.json>`. That file registers
-// bin/clawdling-hook.js for five lifecycle events; the hook script POSTs them to /api/hooks.
+// bin/clawdling-hook.js for Claude Code's lifecycle events; the hook script POSTs them to /api/hooks.
 // Status is driven by these events, never by scraping the screen.
 import { portablePath } from './platform.js';
 import { deriveTitle } from './titles.js';
 import { isUuid, nowIso, oneLine, shq } from './util.js';
 
-export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd'];
+// StopFailure fires instead of Stop when an API error (not signed in, a usage limit, an overload)
+// ended the turn. It is registered only for a Claude Code known to have it (2.1.229+, checked
+// against 2.1.229-2.1.308), so an older one never sees a hook event it does not know.
+export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'Notification', 'SessionEnd'];
+const STOP_FAILURE_SINCE = [2, 1, 229];
+
+/** True when a `claude --version` line ("2.1.283 (Claude Code)") is a version with StopFailure. */
+export function supportsStopFailure(version) {
+  const m = /^\s*(\d+)\.(\d+)\.(\d+)/.exec(String(version || ''));
+  if (!m) return false;
+  const v = m.slice(1, 4).map(Number);
+  for (let i = 0; i < 3; i++) if (v[i] !== STOP_FAILURE_SINCE[i]) return v[i] > STOP_FAILURE_SINCE[i];
+  return true;
+}
+
+export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer (or not set up yet). Open a terminal, run claude, finish its setup and sign-in, then end this session and start it again.';
+const AUTH_ERRORS = new Set(['authentication_failed', 'oauth_org_not_allowed', 'cloud_credential_error']);
+const FAILURE_TEXT = {
+  rate_limit: 'your Claude plan hit a usage or rate limit',
+  overloaded: 'Claude is overloaded right now',
+  server_error: 'the Claude API returned an error',
+  billing_error: 'there is a billing problem on your Claude account',
+  max_output_tokens: 'the reply hit the output limit',
+  model_not_found: 'this model is not available to your account (try /model)',
+  verification_required: 'your Claude account needs verifying',
+};
+
+/** What the cockpit says when a turn ended on an API error (StopFailure). */
+export function stopFailureNotice(error, details) {
+  const what = FAILURE_TEXT[error] || `the turn failed (${oneLine(error || 'unknown error', 60)})`;
+  const extra = typeof details === 'string' && details.trim() ? `: ${oneLine(details, 160)}` : '';
+  return `Claude Code stopped: ${what}${extra}. Send your message again to retry.`;
+}
 
 // Clawdling commands every agent may run without a permission prompt. Deliberately narrower than
 // `Bash(clawdling *)`: an agent can route work and create agents, but cannot re-run `init --force`,
@@ -34,9 +66,10 @@ export function cliAllow(platform = process.platform) {
  * Windows: exec form (`command` + `args`, Claude Code 2.1.139+), so no shell parses the paths,
  * whether Claude Code runs hooks in Git Bash or in PowerShell; paths use forward slashes.
  */
-export function buildHooksSettings({ nodePath, hookScript, platform = process.platform }) {
+export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false }) {
   const hooks = {};
   for (const ev of HOOK_EVENTS) {
+    if (ev === 'StopFailure' && !stopFailure) continue;
     const hook = platform === 'win32'
       ? { type: 'command', command: portablePath(nodePath, 'win32'), args: [portablePath(hookScript, 'win32'), ev], timeout: 5 }
       : { type: 'command', command: `${shq(nodePath)} ${shq(hookScript)} ${ev}`, timeout: 5 };
@@ -56,8 +89,10 @@ export const isLive = (status) => LIVE.has(status);
  * Returns {statusChanged, titleChanged}.
  *
  *   starting --UserPromptSubmit--> working --Stop--> ready
+ *   working --StopFailure--> needs_you (error, or login when not signed in) --UserPromptSubmit--> working
  *   any live --Notification--> needs_you (message kept) --UserPromptSubmit--> working
  *   ready --Notification(idle_prompt)--> ready (a finished turn is still your turn)
+ *   needs_you --Notification(idle_prompt)--> needs_you (the open question or error stays)
  *   starting --SessionStart (no first prompt pending)--> ready   (a fresh session waits for you);
  *   SessionStart never changes a working, ready or waiting session
  *   SessionEnd (except /clear) or tmux exit --> ended
@@ -113,12 +148,39 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
       }
       break;
     }
+    case 'StopFailure': {
+      // The turn ended on an API error, so no Stop comes. Not signed in is the login state the
+      // cockpit already explains; anything else says what failed and that sending again retries.
+      const error = typeof payload.error === 'string' ? payload.error : 'unknown';
+      rec.status = 'needs_you';
+      rec.pending_prompt = false;
+      if (AUTH_ERRORS.has(error)) {
+        rec.waiting_on = 'login';
+        rec.notification = LOGIN_NOTICE;
+      } else {
+        rec.waiting_on = 'error';
+        rec.notification = stopFailureNotice(error, payload.error_details);
+      }
+      if (typeof payload.last_assistant_message === 'string' && payload.last_assistant_message.trim()) {
+        rec.last_message = oneLine(payload.last_assistant_message, 280);
+      }
+      break;
+    }
     case 'Notification': {
       const type = typeof payload.notification_type === 'string' ? payload.notification_type : null;
-      if (type === 'auth_success') break;
+      if (type === 'auth_success') {
+        // Signed in from inside the session (/login): the "not signed in" state is over.
+        if (rec.status === 'needs_you' && rec.waiting_on === 'login') {
+          rec.status = rec.pending_prompt ? 'starting' : 'ready';
+          rec.waiting_on = null;
+          rec.notification = null;
+        }
+        break;
+      }
       // "Claude is waiting for your input" (a minute after a finished turn): still your turn, not a
-      // question that blocks the session. It stays `ready`, so the cockpit keeps it green.
-      if (type === 'idle_prompt' && rec.status === 'ready') break;
+      // question that blocks the session. It stays `ready`, so the cockpit keeps it green, and it
+      // never replaces a question or an error that is already showing.
+      if (type === 'idle_prompt' && (rec.status === 'ready' || rec.status === 'needs_you')) break;
       rec.status = 'needs_you';
       rec.notification = oneLine(payload.message || payload.title || 'Claude Code needs your attention', 300);
       rec.waiting_on = type || 'notification';

@@ -22,7 +22,7 @@ import { TelegramGateway } from './channels/telegram.js';
 import { EventBus } from './events.js';
 import { BACKEND_LABEL, createBackend } from './backend.js';
 import { cliParts } from './hints.js';
-import { buildHooksSettings } from './hooks.js';
+import { buildHooksSettings, supportsStopFailure } from './hooks.js';
 import { OrgStore } from './org.js';
 import {
   DEFAULT_HOST,
@@ -341,6 +341,18 @@ export async function startServer(opts = {}) {
 
   async function initServer() {
     const cEnv = childEnv(env);
+    /** `claude --version`'s first line, or null (not found, or it failed). */
+    async function claudeVersionLine() {
+      const bin = which(claudeBin, cEnv.PATH || '');
+      if (!bin) return null;
+      try {
+        const cmd = commandFor(bin, ['--version'], { env: cEnv });
+        const { stdout } = await execFileP(cmd.file, cmd.args, { timeout: 8000, env: cEnv, spawn: spawnOptions(cmd) });
+        return stdout.trim().split('\n')[0] || null;
+      } catch {
+        return null;
+      }
+    }
     // tmux when it is installed (sessions survive restarts), else a pty per session (server/backend.js).
     // How a person types this install's CLI (attach hints, and every command the cockpit prints).
     const { cli: cliCmd, homeFlag } = cliParts({ home, envPath: cEnv.PATH || '' });
@@ -350,7 +362,7 @@ export async function startServer(opts = {}) {
     // The --settings file every session gets: our hooks + the clawdling allow-list.
     const hookScript = path.join(PKG_ROOT, 'bin', 'clawdling-hook.js');
     const nodePath = stableNodePath(env);
-    writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript }), 0o600);
+    writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(await claudeVersionLine()) }), 0o600);
     // `clawdling` on PATH inside every session and Donna turn.
     for (const [name, text] of Object.entries(cliShims({ nodePath, cliPath: path.join(PKG_ROOT, 'bin', 'clawdling.js') }))) {
       writeFileAtomic(path.join(paths.bin, name), text, 0o700);

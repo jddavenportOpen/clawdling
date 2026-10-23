@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { cliInvocation, cliParts, displayPath, tmuxInstallHint } from '../../server/hints.js';
+import { cliInvocation, cliParts, displayPath, stopMessage, tmuxInstallHint } from '../../server/hints.js';
 
 const POSIX = { skip: process.platform === 'win32' && 'symlinks and extensionless executables are POSIX' };
 
@@ -108,4 +108,17 @@ test('tmux install hint follows the platform (P2-22)', () => {
   assert.match(tmuxInstallHint('linux'), /^sudo apt install tmux/);
   assert.doesNotMatch(tmuxInstallHint('linux'), /brew/);
   assert.match(tmuxInstallHint('win32'), /brew install tmux.*sudo apt install tmux/);
+});
+
+test('`clawdling stop` says what happened to the sessions, in the right number (D6)', () => {
+  const start = 'node ~/.clawdling-app/bin/clawdling.js start';
+  // No live session: nothing about sessions at all (it used to say they "keep running in tmux").
+  assert.equal(stopMessage({ live: 0, keepsRunning: true, start }), 'Stopped the cockpit.');
+  assert.equal(stopMessage({ live: 0, keepsRunning: false, start }), 'Stopped the cockpit.');
+  // Built-in terminal: the sessions ended with the cockpit.
+  assert.equal(stopMessage({ live: 1, keepsRunning: false, start }), `Stopped the cockpit. Its session ended; resume it from the cockpit after \`${start}\`.`);
+  assert.equal(stopMessage({ live: 3, keepsRunning: false, start }), `Stopped the cockpit. Its 3 sessions ended; resume them from the cockpit after \`${start}\`.`);
+  // tmux: they keep running.
+  assert.equal(stopMessage({ live: 1, keepsRunning: true, start }), `Stopped the cockpit. Your session keeps running in tmux; \`${start}\` reconnects to it.`);
+  assert.equal(stopMessage({ live: 2, keepsRunning: undefined, start }), `Stopped the cockpit. Your 2 sessions keep running in tmux; \`${start}\` reconnects to them.`);
 });

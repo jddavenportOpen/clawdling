@@ -116,3 +116,25 @@ test('a Claude Code that is not signed in: "login" at once, a plain notice, and 
     fs.rmSync(marker, { force: true });
   }
 });
+
+test('a turn that ends on an API error says why, and sending again retries (StopFailure, D11)', async () => {
+  // The fake claude is 2.1.999, so the server registered StopFailure for it.
+  const settings = JSON.parse(fs.readFileSync(path.join(home, '.clawdling', 'hooks-settings.json'), 'utf8'));
+  assert.ok(settings.hooks.StopFailure, 'StopFailure registered for a Claude Code that has it');
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'work' })).body;
+  await until(s.sid, (x) => x.status === 'ready', 'ready');
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'fail: rate_limit' })).status, 204);
+  const limited = await until(s.sid, (x) => x.status === 'needs_you', 'a usage limit');
+  assert.equal(limited.waiting_on, 'error');
+  assert.match(limited.notification, /usage or rate limit: You've hit your limit · resets 3pm\. Send your message again to retry\./);
+  // Not a dialog: the composer can send again.
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'and now?' })).status, 204);
+  const again = await until(s.sid, (x) => x.status === 'ready', 'ready after retrying');
+  assert.equal(again.last_message, 'and now?');
+  // Not signed in mid-session: the login state the cockpit already explains.
+  await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'fail: authentication_failed' });
+  const login = await until(s.sid, (x) => x.status === 'needs_you', 'not signed in');
+  assert.equal(login.waiting_on, 'login');
+  assert.match(login.notification, /not signed in on this computer/);
+  assert.equal(login.last_message, 'Not logged in · Please run /login');
+});

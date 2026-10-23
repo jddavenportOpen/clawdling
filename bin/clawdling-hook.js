@@ -75,6 +75,8 @@ async function main() {
     title: clip(payload.title, 200),
     notification_type: payload.notification_type,
     last_assistant_message: clip(payload.last_assistant_message, 1000),
+    error: clip(payload.error, 80),
+    error_details: clip(payload.error_details, 500),
   };
   const record = { event, sid, payload: slim, ts: new Date().toISOString() };
   let token = '';
