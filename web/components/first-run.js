@@ -26,7 +26,7 @@ export function FirstTrust() {
   return html`<section class="first-trust" aria-labelledby="ft-title" data-testid="first-trust">
     <div class="ft-text">
       <h3 id="ft-title" class="ft-title">First, trust your org folder</h3>
-      <p class="ft-sub">Claude Code asks once per folder whether to trust it. Trust <code>${home || 'your org folder'}</code> now and no agent inside it will ask again.</p>
+      <p class="ft-sub">Claude Code asks once per folder whether to trust it. Trust ${home ? html`<code>${home}</code>` : 'your org folder'} now and no agent inside it will ask again.</p>
     </div>
     <button class="btn btn-primary ft-go" onClick=${go} disabled=${blocked || busy} title=${blocked ? BLOCKED_TITLE : undefined}
       data-testid="first-trust-go">${busy ? 'Starting…' : 'Trust my org folder'}</button>

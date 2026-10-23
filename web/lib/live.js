@@ -34,8 +34,9 @@ export async function refreshOrg() {
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) return;
     console.warn('[clawdling] org refresh failed', e);
-    // Shown in place of the agent grid: a failed read is not an empty org.
-    setState({ orgError: (e && e.message) || 'unknown error' });
+    // Never read at all: say so in place of the agent grid (a failed read is not an empty org).
+    // A later refresh that fails keeps the org already on screen.
+    if (getState().org == null) setState({ orgError: (e && e.message) || 'unknown error' });
   }
 }
 
@@ -127,6 +128,7 @@ function connectEvents() {
     esRetry = 1000;
     setState({ conn: 'live' });
     refreshSessions();
+    if (getState().orgError) refreshOrg(); // the server is back: try the org again
   };
   src.onmessage = (e) => {
     const m = parse(e.data);
