@@ -13,7 +13,8 @@ No session caps and no per-agent fees. Every agent is the official `claude` CLI 
 Claude plan you already pay for. Clawdling adds no limits of its own: your Claude plan's usage
 limits, and your machine, are the limit.
 
-![The org map: you, Donna, your domains and their projects, with live sessions and what needs you](docs/img/org-map.png)
+<!-- Hero: docs/img/demo.gif (keep this path; swap the file for a newer demo GIF any time). -->
+![Clawdling: the org map and the cockpit, with live sessions and what needs you](docs/img/demo.gif)
 
 ## Install it by asking Claude Code (recommended)
 
@@ -27,6 +28,9 @@ Claude checks your machine (macOS, Linux or Windows; no WSL needed), installs wh
 once you say OK, clones this repo, asks up to five questions (or you pick "Use defaults"),
 creates your org, starts the cockpit and opens it. [SETUP.md](SETUP.md) is the playbook it
 follows; it never edits your Claude settings and never skips permission checks.
+
+> **Claude Code, read SETUP.md in full:** `curl -fsSL https://raw.githubusercontent.com/jddavenportOpen/clawdling/main/SETUP.md`
+> (a web fetch may hand you a summary of it instead of the file).
 
 ## Or install it by hand
 
@@ -97,6 +101,8 @@ current. Your org is plain files in `~/clawdling`: read them, edit them, put the
 **See the whole system.** The org map draws you, Donna, your domains and their projects, with
 live badges and a ring on anything that needs you. Click an agent to see what it knows and start
 it.
+
+![The org map: you, Donna, your domains and their projects, with live sessions and what needs you](docs/img/org-map.png)
 
 ![The cockpit: every live session by name, what needs you first, panes side by side](docs/img/cockpit.png)
 
@@ -183,6 +189,37 @@ reachable on your Wi-Fi (the token is still required); away from home, use Tails
 
 **Can I keep my existing CLAUDE.md files and skills?** Yes. Agents are folders; put anything
 Claude Code understands in them.
+
+## Troubleshooting
+
+`node ~/.clawdling-app/bin/clawdling.js doctor` (or `clawdling doctor`) checks everything below
+and prints the fix for this computer. The cockpit and the CLI spell every command the way your
+install runs it.
+
+- **`clawdling: command not found`.** A by-hand install is not on your PATH: run
+  `node ~/.clawdling-app/bin/clawdling.js <command>` (Windows: `node "$HOME\.clawdling-app\bin\clawdling.js"`),
+  or run `npm link` once in `~/.clawdling-app`.
+- **"Clawdling can't find the `claude` command"** (a banner in the cockpit). The server's PATH
+  cannot see Claude Code, usually because it was started at login. Start it from a terminal where
+  `which claude` (Windows: `where claude`) prints a path, or run `service install` from there.
+- **"Claude Code is not signed in on this computer (or not set up yet)."** Run `claude` once in
+  a terminal, pick a theme and sign in, then end the session in the cockpit and start it again.
+- **Every agent asks whether to trust its folder.** Trust the org folder once: the cockpit's
+  "Trust my org folder" button on first run, or `clawdling spawn scratch` and answer "Yes". Claude
+  Code then notes that the folder pre-approves a few `clawdling` commands (ls, spawn, send, new,
+  end, doctor): that is Clawdling's routing allow-list ([SECURITY.md](docs/SECURITY.md)), nothing else.
+- **Sessions ended when the cockpit stopped.** Without tmux that is expected: each one comes back
+  under Recent, and Resume picks up the same conversation. Install tmux 3.2+ (macOS, Linux) to keep
+  sessions running across restarts.
+- **`npm install` failed building node-pty (Linux).** Install tmux (`sudo apt install tmux`), or
+  the build tools node-pty needs (`sudo apt install build-essential python3`), then
+  `npm install --omit=dev` again.
+- **"port 4747 is already in use".** Another program (or another org's cockpit) has the port:
+  `clawdling start --port 4800`.
+- **Your phone cannot reach the cockpit.** It listens on 127.0.0.1 only. Restart it with
+  `clawdling start --host 0.0.0.0` (same Wi-Fi; the token is still required) or use Tailscale, then
+  open Settings, Use Clawdling on your phone.
+- **Windows: hooks do not fire.** Clawdling needs Claude Code 2.1.139 or newer there: `claude update`.
 
 ## Development
 

@@ -9,6 +9,9 @@ step. Never edit `~/.claude.json` or `~/.claude/settings.json`, never use
 Clawdling only ever starts the normal `claude` command the user is already signed into. It never
 reads or stores Claude credentials and never calls the Anthropic API itself.
 
+Read this file in full before you start: if a web fetch gave you a summary, get the file itself
+with `curl -fsSL https://raw.githubusercontent.com/jddavenportOpen/clawdling/main/SETUP.md`.
+
 ## 1. Check the prerequisites
 
 Clawdling runs natively on **macOS, Linux and Windows** (Windows 10 1809+ or 11, in PowerShell or
@@ -85,7 +88,9 @@ then `npm install --omit=dev` in it again.
 In the steps below, `clawdling` means `node ~/.clawdling-app/bin/clawdling.js` (Windows:
 `node "$HOME\.clawdling-app\bin\clawdling.js"`). Offer to put it on the PATH with `npm link`
 in that folder (ask first; it writes to the global npm folder). Inside Clawdling's own sessions
-`clawdling` is always on the PATH.
+`clawdling` is always on the PATH. When you tell the user a command to run later, write it the way
+it runs on their computer (`node ~/.clawdling-app/bin/clawdling.js ...`) unless they accepted
+`npm link`.
 
 Run `clawdling doctor` now. It checks node, claude, how sessions will run, and prints the exact
 fix command for anything missing on this machine. Fix every `FIX` line about node, claude or
@@ -176,6 +181,9 @@ Tell the user: "In the cockpit, open the Scratch session and choose **Yes, I tru
 again; a project agent whose code lives outside the org asks once for its repo, the same way."
 Clawdling shows a waiting session under **Needs you** until they answer, and never answers for
 them. (Alternative: run `claude` once in a terminal inside the org folder and accept there.)
+Claude Code's dialog also says the folder pre-approves a few tool permissions: those are the
+`clawdling` routing commands in the org's `.claude/settings.json` (ls, spawn, send, new, end,
+doctor; see docs/SECURITY.md), nothing else. Say so in one line if the user asks.
 
 ## 8. Connect Donna (optional)
 
