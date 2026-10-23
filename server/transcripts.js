@@ -54,7 +54,7 @@ export function transcriptEntry(o) {
 /** Locate a session's transcript. Ids are validated UUIDs, so the path can't escape projects/. */
 export function findTranscript({ ids = [], hint = null, configDir }) {
   const projects = path.join(configDir, 'projects');
-  if (typeof hint === 'string' && /\/projects\/[^/]+\/[0-9a-f-]{36}\.jsonl$/.test(hint) && ids.includes(path.basename(hint, '.jsonl'))) {
+  if (typeof hint === 'string' && /[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(hint) && ids.includes(path.basename(hint, '.jsonl'))) {
     if (fs.existsSync(hint)) return hint;
   }
   let dirs = [];

@@ -1,6 +1,10 @@
 // Shared test helpers. Every test gets a temp CLAWDLING_HOME, a unique tmux socket that is killed
 // in teardown, a random port, and the fake claude. Nothing here can reach Telegram, iMessage or
 // the real claude: CLAWDLING_TEST=1 makes the server refuse the official endpoints and binaries.
+//
+// The suites run under either session backend (CLAWDLING_BACKEND=tmux|pty, see test/run.mjs).
+// Assertions about a session's process use sessionRunning() / terminalSize(): tmux itself for the
+// tmux backend, the fake claude's own pid and its logged terminal size for the pty backend.
 import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -8,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
+import { selectBackend } from '../server/backend.js';
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const FAKE_CLAUDE = path.join(ROOT, 'test', 'fake-claude.mjs');
@@ -28,8 +33,16 @@ export function uniqueSocket() {
 }
 
 export function tempHome(prefix = 'cl-test-') {
-  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+  // .native: on Windows it also turns 8.3 short names (C:\Users\RUNNER~1) into the real ones.
+  return fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
+
+/** The session backend the servers in these tests use (CLAWDLING_BACKEND, else the server's pick). */
+export const BACKEND = selectBackend({ env: process.env }).kind || 'none';
+export const IS_WIN = process.platform === 'win32';
+export const onlyTmux = BACKEND === 'tmux' ? false : `tmux backend only (this run uses ${BACKEND})`;
+export const onlyPty = BACKEND === 'pty' ? false : `pty backend only (this run uses ${BACKEND})`;
+export const notWindows = IS_WIN ? 'not on Windows' : false;
 
 export function testEnv(extra = {}) {
   const env = { ...process.env };
@@ -104,10 +117,14 @@ export async function startServerProc({ home, env, port = 0 }) {
     token,
     url: `http://127.0.0.1:${info.port}`,
     log: () => out,
+    /** A clean stop: SIGTERM, or on Windows (where that would be TerminateProcess) the API. */
     async stop() {
       if (child.exitCode !== null) return;
-      child.kill('SIGTERM');
-      await Promise.race([new Promise((r) => child.once('exit', r)), sleep(6000)]);
+      const exited = new Promise((r) => child.once('exit', r));
+      if (IS_WIN) {
+        await fetch(`http://127.0.0.1:${info.port}/api/shutdown`, { method: 'POST', headers: { 'x-clawdling-token': token } }).catch(() => {});
+      } else child.kill('SIGTERM');
+      await Promise.race([exited, sleep(10000)]);
       if (child.exitCode === null) child.kill('SIGKILL');
     },
   };
@@ -150,11 +167,53 @@ export function killTmux(socket) {
   } catch {
     // not running
   }
+  // A tmux server stuck behind orphaned control clients can outlive kill-server; once its socket
+  // file is gone nothing could reach it again. The socket name is unique to this test: end both.
+  if (process.platform !== 'win32') {
+    try {
+      execFileSync('pkill', ['-KILL', '-f', `tmux -L ${socket} `], { stdio: 'ignore' });
+    } catch {
+      // nothing left
+    }
+  }
   try {
     fs.unlinkSync(`${process.env.TMUX_TMPDIR || '/tmp'}/tmux-${process.getuid()}/${socket}`);
   } catch {
     // gone
   }
+}
+
+export function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return e.code === 'EPERM';
+  }
+}
+
+/** The fake claude's launches for one session (first start and resumes), oldest first. */
+export function launches(fakeLog, sid) {
+  return readLog(fakeLog).filter((e) => e.mode === 'interactive' && (e.opts?.sessionId === sid || e.opts?.resume === sid));
+}
+
+/** Is the session's claude running? tmux: its tmux session exists. pty: the fake's process is alive. */
+export function sessionRunning({ socket, fakeLog }, s) {
+  if (BACKEND === 'tmux') return tmuxHas(socket, s.tmux_name);
+  const last = launches(fakeLog, s.sid).pop();
+  return !!last && pidAlive(last.pid);
+}
+
+/** Wait until the session's claude is gone (a pty session takes a moment to exit after SIGHUP). */
+export async function waitGone(ctx, s, label = 'session process gone') {
+  await waitFor(() => !sessionRunning(ctx, s), { label, timeout: 8000 });
+}
+
+/** The terminal size the session's claude has, "COLSxROWS" (tmux's pane, or the fake's own log). */
+export function terminalSize({ socket, fakeLog }, s) {
+  if (BACKEND === 'tmux') return tmux(socket, 'display-message', '-p', '-t', `=${s.tmux_name}:`, '#{pane_width}x#{pane_height}').trim();
+  const last = readLog(fakeLog).filter((e) => e.mode === 'size' && e.sid === s.sid).pop();
+  return last ? `${last.cols}x${last.rows}` : null;
 }
 
 export function rmrf(p) {

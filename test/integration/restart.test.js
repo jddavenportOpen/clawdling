@@ -1,19 +1,22 @@
-// Sessions outlive the Clawdling server: stop it, keep using the session, start it again.
+// tmux: sessions outlive the Clawdling server: stop it, keep using the session, start it again.
+// pty: sessions end with the server, say so, come back as ended and resume with claude --resume.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { cli, killTmux, openViewer, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, tmux, tmuxHas, uniqueSocket, waitFor } from '../helpers.mjs';
+import { cli, killTmux, launches, onlyPty, onlyTmux, openViewer, readJsonFile, request, rmrf, sessionRunning, startServerProc, tempHome, testEnv, tmux, tmuxHas, uniqueSocket, waitFor, waitGone } from '../helpers.mjs';
 
 let home;
 let socket;
 let env;
+let fakeLog;
 const servers = [];
 
 before(() => {
   home = tempHome();
   socket = uniqueSocket();
-  env = testEnv({ CLAWDLING_TMUX_SOCKET: socket, FAKE_CLAUDE_LOG: path.join(home, 'fake-claude.log') });
+  fakeLog = path.join(home, 'fake-claude.log');
+  env = testEnv({ CLAWDLING_TMUX_SOCKET: socket, FAKE_CLAUDE_LOG: fakeLog });
   cli(['init', '--defaults'], { env, home });
 });
 
@@ -31,7 +34,7 @@ async function start() {
 
 const status = async (srv, sid) => (await request(srv, 'GET', `/api/sessions/${sid}`)).body;
 
-test('a server restart keeps tmux sessions live and reattaches them', async () => {
+test('a server restart keeps tmux sessions live and reattaches them', { skip: onlyTmux }, async () => {
   const a = await start();
   const keep = (await request(a, 'POST', '/api/sessions', { agent: 'work', title: 'Survivor' })).body;
   const other = (await request(a, 'POST', '/api/sessions', { agent: 'health', prompt: 'first' })).body;
@@ -82,4 +85,55 @@ test('a server restart keeps tmux sessions live and reattaches them', async () =
   const r = await request(c, 'POST', `/api/sessions/${keep.sid}/resume`);
   assert.equal(r.status, 200, r.text);
   await waitFor(async () => (await status(c, keep.sid)).status === 'ready', { label: 'resumed on third server' });
+});
+
+test('pty: stopping the server ends its sessions honestly; they come back ended and resume', { skip: onlyPty }, async () => {
+  const a = await start();
+  const keep = (await request(a, 'POST', '/api/sessions', { agent: 'work', title: 'Survivor' })).body;
+  await waitFor(async () => (await status(a, keep.sid)).status === 'ready', { label: 'ready' });
+  assert.match(keep.attach_cmd, /attach [0-9a-f]{8}( --home .+)?$/, 'attach goes through the CLI, not tmux');
+  const v = await openViewer(a, keep.sid);
+  v.send({ t: 'in', data: 'before the stop\r' });
+  await v.waitOutput(/assistant: before the stop/);
+  const closed = new Promise((r) => v.ws.once('close', (code, reason) => r({ code, reason: String(reason) })));
+  await a.stop();
+  const c = await closed;
+  assert.equal(c.code, 1001);
+  assert.match(c.reason, /resume/, 'viewers are told the session ended, not that it keeps running');
+  await waitGone({ socket, fakeLog }, keep);
+
+  const reg = readJsonFile(path.join(home, '.clawdling', 'sessions.json'));
+  assert.equal(reg.backend, 'pty');
+  const row = reg.sessions.find((r) => r.sid === keep.sid);
+  assert.equal(row.status, 'ended');
+  assert.match(row.notification, /Clawdling stopped/);
+
+  const b = await start();
+  assert.equal(readJsonFile(path.join(home, '.clawdling', 'server.json')).backend, 'pty');
+  const k = await status(b, keep.sid);
+  assert.equal(k.status, 'ended');
+  assert.equal(k.resumable, true);
+  assert.equal(k.title, 'Survivor');
+  assert.match(k.notification, /Resume it/);
+  const r = await request(b, 'POST', `/api/sessions/${keep.sid}/resume`);
+  assert.equal(r.status, 200, r.text);
+  await waitFor(async () => (await status(b, keep.sid)).status === 'ready', { label: 'resumed' });
+  assert.ok(launches(fakeLog, keep.sid).some((e) => e.opts.resume === keep.sid), 'relaunched with --resume <sid>');
+  const v2 = await openViewer(b, keep.sid);
+  try {
+    v2.send({ t: 'in', data: 'after the restart\r' });
+    await v2.waitOutput(/assistant: after the restart/);
+  } finally {
+    v2.close();
+  }
+
+  // A crash (no clean stop) leaves no ghost: the next start shows the session as ended.
+  b.child.kill('SIGKILL');
+  await new Promise((res) => (b.child.exitCode !== null ? res() : b.child.once('exit', res)));
+  await waitGone({ socket, fakeLog }, keep, 'the session died with the crashed server');
+  const c2 = await start();
+  const after = await status(c2, keep.sid);
+  assert.equal(after.status, 'ended');
+  assert.match(after.notification, /Clawdling stopped/);
+  assert.equal(sessionRunning({ socket, fakeLog }, keep), false);
 });

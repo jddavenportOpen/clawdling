@@ -152,3 +152,19 @@ export class ModeTracker {
     return s;
   }
 }
+
+/** What a snapshot starts with: reset attributes, home, clear the screen and the scrollback. */
+export const CLEAR = '\x1b[0m\x1b[H\x1b[2J\x1b[3J';
+
+/** tmux snapshot = clear + captured lines + cursor position + replayed terminal modes. */
+export function buildSnapshot(lines, cursorInfo, modes) {
+  const parts = String(cursorInfo || '').trim().split(/\s+/).map(Number);
+  const [cx, cy, , , cursorFlag, alt] = parts;
+  let s = CLEAR;
+  if (alt === 1) s += '\x1b[?1049h\x1b[H\x1b[2J';
+  s += (lines || []).join('\r\n') + '\x1b[0m';
+  if (Number.isFinite(cx) && Number.isFinite(cy)) s += `\x1b[${cy + 1};${cx + 1}H`;
+  if (modes) s += modes.replay();
+  if (cursorFlag === 0) s += '\x1b[?25l';
+  return s;
+}

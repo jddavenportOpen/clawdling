@@ -1,4 +1,5 @@
-// Real server + real tmux + fake claude: spawn, stream, input, hooks → status, rename, send, end, resume.
+// Real server + the session backend (tmux or pty) + fake claude: spawn, stream, input,
+// hooks → status, rename, send, end, resume.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,13 +11,14 @@ import {
   readLog,
   request,
   rmrf,
+  sessionRunning,
   startServerProc,
   tempHome,
+  terminalSize,
   testEnv,
-  tmux,
-  tmuxHas,
   uniqueSocket,
   waitFor,
+  waitGone,
 } from '../helpers.mjs';
 
 let home;
@@ -52,7 +54,7 @@ test('spawn with a first prompt: title, hooks drive starting -> working -> ready
   assert.equal(s.kind, 'domain');
   assert.equal(s.title, 'Check my sleep data');
   assert.equal(s.tmux_name, `cl-health-${s.sid.slice(0, 6)}`);
-  assert.ok(tmuxHas(socket, s.tmux_name), 'tmux session exists');
+  await waitFor(() => sessionRunning({ socket, fakeLog }, s), { label: 'the session process runs' });
   const ready = await waitFor(async () => {
     const cur = await getSession(s.sid);
     return cur.status === 'ready' ? cur : null;
@@ -103,7 +105,7 @@ test('viewer: snapshot first, live output, input echo, permission -> needs_you, 
     v.send({ t: 'in', data: '1\r' });
     await waitFor(async () => (await getSession(s.sid)).status === 'ready', { label: 'ready after permission' });
     v.send({ t: 'resize', cols: 101, rows: 33 });
-    await waitFor(() => tmux(socket, 'display-message', '-p', '-t', `=${s.tmux_name}:`, '#{pane_width}x#{pane_height}').trim() === '101x33', { label: 'resize' });
+    await waitFor(() => terminalSize({ socket, fakeLog }, s) === '101x33', { label: 'resize' });
   } finally {
     v.close();
   }
@@ -131,14 +133,14 @@ test('rename, send, end, resume', async () => {
     assert.equal(ended.body.resumable, true);
     assert.ok(ended.body.ended_at);
     await v.next((m) => m.t === 'ended');
-    assert.equal(tmuxHas(socket, s.tmux_name), false);
+    await waitGone({ socket, fakeLog }, s);
     const blocked = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'x' });
     assert.equal(blocked.status, 409);
 
     const res = await request(srv, 'POST', `/api/sessions/${s.sid}/resume`);
     assert.equal(res.status, 200, res.text);
     assert.notEqual(res.body.status, 'ended');
-    assert.ok(tmuxHas(socket, s.tmux_name));
+    await waitFor(() => sessionRunning({ socket, fakeLog }, s), { label: 'running again after resume' });
     const resumed = await waitFor(() => readLog(fakeLog).filter((e) => e.mode === 'interactive' && e.opts.resume === s.sid).length === 1, { label: 'relaunched with --resume <sid>' });
     assert.ok(resumed);
     await waitFor(async () => (await getSession(s.sid)).status === 'ready', { label: 'ready after resume' });

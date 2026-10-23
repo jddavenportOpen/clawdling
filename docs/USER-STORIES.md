@@ -1,4 +1,4 @@
-# Clawdling 1.0 — test users and user stories
+# Clawdling 1.0 / 1.1 — test users and user stories
 
 Every story below is an acceptance test. The release gate is: every P0 story passes
 for every persona it names, run from a clean home directory with no prior state.
@@ -14,6 +14,8 @@ socket (`CLAWDLING_TMUX_SOCKET`), its own port. No persona can see another's org
 | **Maya — solo founder** | Runs 3 projects (an app, a newsletter, consulting). Lives in Claude Code. | `--answers` with 3 projects + domains Work, Money, Health. Donna on Telegram. | Parallel project agents, never losing a session, a status view on her phone. |
 | **Dev — MBA student + parent** | Juggling school, family, a job search, health. Not a coder. | `--defaults` then adds School and Family domains in the UI. Donna on iMessage. | Domain agents that remember, a chief of staff he can text. |
 | **Rin — the skeptic** | Power user who has tried Conductor, Claude Squad, PAI. | Fresh home, reads SECURITY.md first. | Token handling, "unlimited" claims, what happens on restart, can she attach from her own terminal. |
+| **Wes — Windows, no WSL** (1.1) | Claude Code user on Windows 11 in PowerShell; no WSL, no admin rights, no tmux. | Fresh user profile, `node`, `claude`, maybe Git for Windows. | "Does it work on my machine without WSL? What do I lose without tmux?" |
+| **Ana — Mac without Homebrew** (1.1) | Uses Claude Code on a work Mac where she cannot install Homebrew. | `node` from nvm, `claude`, no tmux. | "Do I need Homebrew? Is anything worse than with tmux?" |
 
 ## User stories
 
@@ -33,7 +35,9 @@ Priority: **P0** = release-blocking, **P1** = must work before the launch post, 
   - Accept (live smoke): the agent answers with its mission phrase and its NOW.md marker.
 - **US-06 (P0, Maya)** As a founder, I can run 5+ sessions at once; Clawdling adds no cap.
 - **US-07 (P0, Maya)** As a founder, clicking a session in the rail focuses it in my workspace and every other open pane stays open. The Cockpit control always returns me to all of my open sessions.
-- **US-08 (P0, Rin)** As a skeptic, when I restart Clawdling (or it crashes) my sessions are still running and reattach; I can `tmux -L clawdling attach -t <name>` from my own terminal.
+- **US-08 (P0, Rin)** As a skeptic with tmux, when I restart Clawdling (or it crashes) my sessions are still running and reattach; I can `tmux -L clawdling attach -t <name>` from my own terminal.
+- **US-08b (P0, Wes, Ana; 1.1)** Without tmux, every session feature works the same (cockpit, phone, Donna, hooks, trust and permission buttons). When the cockpit stops or crashes, my sessions show as ended with a notice saying why, and Resume brings each one back where it was; `clawdling attach <sid>` opens one in my terminal. Accept: `npm run test:pty` on all three OSes in CI, and `CLAWDLING_BACKEND=pty npm run smoke:live`.
+- **US-08c (P0, Wes; 1.1)** On native Windows, the install link, `clawdling doctor` (with fix commands for this OS), `init`, `start` and a live session work without WSL or admin rights; a prompt with quotes, `%` or newlines reaches Claude Code intact.
 - **US-09 (P1, Maya)** As a founder, an ended session appears under Recent and Resume brings the same Claude conversation back (`claude --resume <id>`).
 - **US-10 (P1, Dev)** As a parent, a session that needs my input (a permission prompt or a finished turn) shows as "Needs you" in the rail and on the map within seconds.
 - **US-11 (P1, Maya)** As a founder, I can rename a session, end it with a confirm, and collapse the rail (⌘\), and the rail remembers.

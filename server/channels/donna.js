@@ -1,9 +1,10 @@
 // Donna routing: every inbound text from the paired owner becomes one headless Donna turn,
 // `claude -p --output-format json`, run serially. Donna routes by running the clawdling CLI.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import { which } from '../paths.js';
+import { commandFor, prependPath, spawnOptions } from '../platform.js';
 import { clampText, isUuid, oneLine, readTail } from '../util.js';
 
 export const DONNA_TIMEOUT_MS = 180000;
@@ -12,18 +13,16 @@ export const DONNA_TIMEOUT_MS = 180000;
  * Tools Donna may use without asking. Headless turns run with --permission-mode dontAsk, so
  * anything not listed is denied: no arbitrary shell, no writes outside her memory folder.
  */
-export function donnaAllowedTools(home) {
-  const tools = [
-    'Bash(clawdling spawn *)',
-    'Bash(clawdling send *)',
-    'Bash(clawdling ls)',
-    'Bash(clawdling ls *)',
-    'Bash(clawdling new *)',
-    'Bash(clawdling end *)',
-    'Edit(memory/**)',
-  ];
-  // `//abs/path/**` is Claude Code's absolute-path rule form. Only for paths without rule syntax.
-  if (/^\/[A-Za-z0-9._/ -]+$/.test(home)) tools.push(`Read(/${home}/**)`);
+export function donnaAllowedTools(home, platform = process.platform) {
+  const commands = ['clawdling spawn *', 'clawdling send *', 'clawdling ls', 'clawdling ls *', 'clawdling new *', 'clawdling end *'];
+  const tools = commands.map((c) => `Bash(${c})`);
+  // On Windows her shell may be PowerShell (no Git for Windows): the same commands for that tool.
+  if (platform === 'win32') tools.push(...commands.map((c) => `PowerShell(${c})`));
+  tools.push('Edit(memory/**)');
+  // `//abs/path/**` is Claude Code's absolute-path rule form; on Windows paths are matched in POSIX
+  // form (C:\Users\x -> /c/Users/x). Only for paths without rule syntax.
+  const posix = platform === 'win32' ? String(home).replace(/^([A-Za-z]):[\\/]*/, (m, d) => `/${d.toLowerCase()}/`).replace(/\\/g, '/') : String(home);
+  if (/^\/[A-Za-z0-9._/ -]+$/.test(posix)) tools.push(`Read(/${posix.replace(/\/+$/, '')}/**)`);
   return tools;
 }
 
@@ -102,13 +101,7 @@ export class DonnaRouter {
   /** Kill any Donna turn still running (server shutdown). */
   stop() {
     this.stopped = true;
-    for (const child of this.children) {
-      try {
-        process.kill(-child.pid, 'SIGTERM');
-      } catch {
-        // already gone
-      }
-    }
+    for (const child of this.children) killTree(child, 'SIGTERM');
   }
 
   get busy() {
@@ -201,18 +194,15 @@ export class DonnaRouter {
         resolve({ ok: false, error: 'Clawdling is shutting down' });
         return;
       }
-      const child = spawn(claude, args, {
-        cwd,
-        detached: true,
-        stdio: ['pipe', 'pipe', 'pipe'],
-        env: {
-          ...this.env,
-          CLAWDLING_HOME: this.paths.home,
-          CLAWDLING_PORT: String(this.getPort()),
-          CLAWDLING_DONNA: '1',
-          PATH: `${this.shimDir}:${this.env.PATH || '/usr/bin:/bin'}`,
-        },
-      });
+      const env = {
+        ...prependPath(this.env, this.shimDir),
+        CLAWDLING_HOME: this.paths.home,
+        CLAWDLING_PORT: String(this.getPort()),
+        CLAWDLING_DONNA: '1',
+      };
+      const cmd = commandFor(claude, args, { env });
+      // Its own process group (macOS/Linux) so a timeout ends the whole turn, tools included.
+      const child = spawn(cmd.file, cmd.args, spawnOptions(cmd, { cwd, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], env }));
       this.children.add(child);
       const finish = (res) => {
         if (done) return;
@@ -221,17 +211,7 @@ export class DonnaRouter {
         this.children.delete(child);
         resolve(res);
       };
-      const killGroup = (sig) => {
-        try {
-          process.kill(-child.pid, sig);
-        } catch {
-          try {
-            child.kill(sig);
-          } catch {
-            // gone
-          }
-        }
-      };
+      const killGroup = (sig) => killTree(child, sig);
       const timer = setTimeout(() => {
         killGroup('SIGTERM');
         setTimeout(() => killGroup('SIGKILL'), 3000).unref?.();
@@ -258,5 +238,27 @@ export class DonnaRouter {
       child.stdin.on('error', () => {});
       child.stdin.end(prompt);
     });
+  }
+}
+
+/** End a child and everything it started: its process group, or on Windows its process tree. */
+export function killTree(child, sig = 'SIGTERM') {
+  if (!child?.pid) return;
+  if (process.platform === 'win32') {
+    try {
+      spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true, timeout: 10000 });
+    } catch {
+      // gone
+    }
+    return;
+  }
+  try {
+    process.kill(-child.pid, sig);
+  } catch {
+    try {
+      child.kill(sig);
+    } catch {
+      // gone
+    }
   }
 }

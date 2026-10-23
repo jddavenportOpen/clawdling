@@ -1,11 +1,11 @@
 // A second `clawdling start` must exit at once with a clear message and touch nothing: not the
-// registry, not the hooks file, not the shim, and no duplicate tmux control clients.
+// registry, not the hooks file, not the shim, and (tmux) no duplicate tmux control clients.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { CLI, cli, killTmux, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
+import { BACKEND, CLI, cli, killTmux, readJsonFile, request, rmrf, sleep, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
 
 let home;
 let other;
@@ -49,13 +49,24 @@ function startOnce(args, h) {
 }
 
 const stamp = (files) => Object.fromEntries(files.map((f) => [f, fs.existsSync(f) ? fs.statSync(f).mtimeMs : null]));
-const clients = () => tmux(socket, 'list-clients', '-F', '#{client_name}').split('\n').filter(Boolean).length;
+// tmux: how many control clients are attached (a pty session has none outside the server).
+const clients = () => (BACKEND === 'tmux' ? tmux(socket, 'list-clients', '-F', '#{client_name}').split('\n').filter(Boolean).length : 0);
 
 test('already running for this home: exit 1, nothing touched', async () => {
   const s = (await request(srv, 'POST', '/api/sessions', { agent: 'work' })).body;
   await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${s.sid}`)).body.status === 'ready', { label: 'ready' });
   const rt = path.join(home, '.clawdling');
   const files = ['sessions.json', 'hooks-settings.json', 'tmux.conf', 'server.json', 'bin/clawdling'].map((f) => path.join(rt, f));
+  // The RUNNING server saves the registry 500 ms after the status change: let that land first, or
+  // a slow second start (Windows) would see the first server's own write and blame itself.
+  let last = null;
+  await waitFor(async () => {
+    const cur = JSON.stringify(stamp(files));
+    const stable = cur === last;
+    last = cur;
+    if (!stable) await sleep(700);
+    return stable;
+  }, { label: 'the registry settled', timeout: 10000 });
   const before = stamp(files);
   const clientsBefore = clients();
   const serverJson = readJsonFile(path.join(rt, 'server.json'));

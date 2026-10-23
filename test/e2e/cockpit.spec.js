@@ -291,14 +291,15 @@ test.describe('pane lifecycle', () => {
     await expect(pane(page, ids.quotes).locator('.pane-conn')).toHaveCount(0);
   });
 
-  test('copy attach command puts the tmux line on the clipboard', async ({ page, context }) => {
+  test('copy attach command puts the server\'s attach line on the clipboard', async ({ page, context }) => {
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     await openPanes(page, [ids.brief]);
     await pane(page, ids.brief).getByTestId('pane-attach').click();
     await expect(page.locator('.toast')).toContainText('Attach command copied');
     const s = await sessionBySid(ids.brief);
-    // Only the server knows its tmux socket: tooltip and clipboard are exactly its attach_cmd.
-    expect(s.attach_cmd).toContain(s.tmux_name);
+    // Only the server knows how to attach (its tmux socket, or its CLI for the built-in terminal):
+    // tooltip and clipboard are exactly its attach_cmd.
+    expect(s.attach_cmd.includes(s.tmux_name) || s.attach_cmd.includes(`attach ${s.sid.slice(0, 8)}`)).toBe(true);
     await expect(pane(page, ids.brief).getByTestId('pane-attach')).toHaveAttribute('title', `Copy: ${s.attach_cmd}`);
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(s.attach_cmd);
   });

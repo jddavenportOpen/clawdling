@@ -209,6 +209,6 @@ function IMessageCard({ m }) {
       </li>
     </ol>
     ${enabled ? html`<footer class="card-foot"><button class="btn btn-quiet btn-sm" onClick=${() => save(false)} disabled=${busy}>Turn off iMessage</button></footer>` : null}`
-    : html`<p class="panel-quiet">iMessage needs a Mac. Use Telegram on Linux.</p>`}
+    : html`<p class="panel-quiet">iMessage needs a Mac (it reads and sends through the Messages app). On Windows or Linux, use Telegram.</p>`}
   </section>`;
 }

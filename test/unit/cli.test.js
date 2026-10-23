@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { launchdPlist, parseArgs, systemdUnit } from '../../bin/clawdling.js';
+import { launchdPlist, parseArgs, systemdUnit, versionAtLeast, windowsStartupScript } from '../../bin/clawdling.js';
 import { buildDonnaArgs, buildDonnaPrompt, donnaAllowedTools, parseResult } from '../../server/channels/donna.js';
 
 test('parseArgs: positionals, --flag value, --flag=value, booleans, --', () => {
@@ -70,3 +70,24 @@ test('pairing info: LAN URL when bound to all interfaces, loopback otherwise', a
   assert.equal(pairingInfo({ host: '127.0.0.1', port: 4747, token: t, lan: ['192.168.1.20'] }).url, 'http://127.0.0.1:4747');
   assert.equal(pairingInfo({ host: '100.64.0.7', port: 4747, token: t, lan: [] }).url, 'http://100.64.0.7:4747');
 });
+
+test('Windows login item: a Startup-folder launcher that starts the cockpit minimized', () => {
+  const cmd = windowsStartupScript({ node: 'C:\\Program Files\\nodejs\\node.exe', cli: 'C:\\Users\\Sam\\.clawdling-app\\bin\\clawdling.js', home: 'C:\\Users\\Sam\\clawdling', port: '4747', backend: null });
+  const lines = cmd.split('\r\n');
+  assert.equal(lines[0], '@echo off');
+  assert.ok(lines.includes('start "Clawdling cockpit" /min "C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\Sam\\.clawdling-app\\bin\\clawdling.js" start --home "C:\\Users\\Sam\\clawdling" --port 4747'));
+  assert.ok(!cmd.includes('CLAWDLING_BACKEND'));
+  assert.match(windowsStartupScript({ node: 'n', cli: 'c', home: 'h', port: '1', backend: 'pty' }), /set "CLAWDLING_BACKEND=pty"/);
+  assert.match(launchdPlist({ label: 'l', node: 'n', cli: 'c', home: 'h', port: '1', logFile: 'f', envPath: 'p', socket: 'clawdling', backend: 'pty' }), /<key>CLAWDLING_BACKEND<\/key><string>pty<\/string>/);
+  assert.match(systemdUnit({ node: '/n', cli: '/c', home: '/h', port: '1', envPath: '/p', backend: 'tmux' }), /Environment=CLAWDLING_BACKEND=tmux/);
+});
+
+test('versionAtLeast compares major.minor.patch (Windows needs Claude Code 2.1.139+)', () => {
+  assert.equal(versionAtLeast('2.1.139 (Claude Code)', 2, 1, 139), true);
+  assert.equal(versionAtLeast('2.1.283 (Claude Code)', 2, 1, 139), true);
+  assert.equal(versionAtLeast('2.1.120 (Claude Code)', 2, 1, 139), false);
+  assert.equal(versionAtLeast('2.2.0', 2, 1, 139), true);
+  assert.equal(versionAtLeast('2.1', 2, 1), true);
+  assert.equal(versionAtLeast('nonsense', 2, 1), false);
+});
+

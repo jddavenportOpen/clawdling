@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // A fake `claude` for tests. It never talks to any network service.
 //
-// Interactive mode (inside tmux): prints a banner, runs the hook commands from --settings with
-// realistic JSON, echoes every input line back as "assistant: <line>", asks for "permission" when
-// a line contains "permission?", and exits on "/exit". If the working directory contains a
-// `.fake-claude-trust` file it first shows a folder-trust dialog shaped like the real one (focus on
-// "No, exit"; arrow keys move; Enter chooses).
+// Interactive mode (in a tmux pane or a pty): prints a banner, runs the hook commands from
+// --settings with realistic JSON (shell form through /bin/sh, exec form directly, like Claude Code),
+// echoes every input line back as "assistant: <line>", asks for "permission" when a line contains
+// "permission?", and exits on "/exit". If the working directory contains a `.fake-claude-trust` file
+// it first shows a folder-trust dialog shaped like the real one (focus on "No, exit"; arrow keys
+// move; Enter chooses). It logs its terminal size at start and on every resize ({mode: "size"}).
 //
 // Print mode (-p --output-format json): reads the prompt from stdin. If the owner's message
 // mentions "health" it runs `clawdling spawn health "<message>"` through the real CLI on PATH,
@@ -94,7 +95,7 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 const sid = opts.resume || opts.sessionId || crypto.randomUUID();
-log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, PATH0: (process.env.PATH || '').split(':')[0] } });
+log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, PATH0: (process.env.PATH || '').split(path.delimiter)[0] } });
 
 // ------------------------------------------------------------------ print mode (Donna turns)
 if (opts.print) {
@@ -111,7 +112,10 @@ if (opts.print) {
     let result = `Noted: ${message.slice(0, 80)}`;
     if (/health/i.test(message)) {
       try {
-        const out = execFileSync('clawdling', ['spawn', 'health', message], { encoding: 'utf8', env: process.env, timeout: 30000 });
+        // Through a shell, like Claude Code's own shell tool (on Windows: cmd.exe and the .cmd shim).
+        const out = process.platform === 'win32'
+          ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"clawdling spawn health "${message.replace(/["%^&|<>!]/g, '')}""`], { encoding: 'utf8', env: process.env, timeout: 30000, windowsVerbatimArguments: true, windowsHide: true })
+          : execFileSync('clawdling', ['spawn', 'health', message], { encoding: 'utf8', env: process.env, timeout: 30000 });
         log({ mode: 'print-spawned', out });
         result = 'Health agent is on it.';
       } catch (e) {
@@ -140,7 +144,7 @@ function hookCommands(event) {
     return [];
   }
   const groups = s?.hooks?.[event] || [];
-  return groups.flatMap((g) => (g.hooks || []).filter((h) => h.type === 'command').map((h) => h.command));
+  return groups.flatMap((g) => (g.hooks || []).filter((h) => h.type === 'command'));
 }
 
 // Transcripts go where Claude Code puts them, but only under an explicit CLAUDE_CONFIG_DIR
@@ -153,9 +157,16 @@ function runHook(event, extra = {}) {
   const payload = JSON.stringify({ session_id: sid, transcript_path: transcriptPath, cwd: process.cwd(), permission_mode: opts.permissionMode || 'default', hook_event_name: event, ...extra });
   return Promise.all(
     hookCommands(event).map(
-      (cmd) =>
+      (h) =>
         new Promise((resolve) => {
-          const child = spawn('/bin/sh', ['-c', cmd], { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
+          // Exec form (`args`) spawns the program directly; shell form goes to sh -c.
+          const child = Array.isArray(h.args)
+            ? spawn(h.command, h.args, { stdio: ['pipe', 'pipe', 'pipe'], env: process.env, windowsHide: true })
+            : spawn('/bin/sh', ['-c', h.command], { stdio: ['pipe', 'pipe', 'pipe'], env: process.env });
+          child.on('error', (err) => {
+            log({ mode: 'hook', event, code: null, error: err.message, stdout: '' });
+            resolve();
+          });
           let out = '';
           child.stdout.on('data', (d) => (out += d));
           const t = setTimeout(() => child.kill('SIGKILL'), 5000);
@@ -195,7 +206,7 @@ function select({ header, choices, focus = 0, numbered = false }) {
       drawn = lines.length;
     };
     draw();
-    const raw = process.stdin.isTTY;
+    const raw = process.stdin.isTTY && !process.stdin.isRaw;
     if (raw) process.stdin.setRawMode(true);
     const onData = (d) => {
       const s = d.toString('latin1');
@@ -226,7 +237,13 @@ async function trustDialog() {
   return choice === 1;
 }
 
+function logSize() {
+  log({ mode: 'size', sid, cols: process.stdout.columns ?? null, rows: process.stdout.rows ?? null });
+}
+
 async function interactive() {
+  logSize();
+  process.stdout.on('resize', logSize);
   const trusted = await trustDialog();
   if (!trusted) {
     process.stdout.write('\r\nExiting.\r\n');
@@ -270,11 +287,40 @@ async function interactive() {
   };
   let chain = Promise.resolve();
   if (prompt) chain = chain.then(() => handle(prompt));
-  const rl = readline.createInterface({ input: process.stdin });
-  rl.on('line', (line) => {
-    if (inSelect) return; // keys meant for a select list, not a prompt
-    chain = chain.then(() => handle(line));
-  });
-  rl.on('close', () => chain.then(() => process.exit(0)));
+  if (process.platform === 'win32' && process.stdin.isTTY) {
+    // Like Claude Code, read keys in raw mode: a cooked Windows console treats ESC (the start of a
+    // bracketed-paste marker) as "clear the line". Echo and assemble lines here.
+    process.stdin.setRawMode(true);
+    let line = '';
+    process.stdin.on('data', (d) => {
+      if (inSelect) return; // keys meant for a select list, not a prompt
+      const keys = d.toString('utf8').replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]|\x1bO./g, '');
+      for (const ch of keys) {
+        if (ch === '\r' || ch === '\n') {
+          process.stdout.write('\r\n');
+          const l = line;
+          line = '';
+          chain = chain.then(() => handle(l));
+        } else if (ch === '\x7f' || ch === '\b') {
+          if (line) {
+            line = line.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
+        } else if (ch === '\x03') process.exit(130);
+        else if (ch >= ' ') {
+          line += ch;
+          process.stdout.write(ch);
+        }
+      }
+    });
+    process.stdin.on('end', () => chain.then(() => process.exit(0)));
+  } else {
+    const rl = readline.createInterface({ input: process.stdin });
+    rl.on('line', (line) => {
+      if (inSelect) return; // keys meant for a select list, not a prompt
+      chain = chain.then(() => handle(line));
+    });
+    rl.on('close', () => chain.then(() => process.exit(0)));
+  }
   process.on('SIGHUP', () => process.exit(0));
 }
