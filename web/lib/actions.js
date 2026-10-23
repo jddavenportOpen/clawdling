@@ -253,10 +253,13 @@ export function closeMenu() {
 }
 
 // ---------- server actions ----------
-export async function startSession(agent, { prompt, model, title } = {}) {
+export async function startSession(agent, { prompt, model, effort, account, title } = {}) {
   const body = { agent, ...(nextPaneSize() || {}) };
   if (prompt && prompt.trim()) body.prompt = prompt.trim();
   if (model && model.trim()) body.model = model.trim();
+  if (effort && effort.trim()) body.effort = effort.trim();
+  // No account = the user's own Claude login; only a second login is named.
+  if (account && account.trim() && account.trim() !== 'default') body.account = account.trim();
   if (title && title.trim()) body.title = title.trim();
   try {
     const s = await api.spawn(body);

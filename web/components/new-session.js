@@ -1,12 +1,13 @@
 // New session: pick the agent (Donna, a domain, a project), optionally give it
 // a first message and a model, and it opens focused in the workspace.
 import { html } from '../lib/html.js';
-import { useMemo, useState, useRef } from 'preact/hooks';
+import { useEffect, useMemo, useState, useRef } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Modal } from './dialogs.js';
 import { AgentIcon, Icon } from './icons.js';
 import { closeOverlay, startSession, openOverlay } from '../lib/actions.js';
-import { sortAgents, KIND_LABEL, agentStats } from '../lib/model.js';
+import { sortAgents, KIND_LABEL, agentStats, MODEL_CHOICES, EFFORT_CHOICES } from '../lib/model.js';
+import { api } from '../lib/api.js';
 import { matches, isMac } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
@@ -23,9 +24,19 @@ export function NewSessionDialog({ agent: preset }) {
   const [pick, setPick] = useState(preset || (sorted[0] && sorted[0].id) || null);
   const [prompt, setPrompt] = useState('');
   const [model, setModel] = useState('');
+  const [effort, setEffort] = useState('');
+  const [accounts, setAccounts] = useState([]);
+  const [account, setAccount] = useState('default');
   const [busy, setBusy] = useState(false);
   const promptRef = useRef(null);
   const blocked = useStartBlocked();
+
+  // A second Claude login is optional: the Account picker shows only once one exists.
+  useEffect(() => {
+    let live = true;
+    api.accounts().then((list) => { if (live && Array.isArray(list)) setAccounts(list.filter((a) => a && a.id)); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
 
   const visible = sorted.filter((a) => matches(q, a.name, a.id, a.mission, KIND_LABEL[a.kind]));
   const current = sorted.find((a) => a.id === pick);
@@ -34,7 +45,7 @@ export function NewSessionDialog({ agent: preset }) {
     if (!id || busy || blocked) return;
     setBusy(true);
     try {
-      await startSession(id, { prompt, model });
+      await startSession(id, { prompt, model, effort, account });
       closeOverlay();
     } catch {
       setBusy(false);
@@ -85,12 +96,28 @@ export function NewSessionDialog({ agent: preset }) {
           onKeyDown=${(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); go(); } }}
           placeholder=${current ? `What should ${current.name} work on?` : 'What should it work on?'} data-testid="ns-prompt"></textarea>
       </label>
-      <label class="field field-inline">
-        <span class="field-label">Model</span>
-        <input class="mono" list="ns-models" value=${model} onInput=${(e) => setModel(e.currentTarget.value)}
-          placeholder=${current && current.model ? current.model : 'agent default'} aria-label="Model (optional)" />
-        <datalist id="ns-models"><option value="sonnet" /><option value="opus" /><option value="haiku" /></datalist>
-      </label>
+      <div class="ns-pickers">
+        <label class="field field-inline">
+          <span class="field-label">Model</span>
+          <select value=${model} onChange=${(e) => setModel(e.currentTarget.value)} data-testid="ns-model">
+            <option value="">${current && current.model ? `Agent default (${current.model})` : 'Default'}</option>
+            ${MODEL_CHOICES.map((m) => html`<option value=${m}>${m}</option>`)}
+          </select>
+        </label>
+        <label class="field field-inline">
+          <span class="field-label">Effort</span>
+          <select value=${effort} onChange=${(e) => setEffort(e.currentTarget.value)} data-testid="ns-effort">
+            <option value="">Default</option>
+            ${EFFORT_CHOICES.map((x) => html`<option value=${x}>${x}</option>`)}
+          </select>
+        </label>
+        ${accounts.length > 1 ? html`<label class="field field-inline">
+          <span class="field-label">Account</span>
+          <select value=${account} onChange=${(e) => setAccount(e.currentTarget.value)} data-testid="ns-account">
+            ${accounts.map((a) => html`<option value=${a.id}>${a.name || a.id}</option>`)}
+          </select>
+        </label>` : null}
+      </div>
     </div>
     <div class="modal-foot">
       <span class="foot-hint"><kbd>${isMac ? '⌘' : 'Ctrl'}</kbd><kbd>↵</kbd> to start from the message box</span>
