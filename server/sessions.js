@@ -12,8 +12,6 @@ import { HOOK_EVENTS, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { prependPath } from './platform.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
-
-export { buildSnapshot }; // (moved to termfilter.js: the tmux backend builds snapshots now)
 import { cleanTitle, deriveTitle } from './titles.js';
 import {
   HttpError,
@@ -32,6 +30,8 @@ import {
   writeFileAtomic,
   writeJson,
 } from './util.js';
+
+export { buildSnapshot }; // moved to termfilter.js (the tmux backend builds snapshots now)
 
 const RING_MAX = 256 * 1024;
 const ENDED_VISIBLE_MS = 14 * 24 * 3600 * 1000;

@@ -227,7 +227,7 @@ async function cmdStart(args) {
   console.log(`  Open:      ${srv.openUrl}`);
   console.log(`  Org:       ${home}`);
   if (persistent) console.log(`  Sessions:  tmux (tmux -L ${srv.socket} ls)`);
-  else console.log(`  Sessions:  built-in terminal (${srv.backend.describe().version}). Install tmux 3.2+ to keep them running across restarts.`);
+  else console.log(`  Sessions:  built-in terminal (${srv.backend.describe().version}).${process.platform === 'win32' ? '' : ' Install tmux 3.2+ to keep them running across restarts.'}`);
   console.log(persistent ? 'Ctrl-C stops the cockpit. Your sessions keep running in tmux.\n' : 'Ctrl-C stops the cockpit and ends its sessions; each one resumes where it left off.\n');
   if (!['127.0.0.1', 'localhost', '::1'].includes(host)) {
     console.log(`WARNING: --host ${host} makes the cockpit reachable from other devices on your network.`);
