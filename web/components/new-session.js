@@ -8,6 +8,7 @@ import { AgentIcon, Icon } from './icons.js';
 import { closeOverlay, startSession, openOverlay } from '../lib/actions.js';
 import { sortAgents, KIND_LABEL, agentStats } from '../lib/model.js';
 import { matches, isMac } from '../lib/util.js';
+import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const GROUPS = [['chief', 'Chief of staff'], ['domain', 'Domains'], ['project', 'Projects'], ['scratch', 'No agent']];
 // A plain claude in the org folder, no agent context: for one-off questions.
@@ -24,12 +25,13 @@ export function NewSessionDialog({ agent: preset }) {
   const [model, setModel] = useState('');
   const [busy, setBusy] = useState(false);
   const promptRef = useRef(null);
+  const blocked = useStartBlocked();
 
   const visible = sorted.filter((a) => matches(q, a.name, a.id, a.mission, KIND_LABEL[a.kind]));
   const current = sorted.find((a) => a.id === pick);
 
   const go = async (id = pick) => {
-    if (!id || busy) return;
+    if (!id || busy || blocked) return;
     setBusy(true);
     try {
       await startSession(id, { prompt, model });
@@ -93,7 +95,7 @@ export function NewSessionDialog({ agent: preset }) {
     <div class="modal-foot">
       <span class="foot-hint"><kbd>${isMac ? '⌘' : 'Ctrl'}</kbd><kbd>↵</kbd> to start from the message box</span>
       <button class="btn btn-quiet" onClick=${closeOverlay}>Cancel</button>
-      <button class="btn btn-primary" onClick=${() => go()} disabled=${!pick || busy} data-testid="ns-start">
+      <button class="btn btn-primary" onClick=${() => go()} disabled=${!pick || busy || blocked} title=${blocked ? BLOCKED_TITLE : undefined} data-testid="ns-start">
         ${busy ? 'Starting…' : current ? `Start with ${current.name}` : 'Start session'}
       </button>
     </div>

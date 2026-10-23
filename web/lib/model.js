@@ -20,8 +20,20 @@ export function isLive(s) {
   return !!s && s.status !== 'ended';
 }
 
+// Claude Code asked you something (a permission, a startup dialog): it cannot go on without you.
+export function isBlocked(s) {
+  return !!s && s.status === 'needs_you';
+}
+
+// Claude finished a turn and is waiting for your reply. A session you just opened is "ready" too,
+// but it has no last message yet: it is waiting for your FIRST message, not waiting on you.
+export function isYourTurn(s) {
+  return !!s && s.status === 'ready' && !!s.last_message;
+}
+
+// "Needs you" everywhere (rail section, counts, badges, the map): blocked or your turn.
 export function needsYou(s) {
-  return !!s && (s.status === 'needs_you' || s.status === 'ready');
+  return isBlocked(s) || isYourTurn(s);
 }
 
 export function agentLabel(s, agentsById = {}) {
@@ -45,6 +57,7 @@ export function statusText(s) {
   if (!s) return '';
   if (s.status === 'needs_you') return s.notification ? String(s.notification) : 'Needs you';
   if (s.status === 'ready' && s.last_message) return `Your turn · ${String(s.last_message)}`;
+  if (s.status === 'ready') return 'Ready for your first message';
   if (s.status === 'starting' && s.notification) return String(s.notification);
   return STATUS_LABEL[s.status] || s.status || '';
 }
@@ -63,14 +76,14 @@ export function attachCommand(s) {
 }
 
 const NEEDS_ORDER = { needs_you: 0, ready: 1 };
-const LIVE_ORDER = { working: 0, starting: 1 };
+const LIVE_ORDER = { working: 0, starting: 1, ready: 2 };
 
 export function groupSessions(list, now = Date.now()) {
   const needs = [];
   const live = [];
   const recent = [];
   for (const s of list) {
-    if (s.status === 'needs_you' || s.status === 'ready') needs.push(s);
+    if (needsYou(s)) needs.push(s);
     else if (s.status === 'ended') {
       const t = toMs(s.ended_at) || activityAt(s);
       if (!t || now - t <= RECENT_DAYS * DAY) recent.push(s);
@@ -82,17 +95,21 @@ export function groupSessions(list, now = Date.now()) {
   return { needs, live, recent };
 }
 
+// Per agent: live sessions, blocked (Claude asked something), turn (your reply), needs = both
+// (the same "need you" as the rail), working.
 export function agentStats(agentId, sessions) {
   let live = 0;
-  let needs = 0;
+  let blocked = 0;
+  let turn = 0;
   let working = 0;
   for (const s of sessions) {
     if (s.agent !== agentId || s.status === 'ended') continue;
     live += 1;
-    if (needsYou(s)) needs += 1; // needs_you + ready: the same "need you" as the rail
+    if (isBlocked(s)) blocked += 1;
+    else if (isYourTurn(s)) turn += 1;
     if (s.status === 'working' || s.status === 'starting') working += 1;
   }
-  return { live, needs, working };
+  return { live, blocked, turn, needs: blocked + turn, working };
 }
 
 export function countNeedsYou(sessions) {
@@ -102,6 +119,25 @@ export function countNeedsYou(sessions) {
 }
 
 export const KIND_LABEL = { chief: 'Chief of staff', domain: 'Domain', project: 'Project' };
+
+// One check in /api/health passed (`{ok: true}`).
+export function ok(x) {
+  return !!x && (x.ok === true || x.ok === 'true');
+}
+
+// The checks in /api/health that failed and stop sessions from starting: every top-level entry
+// shaped `{ok, ...}` whose ok is false, unless the server marks it `optional`. Generic on purpose,
+// so a check the server adds later (another session backend, say) shows up without a UI change.
+export function healthProblems(health) {
+  if (!health || typeof health !== 'object') return [];
+  const out = [];
+  for (const [id, v] of Object.entries(health)) {
+    if (!v || typeof v !== 'object' || Array.isArray(v) || !('ok' in v)) continue;
+    if (ok(v) || v.optional) continue;
+    out.push({ id, ...v });
+  }
+  return out;
+}
 
 export function agentFolder(a) {
   if (!a) return '';

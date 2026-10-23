@@ -9,9 +9,11 @@ import { StatusGlyph } from './status.js';
 import { Pane } from './pane.js';
 import { setLayout, focusSession, startSession, togglePalette, openOverlay } from '../lib/actions.js';
 import { gridShape } from '../lib/layout.js';
-import { sessionName, groupSessions, sortAgents, KIND_LABEL, agentStats, statusText, agentLabel } from '../lib/model.js';
-import { MOD, plural } from '../lib/util.js';
+import { sessionName, groupSessions, sortAgents, KIND_LABEL, agentStats, statusText, agentLabel, countNeedsYou } from '../lib/model.js';
+import { MOD, plural, paneKey } from '../lib/util.js';
 import { setState } from '../lib/store.js';
+import { FirstTrust, OrgError } from './first-run.js';
+import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const LAYOUT_OPTS = [
   { id: 'focus', label: 'Focus', icon: 'layout-focus', hint: 'One big pane, the rest as tabs' },
@@ -53,14 +55,14 @@ export function Workspace({ hidden }) {
   const firstSpan = layout === 'grid' && empty > 0 && shape.rows > 1 ? Math.min(shape.rows, empty + 1) : 1;
 
   const panesStyle = { '--cols': String(shape.cols), '--rows': String(shape.rows) };
-  const needsCount = useMemo(() => Object.values(sessions).filter((s) => s.status === 'needs_you' || s.status === 'ready').length, [sessions]);
+  const needsCount = useMemo(() => countNeedsYou(Object.values(sessions)), [sessions]);
 
   return html`<main class=${`workspace ${hidden ? 'is-under' : ''}`} inert=${hidden ? true : undefined} aria-hidden=${hidden ? 'true' : undefined}
       aria-label="Workspace" data-layout=${layout} data-open-count=${open.length}>
     <header class="ws-bar">
       ${mobile ? html`<button class="icon-btn" aria-label="Back to sessions" onClick=${() => setState({ mobileView: 'list' })}><${Icon} name="arrow-left" /></button>` : null}
       <h1 class="ws-title">Cockpit</h1>
-      <span class="ws-sub" aria-live="polite">${open.length ? `${plural(open.length, 'pane')} open` : 'No panes open'}${needsCount ? html` · <span class="tone-amber-text">${needsCount} waiting on you</span>` : null}</span>
+      <span class="ws-sub" aria-live="polite">${open.length ? `${plural(open.length, 'pane')} open` : 'No panes open'}${needsCount ? html` · <span class="tone-amber-text">${needsCount} need you</span>` : null}</span>
       <span class="ws-spacer"></span>
       ${mobile ? null : html`<div class="seg" role="radiogroup" aria-label="Layout">
         ${LAYOUT_OPTS.map((o) => html`<button role="radio" aria-checked=${layout0 === o.id ? 'true' : 'false'} class=${`seg-btn ${layout0 === o.id ? 'is-on' : ''}`}
@@ -96,7 +98,7 @@ function TabStrip({ open, visible, focused }) {
       return html`<button key=${sid} role="tab" aria-selected=${focused === sid ? 'true' : 'false'}
         class=${`tab ${on ? 'is-visible' : ''} ${focused === sid ? 'is-focused' : ''}`} data-tab=${sid}
         onClick=${() => focusSession(sid)} title=${`${sessionName(s, agentsById)} · ${statusText(s)}`}>
-        <${StatusGlyph} status=${s.status} label=${false} /><span class="tab-label">${sessionName(s, agentsById)}</span>${i < 9 ? html`<span class="tab-key" aria-hidden="true">${i + 1}</span>` : null}
+        <${StatusGlyph} status=${s.status} label=${false} /><span class="tab-label">${sessionName(s, agentsById)}</span>${i < 9 ? html`<span class="tab-key" aria-hidden="true">${paneKey(i + 1)}</span>` : null}
       </button>`;
     })}
   </div>`;
@@ -107,17 +109,22 @@ function EmptyState() {
   const sessions = useStore((s) => s.sessions);
   const agentsById = useStore((s) => s.agentsById);
   const now = useStore((s) => s.now);
+  const orgError = useStore((s) => s.orgError);
+  const blocked = useStartBlocked();
   const list = useMemo(() => Object.values(sessions), [sessions]);
   const g = useMemo(() => groupSessions(list, now), [list, now]);
   const waiting = [...g.needs, ...g.live];
   const first = list.length === 0;
+  const mobile = useStore((s) => s.mobile);
+  const trustStep = first && !orgError;
 
   return html`<div class="empty" data-testid="empty-state">
     <div class="empty-inner">
       <h2 class="empty-title">${first ? 'Start your first session' : 'Pick an agent to start a session'}</h2>
       <p class="empty-sub">${first
-        ? 'Every agent is the real claude CLI, opened in its own folder with its own CLAUDE.md and memory. Pick one.'
+        ? 'Every agent is the real claude CLI, opened in its own folder with its own CLAUDE.md and memory.'
         : 'Open panes come back when you reload. Live sessions keep running in tmux even with no pane open.'}</p>
+      ${trustStep && !mobile ? html`<div class="empty-block"><${FirstTrust} /></div>` : null}
       ${waiting.length ? html`<div class="empty-block">
         <h3 class="empty-h">Running now</h3>
         <ul class="empty-live">
@@ -126,12 +133,13 @@ function EmptyState() {
             <span class="elr-meta">${agentLabel(s, agentsById)} · ${statusText(s)}</span></button></li>`)}
         </ul>
       </div>` : null}
-      <div class="empty-block">
-        <h3 class="empty-h">Start a session with</h3>
+      ${orgError ? html`<div class="empty-block"><${OrgError} /></div>` : html`<div class="empty-block">
+        <h3 class="empty-h">${trustStep ? 'Then start a session with' : 'Start a session with'}</h3>
         <ul class="agent-cards">
           ${sortAgents(agents).map((a) => {
             const st = agentStats(a.id, list);
-            return html`<li key=${a.id}><button class="agent-card" onClick=${() => startSession(a.id).catch(() => {})} data-agent-card=${a.id}>
+            return html`<li key=${a.id}><button class="agent-card" onClick=${() => startSession(a.id).catch(() => {})} data-agent-card=${a.id}
+              disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}>
               <span class="ac-icon"><${AgentIcon} agent=${a} size=${16} /></span>
               <span class="ac-text"><span class="ac-name">${a.name}</span><span class="ac-kind">${KIND_LABEL[a.kind] || a.kind}${st.live ? ` · ${st.live} live` : ''}</span>
               ${a.mission ? html`<span class="ac-mission">${a.mission}</span>` : null}</span>
@@ -142,7 +150,7 @@ function EmptyState() {
             <span class="ac-text"><span class="ac-name">New agent</span><span class="ac-kind">A domain or a project</span></span>
           </button></li>
         </ul>
-      </div>
+      </div>`}
     </div>
   </div>`;
 }

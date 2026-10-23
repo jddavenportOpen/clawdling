@@ -10,6 +10,7 @@ import { startSession, focusSession, resumeSession, navigate, toast, errorToast,
 import { refreshOrg } from '../lib/live.js';
 import { sessionName, statusText, KIND_LABEL, agentFolder, groupSessions, sessionTime } from '../lib/model.js';
 import { relTime, longTime, isMac } from '../lib/util.js';
+import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const MAX_BYTES = 200 * 1024;
 
@@ -21,6 +22,7 @@ export function AgentPage({ id, tab = 'sessions' }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState('');
   const [reload, setReload] = useState(0);
+  const blocked = useStartBlocked();
 
   useEffect(() => {
     let live = true;
@@ -58,8 +60,10 @@ export function AgentPage({ id, tab = 'sessions' }) {
         </p>
       </div>
       <div class="hero-actions">
-        <button class="btn btn-primary" onClick=${() => startSession(id).catch(() => {})} data-testid="agent-new-session"><${Icon} name="plus" /> New session</button>
-        <button class="btn btn-quiet" onClick=${() => openOverlay({ type: 'new-session', agent: id })}>With a first message…</button>
+        <button class="btn btn-primary" onClick=${() => startSession(id).catch(() => {})} data-testid="agent-new-session"
+          disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> New session</button>
+        <button class="btn btn-quiet" onClick=${() => openOverlay({ type: 'new-session', agent: id })}
+          disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}>With a first message…</button>
       </div>
     </header>
 

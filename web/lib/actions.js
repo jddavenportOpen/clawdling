@@ -23,6 +23,7 @@ export function initialState() {
     channels: null,
     channelLog: [],
     health: null,
+    orgError: '',
     sessions: {},
     sessionsLoaded: false,
     open: Array.isArray(open) ? open.filter((x) => typeof x === 'string') : [],
@@ -266,6 +267,8 @@ export async function startSession(agent, { prompt, model, title } = {}) {
     return s;
   } catch (e) {
     errorToast('Could not start the session', e);
+    // A missing claude/tmux is a lasting problem: re-read /api/health so the banner says so and stays.
+    import('./live.js').then((m) => m.refreshHealth()).catch(() => {});
     throw e;
   }
 }
