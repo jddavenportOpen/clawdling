@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { readToken, loadOrCreateToken } from '../server/auth.js';
 import { OrgStore, defaultAnswers, initOrg } from '../server/org.js';
 import { selectBackend } from '../server/backend.js';
-import { cliInvocation } from '../server/hints.js';
+import { cliInvocation, stopMessage } from '../server/hints.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
 import { readJson, shq } from '../server/util.js';
@@ -279,9 +279,7 @@ async function cmdStop(args) {
   const r = await api(ctx, 'POST', '/api/shutdown');
   for (let i = 0; i < 120 && (await serverUp(ctx)); i++) await new Promise((res) => setTimeout(res, 100));
   const start = cliCmd(ctx.home, 'start');
-  if (!live) console.log('Stopped the cockpit.');
-  else if (r?.sessions_keep_running === false) console.log(`Stopped the cockpit. Its ${live === 1 ? 'session' : `${live} sessions`} ended; resume them from the cockpit after \`${start}\`.`);
-  else console.log(`Stopped the cockpit. ${live === 1 ? 'Your session keeps' : `Your ${live} sessions keep`} running in tmux; \`${start}\` reconnects to them.`);
+  console.log(stopMessage({ live, keepsRunning: r?.sessions_keep_running, start }));
 }
 
 async function cmdOpen(args) {

@@ -80,6 +80,23 @@ export function cliInvocation(opts = {}) {
   return cli + homeFlag;
 }
 
+/**
+ * What `clawdling stop` prints. `live` is how many sessions were running; `keepsRunning` is false
+ * when they ran inside Clawdling (no tmux) and so ended with it; `start` is the start command as
+ * this computer spells it.
+ */
+export function stopMessage({ live, keepsRunning, start }) {
+  if (!live) return 'Stopped the cockpit.';
+  if (keepsRunning === false) {
+    return live === 1
+      ? `Stopped the cockpit. Its session ended; resume it from the cockpit after \`${start}\`.`
+      : `Stopped the cockpit. Its ${live} sessions ended; resume them from the cockpit after \`${start}\`.`;
+  }
+  return live === 1
+    ? `Stopped the cockpit. Your session keeps running in tmux; \`${start}\` reconnects to it.`
+    : `Stopped the cockpit. Your ${live} sessions keep running in tmux; \`${start}\` reconnects to them.`;
+}
+
 /** How to install tmux on this platform, for error messages. */
 export function tmuxInstallHint(platform = process.platform) {
   if (platform === 'darwin') return 'brew install tmux';
