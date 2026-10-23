@@ -2,7 +2,7 @@
 // a collapsible-but-useful rail, home with panes intact, live terminals.
 import { test, expect } from '@playwright/test';
 import {
-  login, seedStandard, row, rowButton, pane, panes, focusedPane, openPanes, termText, sessionBySid, isMock, TOKEN, mockRequests, spawn, api, sessions, ownsServer,
+  login, seedStandard, row, rowButton, pane, panes, focusedPane, openPanes, termText, sessionBySid, isMock, TOKEN, mockRequests, spawn, api, sessions, ownsServer, health,
 } from './helpers.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,11 +22,19 @@ test.describe('auth', () => {
     expect(c.httpOnly).toBe(true);
   });
 
-  test('without a token the cockpit explains how to get in', async ({ page }) => {
+  test('without a token the cockpit explains how to get in, with a command that runs here', async ({ page, context }) => {
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const h = await health(); // public: the sign-in screen reads the server's CLI spelling from it
+    expect(typeof h.cli).toBe('string');
     await page.goto('/');
     const msg = page.getByTestId('auth-message');
     await expect(msg).toBeVisible();
-    await expect(msg).toHaveText('Open the link printed by clawdling start (or run clawdling open).');
+    await expect(msg).toHaveText('Run this in a terminal on this computer. It opens the cockpit already signed in.');
+    await expect(page.locator('.auth-title')).toHaveText('Open the cockpit from your terminal');
+    // Never a bare `clawdling open` unless that is how this computer runs it (P0-3).
+    await expect(page.getByTestId('auth-command')).toHaveText(`${h.cli} open`);
+    await page.getByTestId('auth-copy').click();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(`${h.cli} open`);
     await expect(page.locator('[data-rail]')).toHaveCount(0);
   });
 });
@@ -219,14 +227,16 @@ test.describe('rail and workspace', () => {
     await expect(panes(page)).toHaveCount(2);
   });
 
-  test(`${MOD}+N focuses pane N and layouts never drop panes`, async ({ page }) => {
+  test('Option/Alt+N focuses pane N (browsers keep Cmd/Ctrl+N) and layouts never drop panes', async ({ page }) => {
     await openPanes(page, [ids.roadmap, ids.brief, ids.quotes]);
-    await page.keyboard.press(`${MOD}+1`);
+    await page.keyboard.press('Alt+Digit1');
     await expect(pane(page, ids.roadmap)).toHaveAttribute('data-focused', 'true');
+    // The hint on each pane names the key that works (⌥2 on a Mac, Alt+2 elsewhere).
+    await expect(pane(page, ids.brief).locator('.pane-index')).toHaveText(/^(⌥|Alt\+)2$/);
     await page.locator('[data-layout-btn="focus"]').click();
     await expect(page.locator('[data-pane]:not(.is-hidden)')).toHaveCount(1);
     await expect(panes(page)).toHaveCount(3);
-    await page.keyboard.press(`${MOD}+3`);
+    await page.keyboard.press('Alt+Digit3');
     await expect(pane(page, ids.quotes)).toBeVisible();
     await expect(page.locator('.tabstrip [role="tab"]')).toHaveCount(3);
     await page.locator('[data-layout-btn="split"]').click();
@@ -402,7 +412,11 @@ test.describe('startup dialogs', () => {
     await openPanes(page, [sid]);
     const banner = pane(page, sid).getByTestId('pane-dialog');
     await expect(banner).toBeVisible();
-    await expect(banner.getByTestId('pane-dialog-text')).toHaveText('Claude Code is asking whether it can trust this folder.');
+    // It names the folder and says what "No, exit" does (P0-4).
+    const cwd = (await sessionBySid(sid)).cwd;
+    await expect(banner.getByTestId('pane-dialog-text')).toHaveText(`Claude Code asks whether you trust ${cwd.replace(/^\/(Users|home)\/[^/]+/, '~')}. "No, exit" ends this session.`);
+    // Buttons follow the server's choices in screen order (2.1.283 lists "No, exit" first).
+    await expect(banner.locator('button')).toHaveText(['No, exit', 'Yes, trust it']);
     await expect(banner.getByTestId('dialog-yes')).toHaveText('Yes, trust it');
     await expect(banner.getByTestId('dialog-no')).toHaveText('No, exit');
     if (isMock()) {

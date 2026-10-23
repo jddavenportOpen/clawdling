@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { login, reset, api, isMock, mockRequests, spawn, panes, focusedPane, sessionBySid, tag, sessions } from './helpers.js';
+import { login, reset, api, isMock, mockRequests, spawn, panes, focusedPane, sessionBySid, tag, sessions, mock, health } from './helpers.js';
 
 async function orgAgents() {
   const r = await api('GET', '/api/org');
@@ -33,23 +33,48 @@ test.describe('org map', () => {
     await expect(page.getByTestId('agent-page')).toBeVisible();
   });
 
-  test('"need you" is one number everywhere, and the amber rings agree with it', async ({ page }) => {
+  test('"need you" is one honest number everywhere: amber = Claude asked, green = your turn', async ({ page }) => {
     await reset('default');
     await login(page, '#/map');
     await expect(page.locator('[data-node]').first()).toBeVisible();
     const all = await sessions();
-    const waiting = all.filter((x) => x.status === 'needs_you' || x.status === 'ready'); // needs you + your turn
+    const blocked = all.filter((x) => x.status === 'needs_you');
+    const turn = all.filter((x) => x.status === 'ready' && x.last_message); // finished a turn, waiting for your reply
+    const waiting = [...blocked, ...turn];
     await expect(page.locator('#sec-needs .sec-count')).toHaveText(String(waiting.length));
     if (waiting.length) await expect(page.locator('.map-page .page-sub')).toContainText(`${waiting.length} need you`);
     else await expect(page.locator('.map-page .page-sub')).not.toContainText('need you');
-    const agentsWaiting = new Set(waiting.map((x) => x.agent));
+    const agentsBlocked = new Set(blocked.map((x) => x.agent));
+    const agentsTurn = new Set(turn.map((x) => x.agent).filter((a) => !agentsBlocked.has(a)));
     for (const a of await orgAgents()) {
-      await expect(page.locator(`[data-node="${a.id}"] .needs-ring`)).toHaveCount(agentsWaiting.has(a.id) ? 1 : 0);
+      await expect(page.locator(`[data-node="${a.id}"] .needs-ring`)).toHaveCount(agentsBlocked.has(a.id) ? 1 : 0);
+      await expect(page.locator(`[data-node="${a.id}"] .ready-ring`)).toHaveCount(agentsTurn.has(a.id) ? 1 : 0);
     }
     if (isMock()) {
-      expect(agentsWaiting.has('donna')).toBe(true); // Donna's session is "your turn" (ready): still amber
-      await expect(page.locator('[data-node="donna"]')).toHaveClass(/tone-needs/);
+      // Home's "your turn" session is green on the map, as in the rail; Work's amber badge counts
+      // the one session that needs you, not its two live ones (P1-5).
+      await expect(page.locator('[data-node="home"]')).toHaveClass(/tone-ready/);
+      await expect(page.locator('[data-node="work"]')).toHaveClass(/tone-needs/);
+      await expect(page.locator('[data-node="work"] .badge-g text')).toHaveText('1');
+      await expect(page.locator('.rail [data-agent="work"] [data-badge="needs"]')).toHaveText('1');
+      await expect(page.locator('.legend')).toContainText('Your turn');
     }
+  });
+
+  test('a session you just opened adds nothing to "need you"', async ({ page }) => {
+    await reset('default');
+    await login(page);
+    const count = page.locator('#sec-needs .sec-count');
+    const needs = async () => ((await count.count()) ? (await count.textContent()).trim() : '0');
+    const before = await needs();
+    await page.locator('.rail [data-agent="money"] button.row').click();
+    await expect(focusedPane(page)).toHaveCount(1);
+    const sid = await focusedPane(page).getAttribute('data-pane');
+    await expect.poll(async () => (await sessionBySid(sid))?.status).toBe('ready');
+    const row = page.locator(`.rail .row-wrap[data-sid="${sid}"]`);
+    await expect(row).toHaveAttribute('data-section', 'live');
+    await expect(row).toContainText('Ready for your first message');
+    await expect.poll(needs).toBe(before);
   });
 
   test('New session from the map panel lands focused in the cockpit', async ({ page }) => {
@@ -234,31 +259,62 @@ test.describe('donna page', () => {
   });
 });
 
-test.describe('settings: connect your phone', () => {
-  test('shows the pairing QR, a copyable link and the localhost warning', async ({ page, context }) => {
+test.describe('settings: use Clawdling on your phone', () => {
+  test('loopback: no QR and no LAN address, just how to make the phone reach it (P0-2)', async ({ page }) => {
     await reset('default');
-    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
     const probe = await fetch(new URL('/api/pair', process.env.CLAWDLING_E2E_URL), { headers: { 'x-clawdling-token': process.env.CLAWDLING_E2E_TOKEN } });
     test.skip(probe.status === 404, 'this server has no /api/pair yet');
     const pair = await probe.json();
+    test.skip(!/^http:\/\/127\./.test(pair.url), 'this server is reachable from other devices');
+    const h = await health();
     await login(page, '#/settings');
     const card = page.getByTestId('phone-card');
-    await expect(card).toBeVisible();
+    await expect(card.locator('.card-title')).toHaveText('Use Clawdling on your phone');
+    await expect(page.getByTestId('pair-qr')).toHaveCount(0);
+    await expect(page.getByTestId('pair-app-qr')).toHaveCount(0);
+    for (const lan of pair.lan) await expect(card).not.toContainText(lan);
+    const warn = page.getByTestId('pair-warning');
+    await expect(warn).toContainText("Your phone can't reach this cockpit yet.");
+    await expect(warn).toContainText(`${h.cli} start --host 0.0.0.0`); // spelled the way this computer runs it
+    await expect(warn).toContainText('Tailscale');
+    // The app is honest about not being out yet.
+    await expect(page.getByTestId('pair-app')).toContainText('coming soon');
+    await expect(page.getByTestId('pair-app')).toContainText('waiting on App Store review');
+  });
+
+  test('reachable: the QR opens the cockpit in the phone browser, signed in; the app code is folded away', async ({ page, context }) => {
+    test.skip(!isMock(), 'needs the mock to change the bind address');
+    await reset('default');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await mock('bind', { bind: '0.0.0.0' });
+    const pair = await api('GET', '/api/pair');
+    expect(pair.browser_link).toBe(`${pair.url}/?t=${pair.token}`);
+    await login(page, '#/settings');
     const qr = page.getByTestId('pair-qr');
-    await expect(qr).toHaveAttribute('src', '/api/pair/qr.svg');
+    await expect(qr).toHaveAttribute('src', '/api/pair/qr.svg?target=browser');
     await expect.poll(() => qr.evaluate((img) => img.complete && img.naturalWidth > 0)).toBe(true);
-    // The token is masked on screen until asked for, but Copy copies the real link.
+    await expect(page.getByTestId('pair-browser')).toContainText("Open it in your phone's browser");
+    await expect(page.getByTestId('pair-warning')).toHaveCount(0);
+    // The token is masked on screen until asked for, but Copy copies the real browser link.
     await expect(page.getByTestId('pair-link')).not.toContainText(pair.token);
     await page.getByTestId('pair-copy').click();
-    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(pair.link);
-    if (pair.bind === '127.0.0.1') {
-      await expect(page.getByTestId('pair-warning')).toContainText("Your phone can't reach this cockpit yet: restart with clawdling start --host 0.0.0.0 (same Wi-Fi) or use Tailscale.");
-    }
-    if (isMock()) {
-      await fetch(new URL('/__mock/bind', process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bind: '0.0.0.0' }) });
-      await page.reload();
-      await expect(page.getByTestId('pair-qr')).toBeVisible();
-      await expect(page.getByTestId('pair-warning')).toHaveCount(0);
-    }
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(pair.browser_link);
+    // Only one code to scan with the camera: the app's stays folded until asked for.
+    await expect(page.getByTestId('pair-app-qr')).toBeHidden();
+    await page.getByTestId('pair-app').locator('summary').click();
+    await expect(page.getByTestId('pair-app-qr')).toBeVisible();
+    await expect(page.getByTestId('pair-app-qr')).toHaveAttribute('src', '/api/pair/qr.svg');
+  });
+
+  test('the browser link really signs a new browser in', async ({ browser }) => {
+    const pair = await api('GET', '/api/pair');
+    // The phone would use the LAN address; this machine reaches the same server on loopback.
+    const local = pair.browser_link.replace(pair.url, process.env.CLAWDLING_E2E_URL.replace(/\/$/, ''));
+    const ctx = await browser.newContext();
+    const page = await ctx.newPage();
+    await page.goto(local);
+    await expect(page.locator('[data-rail]')).toBeVisible();
+    expect(page.url()).not.toContain('t=');
+    await ctx.close();
   });
 });

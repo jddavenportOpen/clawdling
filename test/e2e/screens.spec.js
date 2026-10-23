@@ -93,8 +93,10 @@ for (const vp of [{ w: 1440, h: 900 }, { w: 1024, h: 768 }]) {
 
     test(`settings with phone pairing (${tag})`, async ({ page }) => {
       await reset('default');
+      // Loopback (the default bind) shows no QR: a phone cannot reach it. Capture the reachable case.
+      if (isMock()) await fetch(new URL('/__mock/bind', process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ bind: '0.0.0.0' }) });
       await login(page, '#/settings');
-      await expect(page.getByTestId('pair-qr')).toBeVisible();
+      await expect(page.getByTestId(isMock() ? 'pair-qr' : 'phone-card')).toBeVisible();
       await settle(page);
       await shot(page, `settings-${tag}`);
     });
