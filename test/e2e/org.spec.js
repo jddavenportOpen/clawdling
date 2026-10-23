@@ -280,8 +280,8 @@ test.describe('settings: use Clawdling on your phone', () => {
     await expect(warn).toContainText(`${h.cli} start --host 0.0.0.0`); // spelled the way this computer runs it
     await expect(warn).toContainText('Tailscale');
     // The app is honest about not being out yet.
-    await expect(page.getByTestId('pair-app')).toContainText('coming soon');
-    await expect(page.getByTestId('pair-app')).toContainText('waiting on App Store review');
+    await expect(page.getByTestId('pair-app')).toContainText('public beta');
+    await expect(page.getByTestId('pair-app')).toContainText('public beta on TestFlight');
   });
 
   test('reachable: the QR opens the cockpit in the phone browser, signed in; the app code is folded away', async ({ page, context }) => {

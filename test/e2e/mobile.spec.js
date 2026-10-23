@@ -110,7 +110,7 @@ test('phone card at 390: loopback shows the fix, not a QR that cannot work (P0-2
   await login(page, '#/settings');
   await expect(page.getByTestId('pair-warning')).toContainText(`${h.cli} start --host 0.0.0.0`);
   await expect(page.getByTestId('pair-qr')).toHaveCount(0);
-  await expect(page.getByTestId('pair-app')).toContainText('coming soon');
+  await expect(page.getByTestId('pair-app')).toContainText('public beta');
   expect(await scrollWidth(page)).toBe(390);
   expect(await smallTargets(page)).toEqual([]);
 });

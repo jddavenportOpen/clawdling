@@ -153,8 +153,9 @@ she can start, message and list sessions and read your org, nothing else.
 
 **On your phone.** The Clawdling iPhone app (chat only) connects to your own cockpit: see what
 needs you, chat with any session, start one, talk to Donna. Pair it from Settings with a QR
-code. The app is waiting on Apple's review; this README will link it when it is out. Until
-then the cockpit itself works in a phone browser (see the FAQ for reaching it).
+code. It's in public beta on TestFlight: install TestFlight, then open
+https://testflight.apple.com/join/2MHukWQG on your iPhone. The cockpit itself also works in a phone browser (see the FAQ for
+reaching it).
 
 _Screenshots use sample data._
 

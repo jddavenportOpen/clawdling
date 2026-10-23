@@ -97,8 +97,8 @@ const isLoopbackUrl = (u) => /^https?:\/\/(127\.|localhost[:/]|localhost$|\[::1\
 
 // "Use Clawdling on your phone". GET /api/pair -> {url, token, link, browser_link, lan, bind}.
 // The phone's browser opens browser_link (the cockpit, signed in) from the QR at
-// /api/pair/qr.svg?target=browser. The iPhone app pairs with `link` (/api/pair/qr.svg), but it is
-// still in App Store review, so it is labelled "coming soon" and its code stays folded away.
+// /api/pair/qr.svg?target=browser. The iPhone app pairs with `link` (/api/pair/qr.svg). The app is in
+// public beta on TestFlight (not yet on the App Store), so its code stays folded behind a disclosure.
 function PhoneCard() {
   const health = useStore((s) => s.health);
   const [pair, setPair] = useState(null);
@@ -158,8 +158,8 @@ function PhoneCard() {
           <span>Your phone can't reach this cockpit yet. Restart it with <code>${cliCmd('start --host 0.0.0.0', health)}</code> to reach it on the same Wi-Fi,
           or with <code>--host</code> set to this computer's Tailscale address (<code>tailscale ip -4</code>) to reach it from anywhere on your tailnet. Then reload this page.</span></p>`}
         <div class="phone-block phone-app" data-testid="pair-app">
-          <h3 class="card-h">Clawdling iPhone app <span class="card-tag">coming soon</span></h3>
-          <p class="set-note phone-lead">The iPhone app is waiting on App Store review. ${reachable ? "Once it's out, scan this code with the app." : "Once it's out, you'll pair it here."}</p>
+          <h3 class="card-h">Clawdling iPhone app <span class="card-tag">public beta</span></h3>
+          <p class="set-note phone-lead">The iPhone app is in public beta on TestFlight: install TestFlight, then open <a href="https://testflight.apple.com/join/2MHukWQG" target="_blank" rel="noopener">testflight.apple.com/join/2MHukWQG</a> on your iPhone. ${reachable ? "Then scan this code with the app." : "Once this cockpit is reachable from your phone, you'll pair it here."}</p>
           ${reachable ? html`<details class="app-qr">
             <summary>Show the app's pairing code</summary>
             <div class="qr-frame"><img class="qr" src="/api/pair/qr.svg" width="168" height="168" loading="lazy" alt="QR code that pairs the Clawdling iPhone app with this cockpit" data-testid="pair-app-qr" /></div>
