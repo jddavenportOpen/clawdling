@@ -5,7 +5,7 @@ import { useStore } from '../lib/store.js';
 import { getThemePref, setThemePref } from '../lib/theme.js';
 import { load, save } from '../lib/prefs.js';
 import { terms } from '../lib/term.js';
-import { closeAllPanes, toast } from '../lib/actions.js';
+import { closeAllPanes, toast, errorToast, mergeSession, focusSession } from '../lib/actions.js';
 import { refreshHealth } from '../lib/live.js';
 import { MOD, ALT, copyText, cliCmd } from '../lib/util.js';
 import { ok } from '../lib/model.js';
@@ -76,6 +76,7 @@ export function SettingsPage() {
           <div><dt>Double-click a title</dt><dd>Rename the session</dd></div>
         </dl>
       </section>
+      <${AccountsCard} />
       <section class="card" aria-labelledby="set-server">
         <h2 id="set-server" class="card-title">Server <button class="link-btn" onClick=${refreshHealth}>Refresh</button></h2>
         ${health ? html`<dl class="facts">
@@ -164,5 +165,78 @@ function PhoneCard() {
             <div class="qr-frame"><img class="qr" src="/api/pair/qr.svg" width="168" height="168" loading="lazy" alt="QR code that pairs the Clawdling iPhone app with this cockpit" data-testid="pair-app-qr" /></div>
           </details>` : null}
         </div>`}
+  </section>`;
+}
+
+// Extra Claude logins. Clawdling never touches credentials: an added account is only a folder
+// (~/.clawdling-accounts/<name>) passed to claude as CLAUDE_CONFIG_DIR, and the user signs in
+// inside Claude Code itself. GET /api/accounts -> [{id, name, default, dir}].
+function AccountsCard() {
+  const [accounts, setAccounts] = useState(null);
+  const [unsupported, setUnsupported] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [name, setName] = useState('');
+  const [err, setErr] = useState('');
+  const [busy, setBusy] = useState('');
+
+  const reload = () => api.accounts().then((r) => { setAccounts(r); setUnsupported(false); })
+    .catch(() => setUnsupported(true));
+  useEffect(() => { reload(); }, []);
+
+  const cancel = () => { setAdding(false); setName(''); setErr(''); };
+  const add = async () => {
+    const n = name.trim();
+    if (!n) { setErr('Give the account a name, like "work".'); return; }
+    setBusy('add');
+    setErr('');
+    try {
+      const a = await api.addAccount(n);
+      cancel();
+      await reload();
+      toast(`Added ${(a && a.name) || n}. Sign in to it once to use it.`, { tone: 'ok' });
+    } catch (e) {
+      setErr(e && e.message ? e.message : 'Could not add the account.');
+    } finally {
+      setBusy('');
+    }
+  };
+  const signIn = async (a) => {
+    setBusy(a.id);
+    try {
+      const s = await api.signIn(a.id);
+      if (s && s.sid) { mergeSession(s); focusSession(s.sid); }
+      toast(`Sign in to ${a.name} in the new session: Claude Code walks you through it.`, { tone: 'ok', ms: 5200 });
+    } catch (e) {
+      errorToast(`Could not start the sign-in for ${a.name}`, e);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  return html`<section class="card accounts-card" aria-labelledby="set-accounts" data-testid="accounts-card">
+    <h2 id="set-accounts" class="card-title">Accounts</h2>
+    <p class="set-note acct-lead">Clawdling runs your own <code>claude</code>. To use another Claude plan, add an account: it gets its own folder, and you sign in to it once inside Claude Code.</p>
+    ${unsupported ? null : !accounts ? html`<div class="panel-skel" aria-label="Loading"></div>` : html`
+      <ul class="acct-list">
+        ${accounts.map((a) => html`<li class="set-row acct-row" data-testid="account-row" data-account=${a.id} key=${a.id}>
+          <span class="set-label acct-label">
+            <span class="acct-name">${a.default ? 'Your Claude login' : a.name}${a.default ? html` <span class="card-tag">Default</span>` : null}</span>
+            ${a.default ? html`<span class="set-sub">The login <code>claude</code> already uses on this computer.</span>`
+              : a.dir ? html`<span class="set-sub mono acct-dir">${a.dir}</span>` : null}
+          </span>
+          ${a.default ? null : html`<button class="btn btn-quiet" data-testid="account-signin" disabled=${!!busy}
+            onClick=${() => signIn(a)}>${busy === a.id ? 'Starting...' : 'Sign in'}</button>`}
+        </li>`)}
+      </ul>
+      ${adding ? html`<form class="inline-form acct-form" onSubmit=${(e) => { e.preventDefault(); add(); }}
+          onKeyDown=${(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancel(); } }}>
+          <input type="text" value=${name} placeholder="work" maxLength="32" aria-label="Account name" autoFocus
+            autocomplete="off" autocapitalize="off" spellcheck="false" data-testid="account-name"
+            onInput=${(e) => { setName(e.currentTarget.value); if (err) setErr(''); }} />
+          <button type="submit" class="btn btn-primary" disabled=${busy === 'add'} data-testid="account-add-submit">Add</button>
+          <button type="button" class="btn btn-quiet" onClick=${cancel}>Cancel</button>
+        </form>
+        ${err ? html`<p class="form-error" role="alert" data-testid="account-error"><${Icon} name="alert" size=${14} /> ${err}</p>` : null}`
+      : html`<button class="btn btn-quiet acct-add" data-testid="account-add" onClick=${() => setAdding(true)}>Add another Claude account</button>`}`}
   </section>`;
 }
