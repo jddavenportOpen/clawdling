@@ -39,6 +39,9 @@ Claude Code itself.
 - tmux (optional, recommended): `brew install tmux` if Homebrew is there. Without Homebrew, skip
   it: do not install Homebrew just for this (it needs an admin password). The built-in terminal
   is used and needs nothing else on a Mac.
+- git: part of the Xcode Command Line Tools; if `git --version` opens an install dialog, let the
+  user finish it, or skip git and download the ZIP (see Windows below for the link) instead of
+  cloning in step 2.
 
 **Linux**
 - tmux is the simple path: `sudo apt install -y tmux` (Debian/Ubuntu), `sudo dnf install -y tmux`
