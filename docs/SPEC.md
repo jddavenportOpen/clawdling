@@ -119,11 +119,22 @@ GET    /api/agents/:id              -> Agent + {claude_md, now_md, log_tail:[las
 PUT    /api/agents/:id/context      {claude_md?, now_md?} -> 204   (writes files; size cap 200 KB)
 DELETE /api/agents/:id              -> archives folder to $HOME/.archive/<id>-<ts>/ (refuse "donna")
 GET    /api/sessions                -> [Session]   (newest activity first; includes ended from last 14 days)
-POST   /api/sessions                {agent, prompt?, model?, title?} -> Session
+POST   /api/sessions                {agent, prompt?, model?, effort?, account?, title?} -> Session
+                                    (model -> claude --model=<m>; effort -> claude --effort=<low|medium|high|xhigh|max>;
+                                     account -> that session's claude gets CLAUDE_CONFIG_DIR=~/.clawdling-accounts/<account>)
 PATCH  /api/sessions/:sid           {title} -> Session
 DELETE /api/sessions/:sid           -> ends it (kill tmux session) -> Session(status ended)
 POST   /api/sessions/:sid/resume    -> Session (live again)
 POST   /api/sessions/:sid/send      {text, enter:true} -> 204   (types text into the session; used by Donna routing + CLI)
+POST   /api/sessions/:sid/settings  {model?, effort?} -> Session  (only while status is "ready", i.e. between turns:
+                                    409 otherwise. Restarts that session's claude with --resume and the new --model /
+                                    --effort, which apply to it alone. Not /model or /effort: Claude Code 2.1.283 saves
+                                    those as the user's default for new sessions. The pane chips use it.)
+GET    /api/accounts                -> {accounts:[{id:"default", name:"Your Claude login", default:true, dir:null}, {id, name, default:false, dir}]}
+POST   /api/accounts                {name} -> {id, name, dir}  (creates the empty folder ~/.clawdling-accounts/<id>, 0700;
+                                    CLAWDLING_ACCOUNTS_DIR overrides the parent)
+POST   /api/accounts/:id/signin     -> Session  (a scratch claude with that CLAUDE_CONFIG_DIR, purpose "signin": the user
+                                    runs /login inside Claude Code. Clawdling never reads or writes anything in the folder.)
 POST   /api/hooks                   (hook script only)
 GET    /api/events                  Server-Sent Events: {type:"session"|"org"|"channel", data}
 GET    /api/channels                -> {telegram:{configured, enabled, paired, chat_id_masked}, imessage:{supported, enabled, handle}}
@@ -131,7 +142,7 @@ POST   /api/channels/telegram       {token?, enabled?} -> stores token in .env (
 POST   /api/channels/imessage       {handle, enabled}
 WS     /ws/term/:sid                terminal stream (below)
 ```
-Session object: `{sid, agent, agent_name, kind, title, status, model, cwd, tmux_name, created_at, last_activity_at, ended_at, notification, resumable}`.
+Session object: `{sid, agent, agent_name, kind, title, status, model, effort, account, purpose, cwd, tmux_name, created_at, last_activity_at, ended_at, notification, resumable}`.
 
 WebSocket `/ws/term/:sid` (auth via cookie or `?t=`):
 - server→client: `{"t":"snapshot","data":"<string>"}` first, then `{"t":"out","data":"<string>"}`, `{"t":"status","status":"..."}`, `{"t":"ended"}`.
@@ -315,7 +326,7 @@ no field or path in §4 was renamed or removed.
 **App API (iPhone app addendum, implemented)**. All need the token; native requests send
 `x-clawdling-token` and no `Origin` (allowed, like the CLI). Requests from a foreign web origin are refused.
 - `GET /api/sessions/:sid/messages?after=<n>&limit=<m>` → `{messages:[{n, role:"user"|"assistant",
-  text, tools:[{name, summary}], ts}], next, more, status}`. Read from the session's Claude Code
+  text, tools:[{name, summary, detail}], ts, model?}], next, more, status}`. Read from the session's Claude Code
   transcript (`${CLAUDE_CONFIG_DIR:-~/.claude}/projects/*/<session-id>.jsonl`; the hook-reported
   `transcript_path` is used when it matches). Kept: real user prompts (string content or text
   blocks) and assistant text/tool_use blocks. Dropped: tool_result-only user turns, `isMeta`,
@@ -324,7 +335,10 @@ no field or path in §4 was renamed or removed.
   is stable: the 0-based index in the filtered list). `after` (default -1) returns `n > after`;
   `limit` 1-1000 (default 200); `next` = last returned `n` (or `after` when nothing is new);
   `more` = more entries exist past `next`. `summary` = first 80 chars of the tool input's
-  command / file_path / pattern / url / description (then path, query, prompt).
+  command / file_path / pattern / url / description (then path, query, prompt). `detail` = the full
+  input (a lone string field as is, else pretty JSON; max 2000 chars) for the chat view's expanded
+  line. `model` (assistant entries) = the model that wrote the reply. The transcript is looked up
+  under the session's account folder when it has one.
 - `POST /api/donna/chat {text}` → `{reply}` (one Donna headless turn through the same runner and
   tool allow-list as Telegram; on failure `{reply:"Donna hit an error: ...", error}`, still 200).
   Max 8000 chars. `GET /api/donna/messages?limit=50` → `{messages:[{role:"user"|"donna", text, ts,

@@ -929,8 +929,11 @@ export class SessionManager {
   }
 
   /**
-   * Switch a live session's model or effort the way a person would: type /model <x> or
-   * /effort <x>. Only between turns (status ready): typed mid-turn it would queue as a prompt.
+   * Switch a live session's model or effort (the pane chips). Only between turns (status ready).
+   * The session's claude is restarted on the same conversation with --resume and the new
+   * --model / --effort flags, which apply to this session only. Typing /model or /effort instead
+   * would also save the choice as the user's default for every new session (Claude Code 2.1.283
+   * says so on screen), and Clawdling never changes the user's Claude settings.
    */
   async settings(sid, { model, effort } = {}) {
     const rec = this.require(sid);
@@ -940,19 +943,11 @@ export class SessionManager {
     if (m && !isValidModel(m)) throw badRequest('invalid model');
     if (e && !isValidEffort(e)) throw badRequest('effort must be low, medium, high, xhigh or max');
     if (rec.status !== 'ready') throw conflict('wait for your turn: model and effort change between turns');
-    if (m) {
-      await this.send(sid, `/model ${m}`, true);
-      rec.model = m;
-    }
-    if (e) {
-      if (m) await sleep(300);
-      await this.send(sid, `/effort ${e}`, true);
-      rec.effort = e;
-    }
+    await this.end(sid);
+    if (m) rec.model = m;
+    if (e) rec.effort = e;
     this.events.record({ type: 'settings', sid, agent: rec.agent, ...(m ? { model: m } : {}), ...(e ? { effort: e } : {}) });
-    this.save();
-    this.publish(rec);
-    return this.view(rec);
+    return this.resume(sid);
   }
 
   /** Type text into a session (Donna routing, the CLI). A paste, so multi-line text is one paste. */

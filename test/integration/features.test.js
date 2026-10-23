@@ -54,11 +54,11 @@ test('spawn passes the chosen model and effort to claude as its own flags; nothi
   assert.match(bad.body.error, /effort/);
 });
 
-test('chips: /model and /effort are typed only between turns; mid-question is a 409', async () => {
+test('chips: model/effort change only between turns, by resuming that session with the new flags', async () => {
   const s = (await request(srv, 'POST', '/api/sessions', { agent: 'health', prompt: 'need permission?' })).body;
   await waitFor(async () => (await status(s.sid)) === 'needs_you', { label: 'needs_you' });
   const busy = await request(srv, 'POST', `/api/sessions/${s.sid}/settings`, { model: 'sonnet' });
-  assert.equal(busy.status, 409, 'a question is on screen: typing would answer it');
+  assert.equal(busy.status, 409, 'a question is on screen: the switch waits for the owner');
   assert.match(busy.body.error, /your turn/);
 
   await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 });
@@ -69,12 +69,21 @@ test('chips: /model and /effort are typed only between turns; mid-question is a 
   assert.equal(ok.status, 200, ok.text);
   assert.equal(ok.body.model, 'sonnet');
   assert.equal(ok.body.effort, 'low');
-  // The fake records what was typed into it as user turns, in order.
-  await waitFor(async () => {
-    const msgs = (await request(srv, 'GET', `/api/sessions/${s.sid}/messages`)).body.messages;
-    return msgs.filter((m) => m.role === 'user').map((m) => m.text).join('|') === 'need permission?|/model sonnet|/effort low';
-  }, { label: 'slash commands typed' });
+  // The same conversation, relaunched with session-only flags: nothing is typed, nothing is saved as a default.
+  await waitFor(() => launches(fakeLog, s.sid).length === 2, { label: 'relaunched' });
+  const again = launches(fakeLog, s.sid)[1];
+  assert.equal(again.opts.resume, s.sid);
+  assert.equal(again.opts.model, 'sonnet');
+  assert.equal(again.opts.effort, 'low');
+  await waitFor(async () => (await status(s.sid)) === 'ready', { label: 'ready again' });
+  const msgs = (await request(srv, 'GET', `/api/sessions/${s.sid}/messages`)).body.messages;
+  assert.ok(!msgs.some((x) => x.text.startsWith('/')), 'no /model or /effort typed into the conversation');
   assert.equal((await request(srv, 'GET', `/api/sessions/${s.sid}`)).body.effort, 'low', 'remembered on the session');
+  const more = await request(srv, 'POST', `/api/sessions/${s.sid}/settings`, { model: 'opus' });
+  assert.equal(more.status, 200, more.text);
+  await waitFor(() => launches(fakeLog, s.sid).length === 3, { label: 'relaunched again' });
+  assert.equal(launches(fakeLog, s.sid)[2].opts.effort, 'low', 'an unchanged setting is kept');
+  assert.equal(launches(fakeLog, s.sid)[2].opts.model, 'opus');
 });
 
 test('accounts: only the default login until one is added; an added one is passed as CLAUDE_CONFIG_DIR', async () => {

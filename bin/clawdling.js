@@ -41,7 +41,7 @@ Usage:
   clawdling new domain "<Name>" --mission "..."
   clawdling new project "<Name>" --goal "..." [--repo PATH] [--domain ID]
   clawdling ls [--all] [--json]             list sessions
-  clawdling spawn <agent> ["first message"] [--model M] [--title T] [--cols N --rows N] [--json]
+  clawdling spawn <agent> ["first message"] [--model M] [--effort E] [--account A] [--title T] [--cols N --rows N] [--json]
   clawdling send <sid> "text" [--no-enter]  type into a live session
   clawdling attach <sid|tmux-name>          attach this terminal to a session (detach: Ctrl-b d with
                                             tmux, Ctrl-] with the built-in terminal)
@@ -361,7 +361,7 @@ async function cmdSpawn(args) {
     size[k] = Number(args.flags[k]);
     if (!Number.isInteger(size[k])) throw new CliError(`--${k} must be a whole number`);
   }
-  const s = await api(ctx, 'POST', '/api/sessions', { agent, prompt, model: args.flags.model, title: args.flags.title, ...size });
+  const s = await api(ctx, 'POST', '/api/sessions', { agent, prompt, model: args.flags.model, effort: args.flags.effort, account: args.flags.account, title: args.flags.title, ...size });
   if (args.flags.json) return console.log(JSON.stringify(s, null, 2));
   console.log(`Started ${s.agent} session ${s.sid} (${s.title || 'new session'})`);
   console.log(`Watch it in the cockpit, or in a terminal: ${cliCmd(ctx.home, `attach ${s.sid.slice(0, 8)}`)}`);
