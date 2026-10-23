@@ -117,7 +117,7 @@ function EmptyState() {
       <h2 class="empty-title">${first ? 'Start your first session' : 'Pick an agent to start a session'}</h2>
       <p class="empty-sub">${first
         ? 'Every agent is the real claude CLI, opened in its own folder with its own CLAUDE.md and memory. Pick one.'
-        : 'Open panes come back when you reload. Live sessions keep running in tmux even with no pane open.'}</p>
+        : 'Open panes come back when you reload. Live sessions keep running even with no pane open.'}</p>
       ${waiting.length ? html`<div class="empty-block">
         <h3 class="empty-h">Running now</h3>
         <ul class="empty-live">

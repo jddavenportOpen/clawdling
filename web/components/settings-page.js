@@ -24,6 +24,15 @@ export function SettingsPage() {
     for (const v of terms.values()) v.setFontSize();
   };
   const ok = (x) => x && (x.ok === true || x.ok === 'true');
+  // Where sessions run: tmux (they outlive the cockpit) or the built-in terminal (they end with it).
+  const backend = health && health.backend;
+  const sessionsText = !backend || !backend.kind ? null
+    : backend.kind === 'tmux' ? `tmux · keep running when Clawdling stops`
+    : `built-in terminal${backend.version ? ` (${backend.version})` : ''} · end when Clawdling stops; resume any time`;
+  const tmuxText = !health || !health.tmux ? 'unknown'
+    : ok(health.tmux) ? `ok${health.tmux.version ? ` · ${health.tmux.version}` : ''}`
+    : health.tmux.optional ? `${health.tmux.error || 'not installed'} · optional`
+    : 'missing';
 
   return html`<div class="page settings-page" data-testid="settings-page">
     <header class="page-bar"><div class="page-bar-main"><h1 class="page-title">Settings</h1>
@@ -62,7 +71,8 @@ export function SettingsPage() {
         <h2 id="set-server" class="card-title">Server <button class="link-btn" onClick=${refreshHealth}>Refresh</button></h2>
         ${health ? html`<dl class="facts">
           <div><dt>Clawdling</dt><dd class="mono">${health.version || 'unknown'}</dd></div>
-          <div><dt>tmux</dt><dd class="mono">${health.tmux ? `${ok(health.tmux) ? 'ok' : 'missing'}${health.tmux.version ? ` · ${health.tmux.version}` : ''}` : 'unknown'}</dd></div>
+          ${sessionsText ? html`<div><dt>Sessions</dt><dd class="mono" data-testid="server-sessions">${sessionsText}</dd></div>` : null}
+          <div><dt>tmux</dt><dd class="mono">${tmuxText}</dd></div>
           <div><dt>claude CLI</dt><dd class="mono">${health.claude ? `${ok(health.claude) ? 'ok' : 'missing'}${health.claude.version ? ` · ${health.claude.version}` : ''}` : 'unknown'}</dd></div>
           <div><dt>Org folder</dt><dd class="mono">${health.home || 'unknown'}</dd></div>
         </dl>` : html`<p class="panel-quiet">The server did not report its health.</p>`}
