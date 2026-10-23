@@ -1,0 +1,7 @@
+# Text files are LF in every checkout, Windows included (Git for Windows would otherwise turn the
+# templates that become agents' CLAUDE.md files, and the scripts, into CRLF).
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
+*.svg text eol=lf

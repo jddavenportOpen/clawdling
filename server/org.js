@@ -68,7 +68,8 @@ export function styleFor(id, name) {
 }
 
 export function readTemplate(rel) {
-  return fs.readFileSync(path.join(TEMPLATES_DIR, rel), 'utf8');
+  // LF everywhere, even if this copy was checked out with CRLF (Windows git with autocrlf).
+  return fs.readFileSync(path.join(TEMPLATES_DIR, rel), 'utf8').replace(/\r\n/g, '\n');
 }
 
 /** Replace {{var}} placeholders. Unknown placeholders are an error, never silently blank. */

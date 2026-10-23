@@ -572,6 +572,13 @@ export class SessionManager {
     rt.gen++;
     rt.launchedAt = Date.now();
     rt.size = { cols: c, rows: r };
+    // A control client of the previous run may still be open (ConPTY reports an exit about a second
+    // late): drop it, or attachControl would keep it and the new process would have no viewers.
+    if (rt.control) {
+      const old = rt.control;
+      rt.control = null;
+      old.close();
+    }
     this.attachControl(rec);
     // One look at the screen even if no output follows: a dialog drawn in the few ms before the
     // control client attached produces no output event (seen on fast Linux CI runners).
