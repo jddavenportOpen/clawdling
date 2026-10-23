@@ -976,13 +976,21 @@ h3.chat-h { font-size: 16.5px; }
 .pick-menu { min-width: 150px; }
 .pick-menu .menu-item { font-family: var(--font-mono); font-size: 12px; }
 .pick-check { display: inline-flex; width: 14px; color: var(--accent); }
-@container pane (max-width: 420px) { .pane-pick-effort { display: none; } }
+@container pane (max-width: 520px) { .pane-pick-effort { display: none; } }
+/* A phone-width pane has no room for chips next to its title: pick the model and effort in New session. */
+@container pane (max-width: 420px) { .pane-pick { display: none; } }
 @media (pointer: coarse) { .pane-pick { height: 44px; padding: 0 10px; } }
 .composer-mic { width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
 .composer-mic[aria-pressed="true"] { color: var(--danger); border-color: var(--danger); }
 .composer-note { flex-basis: 100%; margin: 0; color: var(--text-3); font-size: 12px; }
 .ns-pickers { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .ns-pickers .field-inline select { min-width: 0; max-width: 200px; }
+/* WebKit (iPhone Safari) ignores a native select's height: draw the select ourselves so the 44 px touch rule holds. */
+.ns-pickers select {
+  -webkit-appearance: none; appearance: none; padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
 
 
 /* ── end chips and voice ── */
