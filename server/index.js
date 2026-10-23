@@ -20,6 +20,7 @@ import { DonnaRouter } from './channels/donna.js';
 import { IMessageGateway } from './channels/imessage.js';
 import { TelegramGateway } from './channels/telegram.js';
 import { EventBus } from './events.js';
+import { cliInvocation } from './hints.js';
 import { buildHooksSettings } from './hooks.js';
 import { OrgStore } from './org.js';
 import {
@@ -223,7 +224,15 @@ export function pairingInfo({ host, port, token, lan = lanAddresses() }) {
   if (host === '0.0.0.0' || host === '::') url = lanUrls[0] || `http://127.0.0.1:${port}`;
   else if (isLoopback(host)) url = `http://127.0.0.1:${port}`;
   else url = `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
-  return { url, token, link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`, lan: lanUrls, bind: host };
+  return {
+    url,
+    token,
+    link: `clawdling://connect?url=${encodeURIComponent(url)}&t=${token}`,
+    // Opens the cockpit in a phone's browser already signed in (the server swaps ?t= for a cookie).
+    browser_link: `${url}/?t=${token}`,
+    lan: lanUrls,
+    bind: host,
+  };
 }
 
 /** SVG QR code for a string, via the MIT `qrcode-generator` package (server-side only). */
@@ -344,8 +353,12 @@ export async function startServer(opts = {}) {
     const configDir = claudeConfigDir(cEnv);
 
     const versions = { at: 0, claude: null, tmux: null };
+    // How a person types this install's CLI (the cockpit prints commands with it).
+    const cli = cliInvocation({ home, envPath: env.PATH || '' });
     async function toolVersions() {
-      if (Date.now() - versions.at < 60000 && versions.claude) return versions;
+      // A failed check is cached for 3 s, not 60: "Check again" in the cockpit must see a fix.
+      const healthy = versions.claude?.ok && versions.tmux?.ok;
+      if (versions.claude && Date.now() - versions.at < (healthy ? 60000 : 3000)) return versions;
       const tv = await tmux.version();
       let claude = { ok: false, version: null };
       const bin = which(claudeBin, cEnv.PATH || '');
@@ -391,7 +404,7 @@ export async function startServer(opts = {}) {
     const routes = [
       ['GET', /^\/api\/health$/, async () => {
         const v = await toolVersions();
-        return [200, { ok: true, version: VERSION, tmux: v.tmux, claude: v.claude, home }];
+        return [200, { ok: true, version: VERSION, tmux: v.tmux, claude: v.claude, home, cli, platform: process.platform }];
       }, { public: true }],
       ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
       ['GET', /^\/api\/org$/, () => [200, orgView()]],
@@ -506,10 +519,12 @@ export async function startServer(opts = {}) {
         return [200, { messages: donna.messages(Number.isInteger(limit) ? limit : 50) }];
       }],
       ['GET', /^\/api\/pair$/, () => [200, pairingInfo({ host, port, token })]],
-      ['GET', /^\/api\/pair\/qr\.svg$/, (req, m, res) => {
+      ['GET', /^\/api\/pair\/qr\.svg$/, (req, m, res, url) => {
         let svg;
         try {
-          svg = qrSvg(pairingInfo({ host, port, token }).link);
+          const info = pairingInfo({ host, port, token });
+          // ?target=browser: the link that opens the cockpit in a phone's browser. Default: the app's link.
+          svg = qrSvg(url.searchParams.get('target') === 'browser' ? info.browser_link : info.link);
         } catch (err) {
           throw new HttpError(503, `QR code unavailable (${err.code === 'MODULE_NOT_FOUND' ? 'run npm install' : err.message})`);
         }

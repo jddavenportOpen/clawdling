@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { cli, cliResult, killTmux, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
+import { cliInvocation } from '../../server/hints.js';
 
 let home;
 let socket;
@@ -16,6 +17,8 @@ before(async () => {
   env = testEnv({ CLAWDLING_TMUX_SOCKET: socket });
   const out = cli(['init', '--defaults'], { env, home });
   assert.match(out, /Created .*'s org at/);
+  // "Next:" is spelled the way this computer runs this install (no bare `clawdling` off PATH).
+  assert.ok(out.includes(`\n  ${cliInvocation({ home, envPath: env.PATH || '' })} start --open\n`), out);
   srv = await startServerProc({ home, env });
 });
 

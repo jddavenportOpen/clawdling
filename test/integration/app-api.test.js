@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { cli, killTmux, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
+import { cliInvocation } from '../../server/hints.js';
+import { qrSvg } from '../../server/index.js';
 
 let home;
 let socket;
@@ -85,6 +87,8 @@ test('GET /api/pair and /api/pair/qr.svg (auth required)', async () => {
   assert.ok(Array.isArray(p.lan));
   assert.ok(p.lan.every((u) => /^http:\/\/\d+\.\d+\.\d+\.\d+:\d+$/.test(u)));
   assert.equal(p.link, `clawdling://connect?url=${encodeURIComponent(p.url)}&t=${srv.token}`);
+  // Opens the cockpit in a phone's browser, signed in (the server swaps ?t= for its cookie).
+  assert.equal(p.browser_link, `${p.url}/?t=${srv.token}`);
   const qr = await fetch(`${srv.url}/api/pair/qr.svg`, { headers: { 'x-clawdling-token': srv.token } });
   assert.equal(qr.status, 200);
   assert.match(qr.headers.get('content-type'), /image\/svg\+xml/);
@@ -92,6 +96,21 @@ test('GET /api/pair and /api/pair/qr.svg (auth required)', async () => {
   const svg = await qr.text();
   assert.match(svg, /^<svg[\s\S]*<\/svg>$/);
   assert.equal((await fetch(`${srv.url}/api/pair/qr.svg`)).status, 401);
+  // ?target=browser encodes the browser link; the default stays the app's link.
+  assert.equal(svg, qrSvg(p.link));
+  const browserQr = await fetch(`${srv.url}/api/pair/qr.svg?target=browser`, { headers: { 'x-clawdling-token': srv.token } });
+  assert.equal(browserQr.status, 200);
+  assert.equal(await browserQr.text(), qrSvg(p.browser_link));
+});
+
+test('GET /api/health (public) says how this computer runs the CLI, and on what platform', async () => {
+  const r = await fetch(`${srv.url}/api/health`);
+  assert.equal(r.status, 200);
+  const h = await r.json();
+  assert.equal(h.platform, process.platform);
+  assert.equal(h.cli, cliInvocation({ home, envPath: process.env.PATH || '' }));
+  assert.equal(typeof h.claude.ok, 'boolean');
+  assert.equal(typeof h.tmux.ok, 'boolean');
 });
 
 test('native-app style requests (token header, no Origin) work on every JSON route', async () => {
