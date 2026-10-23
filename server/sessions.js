@@ -406,7 +406,7 @@ export class SessionManager {
       try {
         const e = JSON.parse(line);
         if (isUuid(e.sid) && this.records.has(e.sid) && HOOK_EVENTS.includes(e.event)) {
-          this.applyHook(e.event, e.sid, e.payload || {}, e.ts);
+          this.applyHook(e.event, e.sid, e.payload || {}, e.ts, e.launch);
           n++;
         }
       } catch {
@@ -536,8 +536,12 @@ export class SessionManager {
     });
     const claude = this.claudeAbs();
     if (!claude) throw new HttpError(500, `claude CLI not found (looked for "${this.claudeBin}" on PATH)`);
+    // Each launch has its own id, which the hook script sends back: a hook from an earlier launch
+    // of this session (the old claude's SessionEnd, arriving just after a resume) is ignored.
+    rec.launch_id = crypto.randomBytes(6).toString('hex');
     const sessionEnv = {
       CLAWDLING_SID: rec.sid,
+      CLAWDLING_LAUNCH: rec.launch_id,
       CLAWDLING_HOME: this.home,
       CLAWDLING_PORT: String(this.getPort()),
       CLAWDLING_TMUX_SOCKET: this.socket,
@@ -795,9 +799,11 @@ export class SessionManager {
    * applied are dropped, so a spooled event replayed after a newer live one (the hook timed out
    * but the server had in fact received it) cannot roll a session back to "working".
    */
-  applyHook(event, sid, payload = {}, ts) {
+  applyHook(event, sid, payload = {}, ts, launch) {
     if (!HOOK_EVENTS.includes(event)) throw badRequest('unknown hook event');
     const rec = this.require(sid);
+    // From a claude this session has since replaced (ended, then resumed or relaunched).
+    if (typeof launch === 'string' && launch && rec.launch_id && launch !== rec.launch_id) return this.view(rec);
     const at = typeof ts === 'string' ? Date.parse(ts) : NaN;
     if (Number.isFinite(at)) {
       if (rec.last_hook_ms && at < rec.last_hook_ms) return this.view(rec);

@@ -516,7 +516,7 @@ export async function startServer(opts = {}) {
       ['POST', /^\/api\/hooks$/, async (req) => {
         const b = await jsonBody(req);
         if (!isUuid(b.sid)) throw badRequest('invalid sid');
-        sessions.applyHook(String(b.event), b.sid, b.payload && typeof b.payload === 'object' ? b.payload : {}, b.ts);
+        sessions.applyHook(String(b.event), b.sid, b.payload && typeof b.payload === 'object' ? b.payload : {}, b.ts, b.launch);
         return [204];
       }],
       ['GET', /^\/api\/events$/, (req, m, res) => {

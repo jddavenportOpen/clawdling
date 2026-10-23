@@ -101,6 +101,7 @@ export const SCRUBBED_ENV = [
   'TMUX',
   'TMUX_PANE',
   'CLAWDLING_SID',
+  'CLAWDLING_LAUNCH',
 ];
 
 /**

@@ -78,7 +78,7 @@ async function main() {
     error: clip(payload.error, 80),
     error_details: clip(payload.error_details, 500),
   };
-  const record = { event, sid, payload: slim, ts: new Date().toISOString() };
+  const record = { event, sid, payload: slim, ts: new Date().toISOString(), ...(process.env.CLAWDLING_LAUNCH ? { launch: process.env.CLAWDLING_LAUNCH } : {}) };
   let token = '';
   let port = Number(process.env.CLAWDLING_PORT) || 0;
   try {

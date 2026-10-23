@@ -138,3 +138,21 @@ test('a turn that ends on an API error says why, and sending again retries (Stop
   assert.match(login.notification, /not signed in on this computer/);
   assert.equal(login.last_message, 'Not logged in · Please run /login');
 });
+
+test('a hook from a claude the session has replaced never changes it (the old SessionEnd after a resume)', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'health' })).body;
+  await until(s.sid, (x) => x.status === 'ready', 'ready');
+  assert.equal((await request(srv, 'DELETE', `/api/sessions/${s.sid}`)).status, 200);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/resume`, {})).status, 200);
+  await until(s.sid, (x) => x.status === 'ready', 'ready after resume');
+  await waitFor(() => JSON.parse(fs.readFileSync(path.join(home, '.clawdling', 'sessions.json'), 'utf8')).sessions.find((r) => r.sid === s.sid)?.launch_id, { label: 'launch id saved' });
+  const launch = JSON.parse(fs.readFileSync(path.join(home, '.clawdling', 'sessions.json'), 'utf8')).sessions.find((r) => r.sid === s.sid).launch_id;
+  // Killing the old claude makes Claude Code run its SessionEnd hook; it can land after the resume.
+  const stale = { event: 'SessionEnd', sid: s.sid, payload: { reason: 'other' }, ts: new Date().toISOString(), launch: 'old0launch01' };
+  assert.equal((await request(srv, 'POST', '/api/hooks', stale)).status, 204);
+  assert.equal((await get(s.sid)).status, 'ready', 'the old launch cannot end the new one');
+  // The current launch's hooks still apply.
+  await request(srv, 'POST', '/api/hooks', { event: 'UserPromptSubmit', sid: s.sid, payload: { prompt: 'x' }, ts: new Date().toISOString(), launch });
+  assert.equal((await get(s.sid)).status, 'working');
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+});
