@@ -167,6 +167,15 @@ export function killTmux(socket) {
   } catch {
     // not running
   }
+  // A tmux server stuck behind orphaned control clients can outlive kill-server; once its socket
+  // file is gone nothing could reach it again. The socket name is unique to this test: end both.
+  if (process.platform !== 'win32') {
+    try {
+      execFileSync('pkill', ['-KILL', '-f', `tmux -L ${socket} `], { stdio: 'ignore' });
+    } catch {
+      // nothing left
+    }
+  }
   try {
     fs.unlinkSync(`${process.env.TMUX_TMPDIR || '/tmp'}/tmux-${process.getuid()}/${socket}`);
   } catch {
