@@ -919,5 +919,17 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 
 /* ── Accounts ─────────────────────────────────────────────────────────────── */
 
+.accounts-card .acct-lead { margin: 0 0 4px; }
+.acct-list { list-style: none; margin: 0; padding: 0; }
+.acct-label { min-width: 0; }
+.acct-name { display: flex; align-items: center; gap: 8px; }
+.acct-dir { overflow-wrap: anywhere; }
+.acct-add { margin-top: 8px; }
+.acct-form { margin-top: 8px; }
+@media (max-width: 720px) {
+  .acct-form { flex-wrap: wrap; }
+  .acct-form input { flex: 1 1 100%; }
+}
+
 
 /* ── end accounts ── */
