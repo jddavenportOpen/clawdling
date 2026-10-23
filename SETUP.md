@@ -70,7 +70,7 @@ Run it only after the user says yes. Never install Claude Code with `sudo` or `n
 
 **Plan.** Claude Code needs a Pro, Max, Team or Enterprise plan; the free plan cannot run it. If
 the user is on **Pro**, say once: Pro works; every agent shares the plan's usage allowance, which
-is the smallest on Pro, so keep one or two agents busy at a time; when the limit is reached,
+is smaller on Pro than on Max, so keep one or two agents busy at a time; when the limit is reached,
 Claude Code says when it resets and the sessions wait.
 
 **How sessions will run.** With tmux 3.2+ (macOS, Linux) every agent session lives in Clawdling's
@@ -192,7 +192,8 @@ clawdling init --answers /tmp/clawdling-answers.json   # or: clawdling init --de
 
 `mission` may be left out (a sensible one is filled in). `repo` must be an absolute path
 (on Windows, write it with forward slashes or doubled backslashes in JSON: `"C:/Users/sam/code/store"`).
-`permission_mode` is `default` or `acceptEdits`. The org is created in `~/clawdling`
+`permission_mode` is `default` or `acceptEdits`. `donna.channel` is `telegram`, `imessage` or
+`none` (write `none` when they chose "Later"). The org is created in `~/clawdling`
 (set `CLAWDLING_HOME` or pass `--home` to put it elsewhere). Delete the temporary file afterwards.
 
 ## 5. Personalise (you write the prose)

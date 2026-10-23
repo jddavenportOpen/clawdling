@@ -22,8 +22,8 @@ Clawdling is free. It runs on your own computer and uses the Claude plan you alr
 | **Claude Code** | Claude Code is the version of Claude that can work on your computer: it can open files and run programs when you allow it. Clawdling's assistants are Claude Code sessions. | See step 1 |
 | About 15 minutes | Most of it is Claude installing things for you. | |
 
-**About the Pro plan.** Pro works. It has the smallest usage allowance of the plans that include
-Claude Code, and every assistant you talk to draws from that one allowance. Talk to one or two
+**About the Pro plan.** Pro works. Its usage allowance is smaller than Max's, and every assistant
+you talk to draws from that one allowance. Talk to one or two
 assistants at a time. When you hit the limit, Claude Code tells you when it resets, and the
 assistants simply wait until then. Clawdling adds no limits and no fees of its own. Max has much
 more room if you end up using it all day.
@@ -91,8 +91,9 @@ What happens next, so nothing surprises you:
 1. **Trust your org folder.** The cockpit shows a card, "First, trust your org folder". Click
    **Trust my org folder**. A session opens and Claude Code asks whether you trust the folder:
    choose **Yes, I trust this folder**. You do this once; after that no assistant asks again.
-2. **Talk to an assistant.** Click one on the org map (for example Health) and click **New
-   session**. Type a question, like "What do you do for me? Answer in two lines."
+2. **Talk to an assistant.** Click one of the cards under "Then start a session with" (later:
+   click an assistant in the left list, then **New session**). Type a question, like "What do you
+   do for me? Answer in two lines."
 3. **The chat view** is the clean view you see by default: your messages and its answers.
 4. **The Raw view.** Each session has **Chat** and **Raw** buttons at its top. Raw shows the real
    Claude Code screen. Use it if the assistant seems stuck or asks something the chat view

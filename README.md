@@ -24,8 +24,8 @@ limits, and your machine, are the limit.
 - **A Mac, Windows PC or Linux computer.** Clawdling runs on your computer, not on a phone or in a
   browser tab.
 - **A paid Claude plan: Pro, Max, Team or Enterprise.** Clawdling runs on Claude Code, and the
-  free plan does not include Claude Code. **Pro works**: it has the smallest usage allowance and
-  every agent draws from it, so run one or two agents at a time. Max has much more room.
+  free plan does not include Claude Code. **Pro works**: its usage allowance is smaller than Max's
+  and every agent draws from it, so run one or two agents at a time. Max has much more room.
 - **Claude Code**, in either form:
 
 | You use | Do this |
@@ -199,7 +199,7 @@ first message. Details and the threat model are in [docs/SECURITY.md](docs/SECUR
 ## FAQ
 
 **Does it work on the Pro plan?** Yes. Every agent session uses your plan's usage allowance, and
-Pro has the smallest one, so keep one or two agents busy at a time. When you hit the limit,
+Pro's is smaller than Max's, so keep one or two agents busy at a time. When you hit the limit,
 Claude Code says when it resets and the sessions wait. The free plan does not include Claude Code,
 so it cannot run Clawdling.
 
