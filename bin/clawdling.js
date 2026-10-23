@@ -312,7 +312,10 @@ async function cmdNew(args) {
   };
   const ctx = context(args.flags);
   let agent;
-  if (await serverUp(ctx)) agent = await api(ctx, 'POST', '/api/agents', body);
+  // Through the API only when THIS org's cockpit answers: another org's cockpit on the same port
+  // (the default 4747, say) would refuse our token, and the agent belongs to this org anyway.
+  const up = await serverUp(ctx);
+  if (up && up.home === ctx.home) agent = await api(ctx, 'POST', '/api/agents', body);
   else {
     try {
       agent = new OrgStore(ctx.paths).createAgent(body);

@@ -1,6 +1,7 @@
 // The CLI against a running server: what agents and Donna actually call.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { spawn } from 'node:child_process';
@@ -85,6 +86,39 @@ test('new domain / new project, through the API when the server runs', async () 
   const org = (await request(srv, 'GET', '/api/org')).body;
   assert.ok(org.agents.some((a) => a.id === 'garden-club'));
   assert.match(cliResult(['new', 'domain', 'Garden Club'], { env, home }).stderr, /already exists/);
+});
+
+test('new agent while this org\'s cockpit is stopped: another org\'s cockpit on the port is left alone', async () => {
+  const seen = [];
+  const other = http.createServer((req, res) => {
+    seen.push(`${req.method} ${req.url}`);
+    const health = req.url === '/api/health';
+    res.writeHead(health ? 200 : 401, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(health ? { ok: true, home: path.join(path.sep, 'some', 'other', 'org') } : { error: 'missing or wrong token' }));
+  });
+  await new Promise((r) => other.listen(0, '127.0.0.1', r));
+  const stopped = tempHome();
+  try {
+    cli(['init', '--defaults'], { env, home: stopped });
+    // Not execFileSync: the other cockpit lives in this process and has to answer.
+    const args = ['new', 'domain', 'Garden', '--mission', 'Grow tomatoes', '--port', String(other.address().port)];
+    const r = await new Promise((resolve) => {
+      const p = spawn(process.execPath, [CLI, ...args], { env: { ...env, CLAWDLING_HOME: stopped } });
+      let out = '';
+      let err = '';
+      p.stdout.on('data', (d) => { out += d; });
+      p.stderr.on('data', (d) => { err += d; });
+      p.on('close', (code) => resolve({ code, out, err }));
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /Created domain agent "Garden" \(id garden\)/);
+    assert.ok(fs.existsSync(path.join(stopped, 'domains', 'garden', 'CLAUDE.md')));
+    assert.ok(seen.includes('GET /api/health'), 'the CLI looked for a running cockpit');
+    assert.deepEqual(seen.filter((x) => x !== 'GET /api/health'), [], 'nothing but a health check reached the other org');
+  } finally {
+    await new Promise((r) => other.close(r));
+    rmrf(stopped);
+  }
 });
 
 test('doctor, donna status, open --print, service --dry-run', () => {
