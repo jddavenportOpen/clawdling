@@ -7,6 +7,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { tmuxInstallHint } from './hints.js';
 import { HOOK_EVENTS, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { ModeTracker, OutputFilter } from './termfilter.js';
@@ -38,6 +39,9 @@ const WS_HIGH_WATER = 16 * 1024 * 1024;
 
 const TRUST_RE = /Yes, I trust this folder|Quick safety check: Is this a project|Do you trust the files in this folder/i;
 const IMPORTS_RE = /Allow external CLAUDE\.md file imports/i;
+// Claude Code 2.1.283 before it is signed in: the first-run setup ("Let's get started.", then
+// "Select login method:"), or a sign-in error ("Not logged in · Please run /login", "Invalid API key").
+const LOGIN_RE = /Select login method|Let['’]s get started\.|Please run \/login|Not logged in|Invalid API key/i;
 /** What to answer when Claude Code's folder-trust dialog is on screen. */
 export function trustNotice(folder) {
   return (
@@ -48,8 +52,9 @@ export function trustNotice(folder) {
 }
 export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
-export const STALL_NOTICE = 'Claude Code has not finished starting. It may be waiting for an answer in the terminal.';
-const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
+export const LOGIN_NOTICE = 'Claude Code is not signed in on this computer. Open a terminal, run claude, finish signing in, then end this session and start it again.';
+export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
+const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'login', 'startup', 'permission_prompt', 'elicitation_dialog']);
 // Questions POST /api/sessions/:sid/answer may answer: Claude Code's own select lists.
 const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
 const POINTER = '\u276f'; // the "❯" Claude Code puts in front of the selected choice
@@ -111,6 +116,7 @@ export function dialogFromScreen(screen) {
   if (TRUST_RE.test(flat) || tight.includes('yes,itrustthisfolder') || tight.includes('quicksafetycheck:isthisaproject')) return { waiting: 'trust', notice: TRUST_NOTICE };
   // (callers replace the generic notice with trustNotice(<session folder>))
   if (IMPORTS_RE.test(flat) || tight.includes('allowexternalclaude.mdfileimports')) return { waiting: 'imports', notice: IMPORTS_NOTICE };
+  if (LOGIN_RE.test(flat) || tight.includes('selectloginmethod')) return { waiting: 'login', notice: LOGIN_NOTICE };
   return null;
 }
 
@@ -479,7 +485,7 @@ export class SessionManager {
     const text = typeof prompt === 'string' ? prompt.replace(/\0/g, '').slice(0, PROMPT_MAX).trim() : '';
     if (model !== undefined && model !== null && model !== '' && !isValidModel(model)) throw badRequest('invalid model');
     if (!this.claudeAbs()) throw new HttpError(500, `claude CLI not found (looked for "${this.claudeBin}" on PATH). Install Claude Code and sign in.`);
-    if (!which(this.tmux.bin, this.env.PATH || '')) throw new HttpError(500, 'tmux not found on PATH: install tmux 3.2 or newer (brew install tmux)');
+    if (!which(this.tmux.bin, this.env.PATH || '')) throw new HttpError(500, `tmux not found on PATH: install tmux 3.2 or newer (${tmuxInstallHint()})`);
     const sid = crypto.randomUUID();
     const rec = newRecord({
       sid,

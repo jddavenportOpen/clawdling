@@ -92,3 +92,23 @@ test('permission prompts: numbered choices, answered by option', async () => {
     v.close();
   }
 });
+
+test('a Claude Code that is not signed in: "login" at once, a plain notice, and nothing typed into it', async () => {
+  const dir = path.join(home, 'domains', 'money');
+  const marker = path.join(dir, '.fake-claude-login'); // the fake stops at "Select login method:"
+  fs.writeFileSync(marker, '');
+  try {
+    const started = Date.now();
+    const s = (await request(srv, 'POST', '/api/sessions', { agent: 'money' })).body;
+    const q = await until(s.sid, (x) => x.status === 'needs_you' && x.waiting_on === 'login', 'login screen');
+    assert.ok(Date.now() - started < 10000, 'seen long before the 20 s startup stall');
+    assert.match(q.notification, /not signed in on this computer/);
+    assert.equal(q.choices, null, 'not answered with buttons');
+    // Enter would pick a login method: typed text must never reach that screen.
+    assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' })).status, 409);
+    assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 })).status, 409);
+    await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+  } finally {
+    fs.rmSync(marker, { force: true });
+  }
+});

@@ -5,7 +5,8 @@
 // realistic JSON, echoes every input line back as "assistant: <line>", asks for "permission" when
 // a line contains "permission?", and exits on "/exit". If the working directory contains a
 // `.fake-claude-trust` file it first shows a folder-trust dialog shaped like the real one (focus on
-// "No, exit"; arrow keys move; Enter chooses).
+// "No, exit"; arrow keys move; Enter chooses). A `.fake-claude-login` file makes it stop at the
+// sign-in screen of a Claude Code that is not logged in ("Select login method:"), for good.
 //
 // Print mode (-p --output-format json): reads the prompt from stdin. If the owner's message
 // mentions "health" it runs `clawdling spawn health "<message>"` through the real CLI on PATH,
@@ -226,7 +227,17 @@ async function trustDialog() {
   return choice === 1;
 }
 
+// Claude Code 2.1.283 when it is not signed in: the login-method list before anything else.
+async function loginScreen() {
+  if (!fs.existsSync(path.join(process.cwd(), '.fake-claude-login'))) return;
+  process.stdout.write('\x1b[2J\x1b[H');
+  const header = [' Claude Code can be used with your Claude subscription or billed based on API usage through your Console account.', '', ' Select login method:', ''];
+  await select({ header, choices: ['Claude account with subscription · Pro, Max, Team, or Enterprise', 'Anthropic Console account · API usage billing'], focus: 0, numbered: true });
+  await new Promise(() => {}); // the real one opens a browser; the fake waits until the session ends
+}
+
 async function interactive() {
+  await loginScreen();
   const trusted = await trustDialog();
   if (!trusted) {
     process.stdout.write('\r\nExiting.\r\n');
