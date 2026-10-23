@@ -39,7 +39,9 @@ test.describe('org map', () => {
     await expect(page.locator('[data-node]').first()).toBeVisible();
     const all = await sessions();
     const waiting = all.filter((x) => x.status === 'needs_you' || x.status === 'ready'); // needs you + your turn
-    await expect(page.locator('#sec-needs .sec-count')).toHaveText(String(waiting.length));
+    // The rail shows a count only when something needs you.
+    if (waiting.length) await expect(page.locator('#sec-needs .sec-count')).toHaveText(String(waiting.length));
+    else await expect(page.locator('#sec-needs .sec-count')).toHaveCount(0);
     if (waiting.length) await expect(page.locator('.map-page .page-sub')).toContainText(`${waiting.length} need you`);
     else await expect(page.locator('.map-page .page-sub')).not.toContainText('need you');
     const agentsWaiting = new Set(waiting.map((x) => x.agent));
