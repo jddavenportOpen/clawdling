@@ -50,7 +50,7 @@ node bin/clawdling.js init --defaults   # or: --answers answers.json
 node bin/clawdling.js start --open      # the cockpit, at http://127.0.0.1:4747
 ```
 
-Windows (PowerShell; no WSL, no admin rights):
+Windows (PowerShell; no WSL, and none of these commands needs admin rights):
 
 ```powershell
 git clone https://github.com/jddavenportOpen/clawdling "$HOME\.clawdling-app"
