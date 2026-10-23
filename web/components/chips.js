@@ -1,5 +1,6 @@
 // The pane header's model and effort chips. A chip shows what the session runs on and, between
-// turns (your turn), switches it live: Clawdling types /model or /effort into the session.
+// turns (your turn), switches it: the server resumes this session's claude on the same
+// conversation with the new --model / --effort, for this session only (POST .../settings).
 import { html } from '../lib/html.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { api } from '../lib/api.js';

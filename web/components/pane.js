@@ -204,8 +204,10 @@ export const STARTUP_DIALOGS = {
   },
   imports: { text: () => 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
   login: {
-    text: () => 'Claude Code is not signed in on this computer.',
-    note: html`Run <code>claude</code> in a terminal and sign in, then start this session again.`,
+    // A "Sign in" session (Settings -> Accounts) is exactly where signing in happens.
+    text: (s) => (s.purpose === 'signin' ? 'Sign in to this Claude account in the terminal below.' : 'Claude Code is not signed in on this computer.'),
+    note: (s) => (s.purpose === 'signin' ? html`Follow Claude Code's own steps (or type <code>/login</code>). Clawdling never sees the login.`
+      : html`Run <code>claude</code> in a terminal and sign in, then start this session again.`),
   },
 };
 
@@ -233,7 +235,7 @@ function DialogBanner({ s, mobile, accent }) {
   return html`<div class="pane-dialog" role="group" aria-label="Claude Code is asking" data-testid="pane-dialog" data-dialog=${s.waiting_on}>
     <${StatusGlyph} status="needs_you" label=${false} />
     <span class="dialog-text" data-testid="pane-dialog-text">${d.text(s)}</span>
-    ${d.note ? html`<span class="dialog-note" data-testid="pane-dialog-note">${d.note}</span>`
+    ${d.note ? html`<span class="dialog-note" data-testid="pane-dialog-note">${typeof d.note === 'function' ? d.note(s) : d.note}</span>`
       : opts ? html`<span class="dialog-actions">
       <button class="btn btn-quiet btn-sm" onClick=${() => answer(opts.no, false)} disabled=${!!busy} data-testid="dialog-no">${busy === opts.no ? 'Answering…' : d.no}</button>
       <button class=${`btn ${accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${() => answer(opts.yes, true)} disabled=${!!busy} data-testid="dialog-yes">${busy === opts.yes ? 'Answering…' : d.yes}</button>

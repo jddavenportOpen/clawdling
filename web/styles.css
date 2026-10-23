@@ -370,7 +370,6 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
   border: 1px solid var(--line); background: var(--bg-stage); color: var(--text-2); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .chip-icon { display: grid; place-items: center; color: var(--text-3); }
 .chip-icon .initial { width: 12px; height: 12px; font-size: 9.5px; }
-.pane-model { flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .pane-trace { display: flex; flex-shrink: 0; transition: opacity 0.4s; }
 .pane-trace.is-idle { opacity: 0; }
 .trace-base { stroke: var(--line-2); stroke-width: 1; stroke-dasharray: 1 2; }
@@ -410,7 +409,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .ended-sub { margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; }
 .ended-actions { display: flex; justify-content: center; gap: 8px; }
 .pane-missing { margin: auto; text-align: center; color: var(--text-2); }
-@container pane (max-width: 620px) { .pane-model, .pane-index { display: none; } }
+@container pane (max-width: 620px) { .pane-index { display: none; } }
 @container pane (max-width: 470px) { .pane-trace, .pane-chip { display: none; } }
 
 /* ---------- empty state ---------- */
