@@ -191,7 +191,7 @@ SETUP.md steps for Claude Code: (1) check prerequisites (`node -v` >= 20, `tmux 
 
 ## 8. Web cockpit (`web/`) — no build step
 
-Preact + htm + xterm.js via import map. Hash routes: `#/` cockpit, `#/map` org map, `#/agent/<id>` agent page, `#/donna` channels, `#/settings`. Dark theme by default, light via prefers-color-scheme; one accent colour; system font stack + a mono font for terminals. Keyboard: `⌘K`/`Ctrl+K` command palette (jump to session/agent, new session), `⌘\`/`Ctrl+\` toggle rail, `⌘1..9` focus pane N.
+Preact + htm + xterm.js via import map. Hash routes: `#/` cockpit, `#/map` org map, `#/agent/<id>` agent page, `#/donna` channels, `#/settings`. Dark theme by default, light via prefers-color-scheme; one accent colour; system font stack + a mono font for terminals. Keyboard: `⌘K`/`Ctrl+K` command palette (jump to session/agent, new session), `⌘\`/`Ctrl+\` toggle rail, `⌥1..9`/`Alt+1..9` focus pane N (`⌘1..9` belongs to the browser's tabs).
 
 ### Rail (left) — the lessons from JD's own cockpit, applied
 - Header: **Cockpit** home button (always returns to `#/` with every open session restored) + live count + **collapse** button. The rail is collapsible by the user (button + `⌘\`), state persisted in localStorage. Collapsed = 56 px strip that is still useful: expand, home, new session, search, and one status dot/initial per live session (tooltip = name; click = focus).

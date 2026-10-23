@@ -31,9 +31,31 @@ or without tmux.
   `/C:/...` URL path); a folder-trust dialog drawn before tmux's control client attached was not
   detected until the 20 s stall notice.
 - **Install and setup:** README and SETUP.md (the playbook Claude Code follows) now cover each OS,
-  install missing prerequisites only after you agree, and never set up WSL.
+  install missing prerequisites only after you agree, and never set up WSL. README has a
+  troubleshooting section.
+- **First run and honest status (from a UX review):**
+  - A persistent banner (phone included) when `claude` or tmux is missing, with the fix and a
+    "Check again" button; start controls are disabled while it shows. tmux is never flagged
+    when sessions run in the built-in terminal.
+  - "Trust my org folder" on first run, so agents inside the org never ask again; the trust
+    banner names the folder and says what "No, exit" does.
+  - A Claude Code that is not signed in (or not set up yet) is recognised at once, not after a
+    20 s stall.
+  - "Needs you" counts what is blocked plus what is your turn; a session you just opened is
+    neither, and a finished turn stays green "Your turn".
+  - Every command the cockpit and the CLI print is spelled the way this computer runs this
+    install (`node ~/.clawdling-app/bin/clawdling.js ...` when `clawdling` is not on PATH).
+  - "Use Clawdling on your phone": a browser link and QR that sign a phone in (when the cockpit
+    is reachable), the iPhone app marked as coming soon.
+  - Phone: 44 px targets, 16 px fields, no keyboard on open, one-tap answers to permission
+    prompts and questions, a message composer, safe areas; contrast fixes; Alt+1-9 for panes.
+- **Fixes found with real Claude Code 2.1.283:** answer buttons for a permission prompt or a
+  question that Claude Code draws after its notification; `clawdling stop` no longer leaves tmux
+  control clients behind; `clawdling new` no longer posts to another org's cockpit on the same
+  port.
 - **CI:** GitHub Actions on Ubuntu, macOS and Windows, Node 20 and 22, with the unit and
-  integration suites under both backends, plus the Playwright cockpit suite.
+  integration suites under both backends, the Playwright cockpit suite (desktop and phone,
+  Chromium and WebKit), and the same suite against the real server on Linux and Windows.
 
 ## 1.0.0 (2026-10-22)
 

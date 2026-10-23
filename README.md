@@ -226,7 +226,8 @@ install runs it.
 `npm test` runs the unit and integration suites against a fake `claude` (no model calls) with
 the session backend this machine would use; `npm run test:tmux` and `npm run test:pty` pick one.
 CI runs both on macOS and Linux, and the built-in terminal on Windows, under Node 20 and 22.
-`npm run e2e` runs the Playwright cockpit suite. `npm run smoke:live` runs one real Claude Code
+`npm run e2e` runs the Playwright cockpit suite against a mock server (`CLAWDLING_E2E_REAL=1 npm run e2e`
+runs it against the real server with the fake `claude`). `npm run smoke:live` runs one real Claude Code
 session to prove context and memory preload (`CLAWDLING_BACKEND=pty npm run smoke:live` proves
 it without tmux). Test users and acceptance stories are in
 [docs/USER-STORIES.md](docs/USER-STORIES.md).
