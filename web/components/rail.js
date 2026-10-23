@@ -14,6 +14,9 @@ import {
   groupSessions, sessionName, agentLabel, statusText, sessionTime, agentStats, sortAgents, KIND_LABEL,
 } from '../lib/model.js';
 import { relTime, matches, MOD, longTime } from '../lib/util.js';
+import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
+import { FirstTrust } from './first-run.js';
+import { paneAsksWithButtons } from './pane.js';
 
 const RECENT_LIMIT = 8;
 
@@ -42,6 +45,11 @@ function ExpandedRail() {
   const conn = useStore((s) => s.conn);
   const route = useStore((s) => s.route);
   const mobile = useStore((s) => s.mobile);
+  const sessionsLoaded = useStore((s) => s.sessionsLoaded);
+  const orgError = useStore((s) => s.orgError);
+  const sessions = useStore((s) => s.sessions);
+  const mobileView = useStore((s) => s.mobileView);
+  const blocked = useStartBlocked();
   const [showAllRecent, setShowAllRecent] = useState(false);
   const searchRef = useRef(null);
 
@@ -54,6 +62,12 @@ function ExpandedRail() {
   const sortedAgents = sortAgents(agents).filter((a) => matches(query, a.name, a.id, a.mission, KIND_LABEL[a.kind]));
   const searching = !!query.trim();
   const nothing = searching && !needs.length && !live.length && !recentAll.length && !sortedAgents.length;
+  const firstRun = sessionsLoaded && list.length === 0 && !orgError;
+  // One filled accent per screen: the first-run "Trust my org folder", or the focused pane's own
+  // question ("Yes, trust it", "Yes"), outranks New session while it is on screen.
+  const onCockpit = route.name === 'cockpit';
+  const paneOnScreen = onCockpit && !(mobile && mobileView === 'list');
+  const accentElsewhere = (firstRun && onCockpit) || (paneOnScreen && open.includes(focused) && paneAsksWithButtons(sessions[focused]));
 
   const row = (s, section) => html`<${SessionRow} key=${s.sid} s=${s} section=${section} agentsById=${agentsById}
     onScreen=${open.includes(s.sid)} focused=${focused === s.sid && open.includes(s.sid)} now=${now} />`;
@@ -71,7 +85,8 @@ function ExpandedRail() {
     </div>
 
     <div class="rail-actions">
-      <button class="btn btn-primary btn-block" onClick=${() => openOverlay({ type: 'new-session' })} data-testid="new-session">
+      <button class=${`btn ${accentElsewhere ? 'btn-quiet' : 'btn-primary'} btn-block`} onClick=${() => openOverlay({ type: 'new-session' })} data-testid="new-session"
+        disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}>
         <${Icon} name="plus" /> New session
       </button>
       <button class="btn btn-quiet btn-square" onClick=${() => openOverlay({ type: 'wizard' })} aria-label="New agent"
@@ -89,6 +104,7 @@ function ExpandedRail() {
 
     <div class="rail-scroll">
       ${nothing ? html`<p class="rail-empty">Nothing matches “${query.trim()}”.</p>` : null}
+      ${mobile && firstRun && !searching ? html`<div class="rail-first"><${FirstTrust} /></div>` : null}
 
       ${(!searching || needs.length) ? html`<section class="rail-sec sec-needs" aria-labelledby="sec-needs" data-section="needs">
         <h2 id="sec-needs" class="sec-title"><span>Needs you</span>${needs.length ? html`<span class="sec-count tone-amber">${needs.length}</span>` : null}</h2>
@@ -111,7 +127,7 @@ function ExpandedRail() {
 
       ${sortedAgents.length ? html`<section class="rail-sec" aria-labelledby="sec-agents" data-section="agents">
         <h2 id="sec-agents" class="sec-title"><span>Agents</span><span class="sec-count">${sortedAgents.length}</span></h2>
-        <ul class="rows">${sortedAgents.map((a) => html`<${AgentRow} key=${a.id} a=${a} stats=${agentStats(a.id, list)} />`)}</ul>
+        <ul class="rows">${sortedAgents.map((a) => html`<${AgentRow} key=${a.id} a=${a} stats=${agentStats(a.id, list)} mobile=${mobile} blocked=${blocked} />`)}</ul>
       </section>` : null}
     </div>
 
@@ -157,19 +173,20 @@ function SessionRow({ s, section, agentsById, onScreen, focused, now }) {
   </li>`;
 }
 
-function AgentRow({ a, stats }) {
+function AgentRow({ a, stats, mobile, blocked }) {
   const start = () => startSession(a.id).catch(() => {});
+  const kind = KIND_LABEL[a.kind] || a.kind;
   return html`<li class="row-wrap agent-row" data-agent=${a.id}>
-    <button class="row" onClick=${start} aria-label=${`New session with ${a.name}${stats.live ? `, ${stats.live} live` : ''}`}
-      title=${`${a.name}: start a new session${a.mission ? `\n${a.mission}` : ''}`}>
+    <button class="row" onClick=${start} aria-label=${`New session with ${a.name}${stats.live ? `, ${stats.live} live` : ''}${stats.needs ? `, ${stats.needs} need you` : ''}`}
+      title=${blocked ? BLOCKED_TITLE : `${a.name}: start a new session${a.mission ? `\n${a.mission}` : ''}`} disabled=${blocked}>
       <span class="row-icon"><${AgentIcon} agent=${a} size=${14} /></span>
       <span class="row-main">
         <span class="row-title">${a.name}</span>
-        <span class="row-meta"><span class="row-status">${KIND_LABEL[a.kind] || a.kind}</span></span>
+        <span class="row-meta"><span class="row-status">${mobile ? `${kind} · tap to start` : kind}</span></span>
       </span>
       <span class="row-side">
-        ${stats.needs ? html`<span class="badge tone-amber" title=${`${stats.needs} need you`}>${stats.live}</span>`
-          : stats.live ? html`<span class="badge" title=${`${stats.live} live`}>${stats.live}</span>` : null}
+        ${stats.needs ? html`<span class=${`badge ${stats.blocked ? 'tone-amber' : 'tone-ready'}`} title=${`${stats.needs} need you`} data-badge="needs">${stats.needs}</span>`
+          : stats.live ? html`<span class="badge" title=${`${stats.live} live`} data-badge="live">${stats.live}</span>` : null}
         <span class="row-plus" aria-hidden="true"><${Icon} name="plus" size=${14} /></span>
       </span>
     </button>
@@ -183,6 +200,7 @@ function AgentRow({ a, stats }) {
 function Strip() {
   const { groups, agentsById, open, focused } = useRailData();
   const route = useStore((s) => s.route);
+  const blocked = useStartBlocked();
   const [tip, setTip] = useState(null);
   const live = [...groups.needs, ...groups.live];
 
@@ -201,8 +219,8 @@ function Strip() {
       data-testid="rail-expand" ...${tipProps(`Expand sidebar (${MOD}\\)`)}><${Icon} name="chevrons-right" /></button>
     <button class=${`strip-btn ${route.name === 'cockpit' ? 'is-here' : ''}`} onClick=${goHome} aria-label="Cockpit"
       data-testid="cockpit-home" ...${tipProps('Cockpit')}><${Icon} name="home" /></button>
-    <button class="strip-btn" onClick=${() => openOverlay({ type: 'new-session' })} aria-label="New session"
-      data-testid="new-session" ...${tipProps('New session')}><${Icon} name="plus" /></button>
+    <button class="strip-btn" onClick=${() => openOverlay({ type: 'new-session' })} aria-label="New session" disabled=${blocked}
+      data-testid="new-session" ...${tipProps(blocked ? BLOCKED_TITLE : 'New session')}><${Icon} name="plus" /></button>
     <button class="strip-btn" onClick=${togglePalette} aria-label=${`Search and jump (${MOD}K)`}
       ...${tipProps(`Search and jump (${MOD}K)`)}><${Icon} name="search" /></button>
     <div class="strip-sep" role="separator"></div>

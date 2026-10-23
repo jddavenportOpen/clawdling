@@ -92,6 +92,8 @@ export class TermView {
       smoothScrollDuration: 0,
       theme: PALETTES[getTheme()],
       allowTransparency: false,
+      // Settings > Appearance > Screen reader support: xterm mirrors its rows into an ARIA live tree.
+      screenReaderMode: !!load('termScreenReader', false),
     });
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
@@ -143,6 +145,10 @@ export class TermView {
 
   setFontSize() {
     this.layout(); // layout() re-reads the saved size and the pane width
+  }
+
+  setScreenReader(on) {
+    this.term.options.screenReaderMode = !!on;
   }
 
   sendResize(force = false) {
