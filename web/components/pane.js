@@ -9,7 +9,7 @@ import { dialogAnswers } from '../lib/dialogs.js';
 import { TerminalView } from './terminal.js';
 import { Composer } from './composer.js';
 import { PaneChips } from './chips.js';
-import { ChatView } from './chat-view.js';
+import { ChatView, useTranscript } from './chat-view.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
@@ -19,6 +19,7 @@ import { api } from '../lib/api.js';
 import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand } from '../lib/model.js';
 import { relTime, prefersReducedMotion, paneKey, tildify, coarsePointer } from '../lib/util.js';
 import { getState, setState } from '../lib/store.js';
+import { load, save } from '../lib/prefs.js';
 
 export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const s = useStore((st) => st.sessions[sid]);
@@ -33,6 +34,20 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const el = useRef(null);
   // A pane that mounts already focused (just opened, or restored on reload) takes the keyboard too.
   const lastTick = useRef(focused ? -1 : focusTick);
+  // Chat | Raw, remembered per pane. Chat shows once the transcript has messages; until then the
+  // raw terminal shows with a note. The terminal stays mounted under the chat either way.
+  const [view, setViewState] = useState(() => (load(`view.${sid}`, 'chat') === 'raw' ? 'raw' : 'chat'));
+  const ended0 = !!s && s.status === 'ended';
+  const { messages, loaded } = useTranscript(sid, ended0, view === 'chat' && !!s);
+  const chat = view === 'chat' && messages.length > 0;
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+  const setView = (v) => {
+    save(`view.${sid}`, v);
+    setViewState(v);
+    // Back to Raw: the terminal kept its size under the chat, but refit in case the pane changed.
+    requestAnimationFrame(() => { const t = terms.get(sid); if (t && t.layout) t.layout(); });
+  };
 
   // A rail click / palette jump / ⌘N targets this pane: reveal it, flash it,
   // and put the keyboard in its terminal. Nothing else in the workspace moves.
@@ -44,11 +59,14 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     requestAnimationFrame(() => {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
       const v = terms.get(sid);
+      const box = chatRef.current ? node.querySelector('.chat-view textarea') : null;
       // Never pull the keyboard out of a dialog or menu opened since the jump.
       const st = getState();
       const busy = st.overlay || st.menu || st.renaming || (document.activeElement && document.activeElement.closest('.modal, .menu, .pane-title-input'));
       // On a phone, focusing the terminal raises the keyboard over it: typing goes through the composer.
-      if (v && !busy && !st.mobile && !coarsePointer()) v.focus();
+      if (!busy && !st.mobile && !coarsePointer()) {
+        if (box) { if (!box.disabled) box.focus(); } else if (v) v.focus();
+      }
       setFlash(true);
       setTimeout(() => setFlash(false), 650);
     });
@@ -76,8 +94,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   if (span > 1) style.gridRow = `span ${span}`;
 
   return html`<section ref=${el}
-      class=${`pane st-${s.status} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
-      data-pane=${sid} data-status=${s.status} data-focused=${focused ? 'true' : 'false'} style=${style}
+      class=${`pane st-${s.status} ${chat ? 'is-chat' : ''} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
+      data-pane=${sid} data-status=${s.status} data-view=${chat ? 'chat' : 'raw'} data-focused=${focused ? 'true' : 'false'} style=${style}
       role="region" aria-label=${`${name} (${agentLabel(s, agentsById)})`}
       onMouseDown=${() => touchFocus(sid)} onFocusIn=${() => touchFocus(sid)}>
     <header class="pane-head">
@@ -89,6 +107,12 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       <${PaneChips} s=${s} />
       <${Trace} sid=${sid} status=${s.status} />
       <span class="pane-spacer"></span>
+      <div class="seg pane-view" role="group" aria-label="View">
+        <button type="button" class=${`seg-btn ${view === 'chat' ? 'is-on' : ''}`} aria-pressed=${view === 'chat' ? 'true' : 'false'}
+          onClick=${() => setView('chat')} title="Chat view" data-testid="pane-view-chat">Chat</button>
+        <button type="button" class=${`seg-btn ${view === 'raw' ? 'is-on' : ''}`} aria-pressed=${view === 'raw' ? 'true' : 'false'}
+          onClick=${() => setView('raw')} title="Raw terminal" data-testid="pane-view-raw">Raw</button>
+      </div>
       ${conn === 'reconnecting' && !ended ? html`<span class="pane-conn" role="status">Reconnecting…</span>` : null}
       ${!solo && index < 9 ? html`<span class="pane-index" aria-hidden="true" title=${`Focus with ${paneKey(index + 1)}`}>${paneKey(index + 1)}</span>` : null}
       <div class="pane-actions">
@@ -102,11 +126,16 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     </header>
     ${s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
-      : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => { const v = terms.get(sid); if (v) v.focus(); }}>
+      : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => {
+        const focusTerm = () => { const v = terms.get(sid); if (v) v.focus(); };
+        if (chat) { setView('raw'); requestAnimationFrame(() => requestAnimationFrame(focusTerm)); } else focusTerm();
+      }}>
       <${StatusGlyph} status="needs_you" label=${false} /><span class="alert-label">Needs you</span><span class="alert-text">${s.notification || 'Claude is waiting for your answer in the terminal.'}</span>
     </button>` : null}
+    ${view === 'chat' && !chat && loaded && !ended ? html`<p class="chat-pending" data-testid="chat-pending-note">Chat appears once Claude Code starts.</p>` : null}
     <div class="pane-body">
       <${TerminalView} sid=${sid} ended=${ended} onConn=${setConn} onStatus=${onStatus} onEnded=${onEnded} />
+      ${chat ? html`<${ChatView} s=${s} agent=${agentLabel(s, agentsById)} messages=${messages} />` : null}
       ${ended ? html`<div class="pane-ended" role="group" aria-label="Session ended">
         <div class="ended-card">
           <p class="ended-title"><${StatusGlyph} status="ended" label=${false} /> Session ended ${relTime(sessionTime(s), now) === 'now' ? 'just now' : `${relTime(sessionTime(s), now)} ago`}</p>
@@ -119,7 +148,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
         </div>
       </div>` : null}
     </div>
-    ${mobile && !ended ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
+    ${mobile && !ended && !chat ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
   </section>`;
 }
 
