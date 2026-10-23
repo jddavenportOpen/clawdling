@@ -45,7 +45,8 @@ test('GET /api/sessions/:sid/messages reads the Claude transcript as chat', asyn
   const later = await request(srv, 'GET', `/api/sessions/${s.sid}/messages?after=${r.body.next}`);
   assert.deepEqual(later.body.messages.map((m) => m.n), [2, 3]);
   assert.equal(later.body.messages[0].text, 'need permission?');
-  assert.deepEqual(later.body.messages[1].tools, [{ name: 'Bash', summary: 'echo hi' }]);
+  assert.deepEqual(later.body.messages[1].tools, [{ name: 'Bash', summary: 'echo hi', detail: '{\n  "command": "echo hi",\n  "description": "Say hi"\n}' }]);
+  assert.equal(later.body.messages[1].model, 'fake');
   assert.equal(later.body.status, 'needs_you');
   const paged = await request(srv, 'GET', `/api/sessions/${s.sid}/messages?after=-1&limit=1`);
   assert.equal(paged.body.messages.length, 1);

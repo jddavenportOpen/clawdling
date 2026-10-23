@@ -19,6 +19,7 @@ import {
   conflict,
   isUuid,
   isValidAgentId,
+  isValidEffort,
   isValidModel,
   notFound,
   nowIso,
@@ -138,13 +139,14 @@ export function safePositional(prompt) {
   return /\s/.test(prompt) ? prompt : `${prompt} `;
 }
 
-export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsPath, model, permissionMode, addDirs = [], appendSystemPromptFile, prompt }) {
+export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsPath, model, effort, permissionMode, addDirs = [], appendSystemPromptFile, prompt }) {
   const a = [];
   if (resume) a.push('--resume', resumeId || sid);
   else a.push('--session-id', sid);
   if (name) a.push(`--name=${name}`);
   if (settingsPath) a.push('--settings', settingsPath);
   if (model) a.push(`--model=${model}`);
+  if (effort) a.push(`--effort=${effort}`);
   if (permissionMode && permissionMode !== 'default') a.push('--permission-mode', permissionMode);
   for (const d of addDirs) a.push('--add-dir', d);
   if (appendSystemPromptFile) a.push('--append-system-prompt-file', appendSystemPromptFile);
@@ -212,6 +214,9 @@ function newRecord(fields) {
     title: fields.title ?? null,
     status: fields.status ?? 'starting',
     model: fields.model ?? null,
+    effort: fields.effort ?? null,
+    account: fields.account ?? null,
+    purpose: fields.purpose ?? null,
     permission_mode: fields.permission_mode ?? null,
     cwd: fields.cwd,
     tmux_name: fields.tmux_name,
@@ -242,7 +247,8 @@ function sendWs(ws, msg) {
 }
 
 export class SessionManager {
-  constructor({ paths, org, events, backend, tmux, claudeBin, socket, shimDir, env, logger, getPort }) {
+  constructor({ paths, org, events, backend, tmux, claudeBin, socket, shimDir, env, logger, getPort, accounts }) {
+    this.accounts = accounts || null;
     this.paths = paths;
     this.home = paths.home;
     this.org = org;
@@ -300,6 +306,9 @@ export class SessionManager {
       name: `${rec.agent_name}: ${rec.title || 'new session'}`,
       status: rec.status,
       model: rec.model,
+      effort: rec.effort || null,
+      account: rec.account || null,
+      purpose: rec.purpose || null,
       permission_mode: rec.permission_mode,
       cwd: rec.cwd,
       tmux_name: rec.tmux_name,
@@ -475,12 +484,15 @@ export class SessionManager {
     return which(this.claudeBin, this.env.PATH || '');
   }
 
-  async spawn({ agent, prompt, model, title, cols, rows } = {}) {
+  async spawn({ agent, prompt, model, effort, account, purpose, title, cols, rows } = {}) {
     if (typeof agent !== 'string' || !agent) throw badRequest('agent is required');
     const target = this.resolveTarget(agent);
     if (prompt !== undefined && prompt !== null && typeof prompt !== 'string') throw badRequest('prompt must be a string');
     const text = typeof prompt === 'string' ? prompt.replace(/\0/g, '').slice(0, PROMPT_MAX).trim() : '';
     if (model !== undefined && model !== null && model !== '' && !isValidModel(model)) throw badRequest('invalid model');
+    if (effort !== undefined && effort !== null && effort !== '' && !isValidEffort(effort)) throw badRequest('effort must be low, medium, high, xhigh or max');
+    const accountId = account && account !== 'default' ? account : null;
+    if (accountId) this.accountDir(accountId); // unknown or invalid account: 400/404 before anything starts
     if (!this.claudeAbs()) throw new HttpError(500, `claude CLI not found (looked for "${this.claudeBin}" on PATH). Install Claude Code and sign in.`);
     const missing = this.backend.missing ? this.backend.missing(this.env.PATH || '') : null;
     if (missing) throw new HttpError(500, missing);
@@ -492,6 +504,9 @@ export class SessionManager {
       kind: target.kind,
       title: cleanTitle(title) || (text ? deriveTitle(text) : null),
       model: model || target.model || null,
+      effort: effort || null,
+      account: accountId,
+      purpose: purpose === 'signin' ? 'signin' : null,
       permission_mode: target.permission_mode || null,
       cwd: target.cwd,
       tmux_name: `cl-${target.id}-${sid.slice(0, 6)}`,
@@ -529,6 +544,7 @@ export class SessionManager {
       name: `${rec.agent_name}: ${rec.title || 'new session'}`,
       settingsPath: this.paths.hooksSettings,
       model: rec.model,
+      effort: rec.effort,
       permissionMode: rec.permission_mode,
       addDirs: rec.cwd === this.home ? [] : [this.home],
       appendSystemPromptFile: ctxFile,
@@ -543,6 +559,9 @@ export class SessionManager {
       CLAWDLING_TMUX_SOCKET: this.socket,
       COLORTERM: 'truecolor',
     };
+    // A second Claude account is only its own config folder, handed to this session's claude.
+    const accountDir = this.accountDir(rec.account);
+    if (accountDir) sessionEnv.CLAUDE_CONFIG_DIR = accountDir;
     let how;
     if (this.backend.launcher) {
       // tmux: a /bin/sh launcher, so tmux only ever sees our own safe strings.
@@ -891,6 +910,49 @@ export class SessionManager {
       await sleep(100);
     }
     return pred();
+  }
+
+  /** CLAUDE_CONFIG_DIR for a session's account, or null for the user's own default login. */
+  accountDir(account) {
+    if (!account || account === 'default') return null;
+    if (!this.accounts) throw badRequest('accounts are not available on this server');
+    return this.accounts.configDir(account);
+  }
+
+  /** The config folder this session's claude writes its transcripts under. */
+  configDirFor(rec, fallback) {
+    try {
+      return this.accountDir(rec.account) || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * Switch a live session's model or effort the way a person would: type /model <x> or
+   * /effort <x>. Only between turns (status ready): typed mid-turn it would queue as a prompt.
+   */
+  async settings(sid, { model, effort } = {}) {
+    const rec = this.require(sid);
+    const m = model === undefined || model === null || model === '' ? null : model;
+    const e = effort === undefined || effort === null || effort === '' ? null : effort;
+    if (!m && !e) throw badRequest('send {model} or {effort}');
+    if (m && !isValidModel(m)) throw badRequest('invalid model');
+    if (e && !isValidEffort(e)) throw badRequest('effort must be low, medium, high, xhigh or max');
+    if (rec.status !== 'ready') throw conflict('wait for your turn: model and effort change between turns');
+    if (m) {
+      await this.send(sid, `/model ${m}`, true);
+      rec.model = m;
+    }
+    if (e) {
+      if (m) await sleep(300);
+      await this.send(sid, `/effort ${e}`, true);
+      rec.effort = e;
+    }
+    this.events.record({ type: 'settings', sid, agent: rec.agent, ...(m ? { model: m } : {}), ...(e ? { effort: e } : {}) });
+    this.save();
+    this.publish(rec);
+    return this.view(rec);
   }
 
   /** Type text into a session (Donna routing, the CLI). A paste, so multi-line text is one paste. */

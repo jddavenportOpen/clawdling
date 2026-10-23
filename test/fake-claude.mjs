@@ -70,6 +70,9 @@ for (let i = 0; i < argv.length; i++) {
     case '--model':
       opts.model = val();
       break;
+    case '--effort':
+      opts.effort = val();
+      break;
     case '--permission-mode':
       opts.permissionMode = val();
       break;
@@ -97,7 +100,7 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 const sid = opts.resume || opts.sessionId || crypto.randomUUID();
-log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, PATH0: (process.env.PATH || '').split(path.delimiter)[0] } });
+log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, PATH0: (process.env.PATH || '').split(path.delimiter)[0] } });
 
 // ------------------------------------------------------------------ print mode (Donna turns)
 if (opts.print) {

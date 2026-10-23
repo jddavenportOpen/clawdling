@@ -69,6 +69,9 @@ test('claude argv: session id, name, settings, model, permission mode, add-dir, 
   const r = buildClaudeArgs({ sid, resume: true, resumeId: sid, permissionMode: 'default' });
   assert.deepEqual(r, ['--resume', sid], '"default" permission mode passes no flag');
   assert.equal(safePositional('update'), 'update ', 'a bare word cannot become a claude subcommand');
+  const e = buildClaudeArgs({ sid, model: 'opus', effort: 'xhigh' });
+  assert.deepEqual(e, ['--session-id', sid, '--model=opus', '--effort=xhigh'], 'effort is the CLI\'s own --effort flag');
+  assert.deepEqual(buildClaudeArgs({ sid, effort: null }), ['--session-id', sid], 'no effort, no flag: the user\'s own default');
   assert.equal(safePositional('doctor please'), 'doctor please');
 });
 
