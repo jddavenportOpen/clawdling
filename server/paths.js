@@ -20,7 +20,8 @@ const SOCKET_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
 export function expandHome(p) {
   if (p === '~') return os.homedir();
-  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
+  // `~\org` too: PowerShell passes a ~ through to native programs unexpanded.
+  if (p.startsWith('~/') || (process.platform === 'win32' && p.startsWith('~\\'))) return path.join(os.homedir(), p.slice(2));
   return p;
 }
 
