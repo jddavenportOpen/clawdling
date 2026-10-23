@@ -18,7 +18,9 @@ no servers of its own. The author never receives any of your data.
 - **Your Claude account** stays with Claude Code. Clawdling never reads, stores or forwards your
   Claude credentials and never calls the Anthropic API itself; it starts the `claude` command
   you are already signed into. What Claude Code sends to Anthropic is governed by Anthropic's
-  own terms and privacy policy.
+  own terms and privacy policy. If you add a second Claude account in Settings, Clawdling only
+  gives it its own folder (`~/.clawdling-accounts/<name>`) and passes that folder to `claude`;
+  you sign in inside Claude Code, and Clawdling never sees, reads or stores that login.
 - **Telegram or iMessage** (optional, only if you turn on Donna's text channel): messages pass
   through Telegram's or Apple's own services under their terms. Clawdling answers only the one
   chat you pair it with.

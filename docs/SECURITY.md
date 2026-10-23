@@ -7,7 +7,10 @@ server can type into those sessions, so the server is built to be reachable only
 
 - It never reads, stores or forwards Claude credentials or OAuth tokens, and never calls the
   Anthropic API. It only starts the unmodified `claude` binary you are signed into. `clawdling
-  doctor` asks `claude auth status` for an exit code and discards its output.
+  doctor` asks `claude auth status` for an exit code and discards its output. A second Claude
+  account added in Settings is only a folder (`~/.clawdling-accounts/<name>`) that Clawdling passes
+  to `claude` as `CLAUDE_CONFIG_DIR` for the sessions started with it; you sign in inside Claude
+  Code, and Clawdling never sees, reads or stores that login. It never switches accounts on its own.
 - It never edits `~/.claude.json` or your Claude Code settings. Claude Code's own dialogs (folder
   trust) are shown to you and answered by you.
 - It never builds a shell command or a tmux command from your text. tmux sessions start from a
