@@ -54,6 +54,7 @@ jobs:
         run: npm run test:tmux
 
       - name: Tests (pty backend)
+        if: ${{ !cancelled() }}
         run: npm run test:pty
 
   e2e:
