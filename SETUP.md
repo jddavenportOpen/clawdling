@@ -91,7 +91,8 @@ Then offer the option for their OS below that needs no admin password, and say h
 
 **macOS**
 - Node: `brew install node` if Homebrew is there (`brew --version`). Without Homebrew, install
-  Node 22 without admin rights through nvm: `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash`,
+  Node 22 without admin rights through nvm (say: "nvm, a small free tool that installs Node.js in
+  your home folder, no admin password"): `curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash`,
   then `. ~/.nvm/nvm.sh && nvm install 22`. Your shell may not keep that between commands: start
   each later `node`, `npm` or `clawdling` command with `. ~/.nvm/nvm.sh &&`. Do not install
   Homebrew just for this: it needs the admin password. (Or point them to the installer at
@@ -241,7 +242,8 @@ Tell the user: "In the cockpit, open the Scratch session (it waits under **Needs
 After that, agents inside your org won't ask again; a project agent whose code lives outside the
 org asks once for its repo, the same way."
 Clawdling shows a waiting session under **Needs you** until they answer, and never answers for
-them. (Alternative: run `claude` once in a terminal inside the org folder and accept there.)
+them. Wait for that answer before you start any agent (step 9): an agent started before the org
+folder is trusted asks for its own folder too. (Alternative: run `claude` once in a terminal inside the org folder and accept there.)
 Claude Code's dialog also says the folder pre-approves a few tool permissions: those are the
 `clawdling` routing commands in the org's `.claude/settings.json` (ls, spawn, send, new, end,
 doctor; see docs/SECURITY.md), nothing else. Say so in one line if the user asks.

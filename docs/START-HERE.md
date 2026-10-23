@@ -94,7 +94,8 @@ What happens next, so nothing surprises you:
 1. **Trust your org folder.** The cockpit shows a card, "First, trust your org folder". Click
    **Trust my org folder**. A session opens and Claude Code asks whether you trust the folder:
    click **Yes, trust it**. You do this once; after that no assistant asks again. (Closed it or
-   reloaded the page? The question waits under **Needs you** at the top of the left list.)
+   reloaded the page? The question waits under **Needs you** at the top of the left list.) Do this
+   before you start any assistant: one started earlier asks about its own folder too.
 2. **Talk to an assistant.** Click one of the cards under "Then start a session with" (later:
    click an assistant in the left list, then **New session**). Type a question, like "What do you
    do for me? Answer in two lines."
