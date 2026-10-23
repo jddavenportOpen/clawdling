@@ -16,6 +16,18 @@ import { readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
 
+/**
+ * A command as the reader should type it. Inside Clawdling's own sessions and Donna's turns,
+ * `clawdling` is on PATH (the org's shim); in the person's own terminal a by-hand install has no
+ * `clawdling`, so it is spelled `node <path>/bin/clawdling.js` (server/hints.js).
+ */
+function cliCmd(home, sub = '') {
+  const found = which('clawdling', process.env.PATH || '');
+  const inside = !!found && path.dirname(found) === runtimePaths(home).bin;
+  const prefix = inside ? 'clawdling' : cliInvocation({ home });
+  return sub ? `${prefix} ${sub}` : prefix;
+}
+
 const HELP = `clawdling ${VERSION}: an org of Claude Code agents, with a cockpit and a chief of staff.
 
 Usage:
@@ -108,7 +120,7 @@ function baseUrl(ctx) {
 }
 
 async function api(ctx, method, p, body) {
-  if (!ctx.token) throw new CliError(`No org token at ${ctx.paths.token}. Run \`clawdling init\` first.`);
+  if (!ctx.token) throw new CliError(`No org token at ${ctx.paths.token}. Run \`${cliCmd(ctx.home, 'init')}\` first.`);
   let res;
   try {
     res = await fetch(baseUrl(ctx) + p, {
@@ -118,7 +130,7 @@ async function api(ctx, method, p, body) {
       signal: AbortSignal.timeout(60000),
     });
   } catch {
-    throw new CliError(`Clawdling isn't running for ${ctx.home} (nothing answered on port ${ctx.port}). Start it with: clawdling start`);
+    throw new CliError(`Clawdling isn't running for ${ctx.home} (nothing answered on port ${ctx.port}). Start it with: ${cliCmd(ctx.home, 'start')}`);
   }
   if (res.status === 204) return null;
   let data = {};
@@ -263,16 +275,20 @@ async function cmdStop(args) {
     console.log(`The cockpit is not running for ${ctx.home}.`);
     return;
   }
+  const live = (await api(ctx, 'GET', '/api/sessions').catch(() => [])).filter((s) => s.status !== 'ended').length;
   const r = await api(ctx, 'POST', '/api/shutdown');
   for (let i = 0; i < 120 && (await serverUp(ctx)); i++) await new Promise((res) => setTimeout(res, 100));
-  console.log(r?.sessions_keep_running === false ? 'Stopped the cockpit. Its sessions ended; resume them from the cockpit after `clawdling start`.' : 'Stopped the cockpit. Your sessions keep running in tmux.');
+  const start = cliCmd(ctx.home, 'start');
+  if (!live) console.log('Stopped the cockpit.');
+  else if (r?.sessions_keep_running === false) console.log(`Stopped the cockpit. Its ${live === 1 ? 'session' : `${live} sessions`} ended; resume them from the cockpit after \`${start}\`.`);
+  else console.log(`Stopped the cockpit. ${live === 1 ? 'Your session keeps' : `Your ${live} sessions keep`} running in tmux; \`${start}\` reconnects to them.`);
 }
 
 async function cmdOpen(args) {
   const ctx = context(args.flags);
-  if (!ctx.token) throw new CliError('No org here. Run `clawdling init` first.');
+  if (!ctx.token) throw new CliError(`No org here. Run \`${cliCmd(ctx.home, 'init')}\` first.`);
   const url = `${baseUrl(ctx)}/?t=${ctx.token}`;
-  if (!ctx.info) console.error('Note: the cockpit does not look like it is running (clawdling start).');
+  if (!ctx.info) console.error(`Note: the cockpit does not look like it is running (${cliCmd(ctx.home, 'start')}).`);
   if (args.flags.print) console.log(url);
   else {
     console.log(`Opening ${baseUrl(ctx)}`);
@@ -306,7 +322,7 @@ async function cmdNew(args) {
   }
   if (args.flags.json) return console.log(JSON.stringify(agent, null, 2));
   console.log(`Created ${kind} agent "${agent.name}" (id ${agent.id}) at ${agent.dir}`);
-  console.log(`Start it: clawdling spawn ${agent.id} "<first task>"`);
+  console.log(`Start it: ${cliCmd(ctx.home, `spawn ${agent.id} "<first task>"`)}`);
 }
 
 async function cmdLs(args) {
@@ -324,7 +340,7 @@ async function cmdLs(args) {
   if (!args.flags.all) list = list.filter((s) => s.status !== 'ended');
   if (args.flags.json) return console.log(JSON.stringify(list, null, 2));
   if (stale) console.error('(the cockpit is not running: showing the last saved state)');
-  if (!list.length) return console.log(args.flags.all ? 'No sessions yet.' : 'No live sessions. `clawdling ls --all` shows ended ones.');
+  if (!list.length) return console.log(args.flags.all ? 'No sessions yet.' : `No live sessions. \`${cliCmd(ctx.home, 'ls --all')}\` shows ended ones.`);
   console.log(`${pad('SID', 10)}${pad('AGENT', 14)}${pad('STATUS', 11)}${pad('TITLE', 40)}ACTIVE`);
   for (const s of list) {
     console.log(`${pad(s.sid.slice(0, 8), 10)}${pad(s.agent, 14)}${pad(s.status, 11)}${pad(s.title || 'new session', 40)}${rel(s.last_activity_at)}`);
@@ -345,7 +361,7 @@ async function cmdSpawn(args) {
   const s = await api(ctx, 'POST', '/api/sessions', { agent, prompt, model: args.flags.model, title: args.flags.title, ...size });
   if (args.flags.json) return console.log(JSON.stringify(s, null, 2));
   console.log(`Started ${s.agent} session ${s.sid} (${s.title || 'new session'})`);
-  console.log(`Watch it in the cockpit, or in a terminal: clawdling attach ${s.sid.slice(0, 8)}`);
+  console.log(`Watch it in the cockpit, or in a terminal: ${cliCmd(ctx.home, `attach ${s.sid.slice(0, 8)}`)}`);
 }
 
 async function cmdSend(args) {
@@ -361,7 +377,7 @@ async function cmdEnd(args) {
   const ctx = context(args.flags);
   const s = await resolveSid(ctx, args._[1]);
   await api(ctx, 'DELETE', `/api/sessions/${s.sid}`);
-  console.log(`Ended ${s.agent} session ${s.sid.slice(0, 8)} (resume it with: clawdling resume ${s.sid.slice(0, 8)}).`);
+  console.log(`Ended ${s.agent} session ${s.sid.slice(0, 8)} (resume it with: ${cliCmd(ctx.home, `resume ${s.sid.slice(0, 8)}`)}).`);
 }
 
 async function cmdResume(args) {
@@ -407,7 +423,7 @@ const RESET_MODES = '\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[?1015l\x1b
  */
 async function attachPty(ctx, ref) {
   const s = await resolveSid(ctx, ref);
-  if (s.status === 'ended') throw new CliError(`that session has ended. Resume it first: clawdling resume ${s.sid.slice(0, 8)}`);
+  if (s.status === 'ended') throw new CliError(`that session has ended. Resume it first: ${cliCmd(ctx.home, `resume ${s.sid.slice(0, 8)}`)}`);
   const { default: WebSocket } = await import('ws');
   const tty = !!(process.stdin.isTTY && process.stdout.isTTY);
   const size = tty && process.stdout.columns && process.stdout.rows ? `&cols=${process.stdout.columns}&rows=${process.stdout.rows}` : '';
@@ -471,7 +487,7 @@ async function attachPty(ctx, ref) {
       }
       // A snapshot clears the screen; never let it clear this terminal's scrollback too.
       if ((m.t === 'snapshot' || m.t === 'out') && typeof m.data === 'string') process.stdout.write(m.t === 'snapshot' ? m.data.replace(/\x1b\[3J/g, '') : m.data);
-      else if (m.t === 'ended') finish(0, `The session ended. Resume it with: clawdling resume ${s.sid.slice(0, 8)}`);
+      else if (m.t === 'ended') finish(0, `The session ended. Resume it with: ${cliCmd(ctx.home, `resume ${s.sid.slice(0, 8)}`)}`);
     });
     ws.on('close', (code, reason) => finish(code === 1000 || code === 1005 ? 0 : 1, code === 1001 ? `The cockpit stopped (${String(reason) || 'shutting down'}).` : null));
     ws.on('error', (err) => finish(1, `could not attach: ${err.message}`));
@@ -488,7 +504,7 @@ async function cmdDonna(args) {
     if (args.flags.pair) body.pair = true;
     if (!body.token && !args.flags.disable && !args.flags.pair) throw new CliError('usage: clawdling donna telegram --token <token from @BotFather> [--pair] [--disable]');
     const st = await api(ctx, 'POST', '/api/channels/telegram', body);
-    if (args.flags.disable) return console.log('Telegram is off. Re-enable with: clawdling donna telegram --pair');
+    if (args.flags.disable) return console.log(`Telegram is off. Re-enable with: ${cliCmd(ctx.home, 'donna telegram --pair')}`);
     const bot = st.bot_username ? `@${st.bot_username}` : 'your bot';
     console.log(`Telegram is connected${st.bot_username ? ` to ${bot}` : ''}.`);
     if (st.pairing_code) {
@@ -515,7 +531,7 @@ async function cmdDonna(args) {
     if (args.flags.json) return console.log(JSON.stringify(c, null, 2));
     const t = c.telegram;
     const bot = t.bot_username ? `@${t.bot_username}` : 'your bot';
-    console.log(`Telegram: ${!t.configured ? 'not set up (clawdling donna telegram --token ...)' : t.paired ? `${bot} paired with ${t.chat_id_masked}${t.enabled ? '' : ' (off)'}` : `send /pair ${t.pairing_code || '<code>'} to ${bot}${t.pairing_code ? '' : ' (run clawdling donna telegram --pair for a code)'}`}${t.error ? ` [${t.error}]` : ''}`);
+    console.log(`Telegram: ${!t.configured ? `not set up (${cliCmd(ctx.home, 'donna telegram --token ...')})` : t.paired ? `${bot} paired with ${t.chat_id_masked}${t.enabled ? '' : ' (off)'}` : `send /pair ${t.pairing_code || '<code>'} to ${bot}${t.pairing_code ? '' : ` (run ${cliCmd(ctx.home, 'donna telegram --pair')} for a code)`}`}${t.error ? ` [${t.error}]` : ''}`);
     const i = c.imessage;
     console.log(`iMessage: ${!i.supported ? 'macOS only' : i.enabled ? `on for ${i.handle}` : 'off'}${i.error ? ` [${i.error}]` : ''}`);
     console.log(`Donna's text-message session: ${c.donna.session || 'not started yet'}${c.donna.busy ? ' (working)' : ''}`);
@@ -614,7 +630,7 @@ async function cmdService(args) {
     if (sub === 'install') {
       const script = windowsStartupScript({ node, cli, home, port, backend });
       if (args.flags['dry-run']) return console.log(`# would write ${file}\n${script}`);
-      if (!fs.existsSync(runtimePaths(home).orgJson)) throw new CliError(`No org at ${home}. Run \`clawdling init\` first.`);
+      if (!fs.existsSync(runtimePaths(home).orgJson)) throw new CliError(`No org at ${home}. Run \`${cliCmd(home, 'init')}\` first.`);
       fs.mkdirSync(path.dirname(file), { recursive: true });
       fs.writeFileSync(file, script);
       const running = context({ home }).info;
@@ -623,7 +639,7 @@ async function cmdService(args) {
         child.unref();
       }
       console.log(`Installed ${file}. The cockpit starts when you sign in to Windows${running ? ' (it is already running now)' : ' and is starting now'} on port ${port}.`);
-      console.log('Open it with: clawdling open');
+      console.log(`Open it with: ${cliCmd(home, 'open')}`);
     } else {
       if (args.flags['dry-run']) return console.log(`# would remove ${file}`);
       try {
@@ -642,7 +658,7 @@ async function cmdService(args) {
     if (sub === 'install') {
       const plist = launchdPlist({ label, node, cli, home, port, logFile: path.join(runtimePaths(home).logs, 'launchd.log'), envPath, socket: process.env.CLAWDLING_TMUX_SOCKET, backend });
       if (args.flags['dry-run']) return console.log(`# would write ${plistPath}\n${plist}`);
-      if (!fs.existsSync(runtimePaths(home).orgJson)) throw new CliError(`No org at ${home}. Run \`clawdling init\` first.`);
+      if (!fs.existsSync(runtimePaths(home).orgJson)) throw new CliError(`No org at ${home}. Run \`${cliCmd(home, 'init')}\` first.`);
       fs.mkdirSync(path.dirname(plistPath), { recursive: true });
       fs.mkdirSync(runtimePaths(home).logs, { recursive: true, mode: 0o700 });
       spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { stdio: 'ignore' });
@@ -650,7 +666,7 @@ async function cmdService(args) {
       const r = spawnSync('launchctl', ['bootstrap', `gui/${uid}`, plistPath], { encoding: 'utf8' });
       if (r.status !== 0) throw new CliError(`launchctl bootstrap failed: ${(r.stderr || '').trim()}`);
       console.log(`Installed ${plistPath}. The cockpit starts at login and is starting now on port ${port}.`);
-      console.log('Open it with: clawdling open');
+      console.log(`Open it with: ${cliCmd(home, 'open')}`);
     } else {
       if (args.flags['dry-run']) return console.log(`# would run launchctl bootout gui/${uid}/${label} and remove ${plistPath}`);
       spawnSync('launchctl', ['bootout', `gui/${uid}/${label}`], { stdio: 'ignore' });
@@ -752,7 +768,7 @@ async function cmdDoctor(args) {
       // counted below
     }
     ok(`org at ${ctx.home} (${n} agents)`);
-  } else fail(`no org at ${ctx.home}: run \`clawdling init\` (or set CLAWDLING_HOME)`);
+  } else fail(`no org at ${ctx.home}: run \`${cliCmd(ctx.home, 'init')}\` (or set CLAWDLING_HOME)`);
 
   const h = await serverUp(ctx);
   if (h && h.home === ctx.home) {
@@ -763,18 +779,18 @@ async function cmdDoctor(args) {
       const t = c.telegram;
       const bot = t.bot_username ? `@${t.bot_username}` : 'your bot';
       if (t.configured && t.paired) ok(`Telegram: ${bot} is paired with chat ${t.chat_id_masked}${t.enabled ? '' : ' (turned off)'}${t.error ? ` [${t.error}]` : ''}`);
-      else if (t.configured) warn(`Telegram: open ${bot} in Telegram and send ${t.pairing_code ? `/pair ${t.pairing_code}` : 'the code from `clawdling donna telegram --pair`'}${t.error ? ` [${t.error}]` : ''}`);
-      else warn('Telegram: not set up (optional): clawdling donna telegram --token <token from @BotFather>');
+      else if (t.configured) warn(`Telegram: open ${bot} in Telegram and send ${t.pairing_code ? `/pair ${t.pairing_code}` : `the code from \`${cliCmd(ctx.home, 'donna telegram --pair')}\``}${t.error ? ` [${t.error}]` : ''}`);
+      else warn(`Telegram: not set up (optional): ${cliCmd(ctx.home, 'donna telegram --token <token from @BotFather>')}`);
       if (c.imessage.enabled) (c.imessage.error ? fail : ok)(`iMessage: ${c.imessage.error || `on for ${c.imessage.handle}`}`);
     } catch {
       // ignore
     }
   } else if (h) {
-    fail(`port ${ctx.port} answers for a different org (${h.home}): start this org's cockpit on another port with clawdling start --port <n>`);
+    fail(`port ${ctx.port} answers for a different org (${h.home}): start this org's cockpit on another port with ${cliCmd(ctx.home, 'start --port <n>')}`);
   } else if (ctx.info) {
-    fail(`the cockpit (pid ${ctx.info.pid}) should be on port ${ctx.info.port} but does not answer: stop it and run clawdling start`);
+    fail(`the cockpit (pid ${ctx.info.pid}) should be on port ${ctx.info.port} but does not answer: stop it and run ${cliCmd(ctx.home, 'start')}`);
   } else {
-    fail('the cockpit is not running: clawdling start (or clawdling service install to start it at login)');
+    fail(`the cockpit is not running: ${cliCmd(ctx.home, 'start')} (or ${cliCmd(ctx.home, 'service install')} to start it at login)`);
   }
   console.log(bad ? `\n${bad} thing(s) to fix.` : '\nAll good.');
   process.exitCode = bad ? 1 : 0;

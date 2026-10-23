@@ -44,14 +44,18 @@ test('spawn / ls / send / end / resume by short id', async () => {
   assert.ok(m, out);
   const sid = m[1];
   const short = sid.slice(0, 8);
-  assert.match(out, new RegExp(`clawdling attach ${short}`));
+  // Hints are spelled the way THIS computer runs this install (no bare `clawdling` off PATH).
+  const me = cliInvocation({ home, envPath: env.PATH || '' });
+  assert.ok(out.includes(`in a terminal: ${me} attach ${short}`), out);
   await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${sid}`)).body.status === 'ready', { label: 'ready' });
   const list = JSON.parse(cli(['ls', '--json'], { env, home }));
   assert.ok(list.some((s) => s.sid === sid && s.status === 'ready'));
   assert.match(cli(['ls'], { env, home }), new RegExp(`${short}\\s+work\\s+ready\\s+Draft the weekly update`));
   assert.match(cli(['send', short, 'and', 'the', 'monthly', 'one'], { env, home }), /Sent to work session/);
   await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${sid}`)).body.last_message === 'and the monthly one', { label: 'send landed' });
-  assert.match(cli(['end', short], { env, home }), /Ended work session/);
+  const ended = cli(['end', short], { env, home });
+  assert.match(ended, /Ended work session/);
+  assert.ok(ended.includes(`resume it with: ${me} resume ${short}`), ended);
   assert.equal((await request(srv, 'GET', `/api/sessions/${sid}`)).body.status, 'ended');
   assert.ok(!JSON.parse(cli(['ls', '--json'], { env, home })).some((s) => s.sid === sid), 'ls hides ended sessions');
   assert.ok(JSON.parse(cli(['ls', '--all', '--json'], { env, home })).some((s) => s.sid === sid));
@@ -113,7 +117,8 @@ test('helpful error when the server is not running', () => {
     cli(['init', '--defaults'], { env, home: other });
     const r = cliResult(['spawn', 'work'], { env: { ...env, CLAWDLING_PORT: '9' }, home: other });
     assert.equal(r.code, 1);
-    assert.match(r.stderr, /isn't running .*clawdling start/);
+    assert.match(r.stderr, /isn't running /);
+    assert.ok(r.stderr.includes(`Start it with: ${cliInvocation({ home: other, envPath: env.PATH || '' })} start`), r.stderr);
   } finally {
     rmrf(other);
   }
