@@ -153,6 +153,7 @@ class PtySession {
     this.closed = true;
     this.events.emit('close', { code: info.code ?? null, signal: info.signal ?? null, reason: '', stderr: '' });
     this.events.removeAllListeners('output');
+    this.release();
     setTimeout(() => {
       try {
         this.term.dispose();
@@ -160,6 +161,32 @@ class PtySession {
         // already disposed
       }
     }, 0).unref?.();
+  }
+
+  /**
+   * Windows: a process that exits on its own leaves its pseudoconsole (a conhost.exe) and node-pty's
+   * output worker thread behind until the pty is killed (VS Code kills every pty after its exit).
+   * Close both directly: node-pty's kill() would also fork a helper that lists the processes on a
+   * console that no longer exists and prints "AttachConsole failed".
+   */
+  release() {
+    if (this.platform !== 'win32' || this.released || this.killedByUs) return;
+    this.released = true;
+    const agent = this.child._agent; // node-pty 1.1.0 (pinned) internals, with a public fallback
+    try {
+      if (agent?._ptyNative?.kill && agent._conoutSocketWorker?.dispose) {
+        agent._ptyNative.kill(agent._pty, agent._useConptyDll);
+        agent._conoutSocketWorker.dispose();
+        return;
+      }
+    } catch {
+      // fall back to the public API
+    }
+    try {
+      this.child.kill();
+    } catch {
+      // gone
+    }
   }
 
   write(data) {
@@ -199,6 +226,7 @@ class PtySession {
     if (this.exited) return;
     this.exited = true;
     if (this.platform === 'win32') {
+      this.killedByUs = true;
       try {
         this.child.kill(); // ConPTY: closes the console and kills every process attached to it
       } catch {
