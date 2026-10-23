@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.1.1 (2026-10-23)
+
+Fixes from the first strangers and newcomers to install 1.1.0.
+
+- **"Ask before editing files" now asks.** A Claude Code started with no `--permission-mode`
+  opens in auto mode (2.1.283 and newer), so every 1.1.0 session ran in auto mode whatever the
+  interview said. Every choice now passes the mode it names, by the name the installed `claude`
+  lists in `--help` (`manual`, or `default` on older versions). This fixes orgs made by 1.1.0
+  too: nothing to redo. The agent page says what each agent may do without asking. A new opt-in,
+  `inherit`, passes no mode, so your own Claude Code setting applies.
+- **Not signed in is no longer a dead end.** The session says "Claude Code isn't signed in yet.
+  Click Sign in, then follow the browser steps." **Sign in** opens a session where Claude Code
+  runs its own browser sign-in, for your own login or a second account. **Start again** then
+  restarts the stuck session with the new login, and keeps a first message it never got to. The
+  terminal (`claude auth login`) is still mentioned, second.
+- **The trust card stays until your org folder is trusted.** A reload used to hide it. If Claude
+  Code is already asking, the card says so and answers it in one click.
+- **Plain first-run words:** "Every agent is a real Claude Code session that already knows its
+  job and remembers what it did."
+- **A first message is no longer lost** when an agent card's session opened behind the New
+  session dialog and you pressed Escape: the keyboard now goes to the new session.
+- **Agents' file tools can't read or edit `<org>/.clawdling/`**, where the owner token lives
+  (deny rules in every session's settings and Donna's turns). See SECURITY.md for what an
+  approved shell command can still do.
+- `init` accepts `"later"` for `donna.channel` (the same as `none`). `permission_mode` is `ask`,
+  `acceptEdits` or `inherit`; `default` and `manual` still mean ask.
+- API: `POST /api/sessions/:sid/restart`; `POST /api/accounts/default/signin`; sessions carry
+  `live_mode` and `signed_in`; `/api/org` carries `org_trusted`; `/api/health` carries
+  `permission_modes`.
+- Tests: two CI flakes fixed (a pty echo race in the test's own program, and a reused kept-alive
+  socket on Windows). The live smoke test fails if a session runs in auto mode.
+
 ## 1.1.0 (2026-10-23)
 
 **Launch features**
