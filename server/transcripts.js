@@ -13,6 +13,27 @@ export function claudeConfigDir(env = process.env) {
   return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
 }
 
+const DETAIL_MAX = 2000;
+
+/** The full tool input for the chat view's expanded line: a command or path as is, else JSON. */
+export function toolDetail(input) {
+  if (input === undefined || input === null) return '';
+  let text;
+  if (typeof input !== 'object') text = String(input);
+  else {
+    const keys = Object.keys(input);
+    if (keys.length === 1 && typeof input[keys[0]] === 'string') text = input[keys[0]];
+    else {
+      try {
+        text = JSON.stringify(input, null, 2);
+      } catch {
+        text = '';
+      }
+    }
+  }
+  return text.length > DETAIL_MAX ? `${text.slice(0, DETAIL_MAX)}…` : text;
+}
+
 export function toolSummary(input) {
   if (!input || typeof input !== 'object') return '';
   for (const k of SUMMARY_KEYS) {
@@ -46,9 +67,10 @@ export function transcriptEntry(o) {
     .map((b) => b.text)
     .join('\n')
     .trim();
-  const tools = blocks.filter((b) => b?.type === 'tool_use').map((b) => ({ name: String(b.name || 'tool'), summary: toolSummary(b.input) }));
+  const tools = blocks.filter((b) => b?.type === 'tool_use').map((b) => ({ name: String(b.name || 'tool'), summary: toolSummary(b.input), detail: toolDetail(b.input) }));
   if (!text && !tools.length) return null;
-  return { role: 'assistant', text, tools, ts };
+  const model = typeof msg.model === 'string' && msg.model ? msg.model : null;
+  return { role: 'assistant', text, tools, ts, model };
 }
 
 /** Locate a session's transcript. Ids are validated UUIDs, so the path can't escape projects/. */

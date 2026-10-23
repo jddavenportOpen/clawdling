@@ -42,6 +42,7 @@ import {
 import { commandFor, portablePath, spawnOptions } from './platform.js';
 import { SessionManager } from './sessions.js';
 import { TranscriptReader, claudeConfigDir, findTranscript } from './transcripts.js';
+import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
 const MIME = {
@@ -369,8 +370,9 @@ export async function startServer(opts = {}) {
 
     const events = new EventBus({ file: paths.events, logger });
     const org = new OrgStore(paths, { events });
+    const accounts = new Accounts({ env });
     const sessions = new SessionManager({
-      paths, org, events, backend, claudeBin, socket, shimDir: paths.bin, env: cEnv, logger, getPort: () => port,
+      paths, org, events, backend, claudeBin, socket, shimDir: paths.bin, env: cEnv, logger, getPort: () => port, accounts,
     });
     await sessions.init();
 
@@ -485,7 +487,27 @@ export async function startServer(opts = {}) {
       ['GET', /^\/api\/sessions$/, () => [200, sessions.list()]],
       ['POST', /^\/api\/sessions$/, async (req) => {
         const b = await jsonBody(req);
-        return [201, await sessions.spawn({ agent: b.agent, prompt: b.prompt, model: b.model, title: b.title, cols: b.cols, rows: b.rows })];
+        return [201, await sessions.spawn({ agent: b.agent, prompt: b.prompt, model: b.model, effort: b.effort, account: b.account, title: b.title, cols: b.cols, rows: b.rows })];
+      }],
+      // Model / effort chips: typed into the session as /model or /effort, only between turns.
+      ['POST', /^\/api\/sessions\/([^/]+)\/settings$/, async (req, m) => {
+        const sid = sidParam(m);
+        const b = await jsonBody(req);
+        return [200, await sessions.settings(sid, { model: b.model, effort: b.effort })];
+      }],
+      ['GET', /^\/api\/accounts$/, () => [200, { accounts: accounts.list() }]],
+      ['POST', /^\/api\/accounts$/, async (req) => {
+        const b = await jsonBody(req);
+        const a = accounts.create(b.name);
+        events.record({ type: 'account', action: 'created', id: a.id });
+        return [201, a];
+      }],
+      // Sign in: a plain claude in the org folder with the account's own CLAUDE_CONFIG_DIR, where the user runs /login.
+      ['POST', /^\/api\/accounts\/([^/]+)\/signin$/, async (req, m) => {
+        const id = decodeURIComponent(m[1]);
+        const b = await jsonBody(req).catch(() => ({}));
+        accounts.configDir(id);
+        return [201, await sessions.spawn({ agent: 'scratch', account: id, purpose: 'signin', title: `Sign in: ${id}`, cols: b.cols, rows: b.rows })];
       }],
       ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, sessions.view(sessions.require(sidParam(m)))]],
       ['PATCH', /^\/api\/sessions\/([^/]+)$/, async (req, m) => {
@@ -530,7 +552,7 @@ export async function startServer(opts = {}) {
         if (!Number.isInteger(after) || after < -1) throw badRequest('after must be an integer >= -1');
         const limitRaw = Number(url.searchParams.get('limit') || 200);
         const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(1000, limitRaw)) : 200;
-        const file = findTranscript({ ids: [rec.claude_session_id, rec.sid].filter(Boolean), hint: rec.transcript_path, configDir });
+        const file = findTranscript({ ids: [rec.claude_session_id, rec.sid].filter(Boolean), hint: rec.transcript_path, configDir: sessions.configDirFor(rec, configDir) });
         const all = file ? transcripts.read(file) : [];
         const page = [];
         for (const e of all) {

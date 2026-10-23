@@ -7,6 +7,9 @@ import { Icon, AgentIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { dialogAnswers } from '../lib/dialogs.js';
 import { TerminalView } from './terminal.js';
+import { Composer } from './composer.js';
+import { PaneChips } from './chips.js';
+import { ChatView, useTranscript } from './chat-view.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
@@ -16,6 +19,7 @@ import { api } from '../lib/api.js';
 import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand } from '../lib/model.js';
 import { relTime, prefersReducedMotion, paneKey, tildify, coarsePointer } from '../lib/util.js';
 import { getState, setState } from '../lib/store.js';
+import { load, save } from '../lib/prefs.js';
 
 export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const s = useStore((st) => st.sessions[sid]);
@@ -30,6 +34,20 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const el = useRef(null);
   // A pane that mounts already focused (just opened, or restored on reload) takes the keyboard too.
   const lastTick = useRef(focused ? -1 : focusTick);
+  // Chat | Raw, remembered per pane. Chat shows once the transcript has messages; until then the
+  // raw terminal shows with a note. The terminal stays mounted under the chat either way.
+  const [view, setViewState] = useState(() => (load(`view.${sid}`, 'chat') === 'raw' ? 'raw' : 'chat'));
+  const ended0 = !!s && s.status === 'ended';
+  const { messages, loaded } = useTranscript(sid, ended0, view === 'chat' && !!s);
+  const chat = view === 'chat' && messages.length > 0;
+  const chatRef = useRef(chat);
+  chatRef.current = chat;
+  const setView = (v) => {
+    save(`view.${sid}`, v);
+    setViewState(v);
+    // Back to Raw: the terminal kept its size under the chat, but refit in case the pane changed.
+    requestAnimationFrame(() => { const t = terms.get(sid); if (t && t.layout) t.layout(); });
+  };
 
   // A rail click / palette jump / ⌘N targets this pane: reveal it, flash it,
   // and put the keyboard in its terminal. Nothing else in the workspace moves.
@@ -41,11 +59,14 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     requestAnimationFrame(() => {
       node.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
       const v = terms.get(sid);
+      const box = chatRef.current ? node.querySelector('.chat-view textarea') : null;
       // Never pull the keyboard out of a dialog or menu opened since the jump.
       const st = getState();
       const busy = st.overlay || st.menu || st.renaming || (document.activeElement && document.activeElement.closest('.modal, .menu, .pane-title-input'));
       // On a phone, focusing the terminal raises the keyboard over it: typing goes through the composer.
-      if (v && !busy && !st.mobile && !coarsePointer()) v.focus();
+      if (!busy && !st.mobile && !coarsePointer()) {
+        if (box) { if (!box.disabled) box.focus(); } else if (v) v.focus();
+      }
       setFlash(true);
       setTimeout(() => setFlash(false), 650);
     });
@@ -73,8 +94,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   if (span > 1) style.gridRow = `span ${span}`;
 
   return html`<section ref=${el}
-      class=${`pane st-${s.status} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
-      data-pane=${sid} data-status=${s.status} data-focused=${focused ? 'true' : 'false'} style=${style}
+      class=${`pane st-${s.status} ${chat ? 'is-chat' : ''} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
+      data-pane=${sid} data-status=${s.status} data-view=${chat ? 'chat' : 'raw'} data-focused=${focused ? 'true' : 'false'} style=${style}
       role="region" aria-label=${`${name} (${agentLabel(s, agentsById)})`}
       onMouseDown=${() => touchFocus(sid)} onFocusIn=${() => touchFocus(sid)}>
     <header class="pane-head">
@@ -83,9 +104,15 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       <span class="pane-chip" title=${agent && agent.mission ? agent.mission : agentLabel(s, agentsById)}>
         <span class="chip-icon" aria-hidden="true"><${AgentIcon} agent=${agent || { name: agentLabel(s, agentsById) }} size=${12} /></span>${agentLabel(s, agentsById)}
       </span>
-      ${s.model ? html`<span class="pane-model" title="Model">${s.model}</span>` : null}
+      <${PaneChips} s=${s} />
       <${Trace} sid=${sid} status=${s.status} />
       <span class="pane-spacer"></span>
+      <div class="seg pane-view" role="group" aria-label="View">
+        <button type="button" class=${`seg-btn ${view === 'chat' ? 'is-on' : ''}`} aria-pressed=${view === 'chat' ? 'true' : 'false'}
+          onClick=${() => setView('chat')} title="Chat view" data-testid="pane-view-chat">Chat</button>
+        <button type="button" class=${`seg-btn ${view === 'raw' ? 'is-on' : ''}`} aria-pressed=${view === 'raw' ? 'true' : 'false'}
+          onClick=${() => setView('raw')} title="Raw terminal" data-testid="pane-view-raw">Raw</button>
+      </div>
       ${conn === 'reconnecting' && !ended ? html`<span class="pane-conn" role="status">Reconnecting…</span>` : null}
       ${!solo && index < 9 ? html`<span class="pane-index" aria-hidden="true" title=${`Focus with ${paneKey(index + 1)}`}>${paneKey(index + 1)}</span>` : null}
       <div class="pane-actions">
@@ -99,11 +126,16 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     </header>
     ${s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
-      : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => { const v = terms.get(sid); if (v) v.focus(); }}>
+      : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => {
+        const focusTerm = () => { const v = terms.get(sid); if (v) v.focus(); };
+        if (chat) { setView('raw'); requestAnimationFrame(() => requestAnimationFrame(focusTerm)); } else focusTerm();
+      }}>
       <${StatusGlyph} status="needs_you" label=${false} /><span class="alert-label">Needs you</span><span class="alert-text">${s.notification || 'Claude is waiting for your answer in the terminal.'}</span>
     </button>` : null}
+    ${view === 'chat' && !chat && loaded && !ended ? html`<p class="chat-pending" data-testid="chat-pending-note">Chat appears once Claude Code starts.</p>` : null}
     <div class="pane-body">
       <${TerminalView} sid=${sid} ended=${ended} onConn=${setConn} onStatus=${onStatus} onEnded=${onEnded} />
+      ${chat ? html`<${ChatView} s=${s} agent=${agentLabel(s, agentsById)} messages=${messages} />` : null}
       ${ended ? html`<div class="pane-ended" role="group" aria-label="Session ended">
         <div class="ended-card">
           <p class="ended-title"><${StatusGlyph} status="ended" label=${false} /> Session ended ${relTime(sessionTime(s), now) === 'now' ? 'just now' : `${relTime(sessionTime(s), now)} ago`}</p>
@@ -116,7 +148,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
         </div>
       </div>` : null}
     </div>
-    ${mobile && !ended ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
+    ${mobile && !ended && !chat ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
   </section>`;
 }
 
@@ -172,8 +204,10 @@ export const STARTUP_DIALOGS = {
   },
   imports: { text: () => 'Claude Code is asking whether to load CLAUDE.md imports from outside this folder.', yes: 'Allow imports', no: "Don't allow" },
   login: {
-    text: () => 'Claude Code is not signed in on this computer.',
-    note: html`Run <code>claude</code> in a terminal and sign in, then start this session again.`,
+    // A "Sign in" session (Settings -> Accounts) is exactly where signing in happens.
+    text: (s) => (s.purpose === 'signin' ? 'Sign in to this Claude account in the terminal below.' : 'Claude Code is not signed in on this computer.'),
+    note: (s) => (s.purpose === 'signin' ? html`Follow Claude Code's own steps (or type <code>/login</code>). Clawdling never sees the login.`
+      : html`Run <code>claude</code> in a terminal and sign in, then start this session again.`),
   },
 };
 
@@ -201,7 +235,7 @@ function DialogBanner({ s, mobile, accent }) {
   return html`<div class="pane-dialog" role="group" aria-label="Claude Code is asking" data-testid="pane-dialog" data-dialog=${s.waiting_on}>
     <${StatusGlyph} status="needs_you" label=${false} />
     <span class="dialog-text" data-testid="pane-dialog-text">${d.text(s)}</span>
-    ${d.note ? html`<span class="dialog-note" data-testid="pane-dialog-note">${d.note}</span>`
+    ${d.note ? html`<span class="dialog-note" data-testid="pane-dialog-note">${typeof d.note === 'function' ? d.note(s) : d.note}</span>`
       : opts ? html`<span class="dialog-actions">
       <button class="btn btn-quiet btn-sm" onClick=${() => answer(opts.no, false)} disabled=${!!busy} data-testid="dialog-no">${busy === opts.no ? 'Answering…' : d.no}</button>
       <button class=${`btn ${accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${() => answer(opts.yes, true)} disabled=${!!busy} data-testid="dialog-yes">${busy === opts.yes ? 'Answering…' : d.yes}</button>
@@ -233,49 +267,6 @@ function QuestionBanner({ s, mobile, accent }) {
       ${s.choices.length > QUESTION_MAX ? html`<span class="dialog-note">More choices in the terminal.</span>` : null}
     </span>
   </div>`;
-}
-
-// The phone has no hardware keyboard, and typing into xterm through the iOS keyboard fights
-// autocorrect and the hidden textarea. A plain composer sends the text with POST /send.
-const ANSWER_FIRST = new Set(['trust', 'imports', 'login', 'startup', 'permission_prompt', 'elicitation_dialog']);
-const COMPOSER_MAX_LINES = 5;
-
-function Composer({ s, agent }) {
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const area = useRef(null);
-  const waiting = s.status === 'needs_you' && ANSWER_FIRST.has(s.waiting_on);
-  const grow = () => {
-    const el = area.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 22;
-    el.style.height = `${Math.min(el.scrollHeight, line * COMPOSER_MAX_LINES + 18)}px`;
-  };
-  const submit = async (e) => {
-    if (e) e.preventDefault();
-    const t = text.trim();
-    if (!t || busy || waiting) return;
-    setBusy(true);
-    try {
-      await api.send(s.sid, t, true);
-      setText('');
-      requestAnimationFrame(grow);
-    } catch (err) {
-      if (err && err.status === 409) toast('Answer the question above first.', { ms: 3600 });
-      else errorToast('Could not send the message', err);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return html`<form class="pane-composer" onSubmit=${submit} data-testid="pane-composer">
-    <textarea ref=${area} rows="1" value=${text} onInput=${(e) => { setText(e.currentTarget.value); grow(); }}
-      onKeyDown=${(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submit(); } }}
-      placeholder=${waiting ? 'Answer the question above first' : `Message ${agent}…`} aria-label=${`Message ${agent}`}
-      enterkeyhint="send" disabled=${waiting} data-testid="composer-input"></textarea>
-    <button class="btn btn-primary composer-send" type="submit" aria-label="Send" disabled=${waiting || busy || !text.trim()} data-testid="composer-send">
-      <${Icon} name="send" /></button>
-  </form>`;
 }
 
 // Signature detail: a hairline trace of real terminal output over the last 40 s,

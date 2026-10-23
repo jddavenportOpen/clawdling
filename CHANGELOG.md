@@ -2,6 +2,32 @@
 
 ## 1.1.0 (2026-10-23)
 
+**Launch features**
+
+- **Clean chat view, the default.** Each pane shows the conversation as chat: your messages and
+  Claude's replies with markdown (code blocks, tables), each tool call as one line you can expand,
+  live as the transcript grows, with a message box at the bottom. The terminal is one click away
+  (Chat | Raw, remembered per pane). A brand-new session shows the terminal until Claude Code has
+  started; permission and trust questions keep their one-tap buttons.
+- **Model and effort per pane.** The new-session dialog has optional Model and Effort choices
+  (claude's own `--model` and `--effort`); nothing is forced, so your Claude Code defaults stay
+  yours. The chips in a pane's header show what the session runs and change it between turns:
+  that session's `claude` is resumed on the same conversation with the new flags, for that
+  session only (a typed `/model` would also save it as your default for new sessions).
+- **Voice input.** A mic button in the message box uses the browser's own speech recognition
+  (hidden where the browser has none, such as Firefox). It fills the box for you to check; it
+  never sends by itself.
+- **Another Claude account, if you want one.** Settings -> Accounts -> "Add another Claude
+  account" gives it its own folder (`~/.clawdling-accounts/<name>`); "Sign in" opens Claude Code
+  with that folder so you can `/login`. The new-session dialog then lets you pick the account. It
+  is only `CLAUDE_CONFIG_DIR` for that session's `claude`: no automatic switching, and Clawdling
+  never reads, stores or forwards the login. With one account, none of this shows.
+- API: `POST /api/sessions` takes `effort` and `account`; `POST /api/sessions/:sid/settings`;
+  `GET/POST /api/accounts`, `POST /api/accounts/:id/signin`; chat tool calls carry `detail`.
+  CLI: `clawdling spawn --effort E --account A`.
+
+**Cross-platform**
+
 Clawdling now works for a stranger on any OS: macOS, Linux and **native Windows** (no WSL), with
 or without tmux.
 

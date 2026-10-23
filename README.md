@@ -161,8 +161,11 @@ your browser and phone: cockpit · org map · agent pages · Donna
 
 Clawdling never reads, stores or forwards your Claude credentials and never calls the Anthropic
 API itself. It only launches the `claude` command you are already signed into, the same way
-you would in a terminal. Session titles are made locally from your first message. Details and
-the threat model are in [docs/SECURITY.md](docs/SECURITY.md); the design is in
+you would in a terminal. If you add a second Claude account in Settings, Clawdling gives it its
+own folder (`~/.clawdling-accounts/<name>`) and passes that folder to `claude` as
+`CLAUDE_CONFIG_DIR` for the sessions you start with it; you sign in inside Claude Code, and
+Clawdling never sees, reads or stores that login. Session titles are made locally from your
+first message. Details and the threat model are in [docs/SECURITY.md](docs/SECURITY.md); the design is in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## How it compares

@@ -20,6 +20,12 @@ export function isValidModel(m) {
   return typeof m === 'string' && MODEL_RE.test(m);
 }
 
+// The claude CLI's own --effort levels (claude --help, 2.1.283).
+export const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+export function isValidEffort(e) {
+  return typeof e === 'string' && EFFORTS.includes(e);
+}
+
 /** Turn a free-text name into an agent id. Returns `fallback` if nothing usable is left. */
 export function slugify(name, fallback = 'agent') {
   const s = String(name ?? '')

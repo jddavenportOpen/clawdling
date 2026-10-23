@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
-import { TranscriptReader, findTranscript, toolSummary, transcriptEntry } from '../../server/transcripts.js';
+import { TranscriptReader, findTranscript, toolDetail, toolSummary, transcriptEntry } from '../../server/transcripts.js';
 import { ROOT, rmrf, tempHome } from '../helpers.mjs';
 
 const FIXTURE = path.join(ROOT, 'test', 'fixtures', 'transcript.jsonl');
@@ -16,9 +16,11 @@ test('chat view keeps real prompts and replies, drops plumbing, meta, sidechains
   assert.equal(entries[1].text, 'Let me look at your sleep log.');
   assert.deepEqual(entries[1].tools, []);
   assert.equal(entries[2].text, '');
-  assert.deepEqual(entries[2].tools[0], { name: 'Read', summary: '/Users/sam/clawdling/domains/health/memory/NOW.md' });
+  assert.deepEqual(entries[2].tools[0], { name: 'Read', summary: '/Users/sam/clawdling/domains/health/memory/NOW.md', detail: '/Users/sam/clawdling/domains/health/memory/NOW.md' });
   assert.equal(entries[2].tools[1].name, 'Bash');
   assert.ok(entries[2].tools[1].summary.length <= 80);
+  assert.match(entries[2].tools[1].detail, /well past eighty characters total$/); // the expanded line has it all
+  assert.equal(entries[2].model, 'claude-haiku');
   assert.equal(entries[3].text, 'You averaged 7h 10m.\nBest night: Tuesday.');
   assert.equal(entries[4].text, 'Thanks! Plan an earlier bedtime.');
 });
@@ -72,4 +74,13 @@ test('tool summaries and entry edge cases', () => {
   assert.equal(transcriptEntry({ type: 'user', message: { role: 'user', content: '   ' } }), null);
   assert.equal(transcriptEntry({ type: 'assistant', message: { content: 'plain string reply' } }).text, 'plain string reply');
   assert.equal(transcriptEntry(null), null);
+});
+
+test('tool detail: one string field as is, several as JSON, capped at 2000 characters', () => {
+  assert.equal(toolDetail({ command: 'ls -la' }), 'ls -la');
+  assert.equal(toolDetail({ command: 'ls', description: 'List' }), '{\n  "command": "ls",\n  "description": "List"\n}');
+  assert.equal(toolDetail(null), '');
+  const long = toolDetail({ command: 'x'.repeat(5000) });
+  assert.equal(long.length, 2001);
+  assert.ok(long.endsWith('…'));
 });

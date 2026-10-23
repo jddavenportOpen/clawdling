@@ -370,7 +370,6 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
   border: 1px solid var(--line); background: var(--bg-stage); color: var(--text-2); font-size: 11px; font-weight: 500; white-space: nowrap; }
 .chip-icon { display: grid; place-items: center; color: var(--text-3); }
 .chip-icon .initial { width: 12px; height: 12px; font-size: 9.5px; }
-.pane-model { flex-shrink: 0; font-family: var(--font-mono); font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .pane-trace { display: flex; flex-shrink: 0; transition: opacity 0.4s; }
 .pane-trace.is-idle { opacity: 0; }
 .trace-base { stroke: var(--line-2); stroke-width: 1; stroke-dasharray: 1 2; }
@@ -410,7 +409,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .ended-sub { margin: 0 0 14px; color: var(--text-2); font-size: 12.5px; }
 .ended-actions { display: flex; justify-content: center; gap: 8px; }
 .pane-missing { margin: auto; text-align: center; color: var(--text-2); }
-@container pane (max-width: 620px) { .pane-model, .pane-index { display: none; } }
+@container pane (max-width: 620px) { .pane-index { display: none; } }
 @container pane (max-width: 470px) { .pane-trace, .pane-chip { display: none; } }
 
 /* ---------- empty state ---------- */
@@ -899,3 +898,119 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
   .glyph .spin, .pulse { animation: none !important; }
 }
+
+
+/* ── Chat view (pane Chat | Raw) ──────────────────────────────────────────── */
+
+.pane-view { flex-shrink: 0; margin-right: 4px; padding: 1px; }
+.pane-view .seg-btn { height: 22px; padding: 0 8px; font-size: 11.5px; }
+.chat-pending { flex-shrink: 0; margin: 0; padding: 4px 12px; font-size: 12px; color: var(--text-3); border-bottom: 1px solid var(--line); background: var(--surface); }
+/* The terminal stays mounted (it owns the live connection) and keeps its size: only hidden. */
+.pane.is-chat .term-host { visibility: hidden; }
+.chat-view { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; background: var(--term-bg); }
+.chat-list { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.chat-inner { display: flex; flex-direction: column; gap: 14px; max-width: 820px; margin: 0 auto; padding: 16px 16px 20px; }
+.chat-msg { min-width: 0; max-width: 100%; font-size: 14px; line-height: 1.55; color: var(--text); overflow-wrap: anywhere; }
+.chat-user { align-self: flex-end; max-width: min(85%, 640px); padding: 8px 12px; border-radius: var(--r-lg); background: var(--accent-soft); border: 1px solid var(--line-2); }
+.chat-assistant { align-self: stretch; }
+.chat-body > :first-child { margin-top: 0; }
+.chat-body > :last-child { margin-bottom: 0; }
+.chat-body p, .chat-body ul, .chat-body ol, .chat-body blockquote, .chat-code, .chat-table-wrap { margin: 0 0 10px; }
+.chat-body ul, .chat-body ol { padding-left: 22px; }
+.chat-body li + li { margin-top: 3px; }
+.chat-h { margin: 14px 0 6px; font-size: 15px; font-weight: 650; line-height: 1.35; }
+h3.chat-h { font-size: 16.5px; }
+.chat-body blockquote { padding: 2px 0 2px 12px; border-left: 3px solid var(--line-3); color: var(--text-2); }
+.chat-body hr { border: 0; border-top: 1px solid var(--line-2); margin: 12px 0; }
+.chat-body a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.chat-body code { font-family: var(--font-mono); font-size: 0.88em; padding: 1px 5px; border-radius: 4px; background: var(--surface-2); border: 1px solid var(--line); overflow-wrap: anywhere; }
+.chat-code { position: relative; min-width: 0; max-width: 100%; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line-2); }
+.chat-code pre { margin: 0; padding: 10px 12px; overflow-x: auto; font-family: var(--font-mono); font-size: 12.5px; line-height: 1.5; }
+.chat-code pre code { padding: 0; border: 0; background: none; font-size: inherit; white-space: pre; overflow-wrap: normal; }
+.chat-code-lang { display: block; padding: 4px 12px 0; font-size: 11px; color: var(--text-3); font-family: var(--font-mono); }
+.chat-table-wrap { max-width: 100%; overflow-x: auto; border: 1px solid var(--line-2); border-radius: var(--r-md); }
+.chat-table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.chat-table th, .chat-table td { padding: 6px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; overflow-wrap: normal; }
+.chat-table th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+.chat-table tr:last-child td { border-bottom: 0; }
+.chat-tools { display: flex; flex-direction: column; gap: 2px; margin-top: 6px; }
+.chat-body + .chat-tools { margin-top: 8px; }
+.chat-tool { min-width: 0; border-radius: var(--r-sm); }
+.chat-tool summary { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 8px; border-radius: var(--r-sm); cursor: pointer; list-style: none; font-size: 12.5px; color: var(--text-2); }
+.chat-tool summary::-webkit-details-marker { display: none; }
+.chat-tool summary::before { content: ""; flex-shrink: 0; width: 0; height: 0; border-left: 5px solid var(--text-3); border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 0.12s; }
+.chat-tool[open] summary::before { transform: rotate(90deg); }
+.chat-tool summary:hover { background: var(--surface-2); color: var(--text); }
+.chat-tool-name { flex-shrink: 0; font-family: var(--font-mono); font-weight: 600; color: var(--text); }
+.chat-tool-sum { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chat-tool-detail { margin: 4px 0 6px 8px; padding: 8px 10px; max-height: 320px; overflow: auto; font-family: var(--font-mono); font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm); color: var(--text-2); }
+.chat-working { margin: 0; font-size: 12.5px; color: var(--working-text); }
+/* Ended: the history stays readable; the ended card sits at the bottom instead of covering it. */
+.pane.is-chat .pane-ended { inset: auto 0 0 0; background: none; backdrop-filter: none; padding: 12px; }
+.pane.is-chat.st-ended .chat-inner { padding-bottom: 170px; }
+@media (pointer: coarse) {
+  .pane-view .seg-btn { height: 44px; padding: 0 12px; font-size: 13px; }
+  .chat-tool summary { min-height: 44px; }
+  .chat-msg { font-size: 15px; }
+}
+
+
+/* ── end chat view ── */
+
+
+
+
+/* ── Model and effort chips, voice input ─────────────────────────────────── */
+
+.pane-picks { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 1; min-width: 0; }
+.pane-pick-wrap { display: inline-flex; min-width: 0; }
+.pane-pick { display: inline-flex; align-items: center; height: 22px; max-width: 120px; padding: 0 7px; border-radius: var(--r-sm);
+  border: 1px solid var(--line); background: transparent; color: var(--text-3); font-family: var(--font-mono); font-size: 11px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.pane-pick:hover:not([aria-disabled="true"]) { color: var(--text); background: var(--surface-3); }
+.pane-pick:focus-visible { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 2px var(--accent-soft); }
+.pane-pick[aria-disabled="true"] { cursor: default; opacity: 0.6; }
+.pane-pick[aria-expanded="true"] { color: var(--text); border-color: var(--line-2); background: var(--surface-3); }
+.pane-pick.is-static { cursor: default; border-color: transparent; padding: 0 2px; }
+.pick-menu { min-width: 150px; }
+.pick-menu .menu-item { font-family: var(--font-mono); font-size: 12px; }
+.pick-check { display: inline-flex; width: 14px; color: var(--accent); }
+@container pane (max-width: 520px) { .pane-pick-effort { display: none; } }
+/* A phone-width pane has no room for chips next to its title: pick the model and effort in New session. */
+@container pane (max-width: 420px) { .pane-pick { display: none; } }
+@media (pointer: coarse) { .pane-pick { height: 44px; padding: 0 10px; } }
+.composer-mic { width: 44px; height: 44px; padding: 0; flex-shrink: 0; }
+.composer-mic[aria-pressed="true"] { color: var(--danger); border-color: var(--danger); }
+.composer-note { flex-basis: 100%; margin: 0; color: var(--text-3); font-size: 12px; }
+.ns-pickers { display: flex; flex-wrap: wrap; gap: 8px 16px; }
+.ns-pickers .field-inline select { min-width: 0; max-width: 200px; }
+/* WebKit (iPhone Safari) ignores a native select's height: draw the select ourselves so the 44 px touch rule holds. */
+.ns-pickers select {
+  -webkit-appearance: none; appearance: none; padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+
+
+/* ── end chips and voice ── */
+
+
+
+
+/* ── Accounts ─────────────────────────────────────────────────────────────── */
+
+.accounts-card .acct-lead { margin: 0 0 4px; }
+.acct-list { list-style: none; margin: 0; padding: 0; }
+.acct-label { min-width: 0; }
+.acct-name { display: flex; align-items: center; gap: 8px; }
+.acct-dir { overflow-wrap: anywhere; }
+.acct-add { margin-top: 8px; }
+.acct-form { margin-top: 8px; }
+@media (max-width: 720px) {
+  .acct-form { flex-wrap: wrap; }
+  .acct-form input { flex: 1 1 100%; }
+}
+
+
+/* ── end accounts ── */
