@@ -61,7 +61,8 @@ Run it only after the user says yes. Never install Claude Code with `sudo` or `n
    `claude auth status` exits 1 and says `"loggedIn": false` when it is not signed in. Tell the
    user: "A Claude sign-in page will open in your browser. Sign in with the same account you use
    in the app, then come back here." Run `claude auth login` (full path if needed; it uses their
-   Claude subscription by default) with a timeout of several minutes, or in the background, since
+   Claude subscription by default; you run it, the user only signs in on the web page) with a
+   timeout of several minutes, or in the background, since
    it waits until they finish. If no browser opens, it prints a sign-in link: show it to them as
    a link to click. Then check `claude auth status` again, and do not go on until it says
    `"loggedIn": true`.
@@ -235,9 +236,10 @@ from a parent folder, so trust the org root once:
 clawdling spawn scratch
 ```
 
-Tell the user: "In the cockpit, open the Scratch session and choose **Yes, I trust this folder**
-(arrow down, then Enter, or the answer button). After that, agents inside your org won't ask
-again; a project agent whose code lives outside the org asks once for its repo, the same way."
+Tell the user: "In the cockpit, open the Scratch session (it waits under **Needs you**) and click
+**Yes, trust it** (in the Raw view, Claude Code's own option reads 'Yes, I trust this folder').
+After that, agents inside your org won't ask again; a project agent whose code lives outside the
+org asks once for its repo, the same way."
 Clawdling shows a waiting session under **Needs you** until they answer, and never answers for
 them. (Alternative: run `claude` once in a terminal inside the org folder and accept there.)
 Claude Code's dialog also says the folder pre-approves a few tool permissions: those are the

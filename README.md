@@ -25,7 +25,7 @@ limits, and your machine, are the limit.
   browser tab.
 - **A paid Claude plan: Pro, Max, Team or Enterprise.** Clawdling runs on Claude Code, and the
   free plan does not include Claude Code. **Pro works**: its usage allowance is smaller than Max's
-  and every agent draws from it, so run one or two agents at a time. Max has much more room.
+  and every agent draws from it, so run one or two agents at a time. Max gives 5x or 20x Pro's usage.
 - **Claude Code**, in either form:
 
 | You use | Do this |
@@ -51,6 +51,8 @@ follows; it never edits your Claude settings and never skips permission checks.
 > (a web fetch may hand you a summary of it instead of the file).
 
 ## Or install it by hand
+
+For people comfortable in a terminal; skip this if Claude Code is installing it for you.
 
 You need **Node 20+** and **Claude Code 2.1+**, signed in (on Windows, Claude Code 2.1.139+).
 **tmux 3.2+** is optional and recommended on macOS and Linux: with it, sessions keep running when

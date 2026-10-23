@@ -25,8 +25,8 @@ Clawdling is free. It runs on your own computer and uses the Claude plan you alr
 **About the Pro plan.** Pro works. Its usage allowance is smaller than Max's, and every assistant
 you talk to draws from that one allowance. Talk to one or two
 assistants at a time. When you hit the limit, Claude Code tells you when it resets, and the
-assistants simply wait until then. Clawdling adds no limits and no fees of its own. Max has much
-more room if you end up using it all day.
+assistants simply wait until then. Clawdling adds no limits and no fees of its own. Max gives 5x
+or 20x Pro's usage if you end up using it all day.
 
 ## Step 1: get Claude Code
 
@@ -90,7 +90,8 @@ What happens next, so nothing surprises you:
 
 1. **Trust your org folder.** The cockpit shows a card, "First, trust your org folder". Click
    **Trust my org folder**. A session opens and Claude Code asks whether you trust the folder:
-   choose **Yes, I trust this folder**. You do this once; after that no assistant asks again.
+   click **Yes, trust it**. You do this once; after that no assistant asks again. (Closed it or
+   reloaded the page? The question waits under **Needs you** at the top of the left list.)
 2. **Talk to an assistant.** Click one of the cards under "Then start a session with" (later:
    click an assistant in the left list, then **New session**). Type a question, like "What do you
    do for me? Answer in two lines."
