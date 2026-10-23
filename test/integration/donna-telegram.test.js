@@ -1,11 +1,11 @@
 // End to end: a Telegram message to Donna becomes a live health session.
 // Stub Bot API -> pairing -> Donna headless turn (fake claude -p) -> `clawdling spawn health ...`
-// through the real CLI -> new live session in tmux -> reply to the paired chat only.
+// through the real CLI -> new live session (tmux or pty) -> reply to the paired chat only.
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
 import { startTelegramStub } from '../fixtures/telegram-stub.mjs';
-import { cli, killTmux, readJsonFile, readLog, request, rmrf, startServerProc, tempHome, testEnv, tmuxHas, uniqueSocket, waitFor } from '../helpers.mjs';
+import { cli, killTmux, readJsonFile, readLog, request, rmrf, sessionRunning, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
 
 const TOKEN = '123456789:TEST_token_abcdefghijklmnopqrstu';
 const OWNER_CHAT = 1001;
@@ -64,7 +64,7 @@ test('pair, ignore strangers, route "can the health agent look at my sleep" to a
   const health = sessions.filter((s) => s.agent === 'health' && s.status !== 'ended');
   assert.equal(health.length, 1, 'exactly one new live health session (the stranger did not trigger one)');
   assert.equal(health[0].title, 'Can the health agent look at my sleep');
-  assert.ok(tmuxHas(socket, health[0].tmux_name), 'the health session is a live tmux session');
+  await waitFor(() => sessionRunning({ socket, fakeLog }, health[0]), { label: 'the health session is a live process' });
   await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${health[0].sid}`)).body.status === 'ready', { label: 'health session ready' });
 
   assert.equal(stub.sent(STRANGER_CHAT).length, 0, 'strangers never get a reply');

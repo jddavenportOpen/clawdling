@@ -1,11 +1,11 @@
 // A second `clawdling start` must exit at once with a clear message and touch nothing: not the
-// registry, not the hooks file, not the shim, and no duplicate tmux control clients.
+// registry, not the hooks file, not the shim, and (tmux) no duplicate tmux control clients.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { CLI, cli, killTmux, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
+import { BACKEND, CLI, cli, killTmux, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
 
 let home;
 let other;
@@ -49,7 +49,8 @@ function startOnce(args, h) {
 }
 
 const stamp = (files) => Object.fromEntries(files.map((f) => [f, fs.existsSync(f) ? fs.statSync(f).mtimeMs : null]));
-const clients = () => tmux(socket, 'list-clients', '-F', '#{client_name}').split('\n').filter(Boolean).length;
+// tmux: how many control clients are attached (a pty session has none outside the server).
+const clients = () => (BACKEND === 'tmux' ? tmux(socket, 'list-clients', '-F', '#{client_name}').split('\n').filter(Boolean).length : 0);
 
 test('already running for this home: exit 1, nothing touched', async () => {
   const s = (await request(srv, 'POST', '/api/sessions', { agent: 'work' })).body;

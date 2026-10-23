@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { cli, cliResult, killTmux, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
+import { spawn } from 'node:child_process';
+import { BACKEND, CLI, cli, cliResult, killTmux, onlyPty, onlyTmux, request, rmrf, startServerProc, tempHome, testEnv, tmux, uniqueSocket, waitFor } from '../helpers.mjs';
 
 let home;
 let socket;
@@ -81,7 +82,8 @@ test('new domain / new project, through the API when the server runs', async () 
 test('doctor, donna status, open --print, service --dry-run', () => {
   const d = cliResult(['doctor'], { env, home });
   assert.equal(d.code, 0, d.stdout + d.stderr);
-  assert.match(d.stdout, /ok\s+tmux \d/);
+  if (BACKEND === 'tmux') assert.match(d.stdout, /ok\s+sessions: tmux \d/);
+  else assert.match(d.stdout, /ok\s+sessions: built-in terminal \(node-pty/);
   assert.match(d.stdout, /ok\s+claude 2\.1/);
   assert.match(d.stdout, /cockpit running/);
   assert.match(cli(['donna', 'status'], { env, home }), /Telegram: not set up/);
@@ -114,7 +116,7 @@ test('helpful error when the server is not running', () => {
   }
 });
 
-test('attach uses the tmux socket the sessions live on (server.json / registry), not the default', async () => {
+test('attach uses the tmux socket the sessions live on (server.json / registry), not the default', { skip: onlyTmux }, async () => {
   const s = (await request(srv, 'POST', '/api/sessions', { agent: 'home' })).body;
   const logFile = path.join(home, 'fake-tmux.log');
   const fakeTmux = path.join(home, 'fake-tmux.sh');
@@ -126,7 +128,7 @@ test('attach uses the tmux socket the sessions live on (server.json / registry),
   assert.deepEqual(argv, ['-L', socket, 'attach-session', '-t', `=${s.tmux_name}`]);
 });
 
-test('the tmux config turns focus events on (Claude Code asks for them)', () => {
+test('the tmux config turns focus events on (Claude Code asks for them)', { skip: onlyTmux }, () => {
   assert.match(fs.readFileSync(path.join(home, '.clawdling', 'tmux.conf'), 'utf8'), /^set -g focus-events on$/m);
   assert.match(tmux(socket, 'show-options', '-g', 'focus-events'), /focus-events on/);
 });
@@ -141,5 +143,28 @@ test('doctor fails (no "All good") when the cockpit is not running', () => {
     assert.doesNotMatch(r.stdout, /All good/);
   } finally {
     rmrf(down);
+  }
+});
+
+test('pty: attach is a terminal client over the cockpit WebSocket (snapshot, input, detach with Ctrl-])', { skip: onlyPty }, async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'home', prompt: 'hello attach' })).body;
+  await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${s.sid}`)).body.status === 'ready', { label: 'ready' });
+  const child = spawn(process.execPath, [CLI, 'attach', s.sid.slice(0, 8)], { env: { ...env, CLAWDLING_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
+  let out = '';
+  let err = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (err += d));
+  const exited = new Promise((r) => child.once('exit', (code) => r(code)));
+  try {
+    await waitFor(() => /assistant: hello attach/.test(out), { label: `snapshot in the attached terminal (${err})` });
+    child.stdin.write('typed in the terminal\r');
+    await waitFor(() => /assistant: typed in the terminal/.test(out), { label: 'live output after input' });
+    await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${s.sid}`)).body.last_message === 'typed in the terminal', { label: 'input reached claude' });
+    child.stdin.write('\x1d'); // Ctrl-] detaches
+    assert.equal(await exited, 0);
+    assert.match(err, /Detached/);
+    assert.notEqual((await request(srv, 'GET', `/api/sessions/${s.sid}`)).body.status, 'ended', 'detaching leaves the session running');
+  } finally {
+    if (child.exitCode === null) child.kill();
   }
 });
