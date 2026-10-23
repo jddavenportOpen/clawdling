@@ -22,6 +22,9 @@ Clawdling is free. It runs on your own computer and uses the Claude plan you alr
 | **Claude Code** | Claude Code is the version of Claude that can work on your computer: it can open files and run programs when you allow it. Clawdling's assistants are Claude Code sessions. | See step 1 |
 | About 15 minutes | Most of it is Claude installing things for you. | |
 
+**On a work laptop?** Nothing here needs an administrator password, but some companies block
+installing software or running Claude Code on their laptops. If yours does, ask IT first.
+
 **About the Pro plan.** Pro works. Its usage allowance is smaller than Max's, and every assistant
 you talk to draws from that one allowance. Talk to one or two
 assistants at a time. When you hit the limit, Claude Code tells you when it resets, and the
@@ -113,7 +116,12 @@ program, the same as Claude Code always does.
 - It never sees, saves or sends your Claude password or login.
 - It never talks to Anthropic directly and charges nothing. Your usage is your normal plan usage.
 - Your assistants and their notes are plain files in a folder called `clawdling` in your home
-  folder. Nothing leaves your computer.
+  folder. Clawdling sends nothing anywhere; your assistants talk to Claude the same way Claude
+  Code always does.
+- Texting Donna from your phone (Telegram, or iMessage on a Mac) is optional and stays off until
+  you set it up.
+- Clawdling is a new open-source project, built by one person ([JD Davenport](https://jddavenport.com)),
+  not by Anthropic. All of its code is public in this repository.
 
 ## When something goes wrong (plain-language fixes)
 

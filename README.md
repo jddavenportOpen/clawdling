@@ -4,6 +4,10 @@
 
 **Turn Claude Code into an org of agents.** On macOS, Linux and Windows.
 
+> **New to Claude Code, or you only use Claude in the app or at claude.ai?** Read
+> [Start here](docs/START-HERE.md) first: what you need, what each step looks like, and
+> plain-language fixes. Pasting the setup line into a claude.ai chat will not install anything.
+
 Hand Claude Code one link. It asks you up to five questions and builds your org: a chief of
 staff you can text, an agent for each area of your life and work, and an agent for each
 project. Then it gives you a cockpit where you see the whole thing and open any agent in one
@@ -15,9 +19,6 @@ limits, and your machine, are the limit.
 
 <!-- Hero: docs/img/demo.gif (keep this path; swap the file for a newer demo GIF any time). -->
 ![Clawdling: the org map and the cockpit, with live sessions and what needs you](docs/img/demo.gif)
-
-> **New to Claude Code, or never used a terminal?** Read [Start here](docs/START-HERE.md): what
-> you need, what each step looks like, and plain-language fixes.
 
 ## What you need
 
@@ -36,7 +37,8 @@ limits, and your machine, are the limit.
 
 ## Install it by asking Claude Code (recommended)
 
-Open Claude Code anywhere (a terminal, or the desktop app's Code tab) and paste:
+Open Claude Code anywhere (a terminal, or the desktop app's Code tab; not a claude.ai chat, which
+cannot install anything) and paste:
 
 ```
 Set up Clawdling for me from https://github.com/jddavenportOpen/clawdling and follow SETUP.md
