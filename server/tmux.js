@@ -445,12 +445,25 @@ export class ControlClient extends EventEmitter {
     });
   }
 
-  close() {
+  /**
+   * Detach this control client (the session keeps running). `immediate` (server shutdown): end it
+   * now, because the process is about to exit and a timer would never fire; an orphaned
+   * `tmux -C attach-session` client keeps the tmux server alive past kill-server.
+   */
+  close(immediate = false) {
     if (this.closed) return;
     try {
       this.proc.stdin.end();
     } catch {
       // ignore
+    }
+    if (immediate) {
+      try {
+        this.proc.kill('SIGTERM');
+      } catch {
+        // already gone
+      }
+      return;
     }
     const t = setTimeout(() => {
       if (!this.closed) this.proc.kill('SIGTERM');

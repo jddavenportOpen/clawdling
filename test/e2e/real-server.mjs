@@ -54,6 +54,11 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
   }
   const cleanup = () => {
     try { execFileSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' }); } catch { /* no sessions left */ }
+    // A tmux server held up by an orphaned control client can outlive kill-server, and once its
+    // socket file is gone nothing reaches it again: the socket name is unique to this run, end it all.
+    if (process.platform !== 'win32') {
+      try { execFileSync('pkill', ['-KILL', '-f', `tmux -L ${socket} `], { stdio: 'ignore' }); } catch { /* nothing left */ }
+    }
     try { fs.rmSync(path.join(process.env.TMUX_TMPDIR || '/tmp', `tmux-${process.getuid()}`, socket), { force: true }); } catch { /* not there */ }
     fs.rmSync(home, { recursive: true, force: true });
   };
