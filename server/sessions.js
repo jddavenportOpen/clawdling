@@ -1,15 +1,19 @@
-// Sessions = real Claude Code processes in Clawdling's tmux server.
+// Sessions = real Claude Code processes, run by a session backend: Clawdling's tmux server
+// (server/tmux.js) or a pseudo-terminal per session (server/pty.js). Both offer the same surface.
 //
-// One registry (sessions.json) + one tmux control-mode client per live session. Output is fanned
-// out to WebSocket viewers; input from viewers becomes `send-keys -H`. Status comes from Claude
-// Code hooks (see hooks.js). Sessions outlive the Clawdling server: on start we reconcile the
-// registry with `tmux ls` and reattach.
+// One registry (sessions.json) + one control client per live session. Output is fanned out to
+// WebSocket viewers; input from viewers goes back to the session. Status comes from Claude Code
+// hooks (see hooks.js). With tmux, sessions outlive the Clawdling server: on start we reconcile the
+// registry with `tmux ls` and reattach. With pty, they end when it stops and stay resumable.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { HOOK_EVENTS, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
-import { ModeTracker, OutputFilter } from './termfilter.js';
+import { prependPath } from './platform.js';
+import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
+
+export { buildSnapshot }; // (moved to termfilter.js: the tmux backend builds snapshots now)
 import { cleanTitle, deriveTitle } from './titles.js';
 import {
   HttpError,
@@ -49,6 +53,10 @@ export function trustNotice(folder) {
 export const TRUST_NOTICE = trustNotice('this folder');
 export const IMPORTS_NOTICE = 'Claude Code asks whether to allow CLAUDE.md imports from outside this folder. Answer in the terminal (or with the choices shown).';
 export const STALL_NOTICE = 'Claude Code has not finished starting. It may be waiting for an answer in the terminal.';
+export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
+// What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
+// one `clawdling start` ran in, so these are not passed on (tmux sets its own).
+const TERMINAL_IDENTITY = /^(TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|TERMINAL_EMULATOR|COLORFGBG|ITERM_[A-Z_]+|LC_TERMINAL(_VERSION)?|WT_SESSION|WT_PROFILE_ID|KITTY_[A-Z_]+|ALACRITTY_[A-Z_]+|WEZTERM_[A-Z_]+|GHOSTTY_[A-Z_]+|KONSOLE_[A-Z_]+|VTE_VERSION|VSCODE_[A-Z_]+|TMUX|TMUX_PANE|STY|WINDOWID)$/;
 const ANSWER_IN_TERMINAL = new Set(['trust', 'imports', 'startup', 'permission_prompt', 'elicitation_dialog']);
 // Questions POST /api/sessions/:sid/answer may answer: Claude Code's own select lists.
 const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
@@ -158,21 +166,6 @@ export function validSize(cols, rows) {
   return { cols: c, rows: r };
 }
 
-const CLEAR = '\x1b[0m\x1b[H\x1b[2J\x1b[3J';
-
-/** Snapshot = clear + captured lines + cursor position + replayed terminal modes. */
-export function buildSnapshot(lines, cursorInfo, modes) {
-  const parts = String(cursorInfo || '').trim().split(/\s+/).map(Number);
-  const [cx, cy, , , cursorFlag, alt] = parts;
-  let s = '\x1b[0m\x1b[H\x1b[2J\x1b[3J';
-  if (alt === 1) s += '\x1b[?1049h\x1b[H\x1b[2J';
-  s += (lines || []).join('\r\n') + '\x1b[0m';
-  if (Number.isFinite(cx) && Number.isFinite(cy)) s += `\x1b[${cy + 1};${cx + 1}H`;
-  if (modes) s += modes.replay();
-  if (cursorFlag === 0) s += '\x1b[?25l';
-  return s;
-}
-
 /**
  * Pure reconcile of registry rows against `tmux ls`. Live rows whose tmux session is gone become
  * ended; rows whose tmux session exists are (re)attached; tagged orphans are adopted.
@@ -242,12 +235,12 @@ function sendWs(ws, msg) {
 }
 
 export class SessionManager {
-  constructor({ paths, org, events, tmux, claudeBin, socket, shimDir, env, logger, getPort }) {
+  constructor({ paths, org, events, backend, tmux, claudeBin, socket, shimDir, env, logger, getPort }) {
     this.paths = paths;
     this.home = paths.home;
     this.org = org;
     this.events = events;
-    this.tmux = tmux;
+    this.backend = backend || tmux; // tmux or pty (see server/backend.js); `tmux` is the old name
     this.claudeBin = claudeBin;
     this.socket = socket;
     this.shimDir = shimDir;
@@ -281,7 +274,7 @@ export class SessionManager {
       const rec = this.records.get(sid);
       if (rec) rec.modes = rt.modes.list();
     }
-    writeJson(this.paths.sessions, { version: 1, socket: this.socket, sessions: [...this.records.values()] }, 0o600);
+    writeJson(this.paths.sessions, { version: 1, backend: this.backend.kind || 'tmux', socket: this.socket, sessions: [...this.records.values()] }, 0o600);
   }
 
   scheduleSave() {
@@ -312,7 +305,7 @@ export class SessionManager {
       resumable: rec.status === 'ended',
       last_message: rec.last_message,
       transcript_path: rec.transcript_path,
-      attach_cmd: `tmux -L ${this.socket} attach -t ${rec.tmux_name}`,
+      attach_cmd: this.backend.attachCommand ? this.backend.attachCommand(rec) : `tmux -L ${this.socket} attach -t ${rec.tmux_name}`,
     };
   }
 
@@ -361,10 +354,13 @@ export class SessionManager {
   }
 
   async reconcile() {
-    const live = await this.tmux.listSessions();
+    const live = await this.backend.listSessions();
     const recs = [...this.records.values()];
     const { attach, ended, orphans } = reconcileRecords(recs, live);
-    for (const rec of ended) this.events.record({ type: 'end', sid: rec.sid, agent: rec.agent, reason: 'gone at startup' });
+    for (const rec of ended) {
+      if (this.backend.persistent === false) rec.notification = STOPPED_NOTICE;
+      this.events.record({ type: 'end', sid: rec.sid, agent: rec.agent, reason: 'gone at startup' });
+    }
     for (const t of orphans) {
       let target;
       try {
@@ -479,7 +475,8 @@ export class SessionManager {
     const text = typeof prompt === 'string' ? prompt.replace(/\0/g, '').slice(0, PROMPT_MAX).trim() : '';
     if (model !== undefined && model !== null && model !== '' && !isValidModel(model)) throw badRequest('invalid model');
     if (!this.claudeAbs()) throw new HttpError(500, `claude CLI not found (looked for "${this.claudeBin}" on PATH). Install Claude Code and sign in.`);
-    if (!which(this.tmux.bin, this.env.PATH || '')) throw new HttpError(500, 'tmux not found on PATH: install tmux 3.2 or newer (brew install tmux)');
+    const missing = this.backend.missing ? this.backend.missing(this.env.PATH || '') : null;
+    if (missing) throw new HttpError(500, missing);
     const sid = crypto.randomUUID();
     const rec = newRecord({
       sid,
@@ -532,23 +529,33 @@ export class SessionManager {
     });
     const claude = this.claudeAbs();
     if (!claude) throw new HttpError(500, `claude CLI not found (looked for "${this.claudeBin}" on PATH)`);
-    const script = buildLauncherScript({
-      cwd: rec.cwd,
-      env: {
-        CLAWDLING_SID: rec.sid,
-        CLAWDLING_HOME: this.home,
-        CLAWDLING_PORT: String(this.getPort()),
-        CLAWDLING_TMUX_SOCKET: this.socket,
-        COLORTERM: 'truecolor',
-        PATH: `${this.shimDir}:${this.env.PATH || '/usr/bin:/bin'}`,
-      },
-      argv: [claude, ...args],
-      comment: `Clawdling launcher for session ${rec.sid} (agent ${rec.agent}). Safe to delete after the session ends.`,
-    });
-    const scriptPath = path.join(this.paths.run, `${rec.sid}.sh`);
-    writeFileAtomic(scriptPath, script, 0o700);
-    if (await this.tmux.hasSession(rec.tmux_name)) throw conflict(`tmux session ${rec.tmux_name} already exists`);
-    const { paneId } = await this.tmux.newSession({ name: rec.tmux_name, cols: c, rows: r, command: ['/bin/sh', scriptPath] });
+    const sessionEnv = {
+      CLAWDLING_SID: rec.sid,
+      CLAWDLING_HOME: this.home,
+      CLAWDLING_PORT: String(this.getPort()),
+      CLAWDLING_TMUX_SOCKET: this.socket,
+      COLORTERM: 'truecolor',
+    };
+    let how;
+    if (this.backend.launcher) {
+      // tmux: a /bin/sh launcher, so tmux only ever sees our own safe strings.
+      const script = buildLauncherScript({
+        cwd: rec.cwd,
+        env: { ...sessionEnv, PATH: `${this.shimDir}:${this.env.PATH || '/usr/bin:/bin'}` },
+        argv: [claude, ...args],
+        comment: `Clawdling launcher for session ${rec.sid} (agent ${rec.agent}). Safe to delete after the session ends.`,
+      });
+      const scriptPath = path.join(this.paths.run, `${rec.sid}.sh`);
+      writeFileAtomic(scriptPath, script, 0o700);
+      how = { command: ['/bin/sh', scriptPath] };
+    } else {
+      // pty: claude is spawned directly with its argv (no shell on any OS) and the full environment.
+      const env = prependPath(this.env, this.shimDir);
+      for (const k of Object.keys(env)) if (TERMINAL_IDENTITY.test(k)) delete env[k];
+      how = { launch: { cwd: rec.cwd, env: { ...env, ...sessionEnv }, argv: [claude, ...args] } };
+    }
+    if (await this.backend.hasSession(rec.tmux_name)) throw conflict(`session ${rec.tmux_name} already exists`);
+    const { paneId } = await this.backend.newSession({ name: rec.tmux_name, cols: c, rows: r, ...how });
     rec.pane_id = paneId || null;
     rec.status = 'starting';
     rec.ended_at = null;
@@ -556,7 +563,7 @@ export class SessionManager {
     rec.waiting_on = null;
     rec.hooked = false;
     rec.launched_at = nowIso();
-    await this.tmux.setOptions(rec.tmux_name, [
+    await this.backend.setOptions(rec.tmux_name, [
       ['window-size', 'manual'],
       ['@clawdling_sid', rec.sid],
       ['@clawdling_agent', rec.agent],
@@ -610,7 +617,7 @@ export class SessionManager {
   attachControl(rec) {
     const rt = this.rt(rec.sid);
     if (rt.control && !rt.control.closed) return rt.control;
-    const cc = this.tmux.control(rec.tmux_name, rec.pane_id);
+    const cc = this.backend.control(rec.tmux_name, rec.pane_id);
     const gen = rt.gen;
     rt.control = cc;
     cc.on('output', (text) => this.onOutput(rec, rt, text));
@@ -672,7 +679,7 @@ export class SessionManager {
       if (rec.hooked || !(rec.status === 'starting' || rec.status === 'needs_you')) return;
       let screen;
       try {
-        screen = await this.tmux.screenText(rec.pane_id || `=${rec.tmux_name}:`);
+        screen = await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`);
       } catch {
         screen = stripAnsi(this.ringText(rt, 8000));
       }
@@ -707,7 +714,7 @@ export class SessionManager {
     if (this.closing) return;
     this.flushOutput(rec, rt);
     if (rt.gen !== gen) return; // a newer launch owns this session name now
-    const alive = await this.tmux.hasSession(rec.tmux_name);
+    const alive = await this.backend.hasSession(rec.tmux_name);
     if (rt.gen !== gen || this.closing) return;
     if (alive) {
       if (rt.reattach++ < 5) {
@@ -801,7 +808,7 @@ export class SessionManager {
     setTimeout(async () => {
       if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) return;
       try {
-        const c = parseChoices(await this.tmux.screenText(rec.pane_id || `=${rec.tmux_name}:`));
+        const c = parseChoices(await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`));
         if (c && rec.status === 'needs_you') {
           rec.choices = c.labels.map((label, i) => ({ option: i + 1, label }));
           this.publish(rec);
@@ -824,15 +831,15 @@ export class SessionManager {
 
   async end(sid) {
     const rec = this.require(sid);
-    if (rec.status === 'ended' && !(await this.tmux.hasSession(rec.tmux_name))) return this.view(rec);
-    await this.tmux.killSession(rec.tmux_name);
+    if (rec.status === 'ended' && !(await this.backend.hasSession(rec.tmux_name))) return this.view(rec);
+    await this.backend.killSession(rec.tmux_name);
     this.markEnded(rec, { notice: null });
     return this.view(rec);
   }
 
   async resume(sid, { cols, rows } = {}) {
     const rec = this.require(sid);
-    if (await this.tmux.hasSession(rec.tmux_name)) {
+    if (await this.backend.hasSession(rec.tmux_name)) {
       if (rec.status === 'ended') {
         rec.status = 'ready';
         rec.ended_at = null;
@@ -858,7 +865,7 @@ export class SessionManager {
     return pred();
   }
 
-  /** Type text into a session (Donna routing, the CLI). Uses tmux's paste so multi-line text is one paste. */
+  /** Type text into a session (Donna routing, the CLI). A paste, so multi-line text is one paste. */
   async send(sid, text, enter = true) {
     const rec = this.require(sid);
     if (!isLive(rec.status)) throw conflict('that session has ended; resume it first');
@@ -872,10 +879,10 @@ export class SessionManager {
     }
     if (!isLive(rec.status)) throw conflict('that session has ended');
     const target = rec.pane_id || `=${rec.tmux_name}:`;
-    if (clean) await this.tmux.paste(target, clean);
+    if (clean) await this.backend.paste(target, clean);
     if (enter !== false) {
       if (clean) await sleep(150);
-      await this.tmux.sendKeysHex(target, Buffer.from('\r'));
+      await this.backend.sendKeysHex(target, Buffer.from('\r'));
     }
   }
 
@@ -901,7 +908,7 @@ export class SessionManager {
     const kind = rec.waiting_on;
     let chosen = null;
     for (let attempt = 0; attempt < 8 && !chosen; attempt++) {
-      const c = parseChoices(await this.tmux.screenText(target));
+      const c = parseChoices(await this.backend.screenText(target));
       if (!c) {
         if (attempt < 3) {
           await sleep(250);
@@ -912,12 +919,12 @@ export class SessionManager {
       if (n > c.labels.length) throw badRequest(`there are only ${c.labels.length} choices`);
       const moves = n - 1 - c.selected;
       if (moves === 0) {
-        await this.tmux.sendKeysHex(target, KEY.enter);
+        await this.backend.sendKeysHex(target, KEY.enter);
         chosen = c.labels[n - 1];
         break;
       }
       const key = moves > 0 ? KEY.down : KEY.up;
-      for (let i = 0; i < Math.abs(moves); i++) await this.tmux.sendKeysHex(target, key);
+      for (let i = 0; i < Math.abs(moves); i++) await this.backend.sendKeysHex(target, key);
       await sleep(200);
     }
     if (!chosen) throw new HttpError(500, 'could not move the selection onto that choice');
@@ -969,9 +976,9 @@ export class SessionManager {
   }
 
   /**
-   * Make the tmux window `size`. Calls done(changed) once tmux has applied it and the app has had
-   * a moment to redraw for the new size. Everything goes through the control client, so it is
-   * ordered with the snapshot capture that follows.
+   * Make the session's terminal `size`. Calls done(changed) once the backend has applied it and
+   * the app has had a moment to redraw for the new size. With tmux everything goes through the
+   * control client, so it is ordered with the snapshot capture that follows.
    */
   applySize(rec, rt, { cols, rows }, done) {
     const cc = rt.control;
@@ -979,21 +986,7 @@ export class SessionManager {
       done(false);
       return;
     }
-    const target = rec.pane_id || `=${rec.tmux_name}:`;
-    cc.command(`display-message -p -t ${target} '#{window_width} #{window_height}'`, (err, lines) => {
-      const [w, h] = String((lines && lines[0]) || '').trim().split(/\s+/).map(Number);
-      if (!err && w === cols && h === rows) {
-        done(false);
-        return;
-      }
-      if (cc.closed) {
-        done(false);
-        return;
-      }
-      cc.command(`resize-window -t =${rec.tmux_name}: -x ${cols} -y ${rows}`);
-      // The reply to the last command means tmux has resized its grid; then let the app redraw.
-      cc.command(`refresh-client -C ${cols}x${rows}`, () => this.settle(rt, () => done(true)));
-    });
+    cc.fit(cols, rows, (changed) => (changed ? this.settle(rt, () => done(true)) : done(false)));
   }
 
   /** Wait until the pane has been quiet for 50 ms (at least 60 ms, at most 400 ms). */
@@ -1007,7 +1000,7 @@ export class SessionManager {
     setTimeout(tick, 15);
   }
 
-  /** Capture through the control client so the snapshot is an exact cut of the output stream. */
+  /** Snapshot through the control client, so it is an exact cut of the output stream. */
   snapshotTo(rec, rt, ws, { register }) {
     if (ws.readyState !== 1) return;
     const cc = rt.control;
@@ -1018,16 +1011,10 @@ export class SessionManager {
       if (register) rt.viewers.add(ws);
       return;
     }
-    const target = rec.pane_id || `=${rec.tmux_name}:`;
-    let captured = null;
-    cc.command(`capture-pane -p -e -J -S -2000 -t ${target}`, (err, lines) => {
-      captured = err ? null : lines;
-    });
-    cc.command(`display-message -p -t ${target} '#{cursor_x} #{cursor_y} #{pane_width} #{pane_height} #{cursor_flag} #{alternate_on}'`, (err, lines) => {
+    cc.snapshot(rt.modes, (data) => {
       if (ws.readyState !== 1) return;
       this.flushOutput(rec, rt); // output before the cut goes only to existing viewers
-      const data = captured ? buildSnapshot(captured, err ? '' : lines[0], rt.modes) : CLEAR + this.ringText(rt);
-      sendWs(ws, { t: 'snapshot', data });
+      sendWs(ws, { t: 'snapshot', data: data || CLEAR + this.ringText(rt) });
       sendWs(ws, { t: 'status', status: rec.status });
       if (register) rt.viewers.add(ws);
     });
@@ -1065,6 +1052,8 @@ export class SessionManager {
 
   async shutdown() {
     this.closing = true;
+    const persistent = this.backend.persistent !== false;
+    const wasLive = [...this.records.values()].filter((r) => isLive(r.status));
     for (const [sid, rt] of this.runtime) {
       const rec = this.records.get(sid);
       if (rec) this.flushOutput(rec, rt);
@@ -1072,10 +1061,22 @@ export class SessionManager {
       rt.control?.close();
       for (const ws of rt.viewers) {
         try {
-          ws.close(1001, 'Clawdling is restarting; sessions keep running');
+          ws.close(1001, persistent ? 'Clawdling is restarting; sessions keep running' : 'Clawdling stopped; resume the session to continue');
         } catch {
           // ignore
         }
+      }
+    }
+    if (!persistent) {
+      // pty sessions live in this process: end them now, cleanly, and say so in the registry.
+      await this.backend.shutdown?.();
+      const now = nowIso();
+      for (const rec of wasLive) {
+        rec.status = 'ended';
+        rec.ended_at = rec.ended_at || now;
+        rec.waiting_on = null;
+        rec.notification = STOPPED_NOTICE;
+        this.events.record({ type: 'end', sid: rec.sid, agent: rec.agent, reason: 'server stopped' });
       }
     }
     this.save();
