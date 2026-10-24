@@ -810,7 +810,10 @@ test('promoteSubagent: a domain agent from a Claude Code subagent, with provenan
   assert.equal(b.name, 'Db helper');
   assert.match(b.mission, /Db helper area/, 'no description: the default mission');
   const bmd = read(b.dir, 'CLAUDE.md');
-  assert.ok(bmd.includes(`_Copied from ${path.join(repo, '.claude', 'agents', 'db_helper.md')} on 2026-10-24.`), 'only the file name is used');
+  // Shown with ~ for the home folder (on Windows the temp folder is inside it).
+  const home = os.homedir();
+  const shown = (p) => (p.startsWith(home + path.sep) ? `~${path.sep}${p.slice(home.length + 1)}` : p);
+  assert.ok(bmd.includes(`_Copied from ${shown(path.join(repo, '.claude', 'agents', 'db_helper.md'))} on 2026-10-24.`), 'only the file name is used');
   assert.match(bmd, /Use token=\[redacted\] wisely/);
 });
 
