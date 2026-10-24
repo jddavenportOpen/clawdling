@@ -147,7 +147,7 @@ test.describe('bring in your projects', () => {
     await search.press('Escape');
     await expect(search).toHaveValue('');
     await expect(screen(page)).toBeVisible();
-    await expect(page.getByTestId('imp-count')).toHaveText('9 projects you worked on in the last 90 days');
+    await expect(page.getByTestId('imp-count')).toHaveText('9 projects active in the last 90 days');
     await page.getByTestId('imp-show-all').click();
     await expect(page.locator('.imp-row')).toHaveCount(11);
     await expect(page.getByTestId('imp-show-all')).toHaveText('Recent only');

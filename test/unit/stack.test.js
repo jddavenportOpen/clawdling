@@ -289,3 +289,15 @@ test('readmeExcerpt: title and opening paragraphs; badges, images, HTML and code
   withTree({ 'README.md': '# Only a title\n' }, (dir) => assert.deepEqual(readmeExcerpt(dir), { file: 'README.md', title: 'Only a title', text: null }));
   withTree({ 'x.txt': '' }, (dir) => assert.equal(readmeExcerpt(dir), null));
 });
+
+test('other test scripts (test:smoke, e2e:ci) are named too, but not watch modes', () => {
+  const dir = tempHome('cl-stack-scripts-');
+  try {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { 'test:smoke': 'playwright test', 'test:watch': 'vitest', 'e2e:ci': 'playwright test --ci', dev: 'vite' } }));
+    fs.writeFileSync(path.join(dir, 'pnpm-lock.yaml'), '');
+    const tests = detectStack(dir).commands.filter((c) => c.kind === 'test').map((c) => c.cmd);
+    assert.deepEqual(tests, ['pnpm test:smoke', 'pnpm e2e:ci']);
+  } finally {
+    rmrf(dir);
+  }
+});

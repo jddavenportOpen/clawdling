@@ -22,7 +22,7 @@ Code repo: {{repo}}. Part of: {{domain}}.
 ## Context
 - (What it is, the architecture in a few lines, how to test, conventions, gotchas, definition of done. Fill this in as you learn, or run /onboard-project to read the repo and write it.)
 
-_Imported by Clawdling on {{date}}. The sections above were read from the repo's own files{{github_note}}; check them before you rely on them._
+_Imported by Clawdling on {{date}}: the sections above were read from the repo's own files{{github_note}} then. Answer from them; look in the repo when something here seems out of date._
 
 ## Current state
 @memory/NOW.md

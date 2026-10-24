@@ -250,11 +250,19 @@ export function detectStack(dir) {
     if (typeof pkg.description === 'string' && pkg.description.trim()) description = pkg.description.trim();
     cmd('install', pm === 'yarn' ? 'yarn' : `${pm} install`, 'package.json');
     const scripts = pkg.scripts && typeof pkg.scripts === 'object' ? pkg.scripts : {};
+    const runScript = (name) => (pm === 'npm' ? (name === 'test' || name === 'start' ? `npm ${name}` : `npm run ${name}`) : pm === 'bun' ? `bun run ${name}` : `${pm} ${name}`);
     for (const [name, kind] of SCRIPT_KINDS) {
       const body = scripts[name];
       if (typeof body !== 'string' || (name === 'test' && placeholderTest(body))) continue;
-      const run = pm === 'npm' ? (name === 'test' || name === 'start' ? `npm ${name}` : `npm run ${name}`) : pm === 'bun' ? `bun run ${name}` : `${pm} ${name}`;
-      cmd(kind, run, 'package.json');
+      cmd(kind, runScript(name), 'package.json');
+    }
+    // Other test scripts (test:smoke, test:e2e, e2e:ci...): the ones a newcomer most often needs.
+    let extra = 0;
+    for (const [name, body] of Object.entries(scripts)) {
+      if (extra >= 3 || typeof body !== 'string' || !/^(test|e2e)[:_-]./.test(name) || /watch/i.test(name)) continue;
+      if (SCRIPT_KINDS.some(([n]) => n === name)) continue;
+      cmd('test', runScript(name), 'package.json');
+      extra++;
     }
     const ws = Array.isArray(pkg.workspaces) ? pkg.workspaces : Array.isArray(pkg.workspaces?.packages) ? pkg.workspaces.packages : null;
     if (ws && ws.length) monorepo = { tool: `${pm} workspaces`, packages: expandWorkspaceGlobs(box, ws) };

@@ -374,7 +374,7 @@ export function ImportScreen() {
             </div>
             <span class="imp-count" aria-live="polite" data-testid="imp-count">${searching ? `${plural(visible.length, 'match', 'matches')} in all ${all.length}`
               : wide ? (recentCount ? `All ${all.length} projects` : `Nothing from the last 90 days, so all ${all.length} projects`)
-              : `${plural(recentCount, 'project')} you worked on in the last 90 days`}</span>
+              : `${plural(recentCount, 'project')} active in the last 90 days`}</span>
             ${!searching && recentCount && recentCount < all.length ? html`<button class="link-btn" onClick=${() => setShowAll(!wide)} data-testid="imp-show-all">
               ${wide ? 'Recent only' : `Show all ${all.length}`}</button>` : null}
           </div>` : null}
