@@ -26,7 +26,7 @@ import {
   seedNowMd,
   untrusted,
 } from '../../server/importer.js';
-import { OrgStore, initOrg } from '../../server/org.js';
+import { OrgStore, initOrg, styleFor } from '../../server/org.js';
 import { runtimePaths } from '../../server/paths.js';
 import { SessionManager } from '../../server/sessions.js';
 import { FAKE_CLAUDE, rmrf, tempHome } from '../helpers.mjs';
@@ -1282,4 +1282,12 @@ test('sessions: a group agent runs in its folder with each existing repo as --ad
   } finally {
     await sm.shutdown();
   }
+});
+
+test('agent icons match whole words only: "readiness" is not a book, "homework" is not a home', () => {
+  assert.equal(styleFor('agi-readiness-auditor', 'agi-readiness-auditor').icon, 'star');
+  assert.equal(styleFor('homework', 'Homework').icon, 'star');
+  assert.equal(styleFor('reading-list', 'Reading list').icon, 'book');
+  assert.equal(styleFor('fitness-app', 'Fitness app').icon, 'heart');
+  assert.equal(styleFor('money', 'Money').icon, 'coins');
 });

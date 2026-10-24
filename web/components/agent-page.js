@@ -54,8 +54,9 @@ export function AgentPage({ id, tab = 'sessions' }) {
         <h1 class="page-title">${info.name}</h1>
         ${info.mission ? html`<p class="hero-mission">${info.mission}</p>` : html`<p class="hero-mission is-empty">No mission yet. Add one in Context.</p>`}
         <p class="hero-meta">
-          <span class="mono" title=${info.dir || ''}>${info.dir ? info.dir.replace(/^\/(Users|home)\/[^/]+/, '~') : agentFolder(info)}</span>
-          ${info.repo ? html`<span class="mono" title="Sessions open in this repo">${info.repo}</span>` : null}
+          <span title=${info.dir || ''}>${info.repo || (info.repos && info.repos.length) ? 'Notes: ' : ''}<span class="mono">${info.dir ? info.dir.replace(/^\/(Users|home)\/[^/]+/, '~') : agentFolder(info)}</span></span>
+          ${info.repo ? html`<span title="Sessions open in this repo">Repo: <span class="mono">${info.repo.replace(/^\/(Users|home)\/[^/]+/, '~')}</span></span>` : null}
+          ${!info.repo && info.repos && info.repos.length ? html`<span title="Sessions open with these repos">Repos: <span class="mono">${info.repos.map((r) => r.replace(/^\/(Users|home)\/[^/]+/, '~')).join(', ')}</span></span>` : null}
           ${info.model ? html`<span>Model: <span class="mono">${info.model}</span></span>` : null}
           <${PermissionMeta} mode=${info.permission_mode} live=${live} />
         </p>

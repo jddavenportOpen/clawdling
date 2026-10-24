@@ -185,7 +185,7 @@ export function ImportScreen() {
   const cloneRoot = tildify((data && data.clone_root) || '') || '~/code';
 
   // A repo that became an agent somewhere else while this screen is open: untick it (its row is
-  // disabled and says "Agent: <name>"), so it is not made twice.
+  // disabled and says "Already an agent: <name>"), so it is not made twice.
   useEffect(() => {
     if (phase !== 'pick') return;
     const r = rowsRef.current;
@@ -527,7 +527,7 @@ function CandidateRow({ c, row, phase, now, domains, newNames, cloneRoot, owner,
     </label>
     <span class="imp-when" title=${c.last_activity_at ? `Last activity ${longTime(c.last_activity_at)}` : undefined}>${ago(c.last_activity_at, now)}</span>
     <span class="imp-domain">
-      ${owner ? html`<span class="imp-agent" data-testid="imp-agent">Agent: <button class="link-btn" onClick=${() => onOpen(owner.id)}>${owner.name}</button></span>`
+      ${owner ? html`<span class="imp-agent" data-testid="imp-agent">Already an agent: <button class="link-btn" onClick=${() => onOpen(owner.id)}>${owner.name}</button></span>`
         : picking && row.checked ? html`<${DomainPicker} value=${row.domain} domains=${domains} newNames=${newNames} label=${`Domain for ${c.name}`}
             onChoose=${(v) => onChoose(c, v)} onCommitNew=${(v) => onCommitNew(c, v)} />`
         : picking ? null
@@ -600,7 +600,7 @@ function Results({ run, runRows, rows, agentsById, lookup, onboarded, blocked, o
       <h2 id="imp-title" class="modal-title" tabindex="-1" data-phase-focus data-testid="imp-done-title">${title}</h2>
       <p class="modal-text">${n
         ? `${n === 1 ? 'It starts' : 'Each one starts'} with notes drafted from ${run.group ? 'its repos' : 'its repo'}: what it is, how to run it and what changed lately. Nothing in your repos changed.`
-        : failed.length ? 'Nothing was made. The reason is under each project; fix it and try again.' : 'These projects already have agents.'}</p>
+        : failed.length ? 'Nothing was made. The reason is under each project; fix it and try again.' : 'Each of these projects is already an agent. Nothing new was made.'}</p>
     </div>
     <div class="modal-body imp-body" data-testid="import-screen" data-phase="done">
       ${n ? html`<p class="imp-onboard-note" id="imp-onboard-note"><${Icon} name="spark" size=${14} />
@@ -629,7 +629,7 @@ function Results({ run, runRows, rows, agentsById, lookup, onboarded, blocked, o
             key=${`s-${agent ? agent.id : c.key}`}>
           <span class="imp-result-icon"><${Icon} name="folder" size=${16} /></span>
           <span class="imp-result-text"><span class="imp-result-name">${agent ? (agentsById[agent.id] || agent).name : c.name}</span>
-            <span class="imp-result-meta">Already an agent, so nothing new was made.</span></span>
+            <span class="imp-result-meta">Already an agent: ${agent ? (agentsById[agent.id] || agent).name : c.name}. Nothing new was made.</span></span>
           ${agent ? html`<span class="imp-result-actions"><button class="btn btn-quiet btn-sm" onClick=${() => onOpen(agent.id)}>Open</button></span>` : null}
         </li>`)}
         ${(run.group ? failed.slice(0, 1) : failed).map(({ c, r }) => html`<li class="imp-result is-failed" data-failed=${run.group ? run.group.name : c.name} key=${`f-${c.key}`}>

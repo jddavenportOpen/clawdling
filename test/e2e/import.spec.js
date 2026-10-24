@@ -125,7 +125,7 @@ test.describe('bring in your projects', () => {
     await openFromPalette(page);
     await expect(tick(page, 'site')).toBeDisabled();
     await expect(tick(page, 'site')).not.toBeChecked();
-    await expect(cand(page, 'site').getByTestId('imp-agent')).toHaveText('Agent: Launch the website');
+    await expect(cand(page, 'site').getByTestId('imp-agent')).toHaveText('Already an agent: Launch the website');
     await expect(page.getByTestId('imp-create')).toHaveText('Create 5 project agents');
     await cand(page, 'site').getByTestId('imp-agent').locator('button').click();
     await expect(page).toHaveURL(/#\/agent\/site$/);
@@ -372,7 +372,7 @@ test.describe('bring in your projects', () => {
     await expect(page.getByTestId('imp-done-title')).toHaveText('Already in your org');
     await expect(page.getByTestId('imp-retry')).toHaveCount(0);
     await expect(page.locator('[data-failed]')).toHaveCount(0);
-    for (const id of ['recipe-box', 'garden-sensors']) await expect(page.locator(`[data-result="${id}"]`)).toContainText('Already an agent, so nothing new was made.');
+    for (const id of ['recipe-box', 'garden-sensors']) await expect(page.locator(`[data-result="${id}"]`)).toContainText('Nothing new was made.');
     expect((await orgAgents()).filter((a) => a.kind === 'project').map((a) => a.id).sort()).toEqual(['garden-sensors', 'recipe-box']); // nothing new
     await shot(page, '14-import-group-already-in-org-1440x900');
 
@@ -403,7 +403,7 @@ test.describe('bring in your projects', () => {
     await api('POST', '/api/import', { path: '/Users/ada/code/recipe-box', domain: 'work' });
     await expect(tick(page, 'recipe-box')).not.toBeChecked();
     await expect(tick(page, 'recipe-box')).toBeDisabled();
-    await expect(cand(page, 'recipe-box').getByTestId('imp-agent')).toHaveText('Agent: recipe-box');
+    await expect(cand(page, 'recipe-box').getByTestId('imp-agent')).toHaveText('Already an agent: recipe-box');
     await expect(page.getByTestId('imp-create')).toHaveText('Create 5 project agents');
     // By its remote: a GitHub repo cloned and imported elsewhere, though this row has no folder.
     await tick(page, 'family-photos').check();
@@ -411,12 +411,12 @@ test.describe('bring in your projects', () => {
     await api('POST', '/api/import', { clone: true, github: 'ada/family-photos', url: 'https://github.com/ada/family-photos.git', domain: 'work' });
     await expect(tick(page, 'family-photos')).not.toBeChecked();
     await expect(tick(page, 'family-photos')).toBeDisabled();
-    await expect(cand(page, 'family-photos').getByTestId('imp-agent')).toHaveText('Agent: family-photos');
+    await expect(cand(page, 'family-photos').getByTestId('imp-agent')).toHaveText('Already an agent: family-photos');
     // As one of a group's repos.
     await api('POST', '/api/import', { group: { name: 'Shop and site', domain: 'work' }, items: [{ path: '/Users/ada/code/site' }, { path: '/Users/ada/code/shop' }] });
     for (const name of ['site', 'shop']) {
       await expect(tick(page, name)).not.toBeChecked();
-      await expect(cand(page, name).getByTestId('imp-agent')).toHaveText('Agent: Shop and site');
+      await expect(cand(page, name).getByTestId('imp-agent')).toHaveText('Already an agent: Shop and site');
     }
     await expect(page.getByTestId('imp-create')).toHaveText('Create 3 project agents');
     await shot(page, '15-import-live-already-an-agent-1440x900');

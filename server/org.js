@@ -29,15 +29,16 @@ const PERMISSION_MODES = new Set(['ask', 'default', 'acceptEdits', 'plan', 'inhe
 const KIND_DIRS = { domain: 'domains', project: 'projects' };
 
 const PALETTE = ['#E5484D', '#30A46C', '#0091FF', '#F76B15', '#8E4EC6', '#12A594', '#D6409F', '#FFB224', '#3E63DD', '#AB4ABA'];
+// Whole words only: "readiness" is not about reading, "homework" is not about home.
 const ICON_HINTS = [
-  [/health|fitness|sleep|body|medical|gym/, 'heart'],
-  [/work|job|career|office|business/, 'briefcase'],
-  [/money|finance|budget|tax|invest|bank/, 'coins'],
-  [/home|house|chore|garden/, 'home'],
-  [/family|kids|partner|parent|friends|people/, 'users'],
-  [/learn|school|study|course|read|book/, 'book'],
-  [/travel|trip/, 'plane'],
-  [/write|blog|content|newsletter/, 'pen'],
+  [/\b(health|fitness|sleep|body|medical|gym)\b/, 'heart'],
+  [/\b(work|job|career|office|business)\b/, 'briefcase'],
+  [/\b(money|finances?|budget|tax(es)?|invest(ing|ments?)?|bank(ing)?)\b/, 'coins'],
+  [/\b(home|house|chores?|garden(ing)?)\b/, 'home'],
+  [/\b(family|kids|partner|parents?|friends|people)\b/, 'users'],
+  [/\b(learn(ing)?|school|study|courses?|read(ing)?|books?)\b/, 'book'],
+  [/\b(travel|trips?)\b/, 'plane'],
+  [/\b(write|writing|blog|content|newsletter)\b/, 'pen'],
 ];
 
 export const DEFAULT_MISSIONS = {

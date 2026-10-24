@@ -162,7 +162,7 @@ export function PromoteButton({ sub, scope = 'user', repo }) {
   const cancel = () => { setRenaming(false); setAs(''); setErr(''); };
   if (taken) {
     return html`<span class="setup-promote" data-testid="setup-taken">
-      <span class="setup-taken">An agent called <strong>${holder ? holder.name : sub.name}</strong> already exists.</span>
+      <span class="setup-taken">An agent called <strong>${holder ? holder.name : sub.name}</strong> already exists.${renaming ? ' Give the new agent another name; the subagent keeps its own.' : ''}</span>
       ${renaming ? html`<form class="inline-form setup-as" onSubmit=${(e) => { e.preventDefault(); submit(); }}>
           <input ref=${field} type="text" value=${as} maxLength="60" placeholder="Another name" autocomplete="off" data-own-escape
             aria-label=${`Name for the standing agent made from ${sub.name}`} data-testid="setup-as"

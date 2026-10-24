@@ -426,6 +426,7 @@ function MapNode({ n, st, selected, dim, reduced, adds, onSelect, onHover }) {
     ${st.working && !reduced ? html`<circle class="pulse" r=${n.r + 2} />` : null}
     ${st.blocked ? html`<circle class="needs-ring" r=${n.r + 5} />` : st.turn ? html`<circle class="ready-ring" r=${n.r + 5} />` : null}
     <circle class="sel-ring" r=${n.r + (st.needs ? 9 : 5)} />
+    ${n.text !== n.label ? html`<title>${n.label}</title>` : null}
     <circle class="node-disc" r=${n.r} />
     <g class="node-icon" transform=${`translate(${-iconSize / 2} ${-iconSize / 2})`}>
       ${n.kind === 'owner' ? html`<text class="owner-initial" x=${iconSize / 2} y=${iconSize / 2 + 1}>${(n.label || '?').charAt(0).toUpperCase()}</text>`

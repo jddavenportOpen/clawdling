@@ -166,9 +166,10 @@ Bring in your projects, and Your Claude Code setup.
 - **US-40 (P0, Hal; 1.2)** As a builder dad with ten repos on GitHub, I click "Bring in your
   projects" on the first-run card, see all ten in the import screen, tick them, and get ten
   project agents in under two minutes.
-  - Accept: `GET /api/discover` returns 10 candidates sourced from `github`; checking all and
-    clicking "Create N project agents" creates 10 agents with per-row status; total wall time
-    under two minutes against a fake `gh`.
+  - Accept: `GET /api/discover` returns his repos sourced from `github` (and his own folders);
+    ticking them and clicking "Create N project agents" creates one agent per repo with per-row
+    status, in under two minutes. Measured on real GitHub (2026-10-24, the jddavenportOpen
+    account): 10 repos, 9 of them cloned during the import, became 10 agents in about 23 s.
 - **US-41 (P0, Hal; 1.2)** As Hal, ticking a repo I haven't cloned yet clones it under my own
   `gh` login into `~/code/<name>` and creates its agent, in one tick and one click.
   - Accept: an item with `github` set and no `path` needs `clone: true`; it imports with `gh repo
@@ -180,7 +181,9 @@ Bring in your projects, and Your Claude Code setup.
   requests.
   - Accept: the drafted CLAUDE.md's "How to run it" section lists one line per command the stack
     scan found, labelled by kind; the seeded NOW.md's "Recent commits" has up to 15 entries from
-    `git log`; a fresh session's first answer names the test command without reading a file.
+    `git log`; a fresh session's first answer, seconds in, says what the project is and names
+    the test command from those notes (on real repos it sometimes glances at one file to
+    confirm; it never has to go looking).
 - **US-43 (P1, Hal; 1.2)** As Hal, running import again on a repo I already imported skips it
   instead of making a second agent.
   - Accept: importing a repo whose path or remote already belongs to an agent returns `{skipped:
@@ -207,9 +210,10 @@ Bring in your projects, and Your Claude Code setup.
 - **US-47 (P0, Hal; 1.2)** As Hal, I can ask Donna to look at my projects: she can run `clawdling
   discover` and tell me in plain words what she'd import, but she cannot create the agents
   herself; only the cockpit, or my own `clawdling import --yes`, does that.
-  - Accept: a Donna turn (`CLAWDLING_DONNA=1`) may run `clawdling discover` and `clawdling import`
-    without `--yes`; `clawdling import --yes` inside a Donna turn is refused, the same refusal
-    class as `init`/`start`/`service`/`donna`/`attach`.
+  - Accept: a Donna turn (`CLAWDLING_DONNA=1`) may run `clawdling discover` (its table only:
+    names, folders, dates; not `--json` or `--setup`, so no descriptions or README text reach her)
+    and `clawdling import` without `--yes`; `clawdling import --yes` inside a Donna turn is
+    refused, the same refusal class as `init`/`start`/`service`/`donna`/`attach`.
 
 ### Safety and honesty
 - **US-48 (P0, Rin; 1.2)** As a skeptic, discovery is read-only and local: it never sends
@@ -234,7 +238,7 @@ Bring in your projects, and Your Claude Code setup.
   plus what my project's own repo adds, and clicking "Make it a standing agent" on a subagent
   creates a domain agent with a note on where it came from.
   - Accept: `GET /api/setup` lists skills, subagents, commands, plugins, hooks and MCP servers by
-    name and description only; `POST /api/setup/promote {scope, repo?, name}` creates a domain
+    name and description only; `POST /api/setup/promote {scope, repo?, name, as?}` creates a domain
     agent whose CLAUDE.md carries "Copied from ~/.claude/agents/<file> on <date>. Editing this
     file does not change the original."
 

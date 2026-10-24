@@ -929,14 +929,25 @@ test('setup scan: a single-line field is collapsed before it is redacted', () =>
 test('setup scan: 100 skills with 62 KB descriptions stay cheap (a field is clamped before it is redacted)', () => {
   const t = tmp('cl-disc-huge-');
   const cfg = mkdir(t, 'cfg');
+  const small = mkdir(t, 'small');
   const desc = 'sk-'.repeat(20700); // ~62 KB of a token prefix: the slowest shape for the redactor
-  for (let i = 0; i < 100; i++) write(path.join(cfg, 'skills', `big${i}`, 'SKILL.md'), `---\nname: big${i}\ndescription: ${desc}\n---\n`);
-  const t0 = performance.now();
-  const s = scanSetup({ configDir: cfg, claudeJsonPath: path.join(t, 'none.json'), homedir: t });
-  const ms = performance.now() - t0;
+  for (let i = 0; i < 100; i++) {
+    write(path.join(cfg, 'skills', `big${i}`, 'SKILL.md'), `---\nname: big${i}\ndescription: ${desc}\n---\n`);
+    write(path.join(small, 'skills', `big${i}`, 'SKILL.md'), `---\nname: big${i}\ndescription: ${'sk-'.repeat(100)}\n---\n`);
+  }
+  const time = (dir) => {
+    const t0 = performance.now();
+    const out = scanSetup({ configDir: dir, claudeJsonPath: path.join(t, 'none.json'), homedir: t });
+    return [performance.now() - t0, out];
+  };
+  time(small); // warm up
+  const [base] = time(small);
+  const [ms, s] = time(cfg);
   assert.equal(s.skills.length, 100);
   assert.ok(s.skills.every((x) => !x.description || x.description.length <= 300));
-  assert.ok(ms < 1000, `100 skills with 62 KB descriptions took ${Math.round(ms)} ms`);
+  // Compared with the same scan of 300-byte descriptions on the same (possibly busy) machine:
+  // clamped, a 200x longer field costs about the same; unclamped it cost ~100x more.
+  assert.ok(ms < Math.max(400, 12 * base), `62 KB descriptions took ${Math.round(ms)} ms vs ${Math.round(base)} ms for 300 B ones`);
 });
 
 test('findSubagent reads only the head of each candidate to match, and at most 100 KB of the match', () => {
