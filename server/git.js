@@ -42,7 +42,8 @@ export function sanitizeRemote(url) {
     if (!authority) return null;
     return `${scheme[1].toLowerCase()}://${authority}${tail}`;
   }
-  const scp = u.match(/^(?:([A-Za-z0-9._-]+)@)?([A-Za-z0-9.-]+):(?!\/\/)(.+)$/);
+  // Hosts may be ssh config aliases, which can hold an underscore (`github_work`).
+  const scp = u.match(/^(?:([A-Za-z0-9._-]+)@)?([A-Za-z0-9._-]+):(?!\/\/)(.+)$/);
   if (scp && !/^[A-Za-z]$/.test(scp[2])) {
     // user@host:path. Keep only a conventional protocol user (git, hg); drop anything else.
     const user = scp[1] && /^(git|hg|org-\d+)$/.test(scp[1]) ? `${scp[1]}@` : '';

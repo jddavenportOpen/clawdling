@@ -115,9 +115,18 @@ function backupThenWrite(file, content, backupDir, home) {
   writeFileAtomic(file, content, 0o644);
 }
 
-function installSkills(dir, backupDir, home) {
-  for (const skill of ['handoff', 'new-agent']) {
-    backupThenWrite(path.join(dir, '.claude', 'skills', skill, 'SKILL.md'), readTemplate(`skills/${skill}/SKILL.md`), backupDir, home);
+// Skills each folder gets. onboard-project is for project agents; the org root carries it too so a
+// project agent that runs in its repo (with the org added as a directory) finds it.
+const BASE_SKILLS = ['handoff', 'new-agent'];
+const SKILLS_FOR = { root: [...BASE_SKILLS, 'onboard-project'], project: [...BASE_SKILLS, 'onboard-project'], domain: BASE_SKILLS, chief: BASE_SKILLS };
+
+function skillFile(dir, skill) {
+  return path.join(dir, '.claude', 'skills', skill, 'SKILL.md');
+}
+
+function installSkills(dir, backupDir, home, kind = 'root') {
+  for (const skill of SKILLS_FOR[kind] || BASE_SKILLS) {
+    backupThenWrite(skillFile(dir, skill), readTemplate(`skills/${skill}/SKILL.md`), backupDir, home);
   }
 }
 
@@ -136,11 +145,14 @@ function scaffoldAgent({ home, kind, agent, owner, domainName, agentIds, backupD
     agent_ids: agentIds.length ? agentIds.join(', ') : 'none yet',
   };
   const existing = readJson(path.join(dir, 'agent.json'), null);
-  writeJson(path.join(dir, 'agent.json'), { ...agent, created_at: existing?.created_at || agent.created_at });
+  // A re-render (init --force) keeps what an import recorded (source, repos).
+  const kept = {};
+  for (const k of ['source', 'repos']) if (existing?.[k] !== undefined && agent[k] === undefined) kept[k] = existing[k];
+  writeJson(path.join(dir, 'agent.json'), { ...agent, ...kept, created_at: existing?.created_at || agent.created_at });
   backupThenWrite(path.join(dir, 'CLAUDE.md'), renderTemplate(readTemplate(`${tplDir}/CLAUDE.md`), vars), backupDir, home);
   writeIfMissing(path.join(dir, 'memory', 'NOW.md'), renderTemplate(readTemplate(`${tplDir}/NOW.md`), vars));
   writeIfMissing(path.join(dir, 'memory', 'LOG.md'), renderTemplate(readTemplate('LOG.md'), vars));
-  installSkills(dir, backupDir, home);
+  installSkills(dir, backupDir, home, kind);
   return dir;
 }
 
@@ -255,7 +267,7 @@ export function initOrg({ home, answers, force = false, now = new Date() }) {
   if (!exists || answers?.about || force) backupThenWrite(paths.meMd, renderTemplate(readTemplate('org/me.md'), orgVars), backupDir, home);
   writeIfMissing(path.join(home, '.gitignore'), readTemplate('org/gitignore'));
   backupThenWrite(path.join(home, '.claude', 'settings.json'), orgSettings(), backupDir, home);
-  installSkills(home, backupDir, home);
+  installSkills(home, backupDir, home, 'root');
 
   const donna = {
     id: 'donna',
@@ -286,6 +298,29 @@ export function initOrg({ home, answers, force = false, now = new Date() }) {
   return { home, owner: a.owner, channel: a.donna.channel, agents: ['donna', ...agentIds], backupDir };
 }
 
+const SOURCE_FIELDS = ['remote', 'remote_key', 'github', 'imported_at'];
+
+/** Where an imported agent came from: only these string fields, or null. */
+function normalizeSource(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const out = {};
+  for (const k of SOURCE_FIELDS) if (typeof raw[k] === 'string' && raw[k].trim()) out[k] = oneLine(raw[k], 500);
+  return Object.keys(out).length ? out : null;
+}
+
+/** A group project agent's repos: absolute paths only, deduplicated, at most 20. */
+function normalizeRepos(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const r of raw) {
+    if (typeof r !== 'string' || !r || r.includes('\0') || !path.isAbsolute(r)) continue;
+    const p = path.resolve(r);
+    if (!out.includes(p)) out.push(p);
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
 function normalizeAgent(raw, kind, dir) {
   return {
     id: raw.id,
@@ -299,6 +334,8 @@ function normalizeAgent(raw, kind, dir) {
     model: typeof raw.model === 'string' && isValidModel(raw.model) ? raw.model : null,
     permission_mode: PERMISSION_MODES.has(raw.permission_mode) ? raw.permission_mode : null,
     created_at: raw.created_at || null,
+    source: normalizeSource(raw.source),
+    repos: kind === 'project' ? normalizeRepos(raw.repos) : [],
     dir,
   };
 }
@@ -431,6 +468,48 @@ export class OrgStore {
     const a = this.agent(id);
     if (!a) throw notFound(`no agent "${id}"`);
     return a;
+  }
+
+  /**
+   * Merge extra fields into an agent's agent.json (an import records `source` and `repos` this
+   * way). id, kind and created_at are kept as they are. Returns the normalized agent.
+   */
+  updateAgentJson(id, patch = {}) {
+    const loc = this.locate(id);
+    if (!loc) throw notFound(`no agent "${id}"`);
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw badRequest('patch must be an object');
+    const file = path.join(loc.dir, 'agent.json');
+    const raw = readJson(file, null);
+    if (!raw || typeof raw !== 'object') throw notFound(`no agent "${id}"`);
+    const next = { ...raw };
+    for (const [k, v] of Object.entries(patch)) {
+      if (k === 'id' || k === 'kind' || k === 'created_at') continue;
+      if (v === undefined) delete next[k];
+      else next[k] = v;
+    }
+    writeJson(file, next);
+    return this.agent(id);
+  }
+
+  /**
+   * Install any skill file that is missing at the org root and in agent folders (an org made by
+   * an older version has no onboard-project). Never overwrites a skill file that exists.
+   */
+  ensureSkills() {
+    const write = (dir, kind) => {
+      for (const skill of SKILLS_FOR[kind] || BASE_SKILLS) {
+        const file = skillFile(dir, skill);
+        if (fs.existsSync(file)) continue;
+        try {
+          ensureDir(path.dirname(file));
+          fs.writeFileSync(file, readTemplate(`skills/${skill}/SKILL.md`));
+        } catch {
+          // best effort: a read-only folder keeps working without the skill
+        }
+      }
+    };
+    write(this.home, 'root');
+    for (const a of this.agents()) write(a.dir, a.kind);
   }
 
   context(id) {

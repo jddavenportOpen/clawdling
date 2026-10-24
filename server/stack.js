@@ -87,7 +87,8 @@ function tomlArray(body, key) {
 export function makeTargets(text) {
   const out = [];
   for (const line of String(text || '').split(/\r?\n/)) {
-    const m = line.match(/^([A-Za-z0-9][A-Za-z0-9_.\-/]*)\s*:(?![=:])/);
+    // `name:` or a double-colon rule `name::`, but not an assignment (`:=`, `::=`, `:::=`).
+    const m = line.match(/^([A-Za-z0-9][A-Za-z0-9_.\-/]*)\s*::?(?![=:])/);
     if (!m) continue;
     const t = m[1];
     if (t.includes('%') || t.includes('/') || t.startsWith('.') || /\.(o|c|h|a|so)$/.test(t)) continue;
@@ -100,7 +101,8 @@ export function makeTargets(text) {
 export function justRecipes(text) {
   const out = [];
   for (const line of String(text || '').split(/\r?\n/)) {
-    const m = line.match(/^@?([A-Za-z0-9][A-Za-z0-9_-]*)(\s+[^:=]*)?:(?!=)/);
+    // `name params:` (params may have defaults, `target="x"`), but not an assignment `name := value`.
+    const m = line.match(/^@?([A-Za-z0-9][A-Za-z0-9_-]*)(\s+[^:]*)?:(?!=)/);
     if (m && !/^(set|export|alias|import|mod)$/.test(m[1]) && !out.includes(m[1])) out.push(m[1]);
   }
   return out;

@@ -476,8 +476,30 @@ export class SessionManager {
     return { ...a, cwd };
   }
 
-  /** Per-agent context file passed with --append-system-prompt-file (me.md, and for repo-rooted
-   * project agents also the org + agent CLAUDE.md and NOW.md, which do not load from a repo). */
+  isDir(p) {
+    try {
+      return fs.statSync(p).isDirectory();
+    } catch {
+      return false;
+    }
+  }
+
+  /** A group project agent's repos (an agent with `repos` and no `repo`), else []. */
+  groupRepos(target) {
+    if (target.kind !== 'project' || target.repo || !Array.isArray(target.repos)) return [];
+    return target.repos;
+  }
+
+  /** --add-dir folders: the org home (unless the session runs in it), then each existing group repo. */
+  addDirsFor(target, cwd) {
+    const dirs = cwd === this.home ? [] : [this.home];
+    for (const r of this.groupRepos(target)) if (r !== cwd && !dirs.includes(r) && this.isDir(r)) dirs.push(r);
+    return dirs;
+  }
+
+  /** Per-agent context file passed with --append-system-prompt-file (me.md; for a group project
+   * agent the repos it works on; for repo-rooted project agents also the org + agent CLAUDE.md and
+   * NOW.md, which do not load from a repo). */
   writeContextFile(target) {
     const read = (f, max = 60000) => {
       try {
@@ -501,6 +523,26 @@ export class SessionManager {
       lines.push(`Your memory files: ${path.join(target.dir, 'memory', 'NOW.md')} and ${path.join(target.dir, 'memory', 'LOG.md')}. Update them before you finish (the /handoff skill).`);
     }
     lines.push('', `## About ${owner} (me.md)`, '', read(this.paths.meMd).trim() || '(me.md is empty)');
+    const repos = this.groupRepos(target);
+    if (repos.length) {
+      const exists = (f) => {
+        try {
+          return fs.statSync(f).isFile();
+        } catch {
+          return false;
+        }
+      };
+      lines.push('', '## Your repos', '');
+      lines.push('You work on these code repos. Each one that exists is added to this session (--add-dir). This session runs in your agent folder, so Claude Code does not load a repo\'s own CLAUDE.md or AGENTS.md for you: read them before you work in that repo.');
+      for (const r of repos) {
+        if (!this.isDir(r)) {
+          lines.push(`- ${r} (not found on this computer)`);
+          continue;
+        }
+        const own = ['CLAUDE.md', 'AGENTS.md'].filter((f) => exists(path.join(r, f)));
+        lines.push(`- ${r}${own.length ? ` (read its ${own.join(' and ')} first)` : ''}`);
+      }
+    }
     if (target.kind === 'project' && target.cwd !== target.dir) {
       const agentMd = read(path.join(target.dir, 'CLAUDE.md')).replace(/^@memory\/NOW\.md\s*$/m, '(see "Current state" below)');
       lines.push('', '## Org rules (the org CLAUDE.md)', '', read(this.paths.orgClaudeMd).trim());
@@ -578,7 +620,7 @@ export class SessionManager {
       model: rec.model,
       effort: rec.effort,
       permissionMode: cliPermissionMode(rec.permission_mode, this.modeChoices),
-      addDirs: rec.cwd === this.home ? [] : [this.home],
+      addDirs: this.addDirsFor(target, rec.cwd),
       appendSystemPromptFile: ctxFile,
       prompt,
     });
