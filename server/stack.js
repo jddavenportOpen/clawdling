@@ -1,14 +1,17 @@
 // What a folder is built with and how to run it, read from its own manifest files (package.json,
 // pyproject.toml, Makefile, Cargo.toml, go.mod, ...). Read-only and local: nothing is executed.
+// Every read is confined to the folder: a file whose realpath is outside it (a cloned repo can
+// commit `README.md -> ../../.netrc`) reads as missing. Symlinks that stay inside are fine.
 import fs from 'node:fs';
 import path from 'node:path';
 
 const MAX_READ = 256 * 1024;
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
 
 function readText(file, max = MAX_READ) {
   let fd;
   try {
-    fd = fs.openSync(file, 'r');
+    fd = fs.openSync(file, OPEN_FLAGS);
     const buf = Buffer.alloc(max);
     const n = fs.readSync(fd, buf, 0, max, 0);
     return buf.subarray(0, n).toString('utf8');
@@ -41,7 +44,48 @@ function isDir(p) {
   }
 }
 
+function realOf(p) {
+  try {
+    return fs.realpathSync.native(p);
+  } catch {
+    return null;
+  }
+}
+
+/** Is `p` the folder `dir` or inside it? Both realpaths. */
+function inside(p, dir) {
+  const key = (x) => (process.platform === 'win32' ? x.toLowerCase() : x);
+  const a = key(p);
+  const b = key(dir);
+  return a === b || a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
+}
+
+/**
+ * Paths inside `dir` that really are inside it: `file(rel)` / `dir(rel)` give the realpath of a
+ * regular file / folder whose realpath is within realpath(dir), else null.
+ */
+function confined(dir) {
+  const root = typeof dir === 'string' && dir && !dir.includes('\0') ? realOf(dir) : null;
+  const resolve = (rel) => {
+    if (!root) return null;
+    const rp = realOf(path.join(root, rel));
+    return rp && inside(rp, root) ? rp : null;
+  };
+  return {
+    root,
+    file: (rel) => {
+      const rp = resolve(rel);
+      return rp && isFile(rp) ? rp : null;
+    },
+    dir: (rel) => {
+      const rp = resolve(rel);
+      return rp && isDir(rp) ? rp : null;
+    },
+  };
+}
+
 function listDir(dir, max = 2000) {
+  if (!dir) return [];
   try {
     const out = [];
     const d = fs.opendirSync(dir);
@@ -134,18 +178,18 @@ function placeholderTest(cmd) {
   return /no test specified/i.test(cmd || '');
 }
 
-function expandWorkspaceGlobs(dir, globs) {
+function expandWorkspaceGlobs(box, globs) {
   const out = [];
   for (const g of globs.slice(0, 20)) {
     const clean = String(g).replace(/^\.\//, '').replace(/\/+$/, '');
     if (!clean || clean.startsWith('!') || clean.includes('..') || path.isAbsolute(clean)) continue;
     const star = clean.indexOf('*');
     if (star === -1) {
-      if (isDir(path.join(dir, clean))) out.push(clean);
+      if (box.dir(clean)) out.push(clean);
       continue;
     }
     const base = clean.slice(0, star).replace(/\/+$/, '');
-    for (const e of listDir(path.join(dir, base), 200)) {
+    for (const e of listDir(box.dir(base || '.'), 200)) {
       if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') out.push(base ? `${base}/${e.name}` : e.name);
     }
   }
@@ -159,8 +203,13 @@ function expandWorkspaceGlobs(dir, globs) {
  *   monorepo: {tool: string, packages: string[]}|null, description: string|null, ci: boolean, docker: boolean}}
  */
 export function detectStack(dir) {
-  const has = (f) => isFile(path.join(dir, f));
-  const read = (f) => readText(path.join(dir, f));
+  const box = confined(dir);
+  const has = (f) => !!box.file(f);
+  const read = (f) => {
+    const rp = box.file(f);
+    return rp ? readText(rp) : null;
+  };
+  const hasDir = (d) => !!box.dir(d);
   const languages = [];
   const frameworks = [];
   const manifests = [];
@@ -208,12 +257,12 @@ export function detectStack(dir) {
       cmd(kind, run, 'package.json');
     }
     const ws = Array.isArray(pkg.workspaces) ? pkg.workspaces : Array.isArray(pkg.workspaces?.packages) ? pkg.workspaces.packages : null;
-    if (ws && ws.length) monorepo = { tool: `${pm} workspaces`, packages: expandWorkspaceGlobs(dir, ws) };
+    if (ws && ws.length) monorepo = { tool: `${pm} workspaces`, packages: expandWorkspaceGlobs(box, ws) };
   }
   if (has('pnpm-workspace.yaml')) {
     manifests.push('pnpm-workspace.yaml');
     const globs = [...String(read('pnpm-workspace.yaml') || '').matchAll(/^\s*-\s*['"]?([^'"\n#]+?)['"]?\s*$/gm)].map((m) => m[1]);
-    monorepo = { tool: 'pnpm workspaces', packages: expandWorkspaceGlobs(dir, globs) };
+    monorepo = { tool: 'pnpm workspaces', packages: expandWorkspaceGlobs(box, globs) };
   }
   for (const [f, tool] of [['turbo.json', 'Turborepo'], ['nx.json', 'Nx'], ['lerna.json', 'Lerna']]) {
     if (!has(f)) continue;
@@ -247,7 +296,7 @@ export function detectStack(dir) {
     cmd('install', uv ? 'uv sync' : poetry ? 'poetry install' : 'pip install -e .', 'pyproject.toml');
     const lower = toml.toLowerCase();
     for (const [dep, name] of PY_FRAMEWORKS) if (new RegExp(`["'\\s]${dep}\\b`).test(lower)) fw(name);
-    if ('tool.pytest.ini_options' in s || /\bpytest\b/.test(lower) || isDir(path.join(dir, 'tests'))) {
+    if ('tool.pytest.ini_options' in s || /\bpytest\b/.test(lower) || hasDir('tests')) {
       cmd('test', uv ? 'uv run pytest' : poetry ? 'poetry run pytest' : 'pytest', 'pyproject.toml');
     }
   }
@@ -283,7 +332,7 @@ export function detectStack(dir) {
     pm = pm || 'cargo';
     const s = tomlSections(read('Cargo.toml') || '');
     if (!description) description = tomlString(s.package, 'description');
-    if ('workspace' in s) monorepo = { tool: 'Cargo workspace', packages: expandWorkspaceGlobs(dir, tomlArray(s.workspace, 'members')) };
+    if ('workspace' in s) monorepo = { tool: 'Cargo workspace', packages: expandWorkspaceGlobs(box, tomlArray(s.workspace, 'members')) };
     cmd('build', 'cargo build', 'Cargo.toml');
     cmd('test', 'cargo test', 'Cargo.toml');
     if (has('src/main.rs')) cmd('run', 'cargo run', 'Cargo.toml');
@@ -299,7 +348,7 @@ export function detectStack(dir) {
   if (has('go.work')) {
     manifests.push('go.work');
     const uses = [...String(read('go.work') || '').matchAll(/^\s*(?:use\s+)?(\.\/[^\s)]+)\s*$/gm)].map((m) => m[1]);
-    monorepo = { tool: 'Go workspace', packages: expandWorkspaceGlobs(dir, uses) };
+    monorepo = { tool: 'Go workspace', packages: expandWorkspaceGlobs(box, uses) };
   }
   if (has('Gemfile')) {
     manifests.push('Gemfile');
@@ -307,7 +356,7 @@ export function detectStack(dir) {
     pm = pm || 'bundler';
     cmd('install', 'bundle install', 'Gemfile');
     if (/\brails\b/.test(read('Gemfile') || '')) fw('Rails');
-    if (isDir(path.join(dir, 'spec'))) cmd('test', 'bundle exec rspec', 'Gemfile');
+    if (hasDir('spec')) cmd('test', 'bundle exec rspec', 'Gemfile');
     else if (has('Rakefile')) cmd('test', 'bundle exec rake test', 'Gemfile');
   }
   if (has('pom.xml')) {
@@ -357,7 +406,7 @@ export function detectStack(dir) {
     cmd('install', flutter ? 'flutter pub get' : 'dart pub get', 'pubspec.yaml');
     cmd('test', flutter ? 'flutter test' : 'dart test', 'pubspec.yaml');
   }
-  const dotnet = listDir(dir, 400).find((e) => e.isFile() && /\.(sln|csproj|fsproj)$/i.test(e.name));
+  const dotnet = listDir(box.root, 400).find((e) => e.isFile() && /\.(sln|csproj|fsproj)$/i.test(e.name));
   if (dotnet) {
     manifests.push(dotnet.name);
     lang(/\.fsproj$/i.test(dotnet.name) ? 'F#' : 'C#');
@@ -389,7 +438,7 @@ export function detectStack(dir) {
         } else if (e.isDirectory() && depth < 1) visit(path.join(d, e.name), depth + 1);
       }
     };
-    visit(dir, 0);
+    if (box.root) visit(box.root, 0);
     for (const [l] of Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 3)) lang(l);
   }
 
@@ -402,7 +451,7 @@ export function detectStack(dir) {
     commands: commands.slice(0, 12),
     monorepo,
     description: description ? description.replace(/\s+/g, ' ').trim().slice(0, 300) : null,
-    ci: isDir(path.join(dir, '.github', 'workflows')) || has('.gitlab-ci.yml') || has('.circleci/config.yml'),
+    ci: hasDir(path.join('.github', 'workflows')) || has('.gitlab-ci.yml') || has(path.join('.circleci', 'config.yml')),
     docker: has('Dockerfile') || has('docker-compose.yml') || has('compose.yaml') || has('docker-compose.yaml'),
   };
 }
@@ -414,15 +463,18 @@ const README_NAMES = ['README.md', 'readme.md', 'Readme.md', 'README.markdown', 
  * images, HTML and link syntax removed), at most `max` characters. null when there is no README.
  */
 export function readmeExcerpt(dir, max = 800) {
+  const box = confined(dir);
   let file = null;
+  let rp = null;
   for (const n of README_NAMES) {
-    if (isFile(path.join(dir, n))) {
+    rp = box.file(n);
+    if (rp) {
       file = n;
       break;
     }
   }
   if (!file) return null;
-  const raw = readText(path.join(dir, file), 64 * 1024) || '';
+  const raw = readText(rp, 64 * 1024) || '';
   const lines = raw.replace(/\r\n/g, '\n').replace(/<!--[\s\S]*?-->/g, '').split('\n');
   let title = null;
   const paras = [];

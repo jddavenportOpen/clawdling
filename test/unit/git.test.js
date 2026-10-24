@@ -26,6 +26,42 @@ test('sanitizeRemote drops userinfo, query and fragment; keeps scp git@ and loca
   }
 });
 
+test('sanitizeRemote: a password-like user is dropped in every form (scp with a password, a password holding "/", "?" or "#")', () => {
+  const cases = [
+    ['deploy:TOK123@github.com:a/b.git', 'github.com:a/b.git'],
+    ['git:TOK123@github.com:a/b.git', 'github.com:a/b.git'], // the user part is not exactly `git`
+    ['a@b:TOK123@github.com:a/b.git', 'github.com:a/b.git'],
+    ['https://user:TOK123/x@gitlab.com/g/p.git', 'https://gitlab.com/g/p.git'],
+    ['ssh://user:TOK/123@github.com/a/b.git', 'ssh://github.com/a/b.git'],
+    ['https://user:TOK?123@github.com/a/b.git', 'https://github.com/a/b.git'],
+    ['https://user:TOK#123@github.com/a/b.git', 'https://github.com/a/b.git'],
+    ['https://u@x:TOK123@github.com/a/b.git', 'https://github.com/a/b.git'],
+  ];
+  for (const [input, want] of cases) {
+    assert.equal(sanitizeRemote(input), want, input);
+    assert.ok(!sanitizeRemote(input).includes('TOK'), input);
+  }
+  // The normal forms are untouched and keep their key.
+  assert.equal(sanitizeRemote('git@github.com:a/b.git'), 'git@github.com:a/b.git');
+  for (const f of ['deploy:TOK@github.com:a/b.git', 'https://user:TOK/x@github.com/a/b.git', 'git@github.com:a/b.git', 'https://github.com/a/b.git']) assert.equal(remoteKey(f), 'github.com/a/b', f);
+});
+
+test('configRemotes joins a value continued on the next line (trailing backslash), so its userinfo is stripped', () => {
+  const text = '[remote "origin"]\n\turl = https://ada:TOK123\\\n@github.com/a/b.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n[remote "x"]\n\turl = /srv/x\\\\\n\tfetch = y\n';
+  assert.deepEqual(configRemotes(text), [
+    { name: 'origin', url: 'https://ada:TOK123@github.com/a/b.git' },
+    { name: 'x', url: '/srv/x\\\\' }, // an escaped (even) trailing backslash run does not continue
+  ]);
+  const dir = tempHome('cl-git-');
+  try {
+    write(path.join(dir, '.git', 'HEAD'), 'ref: refs/heads/main\n');
+    write(path.join(dir, '.git', 'config'), text);
+    assert.equal(gitInfo(dir).remote, 'https://github.com/a/b.git');
+  } finally {
+    rmrf(dir);
+  }
+});
+
 test('remoteKey: https, ssh, scp and an ssh alias like github-work give one key', () => {
   const forms = [
     'https://github.com/Ada/Site.git',

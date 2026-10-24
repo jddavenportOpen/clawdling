@@ -22,9 +22,10 @@ function mtimeIso(file) {
 
 /**
  * A remote URL with any userinfo removed, so a token embedded in it is never shown or stored:
- * `https://user:tok@github.com/a/b.git` -> `https://github.com/a/b.git`. scp-style
- * `git@host:a/b.git` is kept (its user is the protocol's, not a secret). Query strings and
- * fragments are dropped too.
+ * `https://user:tok@github.com/a/b.git` -> `https://github.com/a/b.git`. Userinfo runs to the
+ * LAST `@` (a password may hold `/`, `?`, `#` or `:`: `https://u:tok/x@host/a`,
+ * `deploy:tok@host:a/b`). scp-style `git@host:a/b.git` keeps `git@` (the protocol's user, not a
+ * secret); any other user is dropped. Query strings and fragments are dropped too.
  */
 export function sanitizeRemote(url) {
   if (typeof url !== 'string') return null;
@@ -33,23 +34,20 @@ export function sanitizeRemote(url) {
   const scheme = u.match(/^([a-z][a-z0-9+.-]*):\/\/(.*)$/i);
   if (scheme) {
     let rest = scheme[2];
+    const at = rest.lastIndexOf('@');
+    if (at !== -1) rest = rest.slice(at + 1);
+    rest = rest.replace(/[?#].*$/, '');
     const slash = rest.indexOf('/');
-    let authority = slash === -1 ? rest : rest.slice(0, slash);
-    let tail = slash === -1 ? '' : rest.slice(slash);
-    const at = authority.lastIndexOf('@');
-    if (at !== -1) authority = authority.slice(at + 1);
-    tail = tail.replace(/[?#].*$/, '');
+    const authority = slash === -1 ? rest : rest.slice(0, slash);
     if (!authority) return null;
-    return `${scheme[1].toLowerCase()}://${authority}${tail}`;
-  }
-  // Hosts may be ssh config aliases, which can hold an underscore (`github_work`).
-  const scp = u.match(/^(?:([A-Za-z0-9._-]+)@)?([A-Za-z0-9._-]+):(?!\/\/)(.+)$/);
-  if (scp && !/^[A-Za-z]$/.test(scp[2])) {
-    // user@host:path. Keep only a conventional protocol user (git, hg); drop anything else.
-    const user = scp[1] && /^(git|hg|org-\d+)$/.test(scp[1]) ? `${scp[1]}@` : '';
-    return `${user}${scp[2]}:${scp[3].replace(/[?#].*$/, '')}`;
+    return `${scheme[1].toLowerCase()}://${authority}${slash === -1 ? '' : rest.slice(slash)}`;
   }
   if (path.isAbsolute(u) || /^[A-Za-z]:[\\/]/.test(u)) return u; // a local path remote
+  const at = u.lastIndexOf('@');
+  const user = at === -1 ? null : u.slice(0, at);
+  // Hosts may be ssh config aliases, which can hold an underscore (`github_work`).
+  const scp = (at === -1 ? u : u.slice(at + 1)).match(/^([A-Za-z0-9._-]+):(?!\/\/)(.+)$/);
+  if (scp && !/^[A-Za-z]$/.test(scp[1])) return `${user === 'git' ? 'git@' : ''}${scp[1]}:${scp[2].replace(/[?#].*$/, '')}`;
   return null;
 }
 
@@ -108,11 +106,38 @@ function commonDirOf(gitDir) {
   return path.resolve(gitDir, c.trim());
 }
 
+/** How many backslashes end `s`. */
+function trailingBackslashes(s) {
+  let n = 0;
+  for (let i = s.length - 1; i >= 0 && s[i] === '\\'; i--) n++;
+  return n;
+}
+
+/**
+ * A git config's lines with continuations joined: a line ending in an odd number of backslashes
+ * goes on with the next line (git-config(1)), so `url = https://u:tok\` + `@host/x` is one value.
+ */
+function joinContinuations(text) {
+  const raw = String(text || '').split(/\r?\n/);
+  const out = [];
+  for (let i = 0; i < raw.length; i++) {
+    const parts = [];
+    let piece = raw[i];
+    while (trailingBackslashes(piece) % 2 === 1 && i + 1 < raw.length) {
+      parts.push(piece.slice(0, -1));
+      piece = raw[++i];
+    }
+    parts.push(piece);
+    out.push(parts.join(''));
+  }
+  return out;
+}
+
 /** `[remote "x"] url = ...` entries of a git config, in file order. */
 export function configRemotes(text) {
   const out = [];
   let cur = null;
-  for (const line of String(text || '').split(/\r?\n/)) {
+  for (const line of joinContinuations(text)) {
     const sec = line.match(/^\s*\[\s*remote\s+"([^"]+)"\s*\]/);
     if (sec) {
       cur = sec[1];

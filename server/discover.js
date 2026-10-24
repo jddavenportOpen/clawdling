@@ -6,7 +6,10 @@
 // starts is `gh` (defaultExec refuses anything else); git metadata is read straight from `.git`.
 // The setup scan returns NAMES and DESCRIPTIONS only: from ~/.claude.json it takes the keys of
 // `mcpServers` and nothing else, hook commands are never read past their event name, and every
-// free-text field passes through redactSecrets().
+// free-text field and name passes through redactSecrets(). Inside a repo a file is read only when
+// its realpath is inside the repo (a cloned repo can commit `README.md -> ../../.netrc`); the
+// user's own config dir may be linked from a dotfiles repo, but a linked file never gives up its
+// first line, and only a file with a frontmatter `name` is a subagent.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -20,6 +23,9 @@ import { execFileP, oneLine } from './util.js';
 
 const MAX_FILE = 20 * 1024 * 1024; // files larger than this are skipped, never read
 const HEAD_BYTES = 64 * 1024; // a transcript's head, a skill's frontmatter, a CLAUDE.md's opening
+const BODY_BYTES = 100 * 1024; // the most of a subagent's file read for its prompt
+const WALK_MAX = 5000; // directory entries one recursive walk (commands) may look at
+const OPEN_FLAGS = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RECENT_DAYS = 90;
 const DESC_MAX = 300;
@@ -95,7 +101,7 @@ function direntIsFile(dir, e) {
 function readHeadDefault(file, bytes = HEAD_BYTES) {
   let fd;
   try {
-    fd = fs.openSync(file, 'r');
+    fd = fs.openSync(file, OPEN_FLAGS);
     const buf = Buffer.alloc(bytes);
     const n = fs.readSync(fd, buf, 0, bytes, 0);
     return buf.subarray(0, n).toString('utf8');
@@ -112,16 +118,38 @@ function readHeadDefault(file, bytes = HEAD_BYTES) {
   }
 }
 
-/** A regular file's text (whole, or its head), or null when missing or over MAX_FILE. */
-function readCapped(file, { head = false } = {}) {
-  const st = statSafe(file);
+// Every file the scans read goes through a scope: `{root, strict}`, root a realpath (or null).
+// A repo is STRICT: a file is read only when its realpath is a regular file inside the repo, since
+// a cloned repo can commit `README.md -> ../../.netrc`. The user's own Claude config dir is
+// LENIENT: it is often linked from a dotfiles repo, so symlinks are followed, but `inside` tells
+// the caller whether the file really lives there (a linked file never gives up its first line).
+const LENIENT = Object.freeze({ root: null, strict: false });
+const scopeOf = (dir, strict) => ({ root: real(dir), strict });
+
+/** `{path: realpath, inside}` for a regular file of at most MAX_FILE bytes the scope allows, else null. */
+function locate(file, scope = LENIENT) {
+  const rp = real(file);
+  if (!rp) return null;
+  const st = statSafe(rp);
   if (!st || !st.isFile() || st.size > MAX_FILE) return null;
-  if (head) return readHeadDefault(file, HEAD_BYTES);
-  try {
-    return fs.readFileSync(file, 'utf8');
-  } catch {
-    return null;
-  }
+  const inside = !!scope.root && isInside(rp, scope.root);
+  if (scope.strict && !inside) return null;
+  return { path: rp, inside };
+}
+
+/** The realpath of a folder the scope allows (strict: inside its root), else null. */
+function dirIn(dir, scope = LENIENT) {
+  const rp = real(dir);
+  if (!rp || !defaultIsDir(rp)) return null;
+  if (scope.strict && !(scope.root && isInside(rp, scope.root))) return null;
+  return rp;
+}
+
+/** The first `bytes` bytes of a file the scope allows: `{text, inside}`, else null. */
+function readIn(file, scope = LENIENT, bytes = HEAD_BYTES) {
+  const f = locate(file, scope);
+  if (!f) return null;
+  return { text: readHeadDefault(f.path, bytes), inside: f.inside };
 }
 
 /**
@@ -129,8 +157,16 @@ function readCapped(file, { head = false } = {}) {
  * returns. The parsed object never leaves this function, and a parse error (whose message can
  * quote the file) is swallowed, never logged or returned.
  */
-function withJson(file, pick) {
-  const text = readCapped(file);
+function withJson(file, pick, scope = LENIENT) {
+  const f = locate(file, scope);
+  let text = null;
+  if (f) {
+    try {
+      text = fs.readFileSync(f.path, 'utf8');
+    } catch {
+      text = null;
+    }
+  }
   if (text === null) return pick(null);
   let obj = null;
   try {
@@ -154,12 +190,15 @@ function samePathKey(p, platform = process.platform) {
   return platform === 'win32' ? p.toLowerCase() : p;
 }
 
-/** Is `p` the folder `dir` or inside it? Both absolute. */
-function isInside(p, dir) {
-  const a = samePathKey(path.resolve(p));
-  const b = samePathKey(path.resolve(dir));
+/** Is `p` the folder `dir` or inside it? Both absolute, in the flavour of the path module `P`. */
+function insideWith(P, platform, p, dir) {
+  const a = samePathKey(P.resolve(p), platform);
+  const b = samePathKey(P.resolve(dir), platform);
   if (a === b) return true;
-  return a.startsWith(b.endsWith(path.sep) ? b : b + path.sep);
+  return a.startsWith(b.endsWith(P.sep) ? b : b + P.sep);
+}
+function isInside(p, dir) {
+  return insideWith(path, process.platform, p, dir);
 }
 
 /** `~/x` for a path under the home folder (display only). */
@@ -176,30 +215,66 @@ function tildify(p, home) {
 
 const SECRET_KEY_WORD = '(?:token|secret|password|passwd|passphrase|api[_-]?key|apikey|private[_-]?key|access[_-]?key|credential|auth)';
 const STRONG_KEY_RE = /token|secret|password|passwd|passphrase|api[_-]?key|apikey|private[_-]?key|access[_-]?key|credential/i;
-// `key: value` / `key = value` where the key names a secret. The value is a quoted string or a bare
-// run of characters that cannot start with "[" (so an earlier [redacted] is not redacted again).
-// Every quantifier is bounded and the key must start a run of key characters, so a hostile 64 KB
-// line costs linear time, not quadratic.
+// `key: value` / `key = value` where the key names a secret. Any whitespace (a newline too, in
+// multi-line text) may sit around the separator. The value is a string in quotes, backticks,
+// <...> or [...] (any length up to 8 KB), or a bare run of characters, possibly after an opening
+// wrapper that is never closed. A bare value cannot start with "[" (so an earlier [redacted] is
+// not redacted again). Every quantifier is bounded and the key must start a run of key characters,
+// so a hostile 64 KB line costs linear time, not quadratic.
 const KV_RE = new RegExp(
-  `(["']?)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,48}${SECRET_KEY_WORD}[A-Za-z0-9_.-]{0,48})\\1([ \\t]{0,8})([:=])([ \\t]{0,8})(?:"([^"\\n]{1,512})"|'([^'\\n]{1,512})'|([^\\s"'\`,;<>(){}\\[\\]]{1,1024}))`,
+  `(["']?)(?<![A-Za-z0-9_.-])([A-Za-z0-9_.-]{0,48}${SECRET_KEY_WORD}[A-Za-z0-9_.-]{0,48})\\1(\\s{0,8})([:=])(\\s{0,8})` +
+    `(?:"([^"\\n]{1,8192})"|'([^'\\n]{1,8192})'|\`([^\`\\n]{1,8192})\`|<([^<>\\n]{1,8192})>|\\[([^\\[\\]\\n]{1,8192})\\]|(["'\`<\\[]?)([^\\s"'\`,;<>(){}\\[\\]]{1,1024}))`,
   'gi'
 );
+const KV_WRAP = [['"', '"'], ["'", "'"], ['`', '`'], ['<', '>'], ['[', ']']];
 const TOKEN_RES = [
-  /-----BEGIN [A-Z ]{0,40}PRIVATE KEY-----[\s\S]{0,16384}?(?:-----END [A-Z ]{0,40}PRIVATE KEY-----|$)/g,
   /\bsk-ant-[A-Za-z0-9_-]{4,}/g,
   /\bsk-(?=[A-Za-z0-9_-]{0,256}\d)[A-Za-z0-9_-]{8,}/g,
   /\bsk-[A-Za-z0-9_-]{20,}/g,
   /\b[rs]k_(?:live|test)_[A-Za-z0-9]{8,}/g,
   /\bgh[pousr]_[A-Za-z0-9]{8,}/g,
   /\bgithub_pat_[A-Za-z0-9_]{8,}/g,
-  /\bxox[abprs]-[A-Za-z0-9-]{6,}/g,
+  /\bxox[abceprs]-[A-Za-z0-9-]{6,}/g,
   /\bxapp-[A-Za-z0-9-]{8,}/g,
   /\bAKIA[0-9A-Z]{8,}/g,
+  /\bASIA[0-9A-Z]{12,}/g, // AWS temporary credentials
   /\bAIza[0-9A-Za-z_-]{8,}/g,
+  /\bya29\.[A-Za-z0-9_-]{8,}/g, // Google OAuth access token
+  /\bGOCSPX-[A-Za-z0-9_-]{8,}/g, // Google OAuth client secret
   /\bglpat-[A-Za-z0-9_-]{8,}/g,
   /\bnpm_[A-Za-z0-9]{8,}/g,
+  /\bpypi-(?:AgE|(?=[A-Za-z0-9_-]{0,256}\d))[A-Za-z0-9_-]{16,}/g,
+  /\bhf_[A-Za-z0-9]{16,}/g, // Hugging Face
+  /\bSG\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}/g, // SendGrid
+  /\bwhsec_[A-Za-z0-9+/=]{8,}/g, // Stripe / Svix webhook secret
+  /\bdo[opr]_v1_[A-Za-z0-9]{16,}/g, // DigitalOcean
+  /\bshp(?:at|ss|ca|pa)_[A-Za-z0-9]{16,}/g, // Shopify
+  /\bAGE-SECRET-KEY-1[0-9A-Z]{16,}/g, // age
   /\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}/g, // a JWT
 ];
+const KEY_BEGIN = '-----BEGIN [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----';
+const KEY_END = '-----END [A-Z0-9 ]{0,40}PRIVATE KEY(?: BLOCK)?-----';
+
+/**
+ * Every private key block (PEM, OpenSSH, PGP `PRIVATE KEY BLOCK`, encrypted) becomes [redacted];
+ * a block with no END line (a file cut short, a giant key) is redacted to the end of the text.
+ */
+function redactKeyBlocks(s) {
+  if (!s.includes('-----BEGIN ')) return s;
+  const begin = new RegExp(KEY_BEGIN, 'g');
+  const end = new RegExp(KEY_END, 'g');
+  let out = '';
+  let last = 0;
+  for (let m = begin.exec(s); m; m = begin.exec(s)) {
+    end.lastIndex = m.index + m[0].length;
+    const e = end.exec(s);
+    const stop = e ? e.index + e[0].length : s.length;
+    out += s.slice(last, m.index) + REDACTED;
+    last = stop;
+    begin.lastIndex = stop;
+  }
+  return out + s.slice(last);
+}
 
 /** A value that looks like a credential rather than a word: long, or letters mixed with digits. */
 function looksSecret(v) {
@@ -213,29 +288,47 @@ function looksCredential(v) {
 
 /**
  * Text with secret-looking values replaced by `[redacted]`: known token prefixes (sk-ant-, sk-,
- * ghp_/gho_/ghu_/ghs_/ghr_, github_pat_, xox?-, AKIA, AIza, glpat-, npm_, Stripe keys, JWTs,
- * private key blocks), `Bearer <x>` / `Basic <x>`, URL userinfo, and `key = value` /
- * `key: value` where the key names a secret (token, secret, password, api_key, private_key,
- * auth...). Ordinary prose is left alone. Defence in depth: callers never surface credential
- * fields in the first place.
+ * ghp_/gho_/ghu_/ghs_/ghr_, github_pat_, xox?-, AKIA/ASIA, AIza, ya29., GOCSPX-, glpat-, npm_,
+ * pypi-, hf_, SG., whsec_, dop_v1_, shpat_/shpss_, AGE-SECRET-KEY-, Stripe keys, JWTs), private
+ * key blocks, Slack / Discord webhook URLs, Azure `AccountKey=` / `SharedAccessSignature=` /
+ * `sig=`, `Bearer <x>` / `Basic <x>`, Authorization and Cookie headers, URL userinfo, netrc
+ * `login x password y`, `key = value` / `key: value` where the key names a secret (token, secret,
+ * password, api_key, private_key, auth...), and env-style `NAME_KEY` / `_TOKEN` / `_SECRET` /
+ * `_PASS` / `_PWD` / `_PASSWD` values. Ordinary prose is left alone. Defence in depth: callers
+ * never surface credential fields in the first place.
  */
 export function redactSecrets(text) {
   if (text === null || text === undefined) return text;
   let s = String(text);
   if (!s) return s;
-  // URL userinfo: scheme://user:pass@host, or scheme://<token>@host.
-  s = s.replace(/\b([a-z][a-z0-9+.-]{0,30}:\/\/)([^\s/@]{1,256})@/gi, (m, scheme, info) => (info.includes(':') || looksSecret(info) ? `${scheme}${REDACTED}@` : m));
+  s = redactKeyBlocks(s);
+  // URL userinfo: scheme://user:pass@host, scheme://<token>@host, scheme://user:pa/ss@host.
+  s = s.replace(/\b([a-z][a-z0-9+.-]{0,30}:\/\/)([^\s@]{1,256})@/gi, (m, scheme, info) => {
+    const slash = info.indexOf('/');
+    if (slash === -1) return info.includes(':') || looksSecret(info) ? `${scheme}${REDACTED}@` : m;
+    // A password holding a slash; `host:8080/path@x` (a port: digits only) is a path, not userinfo.
+    return /^[^:]*:(?!\d*$)/.test(info.slice(0, slash)) ? `${scheme}${REDACTED}@` : m;
+  });
   for (const re of TOKEN_RES) s = s.replace(re, REDACTED);
+  // Webhook URLs whose path is the credential.
+  s = s.replace(/\b(hooks\.slack\.com\/(?:services|workflows|triggers)\/)[A-Za-z0-9_/-]{6,}/gi, `$1${REDACTED}`);
+  s = s.replace(/\b(discord(?:app)?\.com\/api(?:\/v\d{1,3})?\/webhooks\/)[A-Za-z0-9_/-]{6,}/gi, `$1${REDACTED}`);
+  // Azure storage / service bus connection strings and SAS tokens.
+  s = s.replace(/\b(AccountKey|SharedAccessKey|SharedAccessSignature|sig)(\s{0,8}=\s{0,8})(?!\[redacted\])([^;&\s"'<>]{1,4096})/gi, `$1$2${REDACTED}`);
   // Authorization headers, with or without a scheme word.
-  s = s.replace(/\b((?:proxy-)?authorization["']?[ \t]{0,8}[:=][ \t]{0,8}["']?)(?:(bearer|basic|token|bot|digest)[ \t]+)?([^\s"',;]{1,2048})/gi, (m, head, scheme, val) =>
+  s = s.replace(/\b((?:proxy-)?authorization["']?\s{0,8}[:=]\s{0,8}["']?)(?:(bearer|basic|token|bot|digest)\s{1,8})?([^\s"',;]{1,2048})/gi, (m, head, scheme, val) =>
     val.startsWith('[') || (!scheme && !looksSecret(val)) ? m : `${head}${scheme ? `${scheme} ` : ''}${REDACTED}`
   );
-  s = s.replace(/\b(bearer|basic)([ \t]{1,8})([A-Za-z0-9._~+/=-]{1,4096})/gi, (m, word, sp, val) => (looksCredential(val) ? `${word}${sp}${REDACTED}` : m));
-  s = s.replace(KV_RE, (m, q1, key, s1, sep, s2, dq, sq, bare, offset, whole) => {
-    const val = dq ?? sq ?? bare ?? '';
-    if (!val || val.startsWith(REDACTED) || /authorization/i.test(key)) return m; // headers: done above
+  s = s.replace(/\b(bearer|basic)(\s{1,8})([A-Za-z0-9._~+/=-]{1,4096})/gi, (m, word, sp, val) => (looksCredential(val) ? `${word}${sp}${REDACTED}` : m));
+  // A Cookie header's name=value pairs (`Cookie: banners are off` has no pair and stays).
+  s = s.replace(/\b((?:set-)?cookie["']?\s{0,8}[:=]\s{0,8})([^\s"'=;[\]]{1,256}=[^\n"']{1,4096})/gi, `$1${REDACTED}`);
+  s = s.replace(KV_RE, (m, q1, key, s1, sep, s2, dq, sq, bt, ang, brk, open, bare, offset, whole) => {
+    const wrapped = [dq, sq, bt, ang, brk];
+    const w = wrapped.findIndex((v) => v !== undefined);
+    const val = (w === -1 ? bare : wrapped[w]) ?? '';
+    if (!val || val.startsWith(REDACTED) || (w === 4 && `[${val}]` === REDACTED) || /authorization/i.test(key)) return m; // headers: done above
     if (/tokens$/i.test(key) && /^\d+$/.test(val)) return m; // max_tokens=4096 is a count
-    const quoted = dq !== undefined || sq !== undefined;
+    const quoted = w !== -1 || !!open;
     // `auth` alone is too common a fragment (author, OAuth) to mean a secret by itself.
     const relevant = STRONG_KEY_RE.test(key) || /(?:^|[_.-])auth(?:[_.-]|$)/i.test(key);
     let hide;
@@ -247,18 +340,41 @@ export function redactSecrets(text) {
       hide = !/s$/i.test(key) && val.length >= 4 && !prose;
     }
     if (!hide) return m;
-    const q = dq !== undefined ? '"' : sq !== undefined ? "'" : '';
-    return `${q1}${key}${q1}${s1}${sep}${s2}${q}${REDACTED}${q}`;
+    const [l, r] = w === -1 ? [open || '', ''] : KV_WRAP[w];
+    return `${q1}${key}${q1}${s1}${sep}${s2}${l}${REDACTED}${r}`;
   });
-  // ENV_STYLE_KEY=value (STRIPE_KEY=..., DEPLOY_KEY=...).
-  s = s.replace(/(?<![A-Z0-9_])([A-Z][A-Z0-9_]{0,64}_KEY)([ \t]{0,8}=[ \t]{0,8})(?!\[redacted\])(\S{1,4096})/g, `$1$2${REDACTED}`);
+  // netrc: `machine host login ada password hunter2` (`password reset flows` is prose, unless the
+  // value is not a plain word or it follows a netrc `machine ... login <user>`).
+  s = s.replace(/\b(password|passwd)([ \t]{1,8})([^\s"'`,;()<>[\]{}=:][^\s"'`,;()<>[\]{}]{0,1023})/gi, (m, word, sp, val, offset, whole) => {
+    const before = whole.slice(Math.max(0, offset - 300), offset);
+    const netrc = /\b(?:machine|default)\s/i.test(before) && /\blogin\s{1,8}\S{1,256}\s{1,8}$/i.test(before);
+    return netrc || !/^[A-Za-z]+[.,!?:)]?$/.test(val) ? `${word}${sp}${REDACTED}` : m;
+  });
+  // ENV_STYLE names: STRIPE_KEY=..., DB_PASS=..., MYSQL_PWD: ..., APP_SECRET="...".
+  s = s.replace(
+    /(?<![A-Z0-9_])([A-Z][A-Z0-9_]{0,64}_(?:KEY|PASS|PWD|PASSWD|PASSWORD|SECRET|TOKEN))(\s{0,8}([=:])\s{0,8})(?:"([^"\n]{1,4096})"|'([^'\n]{1,4096})'|`([^`\n]{1,4096})`|(?!\[redacted\])([^\s"'`]{1,4096}))/g,
+    (m, key, sp, sep, dq, sq, bt, bare, offset, whole) => {
+      const wrapped = dq ?? sq ?? bt;
+      const val = wrapped ?? bare ?? '';
+      if (!val || val.startsWith(REDACTED)) return m;
+      // `API_KEY: see the docs` is prose; `DEPLOY_KEY: hunter2` is not.
+      if (sep === ':' && wrapped === undefined && (val.length < 4 || /^[ \t]+[A-Za-z]/.test(whole.slice(offset + m.length)))) return m;
+      const q = dq !== undefined ? '"' : sq !== undefined ? "'" : bt !== undefined ? '`' : '';
+      return `${key}${sp}${q}${REDACTED}${q}`;
+    }
+  );
   return s;
 }
 
-/** One line of at most `max` chars, redacted, or null when empty. */
+/**
+ * One line of at most `max` chars, redacted, or null when empty. The text is clamped (to 4x max)
+ * and flattened to one line BEFORE it is redacted: a 62 KB description costs a 1 KB redaction, and
+ * `token:\n\n\n  abc` is judged as the `token: abc` it is shown as.
+ */
 function cleanText(s, max = DESC_MAX) {
   if (s === null || s === undefined) return null;
-  const out = oneLine(redactSecrets(String(s)), max);
+  const flat = oneLine(String(s).slice(0, max * 4), max * 4);
+  const out = oneLine(redactSecrets(flat), max);
   return out || null;
 }
 const cleanName = (s) => cleanText(s, NAME_MAX);
@@ -572,7 +688,7 @@ function mainCheckout(root) {
   if (!st.isFile()) return null;
   const gd = gitDirOf(root);
   if (!gd) return null;
-  const c = readCapped(path.join(gd, 'commondir'), { head: true });
+  const c = readIn(path.join(gd, 'commondir'))?.text;
   if (!c || !c.trim()) return null;
   const common = path.resolve(gd, c.trim());
   if (path.basename(common) !== '.git') return null;
@@ -744,6 +860,38 @@ function tempDirsOutside(tmpDirs, home) {
   return (Array.isArray(tmpDirs) ? tmpDirs : []).filter((t) => typeof t === 'string' && t && !homes.some((h) => isInside(h, t) || isInside(h, real(t) || t)));
 }
 
+const SYSTEM_DIRS_POSIX = ['/etc', '/usr', '/bin', '/sbin', '/var', '/private/etc', '/private/var', '/System', '/Library', '/Applications', '/opt/homebrew', '/proc', '/dev'];
+const SYSTEM_DIRS_WIN = ['C:\\Windows', 'C:\\Program Files', 'C:\\Program Files (x86)', 'C:\\ProgramData'];
+
+/**
+ * The system trees (and, on this machine, their realpaths) that are never projects, minus any
+ * that holds the home folder (a sandbox or CI box with HOME under /var keeps its projects).
+ */
+function systemTrees(home, platform = process.platform) {
+  const win = platform === 'win32';
+  const P = win ? path.win32 : path.posix;
+  const native = P === path; // realpaths only mean something for this machine's own path flavour
+  const homes = home ? [P.resolve(home), native ? real(home) : null].filter(Boolean) : [];
+  const out = [];
+  for (const d of win ? SYSTEM_DIRS_WIN : SYSTEM_DIRS_POSIX) {
+    const rd = native ? real(d) : null;
+    const vs = rd && rd !== d ? [d, rd] : [d];
+    if (homes.some((h) => vs.some((v) => insideWith(P, platform, h, v)))) continue;
+    out.push(...vs);
+  }
+  return out;
+}
+
+/**
+ * Is `p` inside a system folder (/etc, /usr, /var, /System, /Library, /Applications,
+ * /opt/homebrew, C:\Windows, C:\Program Files...)? Not when that folder holds the home folder.
+ */
+export function isSystemPath(p, { platform = process.platform, home = os.homedir() } = {}) {
+  if (typeof p !== 'string' || !p || p.includes('\0')) return false;
+  const P = platform === 'win32' ? path.win32 : path.posix;
+  return systemTrees(home, platform).some((t) => insideWith(P, platform, p, t));
+}
+
 /** A history-folder-name filter for temp folders (cheap: no fs access for 25k scratch folders). */
 function tempNameFilter(tmpDirs) {
   const prefixes = [...new Set(tmpDirs.map((d) => encodeProjectPath(path.resolve(d))).filter((e) => e.length > 2))];
@@ -763,13 +911,22 @@ function makeExcluder({ home, orgHome, configDir, tmpDirs = [] }) {
     ...variants(configDir),
     ...variants(home && path.join(home, '.claude')),
     ...tmpDirs.flatMap(variants),
+    ...systemTrees(home),
   ];
-  const exact = variants(home).map((p) => samePathKey(p));
+  const homes = variants(home);
+  const exact = homes.map((p) => samePathKey(p));
+  // Anything inside a dot-folder directly under home (~/.ssh, ~/.config, ~/.aws, ...).
+  const inDotFolder = (r) =>
+    homes.some((h) => {
+      if (!isInside(r, h)) return false;
+      const first = path.relative(h, r).split(path.sep)[0];
+      return first.startsWith('.') && first !== '..';
+    });
   return (p) => {
     const r = path.resolve(p);
     if (path.parse(r).root === r) return true;
     if (exact.includes(samePathKey(r))) return true;
-    return trees.some((t) => isInside(r, t));
+    return inDotFolder(r) || trees.some((t) => isInside(r, t));
   };
 }
 
@@ -809,12 +966,44 @@ function githubView(r) {
 }
 
 /**
+ * The remote keys of repos in the user's own Clawdling and Claude folders (the org home and
+ * anything inside it, ~/.clawdling-accounts, the Claude config dir): such a repo is never a
+ * project, so its GitHub listing is not offered to clone either (importing it would reuse the org
+ * folder itself as the agent's repo). `paths` = local repos and Claude Code folders to check.
+ */
+function ownRepoKeys({ home, orgHome, configDir, paths = [] }) {
+  const trees = [orgHome, home && path.join(home, '.clawdling-accounts'), configDir, home && path.join(home, '.claude')]
+    .filter((t) => typeof t === 'string' && t)
+    .flatMap((t) => {
+      const r = path.resolve(t);
+      const rr = real(r);
+      return rr && rr !== r ? [rr, r] : [r];
+    });
+  const keys = new Set();
+  const add = (p, stopAt) => {
+    const root = findGitRoot(p, { stopAt });
+    const info = root ? gitInfo(root) : null;
+    const k = info?.remote ? remoteKey(info.remote) : null;
+    if (k) keys.add(k);
+  };
+  for (const t of trees) if (gitDirOf(t)) add(t, t);
+  for (const p of paths) {
+    const rp = real(p);
+    const t = rp && trees.find((x) => isInside(rp, x));
+    if (t) add(rp, t);
+  }
+  return keys;
+}
+
+/**
  * One candidate per project, newest activity first. A Claude Code folder inside a repo counts for
  * the repo root (a monorepo is one agent) and a linked worktree for its main checkout; a local
  * repo and a GitHub repo with the same remoteKey are one candidate; anything else is keyed by
  * realpath. Excluded: the org home and everything in it, ~/.clawdling-accounts, the home folder,
- * `/`, temp folders, the Claude config dir, and (unless they are repos) container folders: the
- * scan roots, ~/Desktop, ~/Documents, ~/Downloads.
+ * `/`, temp folders, the Claude config dir, dot-folders under home (~/.ssh, ~/.config...), system
+ * folders (/etc, /usr, /var, /System, /Library, C:\Windows...), and (unless they are repos)
+ * container folders: the scan roots, ~/Desktop, ~/Documents, ~/Downloads. A GitHub repo whose
+ * remote is the org home's (or a repo inside it, or the config dir's) is not offered to clone.
  */
 export function mergeCandidates({
   claude = [],
@@ -886,6 +1075,9 @@ export function mergeCandidates({
     if (it.rk && !primary.has(it.rk)) primary.set(it.rk, it);
   }
   const ghRepos = Array.isArray(github) ? github : Array.isArray(github?.repos) ? github.repos : [];
+  const own = ghRepos.length
+    ? ownRepoKeys({ home: homeDir, orgHome, configDir, paths: [...(Array.isArray(local) ? local : []).map((r) => (typeof r === 'string' ? r : r?.path)), ...(Array.isArray(claude) ? claude : []).map((c) => c?.path)] })
+    : new Set();
   const notCloned = [];
   for (const r of ghRepos) {
     if (!r || !r.nameWithOwner) continue;
@@ -893,7 +1085,7 @@ export function mergeCandidates({
     const hit = primary.get(rk);
     if (hit) {
       if (!hit.gh) hit.gh = r;
-    } else if (!notCloned.some((x) => x.rk === rk)) notCloned.push({ rk, r });
+    } else if (!own.has(rk) && !notCloned.some((x) => x.rk === rk)) notCloned.push({ rk, r });
   }
 
   const agentFor = agentMatcher(agents);
@@ -907,7 +1099,8 @@ export function mergeCandidates({
     const lastMs = Math.max(it.activity, toMs(gh?.pushedAt) ?? -Infinity);
     const sources = ['claude', 'local'].filter((s) => e.sources.has(s));
     if (gh) sources.push('github');
-    const has = (f) => isFile(path.join(e.path, f));
+    const box = scopeOf(e.path, true); // a file that is a symlink out of the repo does not count
+    const has = (f) => !!locate(path.join(e.path, f), box);
     out.push({
       key: rk && primary.get(rk) === it ? rk : `path:${e.path}`,
       name: path.basename(e.path) || e.path,
@@ -926,7 +1119,7 @@ export function mergeCandidates({
       has: {
         claude_md: has('CLAUDE.md') || has(path.join('.claude', 'CLAUDE.md')),
         agents_md: has('AGENTS.md'),
-        dot_claude: defaultIsDir(path.join(e.path, '.claude')),
+        dot_claude: !!dirIn(path.join(e.path, '.claude'), box),
         mcp_json: has('.mcp.json'),
       },
       monorepo: !!stack.monorepo,
@@ -1028,7 +1221,9 @@ export async function discover({
 
 // ------------------------------------------------------------------------------ setup scan
 
-function mdFiles(dir) {
+/** The `.md` files directly in `dir` (a folder the scope allows), sorted. */
+function mdFiles(dir, scope = LENIENT) {
+  if (!dirIn(dir, scope)) return [];
   const { entries } = listEntries(dir, LIST_MAX);
   return entries
     .filter((e) => /\.md$/i.test(e.name) && direntIsFile(dir, e))
@@ -1037,50 +1232,66 @@ function mdFiles(dir) {
 }
 
 /** Skills: `<dir>/*\/SKILL.md` -> [{name, description, source}]. */
-function listSkills(dir, source) {
+function listSkills(dir, source, scope = LENIENT) {
   const out = [];
+  if (!dirIn(dir, scope)) return out;
   const { entries } = listEntries(dir, LIST_MAX);
   for (const e of entries) {
     if (e.name.startsWith('.') || !direntIsDir(dir, e)) continue;
-    const text = readCapped(path.join(dir, e.name, 'SKILL.md'), { head: true });
-    if (text === null) continue;
-    const { data } = parseFrontmatter(text);
+    const r = readIn(path.join(dir, e.name, 'SKILL.md'), scope);
+    if (!r) continue;
+    const { data } = parseFrontmatter(r.text);
     const name = cleanName(data.name || e.name);
     if (name) out.push({ name, description: cleanText(data.description), source });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Subagents: `<dir>/*.md` -> [{name, description, file, source}]. */
-function listSubagents(dir, source) {
+/**
+ * Subagents: `<dir>/*.md` -> [{name, description, file, source}]. Only a file with a frontmatter
+ * `name` is a subagent (Claude Code's own rule), so a stray .md, or a symlink to some other file,
+ * is never listed.
+ */
+function listSubagents(dir, source, scope = LENIENT) {
   const out = [];
-  for (const f of mdFiles(dir)) {
-    const text = readCapped(path.join(dir, f), { head: true });
-    if (text === null) continue;
-    const { data } = parseFrontmatter(text);
-    const name = cleanName(data.name || f.replace(/\.md$/i, ''));
-    if (name) out.push({ name, description: cleanText(data.description), file: f, source });
+  for (const f of mdFiles(dir, scope)) {
+    const r = readIn(path.join(dir, f), scope);
+    if (!r) continue;
+    const { data } = parseFrontmatter(r.text);
+    const name = cleanName(data.name);
+    if (name) out.push({ name, description: cleanText(data.description), file: cleanName(f), source });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-/** Slash commands: `<dir>/**\/*.md`, a subfolder's commands named `sub:name`. */
-function listCommands(dir) {
+/**
+ * Slash commands: `<dir>/**\/*.md` to depth 3, a subfolder's commands named `sub:name`. Each real
+ * folder is walked once (a symlink loop costs nothing), the walk stops after WALK_MAX entries, and
+ * in a strict scope a folder outside the root is not walked at all.
+ */
+function listCommands(dir, scope = LENIENT) {
   const out = [];
+  const seen = new Set();
+  let budget = WALK_MAX;
   const walk = (d, prefix, depth) => {
-    const { entries } = listEntries(d, LIST_MAX);
+    const rd = dirIn(d, scope);
+    if (!rd || budget <= 0 || seen.has(samePathKey(rd))) return;
+    seen.add(samePathKey(rd));
+    const { entries } = listEntries(rd, Math.min(LIST_MAX, budget));
+    budget -= entries.length;
     for (const e of entries) {
       if (out.length >= LIST_MAX || e.name.startsWith('.')) continue;
-      if (direntIsDir(d, e)) {
-        if (depth < 3) walk(path.join(d, e.name), [...prefix, e.name], depth + 1);
+      if (direntIsDir(rd, e)) {
+        if (depth < 3) walk(path.join(rd, e.name), [...prefix, e.name], depth + 1);
         continue;
       }
-      if (!/\.md$/i.test(e.name) || !direntIsFile(d, e)) continue;
-      const text = readCapped(path.join(d, e.name), { head: true });
-      if (text === null) continue;
-      const { data, body } = parseFrontmatter(text);
-      // Claude Code's own fallback: the first line of the prompt is the description.
-      const firstLine = body.split(/\r?\n/).map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean);
+      if (!/\.md$/i.test(e.name)) continue;
+      const r = readIn(path.join(rd, e.name), scope);
+      if (!r) continue;
+      const { data, body } = parseFrontmatter(r.text);
+      // Claude Code's own fallback: the first line of the prompt is the description. Only for a
+      // file that really lives in the folder: a symlink out of it (to ~/.netrc, say) gives its name.
+      const firstLine = r.inside ? body.split(/\r?\n/).map((l) => l.replace(/^#+\s*/, '').trim()).find(Boolean) : null;
       const name = cleanName([...prefix, e.name.replace(/\.md$/i, '')].join(':'));
       if (name) out.push({ name, description: cleanText(data.description || firstLine) });
     }
@@ -1089,23 +1300,29 @@ function listCommands(dir) {
   return out.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-const EVENT_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+// Claude Code's hook event names (PreToolUse, Stop, UserPromptSubmit...). Any other key of
+// `hooks` is not printed: a name can be a pasted token.
+const EVENT_RE = /^[A-Z][A-Za-z]{2,40}$/;
 
 /** From a settings.json: hook EVENT names with their hook counts, and enabledPlugins flags. */
-function settingsSummary(file) {
-  return withJson(file, (s) => {
-    const hooks = [];
-    if (s && isObj(s.hooks)) {
-      for (const [event, groups] of Object.entries(s.hooks)) {
-        if (!EVENT_RE.test(event) || !Array.isArray(groups)) continue;
-        const count = groups.reduce((n, g) => n + (isObj(g) && Array.isArray(g.hooks) ? g.hooks.length : 1), 0);
-        hooks.push({ event, count });
+function settingsSummary(file, scope = LENIENT) {
+  return withJson(
+    file,
+    (s) => {
+      const hooks = [];
+      if (s && isObj(s.hooks)) {
+        for (const [event, groups] of Object.entries(s.hooks)) {
+          if (!EVENT_RE.test(event) || !Array.isArray(groups)) continue;
+          const count = groups.reduce((n, g) => n + (isObj(g) && Array.isArray(g.hooks) ? g.hooks.length : 1), 0);
+          hooks.push({ event, count });
+        }
       }
-    }
-    const enabled = [];
-    if (s && isObj(s.enabledPlugins)) for (const [k, v] of Object.entries(s.enabledPlugins)) enabled.push([k, v === true]);
-    return { hooks, enabled };
-  });
+      const enabled = [];
+      if (s && isObj(s.enabledPlugins)) for (const [k, v] of Object.entries(s.enabledPlugins)) enabled.push([k, v === true]);
+      return { hooks, enabled };
+    },
+    scope
+  );
 }
 
 function mergeHooks(...lists) {
@@ -1148,8 +1365,8 @@ function claudeJsonMcpNames(file, repoPaths) {
   });
 }
 
-function mcpJsonNames(file) {
-  return withJson(file, (j) => (j && isObj(j.mcpServers) ? Object.keys(j.mcpServers).slice(0, LIST_MAX) : []));
+function mcpJsonNames(file, scope = LENIENT) {
+  return withJson(file, (j) => (j && isObj(j.mcpServers) ? Object.keys(j.mcpServers).slice(0, LIST_MAX) : []), scope);
 }
 
 function namesToMcp(names, scope) {
@@ -1161,16 +1378,16 @@ function namesToMcp(names, scope) {
   return out;
 }
 
-function claudeMdLines(file) {
-  const text = readCapped(file, { head: true });
-  if (text === null) return { exists: isFile(file), lines: [] };
-  // The opening up to the 8th non-empty line, redacted as one piece (a private key block spans
-  // lines), then cut into lines.
-  const raw = text.split(/\r?\n/);
+function claudeMdLines(file, scope = LENIENT) {
+  const r = readIn(file, scope);
+  if (!r) return { exists: isFile(file), lines: [] };
+  // The opening up to the 8th non-empty line (each line clamped first, so a giant line costs
+  // little), redacted as one piece (a private key block spans lines), then cut into lines.
+  const raw = r.text.split(/\r?\n/);
   let end = 0;
   for (let seen = 0; end < raw.length && seen < 8; end++) if (raw[end].trim()) seen++;
   const out = [];
-  for (const l of redactSecrets(raw.slice(0, end).join('\n')).split('\n')) {
+  for (const l of redactSecrets(raw.slice(0, end).map((x) => x.slice(0, DESC_MAX * 4)).join('\n')).split('\n')) {
     const t = cleanText(l);
     if (t) out.push(t);
   }
@@ -1214,35 +1431,40 @@ function setupRepos(repos, agents) {
  * The Claude Code setup every session loads (the `GET /api/setup` body): the first lines of the
  * global CLAUDE.md, skills, subagents, commands, plugins, hook event names with counts, MCP server
  * names, and per repo what the repo adds. Names and descriptions only. `repos` = paths or
- * `{path, agent}`; or pass the org's `agents` and their repos are used.
+ * `{path, agent}`; or pass the org's `agents` and their repos are used. Inside a repo every read
+ * is confined to the repo (a cloned repo can commit symlinks to anything); the config dir may be
+ * linked from a dotfiles repo.
  */
 export function scanSetup({ configDir, claudeJsonPath, repos = [], agents, homedir = os.homedir(), env = process.env } = {}) {
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
+  const user = scopeOf(cfg, false);
   const repoList = setupRepos(repos, agents);
   const mcp = claudeJsonMcpNames(claudeJsonPath || claudeJsonPathFor(env, home), repoList.map((r) => r.path));
-  const settings = settingsSummary(path.join(cfg, 'settings.json'));
+  const settings = settingsSummary(path.join(cfg, 'settings.json'), user);
   return {
     config_dir: tildify(cfg, home),
-    claude_md: claudeMdLines(path.join(cfg, 'CLAUDE.md')),
-    skills: listSkills(path.join(cfg, 'skills'), 'user'),
-    agents: listSubagents(path.join(cfg, 'agents'), 'user'),
-    commands: listCommands(path.join(cfg, 'commands')),
+    claude_md: claudeMdLines(path.join(cfg, 'CLAUDE.md'), user),
+    skills: listSkills(path.join(cfg, 'skills'), 'user', user),
+    agents: listSubagents(path.join(cfg, 'agents'), 'user', user),
+    commands: listCommands(path.join(cfg, 'commands'), user),
     plugins: listPlugins(cfg, settings.enabled),
     hooks: settings.hooks,
     mcp: namesToMcp(mcp.user, 'user'),
     projects: repoList.map(({ path: repo, agent }) => {
+      const box = scopeOf(repo, true);
       const dot = path.join(repo, '.claude');
+      const has = (f) => !!locate(f, box);
       return {
         path: repo,
         agent,
-        claude_md: isFile(path.join(repo, 'CLAUDE.md')) || isFile(path.join(dot, 'CLAUDE.md')),
-        agents_md: isFile(path.join(repo, 'AGENTS.md')),
-        skills: listSkills(path.join(dot, 'skills'), 'project'),
-        agents: listSubagents(path.join(dot, 'agents'), 'project'),
-        commands: listCommands(path.join(dot, 'commands')),
-        hooks: mergeHooks(settingsSummary(path.join(dot, 'settings.json')).hooks, settingsSummary(path.join(dot, 'settings.local.json')).hooks),
-        mcp: [...namesToMcp(mcpJsonNames(path.join(repo, '.mcp.json')), 'project'), ...namesToMcp(mcp.byRepo.get(repo) || [], 'local')],
+        claude_md: has(path.join(repo, 'CLAUDE.md')) || has(path.join(dot, 'CLAUDE.md')),
+        agents_md: has(path.join(repo, 'AGENTS.md')),
+        skills: listSkills(path.join(dot, 'skills'), 'project', box),
+        agents: listSubagents(path.join(dot, 'agents'), 'project', box),
+        commands: listCommands(path.join(dot, 'commands'), box),
+        hooks: mergeHooks(settingsSummary(path.join(dot, 'settings.json'), box).hooks, settingsSummary(path.join(dot, 'settings.local.json'), box).hooks),
+        mcp: [...namesToMcp(mcpJsonNames(path.join(repo, '.mcp.json'), box), 'project'), ...namesToMcp(mcp.byRepo.get(repo) || [], 'local')],
       };
     }),
   };
@@ -1250,36 +1472,44 @@ export function scanSetup({ configDir, claudeJsonPath, repos = [], agents, homed
 
 /**
  * A Claude Code subagent definition looked up BY NAME among `<configDir>/agents/*.md` (scope
- * user) or `<repo>/.claude/agents/*.md` (scope repo), matching its frontmatter `name` (else the
- * file's basename): `{name, description, file, path, body, tools, model}` or null. No path is ever
- * built from `name`. Pass `repos` (allowed repo paths) to refuse a repo outside the org. The body
- * (the subagent's prompt) is read only here, and comes back redacted.
+ * user) or `<repo>/.claude/agents/*.md` (scope repo), matching its frontmatter `name` (a file
+ * without one is not a subagent): `{name, description, file, path, body, tools, model}` or null.
+ * No path is ever built from `name`. Pass `repos` (allowed repo paths) to refuse a repo outside
+ * the org. In scope repo the file's realpath must be inside the repo. Only the head (64 KB) of
+ * each candidate is read to match, then at most 100 KB of the match; the body (the subagent's
+ * prompt) is read only here, and comes back redacted.
  */
 export function findSubagent({ configDir, scope, repo, name, repos } = {}) {
   if (typeof name !== 'string' || !name.trim() || name.length > 200) return null;
   let dir;
+  let box;
   if (scope === 'user') {
     if (typeof configDir !== 'string' || !configDir) return null;
-    dir = path.join(path.resolve(configDir), 'agents');
+    const cfg = path.resolve(configDir);
+    dir = path.join(cfg, 'agents');
+    box = scopeOf(cfg, false);
   } else if (scope === 'repo') {
     if (typeof repo !== 'string' || !isAbsoluteAny(repo)) return null;
     const rr = real(repo);
     if (!rr || !defaultIsDir(rr)) return null;
     if (Array.isArray(repos) && !repos.some((p) => typeof p === 'string' && real(p) && samePathKey(real(p)) === samePathKey(rr))) return null;
     dir = path.join(rr, '.claude', 'agents');
+    box = { root: rr, strict: true };
   } else return null;
   const want = name.trim();
-  for (const f of mdFiles(dir)) {
-    const text = readCapped(path.join(dir, f));
-    if (text === null) continue;
-    const { data, body } = parseFrontmatter(text);
-    const raw = String(data.name || '').trim() || f.replace(/\.md$/i, '');
-    if (raw !== want && cleanName(raw) !== want) continue;
+  for (const f of mdFiles(dir, box)) {
+    const head = readIn(path.join(dir, f), box);
+    const raw = head ? String(parseFrontmatter(head.text).data.name || '').trim() : '';
+    if (!raw || (raw !== want && cleanName(raw) !== want)) continue;
+    const full = readIn(path.join(dir, f), box, BODY_BYTES);
+    if (!full) continue;
+    const { data, body } = parseFrontmatter(full.text);
+    const file = cleanName(f) || 'agent.md'; // a file name can be a pasted token too
     return {
       name: cleanName(raw),
       description: cleanText(data.description),
-      file: f,
-      path: path.join(dir, f), // for the promoted agent's provenance line
+      file,
+      path: path.join(dir, file), // for the promoted agent's provenance line (display only)
       body: redactSecrets(body.replace(/^\s*\n/, '').replace(/\s+$/, '')),
       tools: cleanText(data.tools, 500),
       model: cleanText(data.model, 100),

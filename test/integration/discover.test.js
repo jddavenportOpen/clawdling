@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, beforeEach, test } from 'node:test';
-import { discover, encodeProjectPath, githubRepos } from '../../server/discover.js';
+import { discover, encodeProjectPath, findSubagent, githubRepos, scanSetup } from '../../server/discover.js';
 import { normalizePathKey } from '../../server/platform.js';
 import { shq } from '../../server/util.js';
 import { IS_WIN, ROOT, readLog, rmrf, tempHome } from '../helpers.mjs';
@@ -244,6 +244,57 @@ test('discover: github=false never runs gh', async () => {
   assert.deepEqual(body.sources.github, { installed: null, authed: null, user: null, found: 0, error: null, skipped: true });
   assert.equal(body.candidates.length, 4);
   assert.deepEqual(readLog(LOG), []);
+});
+
+function canSymlink() {
+  const d = tempHome('cl-discover-ln-');
+  try {
+    fs.writeFileSync(path.join(d, 't'), '');
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmrf(d);
+  }
+}
+
+test('discover + setup: symlinks out of a repo, system folders and dot-folders never reach the body; the org repo is not offered from GitHub', { skip: canSymlink() ? false : 'no symlinks here' }, async () => {
+  const t = tempHome('cl-discover-int2-');
+  try {
+    const home = mkdir(t, 'home');
+    const cfg = mkdir(home, '.claude');
+    const netrc = write(path.join(home, '.netrc'), 'machine github.com login ada password NETRCSECRET9001\n');
+    const code = mkdir(home, 'code');
+    const evil = makeRepo(path.join(code, 'evil'), { remote: 'https://github.com/mallory/evil.git', commitAt: ago(1) });
+    fs.symlinkSync(path.relative(evil, netrc), path.join(evil, 'README.md'));
+    fs.symlinkSync(netrc, path.join(evil, 'package.json'));
+    mkdir(evil, '.claude', 'agents');
+    fs.symlinkSync(path.join('..', '..', '..', '..', '.netrc'), path.join(evil, '.claude', 'agents', 'helper.md'));
+    // The org folder is itself a repo pushed to GitHub.
+    const org = makeRepo(path.join(home, 'clawdling'), { remote: 'git@github.com:ada/my-org.git' });
+    // Claude Code was once run in /etc, ~/.ssh and the repo.
+    const ssh = mkdir(home, '.ssh');
+    const sys = fs.existsSync('/etc') ? '/etc' : null;
+    const hist = (cwd) => write(path.join(cfg, 'projects', encodeProjectPath(cwd), 's.jsonl'), `${JSON.stringify({ cwd })}\n`);
+    for (const cwd of [ssh, evil, ...(sys ? [sys] : [])]) hist(cwd);
+    const data = path.join(t, 'gh.json');
+    const r = (nwo) => ({ name: nwo.split('/')[1], nameWithOwner: nwo, description: null, pushedAt: D(1), primaryLanguage: null, isPrivate: false, url: `https://github.com/${nwo}`, isArchived: false, isFork: false });
+    write(data, { user: 'ada', orgs: [], repos: { ada: [r('ada/my-org'), r('ada/site')] } });
+
+    const body = await discover({ env: envFor(BIN, { CLAUDE_CONFIG_DIR: cfg, FAKE_GH_DATA: data }), homedir: home, configDir: cfg, orgHome: org, now: NOW, tmpDirs: [] });
+    const setup = scanSetup({ configDir: cfg, claudeJsonPath: path.join(home, '.claude.json'), repos: [{ path: evil, agent: 'evil' }], homedir: home });
+    const sub = findSubagent({ scope: 'repo', repo: evil, name: 'helper', repos: [evil] });
+    const text = JSON.stringify({ body, setup, sub });
+    for (const s of ['NETRCSECRET9001', 'machine github', 'my-org']) assert.ok(!text.includes(s), `${s} reached the output`);
+    assert.deepEqual(body.candidates.map((c) => c.key).sort(), ['github.com/ada/site', 'github.com/mallory/evil']);
+    const e = body.candidates.find((c) => c.path === evil);
+    assert.deepEqual([e.description, e.sources], [null, ['claude', 'local']]);
+    assert.deepEqual(setup.projects[0].agents, []);
+    assert.equal(sub, null);
+  } finally {
+    rmrf(t);
+  }
 });
 
 test('githubRepos: a gh call that hangs times out without sinking the rest', async () => {

@@ -192,6 +192,62 @@ test('CI and Docker flags', () => {
   });
 });
 
+function canSymlink() {
+  const d = tempHome('cl-stack-ln-');
+  try {
+    fs.writeFileSync(path.join(d, 't'), '');
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmrf(d);
+  }
+}
+const NO_LINKS = canSymlink() ? false : 'this system does not let a test create symlinks';
+
+test('detectStack and readmeExcerpt never read through a symlink that leaves the folder; one that stays inside is fine', { skip: NO_LINKS }, () => {
+  const base = tempHome('cl-stack-ln-');
+  try {
+    const outside = path.join(base, 'private');
+    fs.mkdirSync(path.join(outside, 'pkgs', 'leaked-pkg'), { recursive: true });
+    fs.writeFileSync(path.join(outside, '.netrc'), 'machine github.com login ada password NETRCSECRET0001\n');
+    fs.writeFileSync(path.join(outside, 'package.json'), JSON.stringify({ description: 'PKGSECRET0002', scripts: { test: 'steal' } }));
+    fs.writeFileSync(path.join(outside, 'pyproject.toml'), '[project]\ndescription = "PYSECRET0003"\n');
+    fs.writeFileSync(path.join(outside, 'Makefile'), 'deploy:\n');
+    const repo = path.join(base, 'home', 'code', 'evil');
+    fs.mkdirSync(repo, { recursive: true });
+    fs.symlinkSync(path.relative(repo, path.join(outside, '.netrc')), path.join(repo, 'README.md'));
+    fs.symlinkSync(path.join(outside, 'package.json'), path.join(repo, 'package.json'));
+    fs.symlinkSync(path.join(outside, 'pyproject.toml'), path.join(repo, 'pyproject.toml'));
+    fs.symlinkSync(path.join(outside, 'Makefile'), path.join(repo, 'Makefile'));
+    fs.writeFileSync(path.join(repo, 'Cargo.toml'), '[workspace]\nmembers = ["pkgs/*"]\n');
+    fs.symlinkSync(path.join(outside, 'pkgs'), path.join(repo, 'pkgs'));
+
+    const st = detectStack(repo);
+    const text = JSON.stringify({ st, readme: readmeExcerpt(repo) });
+    for (const s of ['NETRCSECRET0001', 'PKGSECRET0002', 'PYSECRET0003', 'steal', 'leaked-pkg', 'make deploy']) assert.ok(!text.includes(s), `${s} came through a symlink out of the repo`);
+    assert.deepEqual(st.manifests, ['Cargo.toml'], 'a manifest that is a symlink out of the repo reads as absent');
+    assert.deepEqual(st.monorepo, { tool: 'Cargo workspace', packages: [] });
+    assert.equal(readmeExcerpt(repo), null);
+
+    // Inside the repo: a linked README, and the repo reached through a symlinked path, both work.
+    const good = path.join(base, 'home', 'code', 'good');
+    fs.mkdirSync(path.join(good, 'docs'), { recursive: true });
+    fs.writeFileSync(path.join(good, 'docs', 'README.md'), '# Good\n\nGood is fine.\n');
+    fs.writeFileSync(path.join(good, 'package.json'), JSON.stringify({ description: 'Good app' }));
+    fs.symlinkSync(path.join('docs', 'README.md'), path.join(good, 'README.md'));
+    const via = path.join(base, 'via');
+    fs.symlinkSync(good, via);
+    for (const d of [good, via]) {
+      assert.equal(readmeExcerpt(d).text, 'Good is fine.', d);
+      assert.equal(detectStack(d).description, 'Good app', d);
+    }
+  } finally {
+    rmrf(base);
+  }
+});
+
 test('readmeExcerpt: title and opening paragraphs; badges, images, HTML and code blocks removed; stops at the next heading', () => {
   const md = [
     '<!-- a comment that should vanish -->',

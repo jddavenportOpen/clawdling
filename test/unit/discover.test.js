@@ -2,6 +2,7 @@
 // gh wrapper, the setup scan, and the promise that a planted secret never reaches any output.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
 import {
@@ -14,6 +15,7 @@ import {
   findGitRepos,
   findSubagent,
   githubRepos,
+  isSystemPath,
   mergeCandidates,
   parseFrontmatter,
   redactSecrets,
@@ -56,6 +58,23 @@ function makeRepo(dir, { remote, commitAt } = {}) {
   return dir;
 }
 const ghRepo = (nwo, extra = {}) => ({ name: nwo.split('/')[1], nameWithOwner: nwo, url: `https://github.com/${nwo}`, description: null, pushedAt: null, ...extra });
+function canSymlink() {
+  const d = tmp('cl-disc-ln-probe-');
+  try {
+    fs.writeFileSync(path.join(d, 't'), '');
+    fs.symlinkSync(path.join(d, 't'), path.join(d, 'l'));
+    return true;
+  } catch {
+    return false;
+  }
+}
+const NO_LINKS = canSymlink() ? false : 'this system does not let a test create symlinks';
+/** A symlink at `p` pointing at `target` (relative targets are relative to p's folder). */
+function link(target, p) {
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.symlinkSync(target, p);
+  return p;
+}
 
 // ------------------------------------------------------------------------------ history names
 
@@ -211,23 +230,23 @@ test('parseFrontmatter: no frontmatter, or an unterminated one, is all body', ()
 
 test('redactSecrets: every known token prefix', () => {
   const tokens = [
-    'sk-ant-api03-AbCdEf123456_xyz',
+    'sk-ant-' + 'api03-AbCdEf123456_xyz',
     'sk-proj-abcdEFGH1234ijkl',
     'sk-abcdefghijklmnopqrstuvwx',
-    'ghp_0123456789abcdefABCDEF0123456789abcd',
-    'gho_16C7e42F292c6912E7710c838347Ae178B4a',
-    'ghu_abcdefgh12345678',
-    'ghs_abcdefgh12345678',
-    'github_pat_11ABCDEFG0123456789_abcdefghijklmnop',
-    'xoxb-123456789012-abcdefghij',
-    'xoxa-2-abcdefghij',
-    'xoxp-1234-5678',
-    'xoxr-abcdef123',
-    'AKIAIOSFODNN7EXAMPLE',
-    'AIzaSyA-1234567890abcdefghijklmnopqrstu',
-    'glpat-abcdefghij1234567890',
-    'npm_abcdefghijklmnopqrstuvwxyz0123456789',
-    'sk_live_abcdefghij123456',
+    'ghp_' + '0123456789abcdefABCDEF0123456789abcd',
+    'gho_' + '16C7e42F292c6912E7710c838347Ae178B4a',
+    'ghu_' + 'abcdefgh12345678',
+    'ghs_' + 'abcdefgh12345678',
+    'github_pat_' + '11ABCDEFG0123456789_abcdefghijklmnop',
+    'xoxb-' + '123456789012-abcdefghij',
+    'xoxa-' + '2-abcdefghij',
+    'xoxp-' + '1234-5678',
+    'xoxr-' + 'abcdef123',
+    'AKIA' + 'IOSFODNN7EXAMPLE',
+    'AIza' + 'SyA-1234567890abcdefghijklmnopqrstu',
+    'glpat-' + 'abcdefghij1234567890',
+    'npm_' + 'abcdefghijklmnopqrstuvwxyz0123456789',
+    'sk_live_' + 'abcdefghij123456',
     'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U',
   ];
   for (const tok of tokens) assert.equal(redactSecrets(`use ${tok} here`), 'use [redacted] here', tok);
@@ -274,15 +293,79 @@ test('redactSecrets leaves ordinary prose alone', () => {
     'author: Ada Lovelace',
     'Uses scikit-learn and sk-learn style pipelines.',
     'See https://github.com/ada/site and git@github.com:ada/site.git for details.',
-    'Run npm_config_cache=/tmp npm test.',
+    'Run npm_' + 'config_cache=/tmp npm test.',
     'Note: the API key lives in the keychain, never in this repo.',
+  ];
+  for (const p of prose) assert.equal(redactSecrets(p), p);
+});
+
+test('redactSecrets: newer token formats, private key blocks, webhook URLs, Azure keys, netrc, cookies, env-style names', () => {
+  const tokens = [
+    'hf_' + 'abcdefghijklmnopqrstuvwxyzABCDEFGH',
+    'SG.' + 'abcdefghijklmnopqrstuv.abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG',
+    'pypi-' + 'AgEIcHlwaS5vcmcCJGFiY2RlZmdoLTEyMzQ1Njc4',
+    'ASIA' + 'IOSFODNN7EXAMPLE',
+    'ya29.' + 'a0AfH6SMBx-abcdefghijklmnop',
+    'xoxc-' + '1234567890-abcdefghij',
+    'xoxs-' + '1234567890-abcdefghij',
+    'GOCSPX-' + 'abcdefghijklmnopqrstuvwxyz12',
+    'whsec_' + 'abcdefghijklmnopqrstuvwxyz012345',
+    'dop_v1_' + '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+    'shpat_' + '0123456789abcdef0123456789abcdef',
+    'shpss_' + '0123456789abcdef0123456789abcdef',
+    'AGE-SECRET-KEY-' + '1QYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQYQSZQGPQY',
+  ];
+  for (const tok of tokens) assert.equal(redactSecrets(`use ${tok} here`), 'use [redacted] here', tok);
+  const cases = [
+    ['a\n-----BEGIN PGP PRIVATE KEY BLOCK-----\n\nlQOYBF0abc\n=XyZ1\n-----END PGP PRIVATE KEY BLOCK-----\nb', 'a\n[redacted]\nb'],
+    ['-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----', '[redacted]'],
+    ['-----BEGIN ENCRYPTED PRIVATE KEY-----\nMIIFHDBOBgkqhkiG9w0BBQ0w\n-----END ENCRYPTED PRIVATE KEY-----', '[redacted]'],
+    [`x -----BEGIN PRIVATE KEY-----\n${'A'.repeat(40000)}\nKEYTAILSECRET no end marker`, 'x [redacted]'],
+    ['post to https://hooks.slack.com/services/' + 'T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX now', 'post to https://hooks.slack.com/services/[redacted] now'],
+    ['https://discord.com/api/webhooks/' + '123456789012345678/abcDEF-ghiJKL_mno', 'https://discord.com/api/webhooks/[redacted]'],
+    ['https://discordapp.com/api/webhooks/' + '123456789012345678/abcDEFghiJKL', 'https://discordapp.com/api/webhooks/[redacted]'],
+    ['DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=' + 'abc123DEF456ghi789+/==;EndpointSuffix=core.windows.net', 'DefaultEndpointsProtocol=https;AccountName=acct;AccountKey=[redacted];EndpointSuffix=core.windows.net'],
+    ['BlobEndpoint=https://a.blob.core.windows.net/;SharedAccessSignature=' + 'sv=2020-08-04&ss=b&sig=' + 'abcDEF123%2B%3D', 'BlobEndpoint=https://a.blob.core.windows.net/;SharedAccessSignature=[redacted]&ss=b&sig=[redacted]'],
+    ['https://a.blob.core.windows.net/c/f?sv=2020-08-04&sp=r&sig=' + 'abcDEF123%2B%3D', 'https://a.blob.core.windows.net/c/f?sv=2020-08-04&sp=r&sig=[redacted]'],
+    ['machine github.com login ada password hunter2', 'machine github.com login ada password [redacted]'],
+    ['machine github.com\n  login ada\n  password correcthorse', 'machine github.com\n  login ada\n  password [redacted]'],
+    ['Cookie: session=abc123def456; theme=dark', 'Cookie: [redacted]'],
+    ['curl -H "cookie: sid=s%3Aabc123.def" https://x', 'curl -H "cookie: [redacted]" https://x'],
+    ['DB_PASS=hunter2', 'DB_PASS=[redacted]'],
+    ['MYSQL_PWD=hunter2', 'MYSQL_PWD=[redacted]'],
+    ['SMTP_PASSWD=hunter2', 'SMTP_PASSWD=[redacted]'],
+    ['APP_SECRET=hunter2', 'APP_SECRET=[redacted]'],
+    ['GH_TOKEN=hunter2', 'GH_TOKEN=[redacted]'],
+    ['DEPLOY_KEY: hunter2', 'DEPLOY_KEY: [redacted]'],
+    ['DB_PASS="two words here"', 'DB_PASS="[redacted]"'],
+    ['password:\n  hunter2abc', 'password:\n  [redacted]'],
+    ['token =\nabc123', 'token =\n[redacted]'],
+    ['password: `hunter2`', 'password: `[redacted]`'],
+    ['api_key: <sk_abc123>', 'api_key: <[redacted]>'],
+    ['secret: [hunter2]', 'secret: [[redacted]]'],
+    [`token: "${'a1'.repeat(400)}"`, 'token: "[redacted]"'],
+    [`password = '${'x'.repeat(600)} y'`, "password = '[redacted]'"],
+    ['git clone https://ada:tok/123@github.com/a/b.git', 'git clone https://[redacted]@github.com/a/b.git'],
+  ];
+  for (const [input, want] of cases) {
+    assert.equal(redactSecrets(input), want, input.slice(0, 80));
+    assert.equal(redactSecrets(want), want, `idempotent: ${want.slice(0, 80)}`);
+  }
+  const prose = [
+    'Password reset flows live in auth/reset.ts',
+    'Set the password in the keychain.',
+    'Cookie: banners are off by default.',
+    'The DB_PASS variable holds it.',
+    'API_KEY: see the docs',
+    'See https://github.com/ada/site@main and https://localhost:8080/x@y for details.',
+    'Uses hf_' + 'hub_download and pypi-' + 'publish.',
   ];
   for (const p of prose) assert.equal(redactSecrets(p), p);
 });
 
 test('redactSecrets stays linear on hostile 64 KB input (no catastrophic backtracking)', () => {
   const n = 64 * 1024;
-  const inputs = ['a.'.repeat(n / 2), 'a'.repeat(n), 'sk-'.repeat(n / 3), 'x://'.repeat(n / 4), '-----BEGIN PRIVATE KEY-----'.repeat(n / 27), 'password: '.repeat(n / 10), 'Bearer '.repeat(n / 7), 'A_KEY'.repeat(n / 5), `${'a-'.repeat(n / 4)}token=`, `https://${'a'.repeat(n)}@x`, 'token="'.repeat(n / 7), 'auth.'.repeat(n / 5)];
+  const inputs = ['a.'.repeat(n / 2), 'a'.repeat(n), 'sk-'.repeat(n / 3), 'x://'.repeat(n / 4), '-----BEGIN PRIVATE KEY-----'.repeat(n / 27), 'password: '.repeat(n / 10), 'Bearer '.repeat(n / 7), 'A_KEY'.repeat(n / 5), `${'a-'.repeat(n / 4)}token=`, `https://${'a'.repeat(n)}@x`, 'token="'.repeat(n / 7), 'auth.'.repeat(n / 5), 'password '.repeat(n / 9), 'login a password '.repeat(n / 17), 'cookie: a='.repeat(n / 10), `token: "${'a'.repeat(n)}`, 'DB_PASS="'.repeat(n / 9), `-----BEGIN PRIVATE KEY-----${'-----END PRIVATE KEY-----'.repeat(n / 25)}`, 'x://a:b/'.repeat(n / 8), 'sig='.repeat(n / 4), 'token:\n'.repeat(n / 7)];
   for (const input of inputs) {
     const t0 = performance.now();
     redactSecrets(input);
@@ -586,7 +669,7 @@ test('scanSetup: skills, subagents, commands (a:b), plugins, hook events, MCP na
   const repo2 = mkdir(t, 'repo2');
   write(path.join(repo, 'CLAUDE.md'), '# repo');
   write(path.join(repo, '.mcp.json'), { mcpServers: { db: { command: 'psql' }, search: { url: 'https://x' } } });
-  write(path.join(repo, '.claude', 'agents', 'helper.md'), '---\ndescription: Repo helper\n---\nx');
+  write(path.join(repo, '.claude', 'agents', 'helper.md'), '---\nname: helper\ndescription: Repo helper\n---\nx');
   write(path.join(repo, '.claude', 'skills', 'ship', 'SKILL.md'), '---\ndescription: Ships it\n---\n');
   write(path.join(repo, '.claude', 'commands', 'fix.md'), 'Fix the bug');
   write(path.join(repo, '.claude', 'settings.json'), { hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: 'x' }] }] } });
@@ -607,10 +690,8 @@ test('scanSetup: skills, subagents, commands (a:b), plugins, hook events, MCP na
     { name: 'deploy', description: 'Deploys the site to production.', source: 'user' },
     { name: 'unnamed', description: null, source: 'user' },
   ]);
-  assert.deepEqual(s.agents, [
-    { name: 'code-reviewer', description: 'Reviews code', file: 'cr.md', source: 'user' },
-    { name: 'helper', description: null, file: 'helper.md', source: 'user' },
-  ]);
+  // helper.md has no frontmatter `name`: Claude Code does not load it as a subagent, so neither do we.
+  assert.deepEqual(s.agents, [{ name: 'code-reviewer', description: 'Reviews code', file: 'cr.md', source: 'user' }]);
   assert.deepEqual(s.commands, [
     { name: 'frontend:component', description: 'Make a component' },
     { name: 'review', description: 'Review the diff' },
@@ -641,14 +722,17 @@ test('scanSetup: skills, subagents, commands (a:b), plugins, hook events, MCP na
   assert.deepEqual(bare, { config_dir: path.join(t, 'none'), claude_md: { exists: false, lines: [] }, skills: [], agents: [], commands: [], plugins: [], hooks: [], mcp: [], projects: [] });
 });
 
-test('findSubagent: by frontmatter name, else basename; never a path from the name; repo scope honours the allow-list', () => {
+test('findSubagent: by frontmatter name only; never a path from the name; repo scope honours the allow-list', () => {
   const t = tmp('cl-disc-sub-');
   const cfg = mkdir(t, 'cfg');
   write(path.join(cfg, 'agents', 'cr.md'), '---\nname: code-reviewer\ndescription: Reviews code\ntools: Read, Grep\nmodel: sonnet\n---\n\nYou review code.\nBe kind.\n');
   write(path.join(cfg, 'agents', 'helper.md'), 'Just help.');
+  write(path.join(cfg, 'agents', 'nameless.md'), '---\ndescription: No name\n---\nBody.');
   write(path.join(t, 'outside.md'), '---\nname: outside\n---\nnope');
   assert.deepEqual(findSubagent({ configDir: cfg, scope: 'user', name: 'code-reviewer' }), { name: 'code-reviewer', description: 'Reviews code', file: 'cr.md', path: path.join(cfg, 'agents', 'cr.md'), body: 'You review code.\nBe kind.', tools: 'Read, Grep', model: 'sonnet' });
-  assert.deepEqual(findSubagent({ configDir: cfg, scope: 'user', name: 'helper' }), { name: 'helper', description: null, file: 'helper.md', path: path.join(cfg, 'agents', 'helper.md'), body: 'Just help.', tools: null, model: null });
+  // No frontmatter `name`, no subagent (it used to fall back to the file name, so any .md was promotable).
+  assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'helper' }), null);
+  assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'nameless' }), null);
   assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'cr' }), null, 'a frontmatter name wins over the file name');
   for (const name of ['../outside', '../../outside', 'outside', '', 'x'.repeat(300), null]) assert.equal(findSubagent({ configDir: cfg, scope: 'user', name }), null, String(name));
   const repo = mkdir(t, 'repo');
@@ -660,6 +744,275 @@ test('findSubagent: by frontmatter name, else basename; never a path from the na
   assert.equal(findSubagent({ scope: 'other', configDir: cfg, name: 'helper' }), null);
 });
 
+// ------------------------------------------------------------------------------ symlinks, walks, names
+
+test('SYMLINKS: a cloned repo cannot pull a private file into a candidate, the setup scan or a subagent', { skip: NO_LINKS }, () => {
+  const t = tmp('cl-disc-ln-repo-');
+  const home = mkdir(t, 'home');
+  const cfg = mkdir(home, '.claude');
+  const netrc = write(path.join(home, '.netrc'), 'machine github.com login ada password NETRCSECRET0001\n');
+  const priv = mkdir(t, 'private');
+  write(path.join(priv, 'pkg.json'), { description: 'PKGLINKSECRET0002' });
+  write(path.join(priv, 'agent.md'), '---\nname: linked-agent\ndescription: LINKEDAGENT0003\n---\nLINKEDBODY0004');
+  write(path.join(priv, 'skill', 'SKILL.md'), '---\nname: linked-skill\ndescription: LINKEDSKILL0005\n---\n');
+  write(path.join(priv, 'settings.json'), { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'x' }] }] } });
+  write(path.join(priv, 'mcp.json'), { mcpServers: { linkedmcp: {} } });
+  write(path.join(priv, 'CLAUDE.md'), '# outside');
+  write(path.join(priv, 'cmd.md'), '---\ndescription: LINKEDCMD0006\n---\n');
+  const code = mkdir(home, 'code');
+
+  // README.md -> ../../.netrc
+  const a = makeRepo(path.join(code, 'a'), { commitAt: daysAgo(1) });
+  link(path.relative(a, netrc), path.join(a, 'README.md'));
+  // Every other file the scans read, each a symlink out of the repo.
+  const b = makeRepo(path.join(code, 'b'), { commitAt: daysAgo(2) });
+  link(path.join(priv, 'pkg.json'), path.join(b, 'package.json'));
+  link(path.join(priv, 'CLAUDE.md'), path.join(b, 'CLAUDE.md'));
+  link(path.join(priv, 'mcp.json'), path.join(b, '.mcp.json'));
+  link(netrc, path.join(b, 'AGENTS.md'));
+  link(path.join('..', '..', '..', '..', '.netrc'), path.join(b, '.claude', 'agents', 'helper.md')); // the audit's example
+  link(path.join(priv, 'agent.md'), path.join(b, '.claude', 'agents', 'linked.md'));
+  link(path.join(priv, 'skill'), path.join(b, '.claude', 'skills', 'linked'));
+  link(netrc, path.join(b, '.claude', 'commands', 'netrc.md'));
+  link(path.join(priv, 'cmd.md'), path.join(b, '.claude', 'commands', 'linked.md'));
+  link(priv, path.join(b, '.claude', 'commands', 'sub'));
+  link(path.join(priv, 'settings.json'), path.join(b, '.claude', 'settings.json'));
+  // A repo whose whole .claude is the user's own config dir.
+  const c = makeRepo(path.join(code, 'c'), { commitAt: daysAgo(3) });
+  write(path.join(cfg, 'agents', 'mine.md'), '---\nname: mine\ndescription: My own agent\n---\nMine.');
+  link(cfg, path.join(c, '.claude'));
+  // Symlinks that stay inside the repo are fine.
+  const d = makeRepo(path.join(code, 'd'), { commitAt: daysAgo(4) });
+  write(path.join(d, 'docs', 'README.md'), '# D\n\nD is fine.\n');
+  link(path.join('docs', 'README.md'), path.join(d, 'README.md'));
+  write(path.join(d, 'shared', 'real.md'), '---\nname: real\ndescription: Real one\n---\nReal.');
+  link(path.join('..', '..', 'shared', 'real.md'), path.join(d, '.claude', 'agents', 'real.md'));
+
+  const cands = mergeCandidates({ local: [a, b, c, d], home, tmpDirs: [], now: NOW });
+  const setup = scanSetup({ configDir: cfg, claudeJsonPath: path.join(home, '.claude.json'), repos: [a, b, c, d], homedir: home });
+  const subs = [
+    findSubagent({ scope: 'repo', repo: b, name: 'helper' }),
+    findSubagent({ scope: 'repo', repo: b, name: 'linked-agent' }),
+    findSubagent({ scope: 'repo', repo: c, name: 'mine' }),
+  ];
+  const text = JSON.stringify({ cands, setup, subs });
+  for (const s of ['NETRCSECRET0001', 'machine github', 'PKGLINKSECRET0002', 'LINKEDAGENT0003', 'LINKEDBODY0004', 'LINKEDSKILL0005', 'LINKEDCMD0006', 'linkedmcp', 'SessionStart']) {
+    assert.ok(!text.includes(s), `${s} came through a symlink out of a repo`);
+  }
+  assert.deepEqual(subs, [null, null, null]);
+  const by = Object.fromEntries(cands.map((x) => [x.name, x]));
+  assert.equal(by.a.description, null);
+  assert.equal(by.b.description, null);
+  assert.deepEqual(by.b.has, { claude_md: false, agents_md: false, dot_claude: true, mcp_json: false });
+  assert.equal(by.c.has.dot_claude, false, 'a .claude that is a symlink out of the repo');
+  assert.equal(by.d.description, 'D is fine.');
+  const empty = { agent: null, claude_md: false, agents_md: false, skills: [], agents: [], commands: [], hooks: [], mcp: [] };
+  const proj = Object.fromEntries(setup.projects.map((p) => [path.basename(p.path), p]));
+  assert.deepEqual(proj.b, { path: b, ...empty });
+  assert.deepEqual(proj.c, { path: c, ...empty });
+  assert.deepEqual(proj.d.agents, [{ name: 'real', description: 'Real one', file: 'real.md', source: 'project' }]);
+  assert.equal(findSubagent({ scope: 'repo', repo: d, name: 'real' }).body, 'Real.');
+  assert.deepEqual(setup.agents, [{ name: 'mine', description: 'My own agent', file: 'mine.md', source: 'user' }], 'the user scope still lists it');
+});
+
+test('SYMLINKS: the user config dir may link to a dotfiles repo, but a linked file never gives its first line, and only a named file is a subagent', { skip: NO_LINKS }, () => {
+  const t = tmp('cl-disc-ln-cfg-');
+  const home = mkdir(t, 'home');
+  const dots = mkdir(t, 'dotfiles');
+  const cfg = mkdir(home, '.claude');
+  const netrc = write(path.join(home, '.netrc'), 'machine x login ada password NETRCSECRET0007\n');
+  write(path.join(dots, 'agents', 'dotted.md'), '---\nname: dotted\ndescription: From my dotfiles\n---\nDotted body.');
+  link(path.join(dots, 'agents', 'dotted.md'), path.join(cfg, 'agents', 'dotted.md'));
+  link(netrc, path.join(cfg, 'agents', 'helper.md'));
+  write(path.join(cfg, 'agents', 'plain.md'), 'Just a prompt, no frontmatter.');
+  write(path.join(dots, 'commands', 'deploy.md'), 'Deploy everything now.');
+  write(path.join(dots, 'commands', 'ship.md'), '---\ndescription: Ship it\n---\n');
+  link(path.join(dots, 'commands', 'deploy.md'), path.join(cfg, 'commands', 'deploy.md'));
+  link(path.join(dots, 'commands', 'ship.md'), path.join(cfg, 'commands', 'ship.md'));
+  link(netrc, path.join(cfg, 'commands', 'creds.md'));
+  write(path.join(cfg, 'commands', 'own.md'), 'Own command first line.');
+  write(path.join(dots, 'team', 'review.md'), '---\ndescription: Team review\n---\n');
+  link(path.join(dots, 'team'), path.join(cfg, 'commands', 'team')); // a linked subfolder is still walked
+
+  const s = scanSetup({ configDir: cfg, claudeJsonPath: path.join(home, '.claude.json'), homedir: home });
+  assert.deepEqual(s.agents, [{ name: 'dotted', description: 'From my dotfiles', file: 'dotted.md', source: 'user' }]);
+  assert.deepEqual(s.commands, [
+    { name: 'creds', description: null },
+    { name: 'deploy', description: null },
+    { name: 'own', description: 'Own command first line.' },
+    { name: 'ship', description: 'Ship it' },
+    { name: 'team:review', description: 'Team review' },
+  ]);
+  assert.ok(!JSON.stringify(s).includes('NETRCSECRET0007'));
+  assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'helper' }), null);
+  assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'plain' }), null);
+  assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'dotted' }).body, 'Dotted body.');
+  // The config dir itself linked from dotfiles: its own files are inside it.
+  write(path.join(dots, 'claude', 'commands', 'x.md'), 'First line here.');
+  const linkedCfg = link(path.join(dots, 'claude'), path.join(home, '.claude-linked'));
+  assert.deepEqual(scanSetup({ configDir: linkedCfg, claudeJsonPath: path.join(home, '.claude.json'), homedir: home }).commands, [{ name: 'x', description: 'First line here.' }]);
+});
+
+test('setup scan: directory symlink loops in commands cost nothing (no N^4 walk), in the config dir and in a repo', { skip: NO_LINKS }, () => {
+  const t = tmp('cl-disc-fan-');
+  const cfg = mkdir(t, 'cfg');
+  const cmds = mkdir(cfg, 'commands');
+  write(path.join(cmds, 'x.md'), '---\ndescription: X\n---\n');
+  const repo = mkdir(t, 'repo');
+  const rc = mkdir(repo, '.claude', 'commands');
+  write(path.join(rc, 'y.md'), '---\ndescription: Y\n---\n');
+  // N symlinks to a folder of N symlinks to itself, with no command file in it: the old walk
+  // followed every one to depth 3 (N^3 folders, N^4 entries) with nothing to stop it.
+  for (const d of [cmds, rc]) {
+    mkdir(d, 'e');
+    for (let i = 0; i < 30; i++) {
+      link('e', path.join(d, `l${i}`));
+      link('.', path.join(d, 'e', `l${i}`));
+    }
+  }
+  link('..', path.join(rc, 'up')); // .claude, inside the repo
+  link(path.join('..', '..', '..'), path.join(rc, 'out')); // above the repo
+  const t0 = performance.now();
+  const s = scanSetup({ configDir: cfg, claudeJsonPath: path.join(t, 'none.json'), repos: [repo], homedir: t });
+  const ms = performance.now() - t0;
+  assert.ok(ms < 3000, `the scan took ${Math.round(ms)} ms`);
+  assert.deepEqual(s.commands, [{ name: 'x', description: 'X' }]);
+  assert.deepEqual(s.projects[0].commands, [{ name: 'y', description: 'Y' }]);
+});
+
+test('setup scan: hook keys that are not Claude Code event names are never printed; every other name is redacted', () => {
+  const t = tmp('cl-disc-names-');
+  const home = mkdir(t, 'home');
+  const cfg = mkdir(home, '.claude');
+  const N = {
+    hook: 'ghp_' + 'HOOKNAME0123456789abcdefABCDEF0123',
+    hook2: 'HOOKNAMESECRET0002',
+    hook3: 'sk-ant-' + 'api03-HOOKKEY0003',
+    mcp: 'ghp_' + 'MCPNAME0123456789abcdefABCDEF01234',
+    plugin: 'sk-ant-' + 'api03-PLUGINNAME0005',
+    market: 'glpat-' + 'MARKETPLACE0006abcdef',
+    skill: 'glpat-' + 'SKILLDIR0007abcdefgh',
+    agentName: 'xoxb-' + '123456789012-AGENTNAME0008',
+    agentFile: 'npm_' + 'AGENTFILE0009abcdefghijkl',
+    command: 'ghs_' + 'COMMANDFILE0010abcdef',
+    repoMcp: 'AKIA' + 'REPOMCPNAME00011',
+  };
+  const hook = [{ hooks: [{ type: 'command', command: 'x' }] }];
+  write(path.join(cfg, 'settings.json'), { hooks: { PreToolUse: hook, [N.hook]: hook, [N.hook2]: hook, [N.hook3]: hook, x: hook }, enabledPlugins: { [`${N.plugin}@mkt`]: true, [`ok@${N.market}`]: true } });
+  const claudeJson = write(path.join(home, '.claude.json'), { mcpServers: { [N.mcp]: {}, github: {} } });
+  write(path.join(cfg, 'skills', N.skill, 'SKILL.md'), 'no frontmatter');
+  write(path.join(cfg, 'agents', `${N.agentFile}.md`), `---\nname: ${N.agentName}\ndescription: d\n---\n`);
+  write(path.join(cfg, 'commands', `${N.command}.md`), '---\ndescription: c\n---\n');
+  const repo = mkdir(t, 'repo');
+  write(path.join(repo, '.mcp.json'), { mcpServers: { [N.repoMcp]: {} } });
+  write(path.join(repo, '.claude', 'settings.json'), { hooks: { Stop: hook, [N.hook]: hook } });
+  const s = scanSetup({ configDir: cfg, claudeJsonPath: claudeJson, repos: [repo], homedir: home });
+  const text = JSON.stringify(s);
+  for (const [k, v] of Object.entries(N)) assert.ok(!text.includes(v), `${k} (${v}) printed raw`);
+  assert.deepEqual(s.hooks, [{ event: 'PreToolUse', count: 1 }]);
+  assert.deepEqual(s.projects[0].hooks, [{ event: 'Stop', count: 1 }]);
+  assert.ok(s.mcp.some((m) => m.name === 'github'));
+});
+
+test('setup scan: a single-line field is collapsed before it is redacted', () => {
+  const t = tmp('cl-disc-flat-');
+  const cfg = mkdir(t, 'cfg');
+  write(path.join(cfg, 'skills', 'nl', 'SKILL.md'), `---\nname: nl\ndescription: |\n  Deploys.\n  token:\n${'\n'.repeat(10)}  NLSECRET0001abc\n---\n`);
+  write(path.join(cfg, 'agents', 'b.md'), `---\nname: b\ndescription: "Uses Bearer${' '.repeat(12)}BEARERSECRET0002abc"\n---\n`);
+  const s = scanSetup({ configDir: cfg, claudeJsonPath: path.join(t, 'none.json'), homedir: t });
+  const text = JSON.stringify(s);
+  assert.ok(!text.includes('NLSECRET0001abc') && !text.includes('BEARERSECRET0002abc'), text);
+  assert.equal(s.skills.find((x) => x.name === 'nl').description, 'Deploys. token: [redacted]');
+  assert.equal(s.agents.find((x) => x.name === 'b').description, 'Uses Bearer [redacted]');
+});
+
+test('setup scan: 100 skills with 62 KB descriptions stay cheap (a field is clamped before it is redacted)', () => {
+  const t = tmp('cl-disc-huge-');
+  const cfg = mkdir(t, 'cfg');
+  const desc = 'sk-'.repeat(20700); // ~62 KB of a token prefix: the slowest shape for the redactor
+  for (let i = 0; i < 100; i++) write(path.join(cfg, 'skills', `big${i}`, 'SKILL.md'), `---\nname: big${i}\ndescription: ${desc}\n---\n`);
+  const t0 = performance.now();
+  const s = scanSetup({ configDir: cfg, claudeJsonPath: path.join(t, 'none.json'), homedir: t });
+  const ms = performance.now() - t0;
+  assert.equal(s.skills.length, 100);
+  assert.ok(s.skills.every((x) => !x.description || x.description.length <= 300));
+  assert.ok(ms < 1000, `100 skills with 62 KB descriptions took ${Math.round(ms)} ms`);
+});
+
+test('findSubagent reads only the head of each candidate to match, and at most 100 KB of the match', () => {
+  const t = tmp('cl-disc-subcap-');
+  const cfg = mkdir(t, 'cfg');
+  write(path.join(cfg, 'agents', 'big.md'), `---\nname: big\ndescription: Big\n---\n${'line of the prompt\n'.repeat(20000)}`);
+  write(path.join(cfg, 'agents', 'late.md'), `---\nname: late\n${'tools: Read\n'.repeat(7000)}---\nx`); // closing fence past 64 KB
+  const sub = findSubagent({ configDir: cfg, scope: 'user', name: 'big' });
+  assert.ok(sub.body.startsWith('line of the prompt\nline'));
+  assert.ok(sub.body.length <= 100 * 1024, `body is ${sub.body.length} chars`);
+  assert.equal(findSubagent({ configDir: cfg, scope: 'user', name: 'late' }), null);
+});
+
+test('isSystemPath: system trees (POSIX and Windows), minus one that holds the home folder', () => {
+  const posix = { platform: 'linux', home: '/home/ada' };
+  for (const p of ['/etc', '/etc/nginx', '/usr/bin', '/bin', '/sbin', '/var/log', '/private/etc', '/private/var/db', '/System/Library', '/Library/Caches', '/Applications/X.app', '/opt/homebrew/Cellar', '/proc/1', '/dev']) assert.equal(isSystemPath(p, posix), true, p);
+  for (const p of ['/home/ada/code/app', '/srv/app', '/workspace', '/opt/myapp', '/Volumes/x/code', '/etcetera', '/usrlocal']) assert.equal(isSystemPath(p, posix), false, p);
+  assert.equal(isSystemPath('/var/folders/x/home/code/app', { platform: 'linux', home: '/var/folders/x/home' }), false, 'a sandbox HOME under /var keeps /var');
+  assert.equal(isSystemPath('/etc', { platform: 'linux', home: '/var/folders/x/home' }), true);
+  const win = { platform: 'win32', home: 'C:\\Users\\ada' };
+  for (const p of ['C:\\Windows', 'c:\\windows\\System32', 'C:\\Program Files\\Git', 'C:\\Program Files (x86)\\X', 'C:\\ProgramData\\y']) assert.equal(isSystemPath(p, win), true, p);
+  for (const p of ['C:\\Users\\ada\\code', 'D:\\code\\app', 'C:\\work\\site', 'C:\\Windows-projects']) assert.equal(isSystemPath(p, win), false, p);
+});
+
+test('mergeCandidates: history folders in system trees and dot-folders under home are not projects; folders elsewhere still are', () => {
+  const t = tmp('cl-disc-sys-');
+  const home = mkdir(t, 'home');
+  const keep = mkdir(t, 'work', 'app'); // outside home, not a system folder
+  const notes = mkdir(home, 'notes');
+  const s = isoDaysAgo(1);
+  const system = ['/etc', '/usr/bin', '/bin', '/dev', '/System/Library', '/Library', '/private/etc'].filter((p) => fs.existsSync(p));
+  const dots = [mkdir(home, '.ssh'), mkdir(home, '.config', 'gh'), mkdir(home, '.aws')];
+  const claude = [...system, ...dots, keep, notes].map((p) => ({ path: p, last_session_at: s }));
+  const out = mergeCandidates({ claude, home, tmpDirs: [], now: NOW });
+  assert.deepEqual(out.map((c) => c.path).sort(), [keep, notes].sort());
+  // discover() asks claudeProjectFolders to drop them too.
+  const cfg = mkdir(home, '.claude');
+  for (const p of [...system, ...dots, notes]) write(path.join(cfg, 'projects', encodeProjectPath(p), 's.jsonl'), `${JSON.stringify({ cwd: p })}\n`);
+  return discover({ env: { PATH: '' }, homedir: home, configDir: cfg, github: false, roots: [], tmpDirs: [], now: NOW }).then((body) => {
+    assert.deepEqual(body.candidates.map((c) => c.path), [notes]);
+  });
+});
+
+test('mergeCandidates: the GitHub listing of the org folder, or of a repo inside it or the Claude config dir, is not offered to clone', () => {
+  const t = tmp('cl-disc-orggh-');
+  const home = mkdir(t, 'home');
+  const org = makeRepo(path.join(home, 'clawdling'), { remote: 'git@github.com:ada/my-org.git' });
+  const inner = makeRepo(path.join(org, 'projects', 'inner'), { remote: 'https://github.com/ada/inner.git' });
+  const cfg = makeRepo(path.join(home, '.claude'), { remote: 'https://github.com/ada/claude-config.git' });
+  const tmpRoot = mkdir(t, 'tmproot');
+  const scratch = makeRepo(path.join(tmpRoot, 'site'), { remote: 'https://github.com/ada/site.git' });
+  const gh = ['ada/my-org', 'ada/inner', 'ada/claude-config', 'ada/site', 'ada/other'].map((n) => ghRepo(n, { pushedAt: isoDaysAgo(1) }));
+  const claude = [{ path: mkdir(org, 'domains', 'health'), last_session_at: isoDaysAgo(1) }];
+  const out = mergeCandidates({ local: [inner, scratch], claude, github: gh, home, orgHome: org, configDir: cfg, tmpDirs: [tmpRoot], now: NOW });
+  // A scratch clone in a temp folder is not the org: its repo can still be cloned for real.
+  assert.deepEqual(out.map((c) => [c.key, c.cloned]).sort(), [['github.com/ada/other', false], ['github.com/ada/site', false]]);
+});
+
+test('mergeCandidates and discover: a HOME under a temp folder reached through a symlink (macOS /var -> /private/var) keeps its repos', { skip: NO_LINKS }, async () => {
+  const t = tmp('cl-disc-varlink-');
+  const realTmp = mkdir(t, 'private', 'var', 'folders');
+  const linkTmp = link(realTmp, path.join(t, 'var-folders')); // like /var/folders -> /private/var/folders
+  const home = mkdir(realTmp, 'xy', 'home'); // HOME as its realpath, the way macOS hands it out
+  const repo = makeRepo(path.join(home, 'code', 'app'), { commitAt: daysAgo(1) });
+  assert.deepEqual(mergeCandidates({ local: [repo], home, tmpDirs: [linkTmp], now: NOW }).map((c) => c.path), [repo]);
+  const body = await discover({ env: { PATH: '' }, homedir: home, configDir: path.join(home, '.claude'), github: false, roots: [path.join(home, 'code')], tmpDirs: [linkTmp], now: NOW });
+  assert.deepEqual(body.candidates.map((c) => c.path), [repo]);
+  // The real thing on macOS: os.tmpdir() is /var/folders/..., a temp HOME its realpath under /private/var.
+  if (process.platform === 'darwin') {
+    const h = mkdir(tmp('cl-disc-varreal-'), 'home');
+    assert.ok(h.startsWith('/private/var/') && os.tmpdir().startsWith('/var/'), `${h} / ${os.tmpdir()}`);
+    const r = makeRepo(path.join(h, 'code', 'app'), { commitAt: daysAgo(1) });
+    assert.deepEqual(mergeCandidates({ local: [r], home: h, tmpDirs: [os.tmpdir(), '/var/folders'], now: NOW }).map((c) => c.path), [r]);
+  }
+});
+
 // ------------------------------------------------------------------------------ the secret test
 
 test('SECRETS: no planted credential reaches scanSetup, discover or findSubagent output, while the names do', async () => {
@@ -667,7 +1020,7 @@ test('SECRETS: no planted credential reaches scanSetup, discover or findSubagent
   const home = mkdir(t, 'home');
   const cfg = mkdir(home, '.claude');
   const S = {
-    primaryApiKey: 'sk-ant-api03-PRIMARYKEYSECRET0001',
+    primaryApiKey: 'sk-ant-' + 'api03-PRIMARYKEYSECRET0001',
     oauthEmail: 'oauth-secret-person@example.com',
     oauthUuid: 'OAUTHUUIDSECRET-1234',
     mcpEnv: 'MCPENVSECRET0002',
@@ -684,15 +1037,15 @@ test('SECRETS: no planted credential reaches scanSetup, discover or findSubagent
     mcpJsonArg: 'MCPJSONARGSECRET0013',
     skill: 'SKILLSECRET0014abc',
     subagent: 'SUBAGENTSECRET0015def',
-    subagentBody: 'sk-ant-api03-SUBAGENTBODY0016',
+    subagentBody: 'sk-ant-' + 'api03-SUBAGENTBODY0016',
     claudeMd: 'CLAUDEMDSECRET0017',
-    claudeMdToken: 'ghp_CLAUDEMDTOKEN0018abcdefghijklmnop',
+    claudeMdToken: 'ghp_' + 'CLAUDEMDTOKEN0018abcdefghijklmnop',
     command: 'COMMANDSECRET0019xyz',
     gitConfig: 'GITCONFIGSECRET0020',
     pkgDesc: 'PKGDESCSECRET0021',
     pluginPath: 'PLUGINPATHSECRET0022',
     transcript: 'TRANSCRIPTSECRET0023',
-    ghDesc: 'ghp_GHDESCRIPTION0024abcdefghij',
+    ghDesc: 'ghp_' + 'GHDESCRIPTION0024abcdefghij',
     ghUrl: 'GHURLSECRET0025',
     repoAgent: 'REPOAGENTSECRET0026ghi',
     repoSkill: 'REPOSKILLSECRET0027',
@@ -728,7 +1081,7 @@ test('SECRETS: no planted credential reaches scanSetup, discover or findSubagent
   write(path.join(cfg, 'CLAUDE.md'), `# My rules\npassword: ${S.claudeMd}\nThe token ${S.claudeMdToken} is old\n`);
   write(path.join(repo, '.mcp.json'), { mcpServers: { db: { command: 'psql', args: ['--password', S.mcpJsonArg], env: { PGPASSWORD: S.mcpJsonEnv } } } });
   write(path.join(repo, '.claude', 'settings.json'), { hooks: { PostToolUse: [{ hooks: [{ type: 'command', command: `lint ${S.repoHook}` }] }] } });
-  write(path.join(repo, '.claude', 'agents', 'helper.md'), `---\ndescription: Helps. secret: "${S.repoAgent}"\n---\nx`);
+  write(path.join(repo, '.claude', 'agents', 'helper.md'), `---\nname: helper\ndescription: Helps. secret: "${S.repoAgent}"\n---\nx`);
   write(path.join(repo, '.claude', 'skills', 'ship', 'SKILL.md'), `---\ndescription: Ships. ANTHROPIC_API_KEY=${S.repoSkill}\n---\n`);
   write(path.join(repo, 'package.json'), { name: 'shop', description: `Shop app. auth_token: ${S.pkgDesc}` }); // GitHub's description wins here
   const hist = mkdir(cfg, 'projects', encodeProjectPath(repo));
