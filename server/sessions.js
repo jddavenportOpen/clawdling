@@ -532,15 +532,18 @@ export class SessionManager {
           return false;
         }
       };
+      // Each path is a code span (no @import is read inside one); normalizeRepos already dropped
+      // paths with line breaks, control characters or backticks, and this strips any left.
+      const code = (p) => `\`${String(p).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029`]/g, '')}\``;
       lines.push('', '## Your repos', '');
       lines.push('You work on these code repos. Each one that exists is added to this session (--add-dir). This session runs in your agent folder, so Claude Code does not load a repo\'s own CLAUDE.md or AGENTS.md for you: read them before you work in that repo.');
       for (const r of repos) {
         if (!this.isDir(r)) {
-          lines.push(`- ${r} (not found on this computer)`);
+          lines.push(`- ${code(r)} (not found on this computer)`);
           continue;
         }
         const own = ['CLAUDE.md', 'AGENTS.md'].filter((f) => exists(path.join(r, f)));
-        lines.push(`- ${r}${own.length ? ` (read its ${own.join(' and ')} first)` : ''}`);
+        lines.push(`- ${code(r)}${own.length ? ` (read its ${own.join(' and ')} first)` : ''}`);
       }
     }
     if (target.kind === 'project' && target.cwd !== target.dir) {

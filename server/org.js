@@ -298,9 +298,11 @@ export function initOrg({ home, answers, force = false, now = new Date() }) {
   return { home, owner: a.owner, channel: a.donna.channel, agents: ['donna', ...agentIds], backupDir };
 }
 
-const SOURCE_FIELDS = ['remote', 'remote_key', 'github', 'imported_at'];
+// An import records remote, remote_key, github; a promoted Claude Code subagent records subagent
+// (its name) and subagent_scope ('user' or 'repo'); both record imported_at.
+const SOURCE_FIELDS = ['remote', 'remote_key', 'github', 'imported_at', 'subagent', 'subagent_scope'];
 
-/** Where an imported agent came from: only these string fields, or null. */
+/** Where an imported or promoted agent came from: only these string fields, or null. */
 function normalizeSource(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
   const out = {};
@@ -308,12 +310,16 @@ function normalizeSource(raw) {
   return Object.keys(out).length ? out : null;
 }
 
-/** A group project agent's repos: absolute paths only, deduplicated, at most 20. */
+// A repo path is written into the agent's session context (inside a code span): no line breaks,
+// control characters or backticks, which could end the span or start a heading.
+const UNSAFE_PATH_RE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029`]/;
+
+/** A group project agent's repos: absolute paths only (no control characters or backticks), deduplicated, at most 20. */
 function normalizeRepos(raw) {
   if (!Array.isArray(raw)) return [];
   const out = [];
   for (const r of raw) {
-    if (typeof r !== 'string' || !r || r.includes('\0') || !path.isAbsolute(r)) continue;
+    if (typeof r !== 'string' || !r || UNSAFE_PATH_RE.test(r) || !path.isAbsolute(r)) continue;
     const p = path.resolve(r);
     if (!out.includes(p)) out.push(p);
     if (out.length >= 20) break;
