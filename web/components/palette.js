@@ -60,6 +60,8 @@ export function Palette() {
       ['Go to Settings', 'sliders', () => navigate('#/settings'), 'preferences theme'],
       ['New session…', 'plus', () => openOverlay({ type: 'new-session' }), 'start spawn'],
       ['New agent…', 'user-plus', () => openOverlay({ type: 'wizard' }), 'create domain project wizard'],
+      ['Bring in your projects…', 'import', () => openOverlay({ type: 'import' }), 'import repo repos github clone find discover folders new agent project'],
+      ['Your Claude Code setup', 'layers', () => navigate('#/settings/setup'), 'skills subagents mcp hooks plugins commands settings'],
       ['New scratch session', 'terminal', () => startSession('scratch').catch(() => {}), 'plain claude no agent'],
       ['Toggle sidebar', 'chevrons-left', () => toggleRail(), 'rail collapse expand'],
       ['Layout: Focus', 'layout-focus', () => setLayout('focus'), 'view'],

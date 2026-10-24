@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { useStore, getState } from '../lib/store.js';
 import { Icon } from './icons.js';
 import {
-  closeOverlay, endSession, closePane, closeMenu, focusSession, setRenaming, copyAttach, resumeSession, askEndSession,
+  closeOverlay, endSession, closePane, closeMenu, focusSession, setRenaming, copyAttach, resumeSession, askEndSession, dismissToast,
 } from '../lib/actions.js';
 import { sessionName, attachCommand } from '../lib/model.js';
 import { coarsePointer } from '../lib/util.js';
@@ -33,6 +33,9 @@ export function Modal({ label, labelledby, onClose, children, size = 'md', class
     // (a wizard step, a removed button) and Escape/Tab must still work.
     const onKey = (e) => {
       if (e.key === 'Escape') {
+        // A field that cancels its own inline edit on Escape (data-own-escape) keeps the dialog open.
+        const own = document.activeElement && node.contains(document.activeElement) && document.activeElement.closest('[data-own-escape]');
+        if (own) return;
         e.preventDefault();
         e.stopPropagation();
         close.current();
@@ -155,6 +158,8 @@ export function Toasts() {
   return html`<div class="toasts" role="status" aria-live="polite">
     ${toasts.map((t) => html`<div key=${t.id} class=${`toast tone-${t.tone}`}>
       ${t.tone === 'error' ? html`<${Icon} name="alert" size=${14} />` : t.tone === 'ok' ? html`<${Icon} name="check" size=${14} />` : null}
-      <span>${t.text}</span></div>`)}
+      <span>${t.text}</span>
+      ${t.action ? html`<button class="link-btn toast-action" data-testid="toast-action"
+        onClick=${() => { dismissToast(t.id); t.action.run(); }}>${t.action.label}</button>` : null}</div>`)}
   </div>`;
 }

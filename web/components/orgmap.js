@@ -1,16 +1,20 @@
 // Org map (#/map): you at the centre, Donna's orbit around you (everything
 // routes through her), domains on the next ring, projects on the outer ring
 // fanned out from their domain. Hand-built SVG, no chart library.
+// The "Claude Code setup" layer (off by default) draws what every session loads as a dashed halo
+// around you, with a chip per list, and badges the projects whose repo adds its own setup.
 import { html } from '../lib/html.js';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Icon, AgentIcon, hasIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { api } from '../lib/api.js';
-import { startSession, focusSession, navigate, openOverlay } from '../lib/actions.js';
+import { startSession, focusSession, navigate, openOverlay, dismissImportCard } from '../lib/actions.js';
 import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL, countNeedsYou } from '../lib/model.js';
-import { relTime, clamp, prefersReducedMotion } from '../lib/util.js';
-import { OrgError } from './first-run.js';
+import { relTime, clamp, prefersReducedMotion, tildify, plural } from '../lib/util.js';
+import { load, save } from '../lib/prefs.js';
+import { OrgError, useImportStep } from './first-run.js';
+import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf } from './setup.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const TAU = Math.PI * 2;
@@ -19,6 +23,12 @@ const R_CHIEF = 24;
 const R_DOMAIN = 24;
 const R_PROJECT = 17;
 const R1 = 100; // Donna's orbit
+const R1_SETUP = 150; // with the setup layer on: room for its chips between you and Donna
+const HALO = 40; // the setup layer's dashed ring around you
+const CHIP_GAP = 46; // chips start this far left/right of your centre
+const CHIP_H = 24;
+// The layer's chips: two on each side of you, clear of the line up to Donna and your label below.
+const CHIPS = [['skills', -1, -1], ['agents', 1, -1], ['mcp', -1, 1], ['hooks', 1, 1]];
 const LABEL_CH = 6.9; // px per character at 12px, for collision budgeting
 
 const polar = (r, a) => [r * Math.cos(a), r * Math.sin(a)];
@@ -47,7 +57,8 @@ function relaxCircle(items, gap) {
   }
 }
 
-export function layoutOrg(agents, ownerName) {
+export function layoutOrg(agents, ownerName, { setup = false } = {}) {
+  const r1 = setup ? R1_SETUP : R1;
   const chief = agents.find((a) => a.kind === 'chief') || agents.find((a) => a.id === 'donna');
   const domains = agents.filter((a) => a.kind === 'domain');
   const domainIds = new Set(domains.map((d) => d.id));
@@ -61,7 +72,7 @@ export function layoutOrg(agents, ownerName) {
   const edges = [];
   nodes.push({ id: '__owner', kind: 'owner', x: 0, y: 0, r: R_OWNER, label: ownerName || 'You', sub: 'You' });
   if (chief) {
-    const [x, y] = polar(R1, -Math.PI / 2);
+    const [x, y] = polar(r1, -Math.PI / 2);
     nodes.push({ id: chief.id, kind: 'chief', agent: chief, x, y, r: R_CHIEF, label: chief.name, sub: 'Chief of staff', angle: -Math.PI / 2 });
     edges.push({ kind: 'core', from: '__owner', to: chief.id });
   }
@@ -77,7 +88,7 @@ export function layoutOrg(agents, ownerName) {
   }
   const longest = Math.max(6, ...ring.map((n) => Math.min(18, n.label.length)));
   const domainArc = Math.max(116, longest * LABEL_CH + 26);
-  const R2 = ring.length ? Math.max(212, ring.length > 1 ? domainArc / minGap : 0) : 0;
+  const R2 = ring.length ? Math.max(212, r1 + 112, ring.length > 1 ? domainArc / minGap : 0) : 0;
   let acc = -Math.PI / 2;
   ring.forEach((n, i) => {
     n.angle = acc + (weights[i] * unit) / 2;
@@ -86,7 +97,7 @@ export function layoutOrg(agents, ownerName) {
     const [x, y] = polar(R2, n.angle);
     nodes.push({ id: n.id, kind: n.kind, agent: n.agent, x, y, r: n.kind === 'cluster' ? 19 : R_DOMAIN, label: n.label, angle: n.angle,
       sub: n.kind === 'cluster' ? `${n.kids.length} without a domain` : undefined });
-    edges.push({ kind: 'spoke', from: chief ? chief.id : '__owner', to: n.id, angle: n.angle, r0: R1, r1: R2 - (n.kind === 'cluster' ? 19 : R_DOMAIN) });
+    edges.push({ kind: 'spoke', from: chief ? chief.id : '__owner', to: n.id, angle: n.angle, r0: r1, r1: R2 - (n.kind === 'cluster' ? 19 : R_DOMAIN) });
   });
 
   // Outer ring: projects start at their domain's angle, then relax apart.
@@ -107,7 +118,7 @@ export function layoutOrg(agents, ownerName) {
   // Label placement: inner nodes below; projects outward along their angle.
   let minX = -R_OWNER - 60;
   let maxX = R_OWNER + 60;
-  let minY = -R1 - R_CHIEF - 20;
+  let minY = -r1 - R_CHIEF - 20;
   let maxY = R_OWNER + 44;
   for (const n of nodes) {
     const text = trunc(n.label, n.kind === 'project' ? 20 : 22);
@@ -147,7 +158,7 @@ export function layoutOrg(agents, ownerName) {
       maxY = Math.max(maxY, n.ly + (n.sub ? 32 : 18));
     }
   }
-  return { nodes, edges, rings: { R1, R2, R3 }, bounds: { minX, maxX, minY, maxY }, hasChief: !!chief };
+  return { nodes, edges, rings: { R1: r1, R2, R3 }, bounds: { minX, maxX, minY, maxY }, hasChief: !!chief };
 }
 
 function nodeStats(n, sessions) {
@@ -165,7 +176,10 @@ export function OrgMap() {
   const sessions = useMemo(() => Object.values(sessionsMap), [sessionsMap]);
   const owner = (org && (org.owner || org.name)) || (me && me.owner) || 'You';
   const ownerName = org && org.owner ? org.owner : owner;
-  const L = useMemo(() => layoutOrg(agents, ownerName), [agents, ownerName]);
+  const [layer, setLayer] = useState(() => !!load('mapSetupLayer', false));
+  const setup = useSetup(layer);
+  const importStep = useImportStep();
+  const L = useMemo(() => layoutOrg(agents, ownerName, { setup: layer }), [agents, ownerName, layer]);
   const [sel, setSel] = useState(null);
   const [hover, setHover] = useState(null);
   const wrap = useRef(null);
@@ -192,16 +206,36 @@ export function OrgMap() {
     return () => mq.removeEventListener('change', f);
   }, []);
   const covered = narrow && sel && box.w > 560 ? 360 : 0;
+  const toggleLayer = () => {
+    const on = !layer;
+    setLayer(on);
+    save('mapSetupLayer', on);
+    if (!on && sel && sel.startsWith('__setup:')) setSel(null);
+  };
 
+  // The hint along the bottom ("just you and Donna", "No project agents yet") gets its own strip,
+  // so it never covers a node.
+  const hintUp = !orgError && (agents.length <= 1 || importStep);
+  const hintRef = useRef(null);
+  const [hintH, setHintH] = useState(0);
+  useEffect(() => {
+    const node = hintUp ? hintRef.current : null;
+    if (!node) { setHintH(0); return undefined; }
+    const ro = new ResizeObserver(() => setHintH(node.offsetHeight));
+    ro.observe(node);
+    return () => ro.disconnect();
+  }, [hintUp]);
+  const below = hintUp && hintH ? hintH + 40 : 0; // the hint sits 32 px above the bottom
   const fit = useMemo(() => {
     const { minX, maxX, minY, maxY } = L.bounds;
     const cw = maxX - minX;
     const ch = maxY - minY;
     if (!box.w || !box.h) return { k: 1, x: 0, y: 0 };
     const w = box.w - covered;
-    const k = clamp(Math.min((w - 48) / cw, (box.h - 48) / ch), 0.35, 1.45);
-    return { k, x: -((minX + maxX) / 2) * k - covered / 2, y: -((minY + maxY) / 2) * k };
-  }, [L, box, covered]);
+    const h = box.h - below;
+    const k = clamp(Math.min((w - 48) / cw, (h - 48) / ch), 0.35, 1.45);
+    return { k, x: -((minX + maxX) / 2) * k - covered / 2, y: -((minY + maxY) / 2) * k - below / 2 };
+  }, [L, box, covered, below]);
 
   const t = view.auto ? fit : view;
   const statsById = useMemo(() => {
@@ -234,7 +268,8 @@ export function OrgMap() {
   });
 
   const onPointerDown = (e) => {
-    if (e.button !== 0 || e.target.closest('.node')) return;
+    // Nodes, chips and the hint's buttons are clicks, not drags (a pointer capture would eat them).
+    if (e.button !== 0 || e.target.closest('.node, .setup-chip, .map-hint, .map-layer-note')) return;
     const base = view.auto ? fit : view;
     drag.current = { x: e.clientX, y: e.clientY, bx: base.x, by: base.y, k: base.k, moved: false };
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -274,8 +309,29 @@ export function OrgMap() {
 
   const reduced = prefersReducedMotion();
   const selNode = sel ? nodeById[sel] : null;
+  const setupSel = sel && sel.startsWith('__setup:') ? sel.slice(8) : null;
+  const sdata = layer ? setup.data : null;
+  // Project node id -> what its repo adds (a project with several repos has one entry per repo).
+  const adds = useMemo(() => {
+    const m = {};
+    for (const p of (sdata && Array.isArray(sdata.projects) ? sdata.projects : [])) {
+      if (!p || !p.agent) continue;
+      (m[p.agent] = m[p.agent] || []).push(p);
+    }
+    return m;
+  }, [sdata]);
+  const chips = useMemo(() => {
+    if (!sdata) return [];
+    const count = (k) => (k === 'hooks' ? (sdata.hooks || []).reduce((n, h) => n + (Number(h.count) || 1), 0) : (Array.isArray(sdata[k]) ? sdata[k].length : 0));
+    return CHIPS.map(([k, side, row]) => {
+      const n = count(k);
+      const label = kindOf(k).chip;
+      const w = Math.round(22 + (label.length + String(n).length + 1) * 6.3);
+      return { k, n, label, w, x: side * (CHIP_GAP + w / 2), y: row * (CHIP_H / 2 + 3) };
+    });
+  }, [sdata]);
 
-  return html`<div class=${`page map-page ${selNode ? 'has-panel' : ''}`} data-testid="org-map">
+  return html`<div class=${`page map-page ${selNode || setupSel ? 'has-panel' : ''}`} data-testid="org-map" data-setup-layer=${layer ? 'on' : 'off'}>
     <header class="page-bar">
       <div class="page-bar-main">
         <h1 class="page-title">Org map</h1>
@@ -291,6 +347,8 @@ export function OrgMap() {
         <button class="btn btn-quiet btn-sm" onClick=${() => setView({ ...fit, auto: true })} aria-label="Fit the whole org">Fit</button>
         <button class="icon-btn" aria-label="Zoom in" onClick=${() => zoomBy(1.25)}><${Icon} name="plus" /></button>
       </div>
+      <button class=${`btn btn-quiet layer-btn ${layer ? 'is-on' : ''}`} onClick=${toggleLayer} aria-pressed=${layer ? 'true' : 'false'}
+        title="Show the Claude Code setup every session loads" data-testid="map-setup-toggle"><${Icon} name="layers" /> Claude Code setup</button>
       <button class="btn btn-quiet" onClick=${() => openOverlay({ type: 'wizard' })}><${Icon} name="user-plus" /> New agent</button>
     </header>
     <div class="map-body">
@@ -309,7 +367,7 @@ export function OrgMap() {
               ${L.edges.map((e) => {
                 const hot = related && related.has(e.to) && related.has(e.from);
                 if (e.kind === 'core') {
-                  return html`<line class=${`edge edge-core ${hot ? 'is-hot' : ''}`} x1="0" y1=${-R_OWNER} x2="0" y2=${-R1 + R_CHIEF} />`;
+                  return html`<line class=${`edge edge-core ${hot ? 'is-hot' : ''}`} x1="0" y1=${-R_OWNER} x2="0" y2=${-L.rings.R1 + R_CHIEF} />`;
                 }
                 if (e.kind === 'spoke') {
                   const [x1, y1] = polar(e.r0, e.angle);
@@ -324,25 +382,40 @@ export function OrgMap() {
                 return html`<path class=${`edge ${hot ? 'is-hot' : ''}`} d=${`M${x0} ${y0}C${c1x} ${c1y} ${c2x} ${c2y} ${x3} ${y3}`} />`;
               })}
             </g>
+            ${chips.length ? html`<circle class="setup-halo" r=${HALO} aria-hidden="true" />` : null}
             <g class="nodes">
               ${L.nodes.map((n) => html`<${MapNode} key=${n.id} n=${n} st=${statsById[n.id]} selected=${sel === n.id}
-                dim=${related ? !related.has(n.id) : false} reduced=${reduced}
+                dim=${related ? !related.has(n.id) : false} reduced=${reduced} adds=${n.kind === 'project' && (adds[n.id] || []).some(repoAdds)}
                 onSelect=${() => setSel(sel === n.id ? null : n.id)} onHover=${(on) => setHover(on ? n.id : null)} />`)}
             </g>
+            ${chips.length ? html`<g class="setup-layer" role="group" aria-label="Your Claude Code setup, loaded in every session" data-testid="setup-halo">
+              ${chips.map((c) => html`<${SetupChip} key=${c.k} c=${c} selected=${setupSel === c.k}
+                onSelect=${() => setSel(setupSel === c.k ? null : `__setup:${c.k}`)} />`)}
+              <text class="setup-caption" x="0" y=${R_OWNER + 52} text-anchor="middle" dominant-baseline="hanging">Loaded in every session</text>
+            </g>` : null}
           </g>
         </svg>` : null}
+        ${layer && !sdata ? html`<p class="map-layer-note" role="status" data-testid="map-layer-note">${setup.err
+          ? `Couldn't read your Claude Code setup: ${setup.err === 'unsupported' ? 'this Clawdling server is too old to show it' : setup.err}`
+          : 'Reading your Claude Code setup…'}</p>` : null}
         ${orgError ? html`<div class="map-hint map-error"><${OrgError} /></div>`
-          : agents.length <= 1 ? html`<div class="map-hint"><p>Your org is just you and Donna so far.</p>
-          <button class="btn btn-primary" onClick=${() => openOverlay({ type: 'wizard' })}><${Icon} name="user-plus" /> Add a domain or project</button></div>` : null}
+          : agents.length <= 1 ? html`<div class="map-hint" ref=${hintRef}><p>Your org is just you and Donna so far.</p>
+          <button class="btn btn-primary" onClick=${() => openOverlay({ type: 'wizard' })}><${Icon} name="user-plus" /> Add a domain or project</button>
+          <button class="btn btn-quiet" onClick=${() => openOverlay({ type: 'import' })}><${Icon} name="import" /> Bring in your projects</button></div>`
+          : importStep ? html`<div class="map-hint" ref=${hintRef} data-testid="map-import-hint"><p>No project agents yet. Bring in the projects you already work on.</p>
+          <button class="btn btn-quiet" onClick=${() => openOverlay({ type: 'import' })} data-testid="map-import-go"><${Icon} name="import" /> Bring in your projects</button>
+          <button class="icon-btn" onClick=${dismissImportCard} aria-label="Hide this" title="Hide this"><${Icon} name="x" size=${14} /></button></div>` : null}
       </div>
-      ${selNode ? html`<${MapPanel} n=${selNode} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName} />` : null}
+      ${setupSel && sdata ? html`<${SetupPanel} kind=${setupSel} data=${sdata} onClose=${() => setSel(null)} />`
+        : selNode ? html`<${MapPanel} n=${selNode} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName}
+          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} />` : null}
     </div>
   </div>`;
 }
 
-function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
+function MapNode({ n, st, selected, dim, reduced, adds, onSelect, onHover }) {
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
-  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}`;
+  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}`;
   // Amber only when Claude asked something; green when it is your turn; blue while working.
   const tone = st.blocked ? 'needs' : st.turn ? 'ready' : st.working ? 'working' : 'idle';
   const count = tone === 'needs' || tone === 'ready' ? st.needs : st.live;
@@ -364,13 +437,51 @@ function MapNode({ n, st, selected, dim, reduced, onSelect, onHover }) {
     ${count ? html`<g class=${`badge-g tone-${tone}`} transform=${`translate(${n.r * 0.74} ${-n.r * 0.74})`}>
       <rect x=${count > 9 ? -11 : -8} y="-8" width=${count > 9 ? 22 : 16} height="16" rx="8" />
       <text y="0.5">${count}</text></g>` : null}
+    ${adds ? html`<g class="setup-badge" transform=${`translate(${-n.r * 0.74} ${n.r * 0.74})`} data-setup-badge="true">
+      <title>Its repo adds its own Claude Code setup</title><circle r="6" /><circle class="setup-badge-dot" r="2.2" /></g>` : null}
     <text class="node-label" x=${n.lx - n.x} y=${n.ly - n.y} text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.text}</text>
     ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (n.kind === 'chief' ? 14 : 16)}
       text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.sub}</text>` : null}
   </g>`;
 }
 
-function MapPanel({ n, sessions, onClose, agents, ownerName }) {
+// One chip of the setup layer: "Skills 9". Click (or Enter) opens that list in the side panel.
+function SetupChip({ c, selected, onSelect }) {
+  const k = kindOf(c.k);
+  const onKey = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } };
+  return html`<g class=${`setup-chip ${selected ? 'is-selected' : ''}`} transform=${`translate(${c.x} ${c.y})`} role="button" tabindex="0"
+      aria-pressed=${selected ? 'true' : 'false'} aria-label=${`${plural(c.n, k.one)}, loaded in every session. Show the list`} data-chip=${c.k}
+      onClick=${(e) => { e.stopPropagation(); onSelect(); }} onKeyDown=${onKey}>
+    <rect x=${-c.w / 2} y=${-CHIP_H / 2} width=${c.w} height=${CHIP_H} rx=${CHIP_H / 2} />
+    <text class="setup-chip-text" text-anchor="middle" dominant-baseline="central" y="0.5">${c.label} <tspan class="setup-chip-n">${c.n}</tspan></text>
+  </g>`;
+}
+
+function usePanelEscape(onClose) {
+  useLayoutEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+}
+
+function SetupPanel({ kind, data, onClose }) {
+  usePanelEscape(onClose);
+  const k = kindOf(kind);
+  return html`<aside class="map-panel" aria-label=${`${k.title} in your Claude Code setup`} data-testid="map-panel" data-setup-panel=${kind}>
+    <header class="panel-head">
+      <span class="panel-icon"><${Icon} name="layers" /></span>
+      <div class="panel-titles">
+        <h2 class="panel-title">${k.title}</h2>
+        <p class="panel-kind">Loaded in every session</p>
+      </div>
+      <button class="icon-btn" onClick=${onClose} aria-label="Close panel"><${Icon} name="x" /></button>
+    </header>
+    <div class="panel-body"><${SetupKindPanelBody} kind=${kind} data=${data} /></div>
+  </aside>`;
+}
+
+function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState('');
   const now = useStore((s) => s.now);
@@ -388,11 +499,7 @@ function MapPanel({ n, sessions, onClose, agents, ownerName }) {
     return () => { live = false; };
   }, [n.id]);
 
-  useLayoutEffect(() => {
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  usePanelEscape(onClose);
 
   const mine = sessions.filter((s) => s.agent === n.id && s.status !== 'ended');
   const a = n.agent;
@@ -417,6 +524,14 @@ function MapPanel({ n, sessions, onClose, agents, ownerName }) {
           disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> New session</button>
         <button class="btn btn-quiet" onClick=${() => navigate(`#/agent/${encodeURIComponent(n.id)}`)} data-testid="panel-open-agent">Open agent page</button>
       </div>
+      ${n.kind === 'project' && repoSetup !== undefined ? html`<section class="panel-adds" data-testid="panel-repo-adds">
+        <h3 class="panel-h">Its repo adds <span class="panel-h-sub">on top of your own setup</span></h3>
+        ${repoSetup === null ? html`<div class="panel-skel" aria-label="Loading"></div>`
+          : !repoSetup.length ? html`<p class="panel-quiet">No repo linked, so nothing extra.</p>`
+          : repoSetup.map((p) => html`<div class="panel-adds-repo">
+            ${repoSetup.length > 1 ? html`<p class="panel-adds-path mono">${tildify(p.path)}</p>` : null}
+            <${RepoAdds} p=${p} /></div>`)}
+      </section>` : null}
       <h3 class="panel-h">Live sessions <span class="sec-count">${mine.length}</span></h3>
       ${mine.length ? html`<ul class="panel-list">${mine.map((s) => html`<li><button class="panel-row" onClick=${() => focusSession(s.sid)}>
           <${StatusGlyph} status=${s.status} label=${false} /><span class="pr-title">${sessionName(s, agentsById)}</span>

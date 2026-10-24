@@ -236,6 +236,72 @@ const FIXTURES = {
   },
 };
 
+// ---------------------------------------------------------------- 1.2: discover + setup
+// What GET /api/discover finds on Ada's computer: folders from Claude Code's history, git repos
+// under ~/code and ~/projects, and her GitHub repos through `gh` (some not cloned). Ages are from
+// "now" at request time, so "recent" (90 days) stays true whenever the suite runs.
+const CODE = '/Users/ada/code';
+const DISCOVER = [
+  { name: 'site', path: `${CODE}/site`, nwo: 'ada/site', private: true, lang: 'TypeScript', desc: 'Marketing site for the spring launch', age: 2 * HOUR, claude: 2 * HOUR, has: { claude_md: true, dot_claude: true } },
+  { name: 'recipe-box', path: `${CODE}/recipe-box`, nwo: 'ada/recipe-box', private: false, lang: 'JavaScript', desc: 'Family recipes, searchable, with a shopping list', age: 1 * DAY, claude: 1 * DAY, has: { claude_md: true } },
+  { name: 'shop', path: `${CODE}/shop`, nwo: 'ada-studio/shop', private: true, lang: 'TypeScript', desc: 'Online shop: storefront, admin and the order worker', age: 6 * HOUR, claude: 8 * HOUR, monorepo: true, has: { claude_md: true, agents_md: true, dot_claude: true, mcp_json: true } },
+  { name: 'garden-sensors', path: '/Users/ada/projects/garden-sensors', lang: 'Python', localDesc: 'Soil moisture sensors on a Raspberry Pi that water the tomatoes', age: 3 * DAY, claude: 3 * DAY },
+  { name: 'notes', path: '/Users/ada/Documents/notes', git: false, lang: 'Markdown', localDesc: 'Meeting notes and drafts', age: 2 * DAY, claude: 2 * DAY },
+  { name: 'dotfiles', path: `${CODE}/dotfiles`, nwo: 'ada/dotfiles', private: false, lang: 'Shell', desc: 'My shell, git and editor settings', age: 60 * DAY },
+  { name: 'family-photos', nwo: 'ada/family-photos', private: true, lang: 'Swift', desc: 'iPhone app that sorts the family photo backups', age: 5 * DAY },
+  { name: 'ada.github.io', nwo: 'ada/ada.github.io', private: false, lang: 'HTML', desc: 'My personal page', age: 20 * DAY },
+  { name: 'old-blog', nwo: 'ada/old-blog', private: false, lang: 'Ruby', desc: 'The blog before the blog', age: 40 * DAY, archived: true },
+  { name: 'tax-scripts', path: `${CODE}/tax-scripts`, lang: 'Python', localDesc: 'Scripts that sort the receipts for taxes', age: 200 * DAY },
+  { name: 'ml-course', path: `${CODE}/ml-course`, lang: 'Jupyter Notebook', localDesc: 'Notebooks from the machine learning course', age: 150 * DAY, claude: 150 * DAY },
+];
+const ghKey = (nwo) => `github.com/${nwo.toLowerCase()}`;
+
+// What GET /api/setup reads from ~/.claude: names and descriptions only, never a value.
+const SETUP_USER = {
+  config_dir: '~/.claude',
+  claude_md: { exists: true, lines: ['# How I like to work', '- Explain the trade-off before any big change.', '- Prefer small pull requests with a clear title.', '- Use pnpm, not npm, in my JavaScript projects.', '- Ask before adding a new dependency.'] },
+  skills: [
+    ['deploy', 'Ship the current branch to staging, then production after a check'], ['changelog', 'Write the CHANGELOG entry for the last release'],
+    ['pdf', 'Read, fill and merge PDF files'], ['spreadsheet', 'Make and edit spreadsheets with formulas'], ['frontend-design', 'Distinctive, intentional visual design for new UI'],
+    ['standup', 'Summarize what changed since yesterday'], ['bug-triage', 'Sort new issues by how bad and how easy they are'], ['research', 'Look something up on the web and cite sources'],
+    ['translate', 'Translate a document and keep its formatting'],
+  ].map(([name, description]) => ({ name, description, source: 'user' })),
+  agents: [
+    ['code-reviewer', 'Reviews a diff for bugs, unclear names and missing tests before you merge'], ['test-writer', 'Writes the missing tests for a module and runs them'],
+    ['release-notes', 'Turns merged pull requests into release notes people want to read'],
+  ].map(([name, description]) => ({ name, description, file: `${name}.md`, source: 'user' })),
+  commands: [['review', 'Review the staged changes'], ['ship', 'Run the tests, then open a pull request'], ['fix-issue', 'Read a GitHub issue and fix it'], ['git:sync', 'Rebase on main and push']]
+    .map(([name, description]) => ({ name, description })),
+  plugins: [{ name: 'superpowers', marketplace: 'obra', enabled: true }, { name: 'frontend-design', marketplace: 'claude-plugins', enabled: false }],
+  hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }],
+  mcp: [{ name: 'github', scope: 'user' }, { name: 'linear', scope: 'user' }, { name: 'postgres', scope: 'local' }],
+};
+// What each repo adds on top, by path (only repos a project agent owns are reported).
+const SETUP_REPOS = {
+  [`${CODE}/site`]: { claude_md: true, agents_md: false, skills: [{ name: 'lighthouse', description: 'Run Lighthouse on the preview build and list what to fix', source: 'repo' }],
+    agents: [{ name: 'copy-editor', description: 'Tightens marketing copy without losing the voice', file: 'copy-editor.md', source: 'repo' }],
+    commands: [{ name: 'preview', description: 'Build and open a preview' }], hooks: [{ event: 'PostToolUse', count: 1 }], mcp: [{ name: 'figma', scope: 'project' }] },
+  [`${CODE}/shop`]: { claude_md: true, agents_md: true, skills: [], agents: [{ name: 'db-migrator', description: 'Writes and checks database migrations', file: 'db-migrator.md', source: 'repo' }],
+    commands: [{ name: 'seed', description: 'Fill the local database with test orders' }], hooks: [], mcp: [{ name: 'db', scope: 'project' }, { name: 'stripe', scope: 'project' }] },
+};
+
+const humanize = (id) => { const s = String(id).replace(/[-_]+/g, ' ').trim(); return s.charAt(0).toUpperCase() + s.slice(1); };
+
+function importedClaudeMd(a, c, owner) {
+  return [`# ${a.name} agent`, `You are the ${a.name} project agent in ${owner}'s org. Goal: ${a.mission}.`, '## How you work',
+    '- Keep your memory current: before you finish, update memory/NOW.md and append one dated line to memory/LOG.md. The /handoff skill does this.',
+    '- Ask before anything irreversible or outward-facing (pushing, publishing, deleting).', '## The repo',
+    `- Path: ${a.repo || '(several repos)'}`, c && c.remote ? `- Remote: ${c.remote}` : '- Remote: none', c && c.language ? `- Stack: ${c.language}` : '',
+    '## How to run it', '- install: `npm install`', '- test: `npm test`', '## Context', '- (Deep onboard fills this in.)', '@memory/NOW.md', ''].filter((l) => l !== '').join('\n');
+}
+
+function importedNow(a, c) {
+  const day = (n) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+  return [`# ${a.name}: now`, '', '## State', `- Imported from ${a.repo || 'several repos'}${c && c.remote ? ` (${c.remote})` : ''}.`, '', '## Recent commits',
+    `- ${day(0)} a1b2c3d Fix the signup form on small screens`, `- ${day(1)} 9f8e7d6 Add the pricing section`, `- ${day(3)} 4c5d6e7 Update dependencies`, '',
+    '## Open threads', '- None yet.', '', '## Next steps', `- Ask Ada what she wants next from ${a.name}.`, ''].join('\n');
+}
+
 // ---------------------------------------------------------------- fake TUI
 const WORK_SCRIPT = [
   `${CLAUDE}⏺${RESET} Reading the agent's memory to pick up where we left off.`,
@@ -293,7 +359,11 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     org: null, agents: [], sessions: new Map(), terms: new Map(), requests: [],
     channels: { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } },
     pairing: null, health: baseHealth(), trustSim: false, trusted: [], orgTrusted: true, fail: {}, transcripts: new Map(), accounts: [],
+    disc: null, cloned: new Map(),
   };
+  // /__mock/discover changes these until the next reset: how gh answers, how long discovery
+  // takes, and an import that fails `times` times (by candidate name or group name).
+  const discDefaults = () => ({ gh: 'ok', delay: 450, importDelay: 300, cloneDelay: 900, failImport: null });
   const sse = new Set();
   const timers = new Set();
   const later = (ms, fn) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
@@ -322,6 +392,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.fail = {};
     st.transcripts = new Map();
     st.accounts = [];
+    st.disc = discDefaults();
+    st.cloned = new Map();
     st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
     for (const s of fx.sessions) ensureTerm(s);
@@ -560,6 +632,150 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     return { ...c, donna: { session: st.donnaSession, busy: false }, recent: st.recent.slice(-30) };
   }
   const publishChannels = (channel) => broadcast('channel', { channel, ...channelStatus() });
+
+  // ---- 1.2: discover, import, setup
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const uniqueId = (base) => {
+    const b = slug(base);
+    if (!agentById(b)) return b;
+    for (let i = 2; ; i += 1) if (!agentById(`${b}-${i}`)) return `${b}-${i}`;
+  };
+  // The project agent that already owns a folder or a remote, like core's importer checks.
+  const agentFor = (c) => st.agents.find((a) => a.kind === 'project' && ((c.path && (a.repo === c.path || (a.repos || []).includes(c.path)))
+    || (a.source && a.source.remote_key && a.source.remote_key === c.key)));
+
+  function candidates(withGh) {
+    const now = Date.now();
+    const out = [];
+    for (const d of DISCOVER) {
+      const key = d.nwo ? ghKey(d.nwo) : `path:${d.path}`;
+      const path0 = d.path || st.cloned.get(key) || null;
+      if (!path0 && !withGh) continue; // GitHub-only: invisible without gh
+      const gh = d.nwo && withGh ? { nameWithOwner: d.nwo, url: `https://github.com/${d.nwo}`, private: !!d.private, description: d.desc || '',
+        pushed_at: iso(d.age), archived: !!d.archived, fork: false } : null;
+      const sources = [...(d.claude ? ['claude'] : []), ...(path0 ? ['local'] : []), ...(gh ? ['github'] : [])];
+      const c = {
+        key, name: d.name, path: path0, cloned: !!path0, remote: d.nwo ? `https://github.com/${d.nwo}.git` : null, github: gh,
+        language: d.lang || null, description: (gh && gh.description) || d.localDesc || d.desc || null, git: d.git !== false,
+        last_activity_at: iso(d.age), last_claude_session_at: d.claude ? iso(d.claude) : null, sources,
+        recent: d.age <= 90 * DAY, agent: null,
+        has: { claude_md: false, agents_md: false, dot_claude: false, mcp_json: false, ...(d.has || {}) }, monorepo: !!d.monorepo,
+      };
+      const a = agentFor(c);
+      c.agent = a ? { id: a.id, name: a.name } : null;
+      out.push(c);
+    }
+    return out;
+  }
+
+  function discoverBody(askGh) {
+    const mode = askGh ? st.disc.gh : 'skipped';
+    const list = candidates(mode === 'ok');
+    const github = mode === 'ok' ? { installed: true, authed: true, user: 'ada', found: list.filter((c) => c.github).length, error: null }
+      : mode === 'missing' ? { installed: false, authed: false, user: null, found: 0, error: null }
+      : mode === 'unauthed' ? { installed: true, authed: false, user: null, found: 0, error: null }
+      : mode === 'error' ? { installed: true, authed: true, user: 'ada', found: 0, error: 'gh repo list timed out after 15 s' }
+      : { installed: null, authed: null, user: null, found: 0, error: null, skipped: true };
+    return {
+      candidates: list,
+      sources: {
+        claude: { dir: '~/.claude/projects', found: list.filter((c) => c.sources.includes('claude')).length },
+        local: { roots: ['~/code', '~/projects'], found: list.filter((c) => c.cloned && c.git && c.sources.includes('local')).length },
+        github,
+      },
+      clone_root: CODE,
+      took_ms: askGh ? st.disc.delay : 120,
+    };
+  }
+
+  function resolveDomain(body) {
+    if (body.domain) {
+      const d = agentById(String(body.domain));
+      if (!d || d.kind !== 'domain') throw Object.assign(new Error(`no domain called "${body.domain}"`), { status: 400 });
+      return d.id;
+    }
+    const name = typeof body.new_domain === 'string' ? body.new_domain.trim() : '';
+    if (!name) return null;
+    const same = st.agents.find((a) => a.kind === 'domain' && a.name.toLowerCase() === name.toLowerCase());
+    if (same) return same.id;
+    const d = mkAgent(uniqueId(name), 'domain', name, `Own everything about ${name} and keep its projects moving`, { age: 0, icon: null, color: null });
+    st.agents.push(d);
+    return d.id;
+  }
+
+  function failing(name) {
+    const f = st.disc.failImport;
+    if (!f || f.times <= 0 || String(f.name).toLowerCase() !== String(name).toLowerCase()) return null;
+    f.times -= 1;
+    return f.error || `Couldn't reach GitHub for ${name}: the connection timed out. Check your internet connection and try again.`;
+  }
+
+  async function importOne(body) {
+    const all = candidates(true);
+    const c = (body.path && all.find((x) => x.path === body.path))
+      || (body.github && all.find((x) => x.github && x.github.nameWithOwner.toLowerCase() === String(body.github).toLowerCase()))
+      || (body.url && all.find((x) => x.remote === body.url || (x.github && x.github.url === body.url)));
+    if (!c && !body.path) return [400, { error: 'send the path of a folder, or a GitHub repo to clone' }];
+    if (c && !c.cloned && body.clone !== true) return [400, { error: `${c.name} is not on this computer yet: tick it to clone it first` }];
+    const existing = c ? agentFor(c) : st.agents.find((a) => a.kind === 'project' && a.repo === body.path);
+    if (existing) return [200, { agent: publicAgent(existing), skipped: true, reason: `${existing.name} already has this repo` }];
+    const cloning = !!(c && !c.cloned);
+    await pause(cloning ? st.disc.cloneDelay : st.disc.importDelay);
+    const err = failing((c && c.name) || path.basename(body.path));
+    if (err) return [500, { error: err }];
+    let domain;
+    try { domain = resolveDomain(body); } catch (e) { return [e.status || 400, { error: e.message }]; }
+    const name = String(body.name || (c && c.name) || path.basename(body.path)).trim();
+    const repo = cloning ? `${CODE}/${c.name}` : (c ? c.path : body.path);
+    if (cloning) st.cloned.set(c.key, repo);
+    const mission = String(body.mission || (c && c.description) || `Own the ${name} codebase: know how it works, keep it healthy and move the next change forward`).trim();
+    const a = mkAgent(uniqueId(name), 'project', name, mission, { age: 0, repo, domain, icon: 'folder', color: null });
+    a.source = { remote: c ? c.remote : null, remote_key: c && c.github ? c.key : null, github: c && c.github ? c.github.nameWithOwner : null, imported_at: new Date().toISOString() };
+    a._claude = importedClaudeMd(a, c, st.org.owner);
+    a._now = importedNow(a, c);
+    a._log = [`${new Date().toISOString().slice(0, 10)} Imported from ${repo}.`];
+    st.agents.push(a);
+    publishOrg('agent_created', a.id);
+    return [201, { agent: publicAgent(a), created: true, cloned: cloning }];
+  }
+
+  async function importGroup(body) {
+    const g = body.group || {};
+    const name = String(g.name || '').trim();
+    const items = Array.isArray(body.items) ? body.items : [];
+    if (!name) return [400, { error: 'give the agent a name' }];
+    if (items.length < 2 || items.length > 12) return [400, { error: 'one agent can hold 2 to 12 repos' }];
+    const all = candidates(true);
+    const picked = items.map((it) => all.find((x) => x.path && x.path === it.path) || { name: path.basename(String(it.path || '')), path: it.path, key: `path:${it.path}` });
+    if (picked.some((x) => !x.path)) return [400, { error: 'every repo in a group must already be on this computer' }];
+    if (picked.every((x) => agentFor(x))) return [409, { error: 'every one of these repos already has an agent' }];
+    await pause(st.disc.importDelay);
+    const err = failing(name);
+    if (err) return [500, { error: err }];
+    let domain;
+    try { domain = resolveDomain(g); } catch (e) { return [e.status || 400, { error: e.message }]; }
+    const mission = String(g.mission || `Own ${picked.map((x) => x.name).join(', ')} together and move the next change forward`).trim();
+    const a = mkAgent(uniqueId(name), 'project', name, mission, { age: 0, domain, icon: 'folder', color: null });
+    a.repos = picked.map((x) => x.path);
+    a.source = { remote: null, remote_key: null, github: null, imported_at: new Date().toISOString() };
+    a._claude = importedClaudeMd(a, null, st.org.owner);
+    a._now = importedNow(a, null);
+    st.agents.push(a);
+    publishOrg('agent_created', a.id);
+    return [201, { agent: publicAgent(a), created: true, cloned: false }];
+  }
+
+  function setupBody() {
+    const projects = [];
+    for (const a of st.agents) {
+      if (a.kind !== 'project') continue;
+      for (const repo of a.repo ? [a.repo] : (a.repos || [])) {
+        const r = SETUP_REPOS[repo] || { claude_md: false, agents_md: false, skills: [], agents: [], commands: [], hooks: [], mcp: [] };
+        projects.push({ path: repo, agent: a.id, ...JSON.parse(JSON.stringify(r)) });
+      }
+    }
+    return { ...JSON.parse(JSON.stringify(SETUP_USER)), projects };
+  }
 
   // ---- http helpers
   const send = (res, code, body, headers = {}) => {
@@ -838,6 +1054,32 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       res.end(placeholderQr(url.searchParams.get('target') === 'browser' ? `browser:${token}` : token));
       return;
     }
+    if (p === '/api/discover' && m === 'GET') {
+      const askGh = url.searchParams.get('github') !== '0';
+      await pause(askGh ? st.disc.delay : 120);
+      send(res, 200, discoverBody(askGh));
+      return;
+    }
+    if (p === '/api/import' && m === 'POST') {
+      const [code, out] = body.group ? await importGroup(body) : await importOne(body);
+      send(res, code, out);
+      return;
+    }
+    if (p === '/api/setup' && m === 'GET') { send(res, 200, setupBody()); return; }
+    if (p === '/api/setup/promote' && m === 'POST') {
+      const name = String(body.name || '');
+      const list = body.scope === 'repo' ? ((SETUP_REPOS[body.repo] || {}).agents || []) : SETUP_USER.agents;
+      const sub = list.find((x) => x.name === name);
+      if (!sub) { send(res, 404, { error: `no Claude Code subagent called "${name}"` }); return; }
+      const id = slug(name);
+      if (agentById(id)) { send(res, 409, { error: `an agent called "${id}" already exists` }); return; }
+      const a = mkAgent(id, 'domain', humanize(name), sub.description, { age: 0, icon: null, color: null });
+      a._claude = `${defaultClaudeMd(a, st.org.owner)}\n## Working instructions (from your Claude Code subagent "${name}")\n${sub.description}\n\nCopied from ~/.claude/agents/${sub.file} on ${new Date().toISOString().slice(0, 10)}. Editing this file does not change the original.\n`;
+      st.agents.push(a);
+      publishOrg('agent_created', id);
+      send(res, 201, publicAgent(a));
+      return;
+    }
     if (p === '/api/channels' && m === 'GET') { send(res, 200, channelStatus()); return; }
     if (p === '/api/channels/telegram' && m === 'POST') {
       const t = st.channels.telegram;
@@ -918,6 +1160,15 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const body = await readBody(req);
       if (body.off) delete st.fail[body.path];
       else st.fail[body.path] = { status: body.status || 500, error: body.error || 'internal error' };
+      send(res, 204);
+      return;
+    }
+    if (p === '/__mock/discover' && req.method === 'POST') {
+      // {gh: 'ok'|'missing'|'unauthed'|'error', delay, importDelay, cloneDelay,
+      //  failImport: {name, times, error}} until the next reset.
+      const body = await readBody(req);
+      Object.assign(st.disc, body);
+      if (body.failImport) st.disc.failImport = { times: 1, ...body.failImport };
       send(res, 204);
       return;
     }

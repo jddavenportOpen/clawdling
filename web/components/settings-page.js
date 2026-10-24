@@ -1,4 +1,5 @@
-// Settings (#/settings): your phone, appearance, workspace, shortcuts, and what the server reports.
+// Settings (#/settings): your phone, appearance, workspace, shortcuts, what the server reports, and
+// your own Claude Code setup (#/settings/setup scrolls to it).
 import { html } from '../lib/html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
@@ -11,11 +12,22 @@ import { MOD, ALT, copyText, cliCmd } from '../lib/util.js';
 import { ok } from '../lib/model.js';
 import { api } from '../lib/api.js';
 import { Icon } from './icons.js';
+import { SetupCard } from './setup.js';
 
 export function SettingsPage() {
   const health = useStore((s) => s.health);
   const open = useStore((s) => s.open);
+  const section = useStore((s) => s.route.section);
   const [theme, setTheme] = useState(getThemePref());
+
+  useEffect(() => {
+    if (section !== 'setup') return undefined;
+    const id = requestAnimationFrame(() => {
+      const card = document.getElementById('setup');
+      if (card) card.scrollIntoView({ block: 'start' });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [section]);
   const [font, setFont] = useState(Number(load('termFontSize', 13)) || 13);
   const [reader, setReader] = useState(!!load('termScreenReader', false));
 
@@ -89,6 +101,7 @@ export function SettingsPage() {
         </dl>` : html`<p class="panel-quiet">The server did not report its health.</p>`}
         <p class="set-note">Clawdling only ever starts the official <code>claude</code> binary you are signed into. It never reads or forwards your credentials.</p>
       </section>
+      <${SetupCard} />
     </div>
   </div>`;
 }

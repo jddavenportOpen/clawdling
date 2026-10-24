@@ -18,6 +18,7 @@ import { AuthScreen } from './components/auth-screen.js';
 import { Palette } from './components/palette.js';
 import { NewSessionDialog } from './components/new-session.js';
 import { Wizard } from './components/wizard.js';
+import { ImportScreen } from './components/import.js';
 import { EndDialog, Menu, Toasts } from './components/dialogs.js';
 import { Icon, Mark } from './components/icons.js';
 import { HealthBanner } from './components/health-banner.js';
@@ -39,6 +40,7 @@ function Overlays() {
   if (overlay.type === 'palette') return html`<${Palette} key="palette" />`;
   if (overlay.type === 'new-session') return html`<${NewSessionDialog} key="ns" agent=${overlay.agent} />`;
   if (overlay.type === 'wizard') return html`<${Wizard} key="wizard" name=${overlay.name} />`;
+  if (overlay.type === 'import') return html`<${ImportScreen} key="import" />`;
   if (overlay.type === 'end') return html`<${EndDialog} key=${`end-${overlay.sid}`} sid=${overlay.sid} />`;
   return null;
 }

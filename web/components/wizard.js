@@ -1,11 +1,12 @@
 // New agent wizard: kind → name → mission/goal → (project) repo + parent domain
-// → Create → optional "Start a session to flesh this out".
+// → Create → optional "Start a session to flesh this out". The first step's "From a repo" card
+// opens the import screen instead, for projects that already exist.
 import { html } from '../lib/html.js';
 import { useState, useMemo, useEffect, useRef } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Modal } from './dialogs.js';
 import { Icon } from './icons.js';
-import { closeOverlay, startSession, navigate, toast } from '../lib/actions.js';
+import { closeOverlay, startSession, navigate, toast, openOverlay } from '../lib/actions.js';
 import { api } from '../lib/api.js';
 import { refreshOrg } from '../lib/live.js';
 import { agentFolder } from '../lib/model.js';
@@ -120,16 +121,23 @@ export function Wizard({ name: presetName = '' }) {
       </ol>
     </div>
     <div class="modal-body wz-body" key=${step} ref=${body}>
-      ${step === 0 ? html`<div class="wz-kinds" role="radiogroup" aria-label="Kind of agent">
-        ${[
-          ['domain', 'briefcase', 'Domain', 'An area of your life or work that never ends: Health, Money, a team, a client.'],
-          ['project', 'folder', 'Project', 'Something with a goal and a finish line: a launch, a repo, a move, a trip.'],
-        ].map(([k, icon, title, sub], i) => html`<button role="radio" aria-checked=${kind === k ? 'true' : 'false'}
-            class=${`wz-kind ${kind === k ? 'is-on' : ''}`} data-autofocus=${i === 0 && !kind ? true : kind === k ? true : undefined}
-            onClick=${() => { setKind(k); setStep(1); }} data-kind=${k}>
-          <span class="wz-kind-icon"><${Icon} name=${icon} size=${18} /></span>
-          <span class="wz-kind-title">${title}</span><span class="wz-kind-sub">${sub}</span>
-        </button>`)}
+      ${step === 0 ? html`<div class="wz-start">
+        <div class="wz-kinds" role="radiogroup" aria-label="Kind of agent">
+          ${[
+            ['domain', 'briefcase', 'Domain', 'An area of your life or work that never ends: Health, Money, a team, a client.'],
+            ['project', 'folder', 'Project', 'Something with a goal and a finish line: a launch, a repo, a move, a trip.'],
+          ].map(([k, icon, title, sub], i) => html`<button role="radio" aria-checked=${kind === k ? 'true' : 'false'}
+              class=${`wz-kind ${kind === k ? 'is-on' : ''}`} data-autofocus=${i === 0 && !kind ? true : kind === k ? true : undefined}
+              onClick=${() => { setKind(k); setStep(1); }} data-kind=${k}>
+            <span class="wz-kind-icon"><${Icon} name=${icon} size=${18} /></span>
+            <span class="wz-kind-title">${title}</span><span class="wz-kind-sub">${sub}</span>
+          </button>`)}
+        </div>
+        <button class="wz-kind wz-kind-import" onClick=${() => openOverlay({ type: 'import' })} data-kind="import" data-testid="wz-from-repo">
+          <span class="wz-kind-icon"><${Icon} name="import" size=${18} /></span>
+          <span class="wz-kind-title">From a repo</span>
+          <span class="wz-kind-sub">Projects already on this computer or on GitHub. Pick several and each gets its own agent.</span>
+        </button>
       </div>` : null}
 
       ${step === 1 ? html`<label class="field">

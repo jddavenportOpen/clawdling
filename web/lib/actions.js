@@ -45,6 +45,7 @@ export function initialState() {
     renaming: null,
     mobile: false,
     mobileView: 'list',
+    importDismissed: !!load('importCardDismissed', false), // the first-run "Bring in your projects" card
   };
 }
 
@@ -59,10 +60,21 @@ function persistWorkspace() {
 
 // ---------- toasts ----------
 let toastId = 0;
-export function toast(text, { tone = 'info', ms = 3200 } = {}) {
+// `action` ({label, run}) adds one button to the toast, like "Open" after making an agent.
+export function toast(text, { tone = 'info', ms = 3200, action = null } = {}) {
   const id = ++toastId;
-  setState((s) => ({ toasts: [...s.toasts, { id, text, tone }].slice(-4) }));
-  setTimeout(() => setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })), ms);
+  setState((s) => ({ toasts: [...s.toasts, { id, text, tone, action }].slice(-4) }));
+  setTimeout(() => dismissToast(id), ms);
+}
+export function dismissToast(id) {
+  setState((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }));
+}
+
+// The first-run "Bring in your projects" card: hidden for good once dismissed (New agent and
+// the palette still offer it).
+export function dismissImportCard() {
+  setState({ importDismissed: true });
+  save('importCardDismissed', true);
 }
 
 export function errorToast(prefix, err) {
@@ -84,7 +96,7 @@ export function parseRoute(hash = location.hash) {
   const [head, ...rest] = h.split('/');
   if (head === 'map') return { name: 'map' };
   if (head === 'donna') return { name: 'donna' };
-  if (head === 'settings') return { name: 'settings' };
+  if (head === 'settings') return { name: 'settings', section: rest[0] || null };
   if (head === 'agent' && rest[0]) return { name: 'agent', id: decodeURIComponent(rest[0]), tab: rest[1] || 'sessions' };
   return { name: 'cockpit' };
 }

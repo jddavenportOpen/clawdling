@@ -78,6 +78,22 @@ export const api = {
   addAccount: (name) => request('POST', '/api/accounts', { name }),
   signIn: async (id) => one(await request('POST', `/api/accounts/${enc(id)}/signin`, {}), 'session'),
 
+  // 1.2. Find the user's projects: read-only, local, and GitHub only through their own gh.
+  // {candidates, sources: {claude, local, github}, clone_root, took_ms}. github: false skips gh;
+  // refresh: true skips the server's 30 s cache.
+  discover: ({ github = true, refresh = false } = {}) => {
+    const q = [github ? '' : 'github=0', refresh ? 'refresh=1' : ''].filter(Boolean).join('&');
+    return request('GET', `/api/discover${q ? `?${q}` : ''}`);
+  },
+  // The user's own Claude Code setup, names and descriptions only (never a key or a command).
+  setup: () => request('GET', '/api/setup'),
+  // One project per call, so the cockpit can show each row's progress: {path?, github?, url?, name?,
+  // domain?, new_domain?, clone?} or {group: {name, domain?, new_domain?}, items: [{path}]}.
+  // 201 {agent, created, cloned}, or 200 {agent, skipped, reason} when it is already an agent.
+  importProject: (body) => request('POST', '/api/import', body),
+  // A Claude Code subagent becomes a standing domain agent: {scope: 'user'|'repo', repo?, name}.
+  promoteSubagent: async (body) => one(await request('POST', '/api/setup/promote', body), 'agent'),
+
   pair: () => request('GET', '/api/pair'),
   channels: () => request('GET', '/api/channels'),
   telegram: (body) => request('POST', '/api/channels/telegram', body),

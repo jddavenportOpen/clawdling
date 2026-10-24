@@ -4,9 +4,9 @@ import { html } from '../lib/html.js';
 import { useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { Icon } from './icons.js';
-import { startSession, focusSession, answerDialog, toast } from '../lib/actions.js';
+import { startSession, focusSession, answerDialog, toast, openOverlay, dismissImportCard } from '../lib/actions.js';
 import { dialogAnswers } from '../lib/dialogs.js';
-import { tildify } from '../lib/util.js';
+import { tildify, MOD } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 /**
@@ -72,6 +72,32 @@ function TrustWaiting({ s, home }) {
     <span class="ft-actions">
       <button class="btn btn-quiet" onClick=${() => focusSession(s.sid)} data-testid="first-trust-show">Show the question</button>
       ${opts ? html`<button class="btn btn-primary ft-go" onClick=${yes} disabled=${busy} data-testid="first-trust-yes">${busy ? 'Answering…' : 'Yes, trust it'}</button>` : null}
+    </span>
+  </section>`;
+}
+
+/**
+ * Should the "Bring in your projects" card show? While the org has no project agent yet and the
+ * person has not hidden it. Never on a failed org read (that is not an empty org).
+ */
+export function useImportStep() {
+  return useStore((s) => !!s.org && !s.orgError && !s.importDismissed && !s.agents.some((a) => a.kind === 'project'));
+}
+
+// 1.2: one agent per project, found instead of typed. Beside "Trust my org folder" it is the
+// quiet second step; on its own it is the screen's one filled button.
+export function FirstImport({ quiet = false }) {
+  return html`<section class=${`first-trust first-import ${quiet ? 'is-quiet' : ''}`} aria-labelledby="fi-title" data-testid="first-import">
+    <span class="fi-icon" aria-hidden="true"><${Icon} name="import" /></span>
+    <div class="ft-text">
+      <h3 id="fi-title" class="ft-title">Bring in your projects</h3>
+      <p class="ft-sub">Clawdling looks for folders where you've used Claude Code, repos in <code>~/code</code> and similar folders,
+        and your GitHub repos if GitHub's <code>gh</code> tool is signed in. Pick the ones you want: each gets its own agent. Nothing leaves this computer.</p>
+    </div>
+    <span class="ft-actions">
+      <button class=${`btn ${quiet ? 'btn-quiet' : 'btn-primary'} ft-go`} onClick=${() => openOverlay({ type: 'import' })} data-testid="first-import-go">Find my projects</button>
+      <button class="icon-btn fi-dismiss" onClick=${dismissImportCard} aria-label="Hide this card" data-testid="first-import-dismiss"
+        title=${`Hide this card. New agent and the search (${MOD}K) still offer it.`}><${Icon} name="x" size=${14} /></button>
     </span>
   </section>`;
 }
