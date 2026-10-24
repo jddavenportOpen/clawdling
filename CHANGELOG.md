@@ -17,8 +17,8 @@ pick into project agents with real starting context.
   from the repo's recent commits and its open issues and pull requests. Sessions run in the repo
   itself. Importing never writes into the repo: everything Clawdling writes lives under the org
   folder, and cloning a not-cloned repo only ever creates a new folder.
-- **The import screen.** Tick the projects you want (recent ones are pre-checked), pick a domain,
-  and click **Create N project agents**. A repo you haven't cloned gets a one-click clone into
+- **The import screen.** Tick the projects you want (recent ones on this computer are
+  pre-checked), pick a domain, and click **Create N project agents**. A repo you haven't cloned gets a one-click clone into
   `~/code/<name>`. Pick several small repos and **One agent for these N** makes one agent that
   covers all of them. A repo that already has an agent is skipped.
 - **Deep onboard.** After an import, **Deep onboard** starts a real Claude Code session, on your
@@ -32,8 +32,25 @@ pick into project agents with real starting context.
 - **CLI:** `clawdling discover [--json] [--no-github] [--setup]`; `clawdling import
   <name|path|owner/repo>... [--recent] [--domain <id>] [--clone] [--group "Name"] [--yes]`.
   Without `--yes`, `import` prints the plan and creates nothing.
+- **Safe with other people's repos.** Inside a repo, Clawdling reads a file only if it really
+  lives in the repo (a `README.md` symlinked to `~/.netrc` is not read). Text anyone can write on
+  a public repo (commit subjects, issue titles, the README, the GitHub description) goes into an
+  agent's notes as data: one line each, no backticks, every `@` made harmless so nothing becomes
+  a CLAUDE.md file import, and an agent's mission is never taken from it. `git log` runs with
+  signatures, pagers and fsmonitor off, so a repo's own `.git/config` cannot make it run a
+  program. Remote URLs never carry an embedded token. Imports in one org take a lock.
+- Discovery runs in a worker thread, so a big home folder never stalls your terminals; its answer
+  is cached for 30 seconds and cleared whenever the org changes.
+- Agent icons match whole words ("readiness" is not about reading).
 - API: `GET /api/discover`, `GET /api/setup`, `POST /api/import`, `POST /api/setup/promote`.
-- Tests: TBD.
+  Agents carry `source` (where an import or a promoted subagent came from) and `repos` (one
+  agent for several repos).
+- Tests: 111 new (discovery 46, including planted-secret and symlink tests; import 35; stack
+  detection 11; git metadata 8; end to end against the real server and the CLI 11) and 22 new
+  browser tests. The suite is 312 tests under each session backend, plus 120 browser tests. Also
+  run for real: 10 GitHub repos imported as 10 agents in about 23 s, a Claude Code session in an
+  imported repo answering "what is this and how do I run its tests" from its notes, and Deep
+  onboard; every 1.2 user story passed a third-party visual review.
 
 ## 1.1.1 (2026-10-23)
 
