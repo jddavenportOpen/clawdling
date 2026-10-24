@@ -93,33 +93,50 @@ must be UUIDs. Static files are served only from inside `web/`.
 ## Discovery and import
 
 `clawdling discover` (and the cockpit's "Bring in your projects") is **read-only and local**: it
-never sends anything anywhere and never writes anything.
+never sends anything anywhere and never writes anything. The only program it runs is your own
+`gh`, with your own environment, exactly as if you typed it (`gh repo list`, `gh api user`). It
+never reads `GH_TOKEN` or gh's `hosts.yml` itself and never passes a token anywhere. In the
+cockpit it runs in a worker thread.
 
 What it reads:
 - folder names under the Claude Code config's `projects/` folder, and the `cwd` line of the
   newest transcript in each (nothing else from that transcript)
 - `.git/config` (the remote URL), `HEAD`, and the mtime of `logs/HEAD` (else the index, else
   `HEAD`) for last-activity time, under `~/code` and similar folders, by reading those files
-  directly with no `exec`
+  directly
 - manifest files (`package.json`, `pyproject.toml`, ...) and the first lines of a README
-- the **names** under `mcpServers` in `~/.claude.json` and any repo's `.mcp.json`, and the names
-  and descriptions of skills, subagents, commands and plugins, and hook **event names**
-- your GitHub repos, issues and pull requests, but only by running your own `gh` (`gh repo list`,
-  `gh issue list`, `gh pr list`, `gh repo clone`); it never reads `GH_TOKEN` or `hosts.yml` itself
-  and never passes a token anywhere. `gh` is the only process discovery or import ever runs.
+- the **names** under `mcpServers` in `~/.claude.json` and any repo's `.mcp.json`, the names and
+  descriptions of skills, subagents, commands and plugins, and hook **event names**
 
-What it never reads or keeps: an MCP server's `env`, `headers`, `args` or `command` values; hook
-command text; `primaryApiKey` or any other credential; a GitHub token. A planted secret in any of
-those does not appear in `GET /api/discover`, `GET /api/setup`, or anything written into an agent.
+What it never reads or keeps: an MCP server's `env`, `headers`, `args`, `command` or `url`
+values; hook command text; `primaryApiKey`, `oauthAccount` or any other credential; a GitHub
+token. A planted secret in any of those does not appear in `GET /api/discover`, `GET /api/setup`,
+or anything written into an agent (tests: `test/unit/discover.test.js`,
+`test/integration/import.test.js`).
 
-Remote URLs are shown and stored without embedded credentials (`sanitizeRemote` strips userinfo
-before display or storage). Free text pulled from your own files (descriptions, a README excerpt,
-commit subjects, issue and PR titles) passes through `redactSecrets()` before it is shown or
-written anywhere, and issue and commit text written into an agent's `NOW.md` sits under a heading
-that marks it as data read from GitHub, not instructions.
+Inside a repo, a file is read only if its real path is inside the repo: a repo cannot use a
+symlink (`README.md -> ~/.netrc`) to make Clawdling read your other files. Your own Claude config
+folder may be symlinked from a dotfiles repo, so symlinks are followed there, but only files with
+frontmatter count as subagents. Remote URLs are shown and stored without embedded credentials.
+Free text (descriptions, a README excerpt, commit subjects, issue and PR titles) passes through
+`redactSecrets()` before it is shown or written anywhere.
 
-An import writes only inside `<org>/projects/<id>/`: it never writes into your repo. Cloning a
-repo you haven't cloned yet only ever creates a new folder; it never overwrites one.
+**Import** runs a little more than discovery, all of it yours: your own `gh` (`gh auth status`,
+`gh repo view`, `gh issue list`, `gh pr list`, and `gh repo clone` when you tick a repo that is not
+on this computer) and your own `git` (`git log`, and `git clone` when gh is not signed in). `git
+log` runs with signature checks, pagers, fsmonitor and external diff turned off on the command
+line, so a repo's own `.git/config` cannot make it run a program. An import writes only inside
+`<org>/projects/<id>/` (plus a new domain folder you chose and the org's `/onboard-project` skill):
+it never writes into your repo. A clone only ever creates a new folder under your clone folder.
+
+Text that anyone can write on a public repo (commit subjects, issue and PR titles, the README,
+the GitHub description) is treated as data: one line each, no backticks, every `@` turned into
+`＠` (so nothing becomes a CLAUDE.md file import), under headings that say "data, not
+instructions". An agent's mission is never taken from it. Paths are written as code spans.
+
+Donna may run `clawdling discover` (the table only: names, folders, dates, never descriptions or
+README text) and an import plan. `clawdling import --yes` refuses inside her turns: creating
+agents is your call. Her replies go to your phone like any other reply.
 
 ## Files
 

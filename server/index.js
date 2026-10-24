@@ -4,6 +4,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { Worker } from 'node:worker_threads';
 import { WebSocketServer } from 'ws';
 import {
   COOKIE_NAME,
@@ -404,27 +405,54 @@ export async function startServer(opts = {}) {
       logger.warn(`could not install the org's skills: ${err.message}`);
     }
 
-    // "Bring in your projects": discovery is read-only and local (plus the user's own gh), so its
-    // answer is cached for 30 s; anything that changes the org clears it.
+    // "Bring in your projects": discovery is read-only and local (plus the user's own gh). It runs
+    // in a worker thread (its folder walk is synchronous), and its answer is cached for 30 s;
+    // anything that changes the org clears the cache, and a scan that started before the change
+    // is never stored.
     const userHome = (process.platform === 'win32' ? envGet(env, 'USERPROFILE') : envGet(env, 'HOME')) || os.homedir();
-    const found = { at: 0, key: null, body: null, pending: null };
-    const forgetDiscovery = () => Object.assign(found, { at: 0, key: null, body: null });
+    const found = { at: 0, key: null, body: null, gen: 0, pending: null, worker: null };
+    let lastCloneRoot = null; // what the import screen showed: kept when the cache is cleared
+    const forgetDiscovery = () => Object.assign(found, { at: 0, key: null, body: null, gen: found.gen + 1, pending: null });
+    function discoverOffThread(args) {
+      return new Promise((resolve, reject) => {
+        let w;
+        try {
+          w = new Worker(new URL('./discover-worker.js', import.meta.url), { workerData: args });
+        } catch {
+          discover(args).then(resolve, reject);
+          return;
+        }
+        found.worker = w;
+        let settled = false;
+        const done = (fn, v) => {
+          if (settled) return;
+          settled = true;
+          if (found.worker === w) found.worker = null;
+          fn(v);
+        };
+        w.once('message', (m) => (m && m.ok ? done(resolve, m.body) : done(reject, new Error((m && m.error) || 'discovery failed'))));
+        w.once('error', (err) => done(reject, err));
+        w.once('exit', (code) => done(reject, new Error(`discovery stopped (exit ${code})`)));
+      });
+    }
     async function discovery({ github, refresh }) {
       const key = github ? 'gh' : 'local';
       if (!refresh && found.body && found.key === key && Date.now() - found.at < 30000) return found.body;
-      if (found.pending && found.pending.key === key) return found.pending.promise;
-      const promise = discover({ env: cEnv, homedir: userHome, configDir, orgHome: home, agents: org.agents(), github })
-        .then((body) => {
-          Object.assign(found, { at: Date.now(), key, body });
-          return body;
-        })
-        .finally(() => {
-          if (found.pending && found.pending.promise === promise) found.pending = null;
-        });
-      found.pending = { key, promise };
+      if (!refresh && found.pending && found.pending.key === key) return found.pending.promise;
+      const gen = found.gen;
+      const promise = discoverOffThread({ env: { ...cEnv }, homedir: userHome, configDir, orgHome: home, agents: org.agents(), github }).then((body) => {
+        if (body && body.clone_root) lastCloneRoot = body.clone_root;
+        if (found.gen === gen) Object.assign(found, { at: Date.now(), key, body });
+        return body;
+      });
+      const pending = { key, promise };
+      found.pending = pending;
+      promise.finally(() => {
+        if (found.pending === pending) found.pending = null;
+      }).catch(() => {});
       return promise;
     }
-    const cloneRoot = () => found.body?.clone_root || path.join(userHome, 'code');
+    const cloneRoot = () => lastCloneRoot || path.join(userHome, 'code');
     // One import at a time: ids and new domains are allocated without a race.
     let importQueue = Promise.resolve();
     const serially = (fn) => {
@@ -556,7 +584,7 @@ export async function startServer(opts = {}) {
         if (b.scope === 'repo' && (typeof b.repo !== 'string' || !projectRepos().includes(b.repo))) throw badRequest("repo must be one of your project agents' repos");
         const subagent = findSubagent({ configDir, scope: b.scope, repo: b.repo, name: b.name.trim(), repos: projectRepos() });
         if (!subagent) throw notFound(`no Claude Code subagent named "${b.name.trim()}"`);
-        const agent = promoteSubagent(org, { subagent, scope: b.scope, repo: b.repo });
+        const agent = promoteSubagent(org, { subagent, scope: b.scope, repo: b.repo, name: typeof b.as === 'string' ? b.as : undefined });
         events.record({ type: 'agent', action: 'created', id: agent.id });
         publishOrg('agent_created', agent.id);
         return [201, { ...agent, live: 0, needs_you: 0, last_activity_at: null }];
@@ -824,6 +852,7 @@ export async function startServer(opts = {}) {
       telegram.stop();
       imessage.stop();
       donna.stop();
+      found.worker?.terminate().catch(() => {});
       await sessions.shutdown();
       events.closeAll();
       for (const c of wss.clients) c.terminate();

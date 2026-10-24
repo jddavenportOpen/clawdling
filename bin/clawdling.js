@@ -12,7 +12,7 @@ import { selectBackend } from '../server/backend.js';
 import { cliInvocation, stopMessage } from '../server/hints.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
-import { readJson, shq } from '../server/util.js';
+import { oneLine, readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
 
@@ -353,8 +353,8 @@ async function discoverHere(ctx, flags) {
   return discover({ env: childEnv(), homedir: os.homedir(), orgHome: ctx.home, agents, github: !flags['no-github'] });
 }
 
-/** A table cell: at most n - 1 characters and always one space after. */
-const col = (v, n) => `${pad(v, n - 1)} `;
+/** A table cell: one line with no control characters, at most n - 1 characters, then a space. */
+const col = (v, n) => `${pad(oneLine(String(v ?? ''), 200), n - 1)} `;
 
 function whereText(c) {
   if (c.path) return tildePath(c.path);
@@ -404,7 +404,7 @@ async function cmdDiscover(args) {
   console.log('Nothing was sent anywhere: this ran on your computer and only read files.');
   if (body.setup) printSetup(body.setup);
   const fresh = list.filter((c) => c.recent && !c.agent);
-  if (fresh.length) console.log(`\nNext: ${cliCmd(ctx.home, `import ${fresh.slice(0, 3).map((c) => (/\s/.test(c.name) ? JSON.stringify(c.name) : c.name)).join(' ')}${fresh.length > 3 ? ' ...' : ''}`)} (or --recent), or "Bring in your projects" in the cockpit.`);
+  if (fresh.length) console.log(`\nNext: ${cliCmd(ctx.home, `import ${fresh.slice(0, 3).map((c) => (/\s/.test(c.name) ? JSON.stringify(oneLine(c.name, 60)) : oneLine(c.name, 60))).join(' ')}${fresh.length > 3 ? ' ...' : ''}`)} (or --recent), or "Bring in your projects" in the cockpit.`);
 }
 
 function printSetup(st) {
@@ -496,8 +496,8 @@ async function cmdImport(args) {
   } else console.log(`Plan: ${todo.length} new project agent${todo.length === 1 ? '' : 's'} in ${domainLabel}:`);
   for (const r of rows) {
     if (r.skip) console.log(`  =  ${col(r.c.name, 22)}${r.skip}`);
-    else if (r.c.path) console.log(`  +  ${col(r.c.name, 22)}${tildePath(r.c.path)}`);
-    else console.log(`  +  ${col(r.c.name, 22)}clone ${r.c.github ? r.c.github.nameWithOwner : r.c.remote} to ${tildePath(path.join(cloneRoot, r.c.name))} (your own gh or git), then make the agent`);
+    else if (r.c.path) console.log(`  +  ${col(r.c.name, 22)}${oneLine(tildePath(r.c.path), 300)}`);
+    else console.log(`  +  ${col(r.c.name, 22)}clone ${oneLine(r.c.github ? r.c.github.nameWithOwner : r.c.remote, 200)} to ${oneLine(tildePath(path.join(cloneRoot, r.c.name)), 300)} (your own gh or git), then make the agent`);
   }
   if (!todo.length) return;
   if (args.flags.group && todo.length < 2) throw new CliError('a group needs at least two repos');
@@ -522,7 +522,8 @@ async function cmdImport(args) {
   if (args.flags.group) {
     const r = await run({ group: { name: String(args.flags.group), ...where }, items: todo.map((t) => ({ path: t.item.path })) });
     results.push(r);
-    console.log(`Created "${r.agent.name}" (id ${r.agent.id}) for ${todo.length} repos.`);
+    if (r.skipped) console.log(`Nothing created: ${oneLine(r.reason, 200)}.`);
+    else console.log(`Created "${r.agent.name}" (id ${r.agent.id}) for ${todo.length} repos.`);
   } else {
     let failed = 0;
     for (const r of todo) {
@@ -530,7 +531,7 @@ async function cmdImport(args) {
       try {
         const out = await run(r.item);
         results.push(out);
-        console.log(out.skipped ? `skipped (${out.reason})` : `created "${out.agent.id}"${out.cloned ? ' (cloned)' : ''}`);
+        console.log(out.skipped ? `skipped (${oneLine(out.reason, 200)})` : `created "${out.agent.id}"${out.cloned ? ' (cloned)' : ''}`);
       } catch (e) {
         failed++;
         console.log(`failed: ${e.message}`);

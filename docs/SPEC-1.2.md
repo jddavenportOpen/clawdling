@@ -188,19 +188,27 @@ Sources: skills `<config>/skills/*/SKILL.md`; subagents `<config>/agents/*.md`; 
   'project', name, mission, repo, domain})` → overwrite the new agent's CLAUDE.md with
   `draftClaudeMd(...)` and its NOW.md with `seedNowMd(...)` → write `source: {remote, remote_key,
   github, imported_at}` into `agent.json`. Name defaults to the repo folder name; id = slug, made
-  unique with `-2`... if taken by an agent for another repo. Mission defaults to the GitHub
-  description, else the package description, else the README's first sentence, else
+  unique with `-2`... if taken by an agent for another repo. Mission = the one the user gave, else
   `Own the <name> codebase: know how it works, keep it healthy and move the next change forward`.
+  It is never taken from the README or the GitHub description: anyone can write those on a public
+  repo, and the mission sits outside the "data, not instructions" blocks (and in Donna's roster).
+  The GitHub and package descriptions appear under `## The repo` as labelled data instead. Every
+  path in a generated file is a code span; every `@` in untrusted text becomes `＠`, so nothing
+  becomes a CLAUDE.md import. Imports in one org are serialized by `<org>/.clawdling/import.lock`.
 - `importGroup(org, {name, mission?, domain?, new_domain?, items: [{path}, ...]}, opts)` → one
   project agent for 2-12 local repos: `repo` = null, `repos` = the paths (agent.json), CLAUDE.md
   lists each repo with its stack, commands and README title. Sessions run in the agent folder with
-  every repo passed as `--add-dir` (sessions.js). Skips (409) if all the repos already have agents.
+  every repo passed as `--add-dir` (sessions.js). When every repo already has an agent it returns
+  `{agent, agents, skipped: true, reason}` (HTTP 200).
 - `promoteSubagent(org, {scope: 'user'|'repo', repo?, name}, opts)` → a new **domain** agent from a
   Claude Code subagent definition. The file is found by name through the scanner (never a path
   from the request). The new CLAUDE.md = the domain template with the subagent's prompt (its body)
   under `## Working instructions (from your Claude Code subagent "<name>")` and a provenance line
   (`Copied from ~/.claude/agents/<file> on <date>. Editing this file does not change the
-  original.`). Mission = the subagent's description. 409 when an agent with that id exists.
+  original.`). Mission = the subagent's description. An optional `as` (the request) / `name`
+  (the function) renames it. agent.json records `source: {subagent, subagent_scope, imported_at}`.
+  Only files with frontmatter `name` are subagents; a repo's must really live in the repo. 409
+  when an agent with that id exists.
 
 `org.js` changes: `normalizeAgent` keeps `source` (`{remote, remote_key, github, imported_at}`,
 strings only) and `repos` (array of absolute paths, project agents only). `installSkills` also
@@ -216,9 +224,11 @@ each existing repo added as `--add-dir`; the context file lists the repos.
 | `GET /api/discover` | `?github=0`, `?refresh=1` | discover body (above) |
 | `GET /api/setup` | | setup body (above) |
 | `POST /api/import` | an item, or `{group: {name, mission?, domain?, new_domain?}, items: [{path}]}` | 201 `{agent, created, cloned}` / 200 `{agent, skipped, reason}` |
-| `POST /api/setup/promote` | `{scope, repo?, name}` | 201 agent |
+| `POST /api/setup/promote` | `{scope, repo?, name, as?}` | 201 agent |
 
-Every route needs the token like the rest of the API. Imports publish the `org` event
+Every route needs the token like the rest of the API. Discovery runs in a worker thread
+(`server/discover-worker.js`) and is cached for 30 s; any org change clears the cache, and a scan
+that started before the change is not stored. Imports publish the `org` event
 (`agent_created`) so every open cockpit updates. The client imports one row per request, in
 order, so it can show per-row progress.
 
@@ -233,8 +243,9 @@ order, so it can show per-row progress.
   running cockpit's API (so the cockpit updates live), else in-process. A ref matches a
   candidate's name, path, `owner/repo` or key. `--recent` = every recent candidate without an
   agent. Never creates anything the user did not name or select. Not-cloned refs need `--clone`.
-- Donna (`CLAWDLING_DONNA=1`) may run `clawdling discover` and `clawdling import` without
-  `--yes` (a proposal). `import --yes` refuses inside Donna's turns: creating agents is the owner's
+- Donna (`CLAWDLING_DONNA=1`) may run `clawdling discover` (the table only: `--all` and
+  `--no-github`, never `--json` or `--setup`, so no descriptions or README text reach her) and
+  `clawdling import` without `--yes` (a proposal). `import --yes` refuses inside Donna's turns: creating agents is the owner's
   call (the cockpit, or `clawdling import --yes` themselves).
 - Org allow-list (`templates/org/claude/settings.json`) gains `clawdling discover` (read-only).
 
