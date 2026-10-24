@@ -40,7 +40,22 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
 
   const proc = spawn(process.execPath, [cli, 'start', '--port', '0'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';
-  proc.stderr.on('data', (c) => { stderr = (stderr + c).slice(-4000); });
+  proc.stderr.on('data', (c) => { stderr = (stderr + c).slice(-16000); });
+  // A server that dies mid-run fails every later test with "fetch failed": say why, in the log
+  // and in test-results (uploaded by CI), instead of leaving nothing behind.
+  let closing = false;
+  proc.on('exit', (code, signal) => {
+    if (closing) return;
+    let log = '';
+    try { log = fs.readFileSync(path.join(home, '.clawdling', 'logs', 'server.log'), 'utf8').slice(-16000); } catch { /* none */ }
+    const text = `real server exited unexpectedly (code ${code}, signal ${signal})\n--- stderr ---\n${stderr}\n--- server.log ---\n${log}\n`;
+    console.error(text);
+    try {
+      const dir = path.join(ROOT, 'test', 'e2e', 'test-results');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'real-server-crash.log'), text);
+    } catch { /* best effort */ }
+  });
   const serverJson = path.join(home, '.clawdling', 'server.json');
   const until = Date.now() + 20000;
   let info = null;
@@ -64,6 +79,7 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
     try { fs.rmSync(home, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }); } catch (e) { console.warn(`could not remove ${home}: ${e.message}`); }
   };
   if (!info) {
+    closing = true;
     proc.kill('SIGKILL');
     cleanup();
     throw new Error(`real server did not start:\n${stderr}`);
@@ -75,6 +91,7 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
     home,
     socket,
     close: async () => {
+      closing = true;
       // A clean stop first (`clawdling stop`): it ends pty sessions and their processes, which a
       // signal cannot do on Windows (there it is TerminateProcess, and children are orphaned).
       if (proc.exitCode === null) {
