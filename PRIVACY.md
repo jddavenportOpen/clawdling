@@ -15,6 +15,12 @@ no servers of its own. The author never receives any of your data.
 - **Your org and sessions** live on your computer: plain files in `~/clawdling` and the session
   transcripts Claude Code itself writes. Clawdling's cockpit binds to `127.0.0.1` by default
   and requires a local access token.
+- **Bring in your projects** (discovery and import) reads folder names, git metadata (a remote
+  URL, with any credential stripped out), manifest and README files, and the names (never the
+  values) of your Claude Code setup: skills, subagents, MCP servers and hooks. It reaches GitHub
+  only through your own `gh` command, never a token Clawdling holds itself. All of this stays on
+  your computer and is read-only; creating a project agent writes only inside your org folder,
+  never into the repo. Detail: [docs/SECURITY.md](docs/SECURITY.md).
 - **Your Claude account** stays with Claude Code. Clawdling never reads, stores or forwards your
   Claude credentials and never calls the Anthropic API itself; it starts the `claude` command
   you are already signed into. What Claude Code sends to Anthropic is governed by Anthropic's

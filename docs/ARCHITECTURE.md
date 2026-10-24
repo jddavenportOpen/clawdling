@@ -149,6 +149,33 @@ CLI, which talks to the server over HTTP like any other client. Every exchange i
 (`server/transcripts.js`) and returns an append-only chat view. `GET /api/pair` and
 `/api/pair/qr.svg` hand a phone the URL and token. See SPEC.md "Contract changes".
 
+## Discovery and import (server/stack.js, server/git.js, server/discover.js, server/importer.js)
+
+`server/stack.js` reads a repo's manifests to name its language, frameworks, package manager,
+install/test/dev/build/lint commands and monorepo packages, and pulls a short README excerpt. No
+network, no `exec`.
+
+`server/git.js` reads a repo's `.git` directly (`HEAD`, `config`, `logs/HEAD`) for its remote and
+last-activity time, so finding repos never spawns a process. `server/discover.js` walks the
+filesystem for git repos under `~/code` and similar roots (bounded depth and entry count,
+skipping `node_modules`, `vendor`, dot-folders and the org's own home), reads Claude Code's
+`projects/` folder for folders you've worked in before, and scans your Claude Code setup (skills,
+subagents, commands, plugins, hooks, MCP server names) for the Settings card and the org map's
+toggle. It is the only module that spawns anything, and the only thing it spawns is the user's own
+`gh`: each call is bounded by a timeout and never fatal to the overall scan. Every string it
+surfaces passes through `redactSecrets()` before it is returned.
+
+`server/importer.js` turns a chosen candidate into a project agent: it drafts the agent's
+`CLAUDE.md` and `NOW.md` deterministically from what `discover.js` found (no model call), clones
+a not-cloned repo into a new folder under the user's `~/code`-style root (never into an existing
+one), and writes `source: {remote, remote_key, github, imported_at}` into `agent.json` so
+importing the same repo again is recognised and skipped. Everything it writes resolves under
+`<org>/projects/<id>/`; it never writes into the repo itself.
+
+New routes: `GET /api/discover`, `GET /api/setup`, `POST /api/import`, `POST
+/api/setup/promote` (the same token auth as every other route). A successful import publishes the
+`agent_created` org event, so every open cockpit updates live.
+
 ## Verified behaviour this design relies on
 
 - tmux 3.6a: control mode over plain pipes works; `set -g window-size manual` in a config file

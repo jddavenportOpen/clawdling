@@ -244,13 +244,30 @@ Tell the user: "In the cockpit, open the Scratch session (it waits under **Needs
 After that, agents inside your org won't ask again; a project agent whose code lives outside the
 org asks once for its repo, the same way."
 Clawdling shows a waiting session under **Needs you** until they answer, and never answers for
-them. Wait for that answer before you start any agent (step 9): an agent started before the org
+them. Wait for that answer before you start any agent (step 10): an agent started before the org
 folder is trusted asks for its own folder too. (Alternative: run `claude` once in a terminal inside the org folder and accept there.)
 Claude Code's dialog also says the folder pre-approves a few tool permissions: those are the
 `clawdling` routing commands in the org's `.claude/settings.json` (ls, spawn, send, new, end,
 doctor; see docs/SECURITY.md), nothing else. Say so in one line if the user asks.
 
-## 8. Connect Donna (optional)
+## 8. Bring in your projects (optional)
+
+Ask in plain words: "Want an agent for each of your projects too?" This is not one of the five
+interview questions in step 3: it is one yes/no question, plus their pick. If they say no, skip
+to step 9.
+
+If yes:
+1. Run `clawdling discover` and show them the recent ones it found, in a short list (name, where
+   it lives, or "GitHub, not cloned"; when it was last touched).
+2. Ask which ones they want. Default to the recent ones (the ones already shown as recent).
+3. Create them: `clawdling import <name> <name> ... --yes`. Add `--clone` only for the ones they
+   picked that are not on this computer yet.
+
+Never run `clawdling import --yes` without their pick; "Use defaults" in step 3 does not include
+this step. Mention that the cockpit has its own **Bring in your projects** button, so they can
+come back and do this again later for anything they skip now.
+
+## 9. Connect Donna (optional)
 
 **Telegram**
 1. In Telegram, open @BotFather, send `/newbot`, pick a name and a username ending in `bot`.
@@ -268,7 +285,7 @@ doctor; see docs/SECURITY.md), nothing else. Say so in one line if the user asks
   permission to control Messages when Donna first replies.
 - `clawdling donna imessage --handle <the phone number or email they text from>`
 
-## 9. Verify
+## 10. Verify
 
 ```bash
 clawdling doctor

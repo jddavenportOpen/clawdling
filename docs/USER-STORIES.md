@@ -1,4 +1,4 @@
-# Clawdling 1.0 / 1.1 - test users and user stories
+# Clawdling 1.0 / 1.1 / 1.2 - test users and user stories
 
 Every story below is an acceptance test. The release gate is: every P0 story passes
 for every persona it names, run from a clean home directory with no prior state.
@@ -19,6 +19,7 @@ socket (`CLAWDLING_TMUX_SOCKET`) when tmux is used, its own port. No persona can
 | **Priya - MBA student, desktop app only** (1.1) | Uses Claude only through the Claude desktop app on her Mac; has never opened a terminal. Pro or Max plan. | Fresh Mac user, Claude desktop app signed in, no `claude` command, no Node, no tmux, no Homebrew. | "Can I do this from the app I already use? Will it ask for my Mac password? What do I click?" |
 | **Tom - small-business owner on Pro** (1.1) | Runs a small shop; pays for Claude Pro; uses Claude Code a little. | `--defaults`, one or two domains, Pro plan, desktop app or terminal. | "Is Pro enough? What happens when I hit my limit? Does Clawdling cost anything extra?" |
 | **Lena - claude.ai chat only** (1.1) | Uses Claude in a browser tab and on her phone; has never installed Claude Code. | No desktop app, no `claude`; arrives with only the GitHub link. | "Can I use this from claude.ai? If not, what is the shortest path?" |
+| **Hal - the builder dad** (1.2) | Retired engineer. About ten repos on GitHub from side projects over the years, some cloned locally, some not. `gh` installed and signed in. | Fresh home, `node`, `claude`, `git`, `gh`; 10 repos on GitHub. | "Can I get an agent per project, linked to my GitHub, without doing it ten times by hand?" |
 
 ## User stories
 
@@ -156,3 +157,91 @@ Each acceptance check names the automated test that covers it, or says `manual` 
 - **US-39 (P1, Lena; 1.1)** As someone who only uses claude.ai in a browser (or the phone app), when I paste the setup line into a chat Claude does not pretend to install anything: it tells me Clawdling needs a Mac, Windows or Linux computer, a Pro/Max/Team/Enterprise plan and Claude Code, points me to the desktop app's Code tab and links Start here.
   - Accept: manual: paste the line from README.md:42 into a claude.ai chat; confirm the reply matches SETUP.md:15-21 (no fake install steps, names the plan requirement, links https://claude.com/download and docs/START-HERE.md); also confirm README.md:35 and 206-208 and docs/START-HERE.md:44-49 give the same path.
   - Gap: Untested and only partly in our control: it relies on the chat model fetching SETUP.md in full (a web fetch may return a summary, SETUP.md:12-13) and obeying its first paragraph. The cockpit itself can later be used from a phone browser (US-36), but only after it is set up on a computer.
+
+## New in 1.2
+
+Bring in your projects, and Your Claude Code setup.
+
+### Bring in your projects
+- **US-40 (P0, Hal; 1.2)** As a builder dad with ten repos on GitHub, I click "Bring in your
+  projects" on the first-run card, see all ten in the import screen, tick them, and get ten
+  project agents in under two minutes.
+  - Accept: `GET /api/discover` returns 10 candidates sourced from `github`; checking all and
+    clicking "Create N project agents" creates 10 agents with per-row status; total wall time
+    under two minutes against a fake `gh`.
+- **US-41 (P0, Hal; 1.2)** As Hal, ticking a repo I haven't cloned yet clones it under my own
+  `gh` login into `~/code/<name>` and creates its agent, in one tick and one click.
+  - Accept: an item with `github` set and no `path` needs `clone: true`; it imports with `gh repo
+    clone <owner/name> <dest>` when `gh` is signed in, else `git clone <url> <dest>`; the new
+    agent's repo is the cloned path.
+- **US-42 (P0, Hal; 1.2)** As Hal, the first session on any imported agent already knows what the
+  project is and how to run its tests, because its CLAUDE.md names the repo's install, test, dev
+  and build commands and its NOW.md lists the repo's recent commits and open issues and pull
+  requests.
+  - Accept: the drafted CLAUDE.md's "How to run it" section lists one line per command the stack
+    scan found, labelled by kind; the seeded NOW.md's "Recent commits" has up to 15 entries from
+    `git log`; a fresh session's first answer names the test command without reading a file.
+- **US-43 (P1, Hal; 1.2)** As Hal, running import again on a repo I already imported skips it
+  instead of making a second agent.
+  - Accept: importing a repo whose path or remote already belongs to an agent returns `{skipped:
+    true, reason}` instead of creating one; the import screen marks that row "Already an agent:
+    <name>" and its checkbox is disabled.
+- **US-44 (P1, Hal; 1.2)** As Hal, a monorepo becomes one agent, not one per package inside it,
+  and when I pick several small repos myself, "One agent for these N" makes one agent that covers
+  all of them.
+  - Accept: a Claude Code folder or git root found inside a monorepo collapses to one candidate
+    marked `monorepo: true`; checking 2 to 12 local repos and clicking "One agent for these N"
+    creates one agent whose CLAUDE.md lists each repo with its own stack and commands.
+- **US-45 (P1, Hal; 1.2)** As Hal, Deep onboard tells me up front that it spends my own Claude
+  plan, not something free or separate.
+  - Accept: the result view's Deep onboard button reads "Starts a Claude Code session that reads
+    the repo and improves this agent's notes. Uses your Claude plan."; clicking it starts a
+    session for that agent running `/onboard-project`.
+- **US-46 (P1, Sam; 1.2)** As a newcomer with no `gh` installed, the import screen still works:
+  it shows the folders it found on this computer, says plainly that GitHub isn't connected and
+  how to fix that, and I can still create agents from what it found locally.
+  - Accept: with `gh` missing, `GET /api/discover`'s `sources.github.installed` is `false` and the
+    candidate list still has the `claude` and `local` ones; the import screen's banner reads
+    "GitHub: not connected. Install GitHub CLI and run `gh auth login` to see repos you haven't
+    cloned. Showing folders on this computer."; creating agents from the local list still works.
+- **US-47 (P0, Hal; 1.2)** As Hal, I can ask Donna to look at my projects: she can run `clawdling
+  discover` and tell me in plain words what she'd import, but she cannot create the agents
+  herself; only the cockpit, or my own `clawdling import --yes`, does that.
+  - Accept: a Donna turn (`CLAWDLING_DONNA=1`) may run `clawdling discover` and `clawdling import`
+    without `--yes`; `clawdling import --yes` inside a Donna turn is refused, the same refusal
+    class as `init`/`start`/`service`/`donna`/`attach`.
+
+### Safety and honesty
+- **US-48 (P0, Rin; 1.2)** As a skeptic, discovery is read-only and local: it never sends
+  anything off my machine and never reads a secret. MCP servers show as names only, never their
+  env, headers, args or command; hooks show as event names and counts, never their command text;
+  a remote URL on screen never carries a token.
+  - Accept: a planted secret-shaped env var, MCP header value, or hook command string placed in
+    `~/.claude.json`, a repo's `.mcp.json` or its `.claude/settings.json` does not appear anywhere
+    in `GET /api/discover` or `GET /api/setup`'s response; `sanitizeRemote` strips userinfo from
+    every remote shown or stored; the only process discovery ever runs is the user's own `gh`.
+- **US-49 (P0, Rin; 1.2)** As a skeptic, importing a project never writes into the repo:
+  everything an import creates lives under my org folder, and cloning a not-cloned repo only ever
+  creates a new folder, never overwrites one.
+  - Accept: before and after an import, the repo's own `git status` and the mtimes of its tracked
+    files are unchanged; every path `importProject` writes resolves under
+    `<org>/projects/<id>/`; `cloneRepo`'s destination is never an existing folder with different
+    contents (it gets `-2`, `-3`, ... instead).
+
+### Your Claude Code setup
+- **US-50 (P1, Dev; 1.2)** As a non-coder, Settings' "Your Claude Code setup" card and the org
+  map's matching toggle show the skills, subagents, MCP servers and hooks every agent inherits,
+  plus what my project's own repo adds, and clicking "Make it a standing agent" on a subagent
+  creates a domain agent with a note on where it came from.
+  - Accept: `GET /api/setup` lists skills, subagents, commands, plugins, hooks and MCP servers by
+    name and description only; `POST /api/setup/promote {scope, repo?, name}` creates a domain
+    agent whose CLAUDE.md carries "Copied from ~/.claude/agents/<file> on <date>. Editing this
+    file does not change the original."
+
+### Setup
+- **US-51 (P1, Sam; 1.2)** As a stranger just after init, Claude offers "Bring in your projects
+  now?" as a separate, optional question, not one of the five interview questions; answering no
+  creates zero project agents, and answering yes still only imports what I pick.
+  - Accept: the interview in SETUP.md stays at five questions or fewer; "Bring in your projects"
+    is asked after init, as one yes/no question plus a pick, and `clawdling import --yes` never
+    runs without a name or selection the user gave.

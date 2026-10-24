@@ -107,6 +107,10 @@ What happens next, so nothing surprises you:
    list) and follow the steps.
 6. **Donna**, your chief of staff, has her own page (Donna, at the bottom of the left list). From
    there you can connect her to Telegram so you can text her from your phone.
+7. **Bring in your projects.** Click **Bring in your projects** (on the empty cockpit, or under
+   **New agent**) and Clawdling looks on your computer, and on GitHub too if you use it, for
+   projects you already have, then makes an assistant for each one you pick, already knowing what
+   it is and how to run it.
 
 Every assistant is a normal Claude Code session. It asks before it edits your files or runs a
 program, the same as Claude Code always does.

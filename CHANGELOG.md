@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.2.0 (2026-10-24)
+
+**Bring in your projects.** Clawdling finds the projects you already have and turns the ones you
+pick into project agents with real starting context.
+
+- **Discovery, read-only and local.** `clawdling discover` (and the cockpit's new "Bring in your
+  projects" card) looks at folders where you've used Claude Code before, git repos under `~/code`
+  and similar folders, and your GitHub repos through your own `gh`, if it's signed in. Nothing
+  leaves your computer; GitHub is reached only through your own `gh` command, and Clawdling never
+  reads, stores or passes a GitHub token. The setup scan behind it (also `clawdling discover
+  --setup`) returns names and descriptions only: never an MCP server's env, headers, args or
+  command, never a hook's command, never a credential.
+- **Real starting context, not an empty folder.** An imported project agent's `CLAUDE.md` is
+  drafted from the repo's README and its install/test/dev/build commands; its `NOW.md` is seeded
+  from the repo's recent commits and its open issues and pull requests. Sessions run in the repo
+  itself. Importing never writes into the repo: everything Clawdling writes lives under the org
+  folder, and cloning a not-cloned repo only ever creates a new folder.
+- **The import screen.** Tick the projects you want (recent ones are pre-checked), pick a domain,
+  and click **Create N project agents**. A repo you haven't cloned gets a one-click clone into
+  `~/code/<name>`. Pick several small repos and **One agent for these N** makes one agent that
+  covers all of them. A repo that already has an agent is skipped.
+- **Deep onboard.** After an import, **Deep onboard** starts a real Claude Code session, on your
+  own plan, that reads the repo and rewrites the agent's notes properly.
+- **Your Claude Code setup, visible.** Settings has a new "Your Claude Code setup" card, and the
+  org map has a matching toggle: the skills, subagents, MCP servers and hooks every agent
+  inherits, by name only, plus what each project's own repo adds. **Make it a standing agent**
+  turns any of your Claude Code subagents into a domain agent, with a note on where it came from.
+- **Donna** can run `clawdling discover` and propose an import from a text message, but cannot
+  create the agents herself: that still needs the cockpit, or your own `clawdling import --yes`.
+- **CLI:** `clawdling discover [--json] [--no-github] [--setup]`; `clawdling import
+  <name|path|owner/repo>... [--recent] [--domain <id>] [--clone] [--group "Name"] [--yes]`.
+  Without `--yes`, `import` prints the plan and creates nothing.
+- API: `GET /api/discover`, `GET /api/setup`, `POST /api/import`, `POST /api/setup/promote`.
+- Tests: TBD.
+
 ## 1.1.1 (2026-10-23)
 
 Fixes from the first strangers and newcomers to install 1.1.0.

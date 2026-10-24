@@ -163,6 +163,37 @@ reaching it).
 
 _Screenshots use sample data._
 
+## Bring in your projects
+
+Click **Bring in your projects** (shown on the empty cockpit, or **New agent → From a repo**) and
+Clawdling looks for your projects: folders where you've used Claude Code before, git repos under
+`~/code` and similar folders, and your GitHub repos too, if `gh` is signed in. Nothing leaves your
+computer, and GitHub is reached only through your own `gh`: Clawdling never reads or stores a
+GitHub token.
+
+Tick the ones you want (the recent ones are pre-checked), pick a domain for each, and click
+**Create N project agents**. Each one gets:
+- a folder in your org that points at the repo
+- sessions that run in the repo itself, not a copy
+- a `CLAUDE.md` drafted from the repo's README and its install/test/dev/build commands
+- a `NOW.md` seeded from the repo's recent commits and its open issues and pull requests
+
+An import never writes into your repo: everything it writes lives under your org folder. A repo
+you haven't cloned yet gets a one-click clone into `~/code/<name>`. Picked several small repos?
+**One agent for these N** makes one agent that covers all of them. A repo that already has an
+agent is skipped, so running it again is safe.
+
+**Deep onboard**, next to a new agent, starts a real Claude Code session, on your own Claude
+plan, that actually reads the repo and writes better notes than the quick draft.
+
+From a terminal: `clawdling discover` lists what it found; `clawdling import <name> --yes`
+creates the agent (leave off `--yes` to see the plan first).
+
+**Your Claude Code setup, visible.** Settings has a "Your Claude Code setup" card, and the org
+map has a matching toggle: the skills, subagents, MCP servers and hooks every agent inherits, by
+name only, plus what each project's own repo adds. **Make it a standing agent** turns any of your
+Claude Code subagents into a domain agent of its own.
+
 ## How it works
 
 ```

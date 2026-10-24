@@ -48,10 +48,12 @@ server can type into those sessions, so the server is built to be reachable only
   30 minutes. Five wrong codes burn the code. Every other chat, including groups, gets no reply and
   never reaches Donna. iMessage only answers the configured handle.
 - Each turn is `claude -p --permission-mode dontAsk --setting-sources project,local
-  --strict-mcp-config --allowedTools ...`. The allow-list is `clawdling spawn`, `send`, `ls`, `new`
-  and `end`, reading files inside the org folder, and editing her own `memory/`; under `dontAsk`
-  everything else is refused without a prompt. No arbitrary shell, no writes elsewhere, no network
-  tools. `clawdling init`, `start`, `service`, `donna` and `attach` refuse to run inside a Donna turn.
+  --strict-mcp-config --allowedTools ...`. The allow-list is `clawdling spawn`, `send`, `ls`,
+  `new`, `end`, `discover` and `import` (without `--yes`), reading files inside the org folder,
+  and editing her own `memory/`; under `dontAsk` everything else is refused without a prompt. No
+  arbitrary shell, no writes elsewhere, no network tools. `clawdling init`, `start`, `service`,
+  `donna`, `attach` and `import --yes` refuse to run inside a Donna turn: creating agents is the
+  owner's call, made from the cockpit or by running `import --yes` themselves.
 - **Your own Claude Code setup does not apply to Donna's turns.** `--setting-sources project,local`
   skips your user settings (`~/.claude/settings.json`: your allow rules, hooks, plugins), so a
   personal rule such as `Bash(git *)` cannot widen what a text message can make Donna run. Only
@@ -87,6 +89,37 @@ mode. `acceptEdits` is opt-in, `inherit` (no flag: your own Claude Code setting)
 
 Agent ids must match `^[a-z0-9][a-z0-9-]{0,39}$` before any path is built from them; session ids
 must be UUIDs. Static files are served only from inside `web/`.
+
+## Discovery and import
+
+`clawdling discover` (and the cockpit's "Bring in your projects") is **read-only and local**: it
+never sends anything anywhere and never writes anything.
+
+What it reads:
+- folder names under the Claude Code config's `projects/` folder, and the `cwd` line of the
+  newest transcript in each (nothing else from that transcript)
+- `.git/config` (the remote URL), `HEAD`, and the mtime of `logs/HEAD` (else the index, else
+  `HEAD`) for last-activity time, under `~/code` and similar folders, by reading those files
+  directly with no `exec`
+- manifest files (`package.json`, `pyproject.toml`, ...) and the first lines of a README
+- the **names** under `mcpServers` in `~/.claude.json` and any repo's `.mcp.json`, and the names
+  and descriptions of skills, subagents, commands and plugins, and hook **event names**
+- your GitHub repos, issues and pull requests, but only by running your own `gh` (`gh repo list`,
+  `gh issue list`, `gh pr list`, `gh repo clone`); it never reads `GH_TOKEN` or `hosts.yml` itself
+  and never passes a token anywhere. `gh` is the only process discovery or import ever runs.
+
+What it never reads or keeps: an MCP server's `env`, `headers`, `args` or `command` values; hook
+command text; `primaryApiKey` or any other credential; a GitHub token. A planted secret in any of
+those does not appear in `GET /api/discover`, `GET /api/setup`, or anything written into an agent.
+
+Remote URLs are shown and stored without embedded credentials (`sanitizeRemote` strips userinfo
+before display or storage). Free text pulled from your own files (descriptions, a README excerpt,
+commit subjects, issue and PR titles) passes through `redactSecrets()` before it is shown or
+written anywhere, and issue and commit text written into an agent's `NOW.md` sits under a heading
+that marks it as data read from GitHub, not instructions.
+
+An import writes only inside `<org>/projects/<id>/`: it never writes into your repo. Cloning a
+repo you haven't cloned yet only ever creates a new folder; it never overwrites one.
 
 ## Files
 
