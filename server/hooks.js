@@ -51,6 +51,8 @@ export const CLI_ALLOW = [
   'Bash(clawdling spawn *)',
   'Bash(clawdling send *)',
   'Bash(clawdling new *)',
+  'Bash(clawdling discover)',
+  'Bash(clawdling discover *)',
   'Bash(clawdling end *)',
   'Bash(clawdling doctor)',
 ];

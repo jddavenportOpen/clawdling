@@ -40,6 +40,12 @@ Usage:
   clawdling open [--print]                  open the cockpit in your browser (with the token)
   clawdling new domain "<Name>" --mission "..."
   clawdling new project "<Name>" --goal "..." [--repo PATH] [--domain ID]
+  clawdling discover [--all] [--setup] [--no-github] [--json]
+                                            find your projects (Claude Code history, git repos in
+                                            ~/code and similar folders, GitHub through your own gh)
+  clawdling import <name|path|owner/repo>... [--recent] [--domain D] [--clone] [--group "Name"] [--yes]
+                                            make a project agent per project (prints the plan
+                                            until you add --yes; never writes into your repos)
   clawdling ls [--all] [--json]             list sessions
   clawdling spawn <agent> ["first message"] [--model M] [--effort E] [--account A] [--title T] [--cols N --rows N] [--json]
   clawdling send <sid> "text" [--no-enter]  type into a live session
@@ -62,7 +68,7 @@ picks one (tmux or pty).
 
 // ------------------------------------------------------------------------------------- args
 
-const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-enter', 'print', 'dry-run', 'disable', 'pair', 'help', 'version']);
+const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-enter', 'print', 'dry-run', 'disable', 'pair', 'help', 'version', 'setup', 'no-github', 'recent', 'clone', 'yes']);
 
 export function parseArgs(argv) {
   const out = { _: [], flags: {} };
@@ -324,6 +330,220 @@ async function cmdNew(args) {
   if (args.flags.json) return console.log(JSON.stringify(agent, null, 2));
   console.log(`Created ${kind} agent "${agent.name}" (id ${agent.id}) at ${agent.dir}`);
   console.log(`Start it: ${cliCmd(ctx.home, `spawn ${agent.id} "<first task>"`)}`);
+}
+
+// ------------------------------------------------------------------------------------- projects
+
+const tildePath = (p) => {
+  const h = os.homedir();
+  return p && (p === h || p.startsWith(h + path.sep)) ? `~${p.slice(h.length)}` : p;
+};
+
+async function discoverHere(ctx, flags) {
+  const { discover } = await import('../server/discover.js');
+  let agents = [];
+  const hasOrg = fs.existsSync(ctx.paths.orgJson);
+  if (hasOrg) {
+    try {
+      agents = new OrgStore(ctx.paths).agents();
+    } catch {
+      // an unreadable org: no agent matches
+    }
+  }
+  return discover({ env: childEnv(), homedir: os.homedir(), orgHome: ctx.home, agents, github: !flags['no-github'] });
+}
+
+/** A table cell: at most n - 1 characters and always one space after. */
+const col = (v, n) => `${pad(v, n - 1)} `;
+
+function whereText(c) {
+  if (c.path) return tildePath(c.path);
+  return c.github ? `GitHub, not cloned (${c.github.nameWithOwner})` : 'not on this computer';
+}
+
+function githubLine(gh) {
+  if (!gh || gh.skipped) return 'GitHub: skipped (--no-github).';
+  if (gh.installed === false) return 'GitHub: not connected (the GitHub CLI, gh, is not installed). Install it from https://cli.github.com and run `gh auth login` to also see repos you have not cloned.';
+  if (gh.authed === false) return 'GitHub: gh is installed but not signed in. Run `gh auth login` to also see repos you have not cloned.';
+  if (gh.error && !gh.found) return `GitHub: could not ask gh (${gh.error}).`;
+  return `GitHub: ${gh.found} repos through your own gh${gh.user ? ` (signed in as ${gh.user})` : ''}.`;
+}
+
+async function cmdDiscover(args) {
+  const ctx = context(args.flags);
+  const body = await discoverHere(ctx, args.flags);
+  if (args.flags.setup) {
+    const { scanSetup } = await import('../server/discover.js');
+    let agents = [];
+    try {
+      agents = fs.existsSync(ctx.paths.orgJson) ? new OrgStore(ctx.paths).agents() : [];
+    } catch {
+      // none
+    }
+    body.setup = scanSetup({ agents, homedir: os.homedir(), env: childEnv() });
+  }
+  if (args.flags.json) return console.log(JSON.stringify(body, null, 2));
+  const list = body.candidates || [];
+  const shown = args.flags.all ? list : list.filter((c) => c.recent);
+  if (!list.length) console.log('No projects found yet.');
+  else {
+    console.log(`${col('NAME', 22)}${col('WHERE', 44)}${col('LAST', 10)}${col('LANG', 12)}${col('VIS', 9)}AGENT`);
+    for (const c of shown) {
+      const vis = c.github ? (c.github.private ? 'private' : 'public') : '';
+      console.log(`${col(c.name, 22)}${col(whereText(c), 44)}${col(rel(c.last_activity_at), 10)}${col(c.language || '', 12)}${col(vis, 9)}${c.agent ? c.agent.id : ''}`);
+    }
+    const older = list.length - shown.length;
+    if (older > 0) console.log(`\n${older} more not touched in 90 days: \`${cliCmd(ctx.home, 'discover --all')}\` lists them.`);
+  }
+  const s = body.sources || {};
+  const looked = [];
+  if (s.claude) looked.push(`Claude Code history (${tildePath(s.claude.dir) || '~/.claude/projects'})`);
+  if (s.local && s.local.roots && s.local.roots.length) looked.push(s.local.roots.map(tildePath).join(', '));
+  console.log(`\nLooked in: ${looked.join('; ') || 'nothing to look in'}.`);
+  console.log(githubLine(s.github));
+  console.log('Nothing was sent anywhere: this ran on your computer and only read files.');
+  if (body.setup) printSetup(body.setup);
+  const fresh = list.filter((c) => c.recent && !c.agent);
+  if (fresh.length) console.log(`\nNext: ${cliCmd(ctx.home, `import ${fresh.slice(0, 3).map((c) => (/\s/.test(c.name) ? JSON.stringify(c.name) : c.name)).join(' ')}${fresh.length > 3 ? ' ...' : ''}`)} (or --recent), or "Bring in your projects" in the cockpit.`);
+}
+
+function printSetup(st) {
+  const names = (xs) => (xs || []).map((x) => x.name || x.event).join(', ');
+  console.log('\nYour Claude Code setup (every agent session loads it; names only):');
+  if (st.claude_md && st.claude_md.exists) console.log(`  CLAUDE.md: ${(st.claude_md.lines || [])[0] || '(empty)'}`);
+  for (const [label, key] of [['Skills', 'skills'], ['Subagents', 'agents'], ['Commands', 'commands'], ['Plugins', 'plugins'], ['MCP servers', 'mcp']]) {
+    const xs = st[key] || [];
+    if (xs.length) console.log(`  ${label} (${xs.length}): ${names(xs)}`);
+  }
+  if ((st.hooks || []).length) console.log(`  Hooks: ${st.hooks.map((h) => `${h.event} (${h.count})`).join(', ')}`);
+  for (const p of st.projects || []) {
+    const bits = [p.claude_md ? 'CLAUDE.md' : '', p.agents_md ? 'AGENTS.md' : '', ...['skills', 'agents', 'commands', 'mcp'].filter((k) => (p[k] || []).length).map((k) => `${k === 'agents' ? 'subagents' : k}: ${names(p[k])}`)].filter(Boolean);
+    if (bits.length) console.log(`  ${p.agent || tildePath(p.path)} adds: ${bits.join('; ')}`);
+  }
+}
+
+/** The candidate a person means by `ref`: a name, a path, owner/repo or a key. */
+function matchRef(list, ref) {
+  const r = String(ref).trim();
+  const lower = r.toLowerCase();
+  const abs = /^(~|\.|\/|[A-Za-z]:[\\/])/.test(r) ? path.resolve(r.startsWith('~') ? path.join(os.homedir(), r.slice(1)) : r) : null;
+  const byExact = list.filter((c) => (abs && c.path && path.resolve(c.path) === abs) || c.key === r || (c.github && c.github.nameWithOwner.toLowerCase() === lower));
+  if (byExact.length) return { hits: byExact.slice(0, 1) };
+  const byName = list.filter((c) => c.name.toLowerCase() === lower);
+  if (byName.length) return { hits: byName };
+  return { hits: [], abs };
+}
+
+async function cmdImport(args) {
+  const ctx = context(args.flags);
+  const refs = args._.slice(1);
+  if (process.env.CLAWDLING_DONNA === '1' && args.flags.yes) {
+    throw new CliError('Donna can propose an import, but creating the agents is the owner\'s call: "Bring in your projects" in the cockpit, or `clawdling import ... --yes` in their own terminal.');
+  }
+  if (!fs.existsSync(ctx.paths.orgJson)) throw new CliError(`No org at ${ctx.home}. Run \`${cliCmd(ctx.home, 'init')}\` first.`);
+  if (!refs.length && !args.flags.recent) {
+    throw new CliError(`say which projects: names, paths or owner/repo from \`${cliCmd(ctx.home, 'discover')}\`, or --recent for every recent one without an agent`);
+  }
+  const body = await discoverHere(ctx, args.flags);
+  const list = body.candidates || [];
+  const picked = [];
+  const problems = [];
+  const add = (c) => {
+    if (!picked.includes(c)) picked.push(c);
+  };
+  for (const ref of refs) {
+    const { hits, abs } = matchRef(list, ref);
+    if (hits.length > 1) {
+      problems.push(`"${ref}" matches ${hits.length} projects: ${hits.map(whereText).join(', ')}. Use the path or owner/repo.`);
+      continue;
+    }
+    if (hits.length) {
+      add(hits[0]);
+      continue;
+    }
+    let isDir = false;
+    try {
+      isDir = !!abs && fs.statSync(abs).isDirectory();
+    } catch {
+      isDir = false;
+    }
+    if (isDir) add({ key: `path:${abs}`, name: path.basename(abs), path: abs, cloned: true, github: null, agent: null });
+    else if (/^[A-Za-z0-9][A-Za-z0-9-]*\/[A-Za-z0-9_.-]+$/.test(ref)) add({ key: `github.com/${ref.toLowerCase()}`, name: ref.split('/')[1], path: null, cloned: false, github: { nameWithOwner: ref, url: `https://github.com/${ref}` }, agent: null });
+    else problems.push(`no project matches "${ref}" (see \`${cliCmd(ctx.home, 'discover --all')}\`).`);
+  }
+  if (args.flags.recent) for (const c of list) if (c.recent && !c.agent && !(c.github && c.github.archived) && (c.cloned || args.flags.clone)) add(c);
+  for (const p of problems) console.error(`clawdling: ${p}`);
+  if (!picked.length) throw new CliError(problems.length ? 'nothing to import' : 'no recent projects without an agent');
+
+  // The domain every new agent goes in: an existing one by id or name, else a new one (default Work).
+  const org = new OrgStore(ctx.paths);
+  const want = String(args.flags.domain || 'Work').trim();
+  const dom = org.agents().find((a) => a.kind === 'domain' && (a.id === want || a.name.toLowerCase() === want.toLowerCase()));
+  const where = dom ? { domain: dom.id } : { new_domain: want };
+  const domainLabel = dom ? dom.name : `${want} (new domain)`;
+
+  const rows = picked.map((c) => {
+    if (c.agent) return { c, skip: `already an agent: ${c.agent.name || c.agent.id}` };
+    if (!c.path && !args.flags.clone) return { c, skip: 'not on this computer: add --clone to clone it first' };
+    if (args.flags.group && !c.path) return { c, skip: 'a group takes repos that are already on this computer' };
+    const item = c.path ? { path: c.path, ...(c.github ? { github: c.github.nameWithOwner } : {}) } : { github: c.github ? c.github.nameWithOwner : undefined, url: (c.github && c.github.url) || c.remote, name: c.name, clone: true };
+    return { c, item: { ...item, ...where } };
+  });
+  const todo = rows.filter((r) => r.item);
+  const cloneRoot = body.clone_root || path.join(os.homedir(), 'code');
+  if (args.flags.group) {
+    console.log(`Plan: one project agent "${args.flags.group}" in ${domainLabel} for ${todo.length} repos:`);
+  } else console.log(`Plan: ${todo.length} new project agent${todo.length === 1 ? '' : 's'} in ${domainLabel}:`);
+  for (const r of rows) {
+    if (r.skip) console.log(`  =  ${col(r.c.name, 22)}${r.skip}`);
+    else if (r.c.path) console.log(`  +  ${col(r.c.name, 22)}${tildePath(r.c.path)}`);
+    else console.log(`  +  ${col(r.c.name, 22)}clone ${r.c.github ? r.c.github.nameWithOwner : r.c.remote} to ${tildePath(path.join(cloneRoot, r.c.name))} (your own gh or git), then make the agent`);
+  }
+  if (!todo.length) return;
+  if (args.flags.group && todo.length < 2) throw new CliError('a group needs at least two repos');
+  if (!args.flags.yes) {
+    console.log(`\nNothing was created. Run again with --yes to create ${args.flags.group ? 'it' : `these ${todo.length}`}. Each agent gets its own folder in ${tildePath(ctx.home)}; your repos are not changed.`);
+    return;
+  }
+
+  const up = await serverUp(ctx);
+  const viaApi = up && up.home === ctx.home;
+  let importer = null;
+  const run = async (payload) => {
+    if (viaApi) return api(ctx, 'POST', '/api/import', payload);
+    importer = importer || (await import('../server/importer.js'));
+    try {
+      return payload.group ? await importer.importGroup(org, { ...payload.group, items: payload.items }) : await importer.importProject(org, payload, { cloneRoot });
+    } catch (e) {
+      throw new CliError(e.message);
+    }
+  };
+  const results = [];
+  if (args.flags.group) {
+    const r = await run({ group: { name: String(args.flags.group), ...where }, items: todo.map((t) => ({ path: t.item.path })) });
+    results.push(r);
+    console.log(`Created "${r.agent.name}" (id ${r.agent.id}) for ${todo.length} repos.`);
+  } else {
+    let failed = 0;
+    for (const r of todo) {
+      process.stdout.write(`  ${col(r.c.name, 22)}${r.item.clone ? 'cloning, then creating... ' : 'creating... '}`);
+      try {
+        const out = await run(r.item);
+        results.push(out);
+        console.log(out.skipped ? `skipped (${out.reason})` : `created "${out.agent.id}"${out.cloned ? ' (cloned)' : ''}`);
+      } catch (e) {
+        failed++;
+        console.log(`failed: ${e.message}`);
+      }
+    }
+    if (failed) process.exitCode = 1;
+  }
+  if (args.flags.json) console.log(JSON.stringify(results, null, 2));
+  const made = results.filter((r) => r && r.created);
+  if (made.length) {
+    console.log(`\nStart one: ${cliCmd(ctx.home, `spawn ${made[0].agent.id} "What is this project and how do I run its tests?"`)}`);
+    console.log(`Or let it read its repo and improve its own notes (uses your Claude plan): ${cliCmd(ctx.home, `spawn ${made[0].agent.id} /onboard-project`)}`);
+  }
 }
 
 async function cmdLs(args) {
@@ -814,6 +1034,8 @@ export async function main(argv = process.argv.slice(2)) {
     stop: cmdStop,
     open: cmdOpen,
     new: cmdNew,
+    discover: cmdDiscover,
+    import: cmdImport,
     ls: cmdLs,
     spawn: cmdSpawn,
     send: cmdSend,

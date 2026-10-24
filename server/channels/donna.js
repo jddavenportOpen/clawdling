@@ -15,7 +15,8 @@ export const DONNA_TIMEOUT_MS = 180000;
  * anything not listed is denied: no arbitrary shell, no writes outside her memory folder.
  */
 export function donnaAllowedTools(home, platform = process.platform) {
-  const commands = ['clawdling spawn *', 'clawdling send *', 'clawdling ls', 'clawdling ls *', 'clawdling new *', 'clawdling end *'];
+  // discover is read-only; import without --yes only prints a plan (the CLI refuses --yes in her turns).
+  const commands = ['clawdling spawn *', 'clawdling send *', 'clawdling ls', 'clawdling ls *', 'clawdling new *', 'clawdling end *', 'clawdling discover', 'clawdling discover *', 'clawdling import *'];
   const tools = commands.map((c) => `Bash(${c})`);
   // On Windows her shell may be PowerShell (no Git for Windows): the same commands for that tool.
   if (platform === 'win32') tools.push(...commands.map((c) => `PowerShell(${c})`));

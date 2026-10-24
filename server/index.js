@@ -40,7 +40,9 @@ import {
   tmuxSocketName,
   which,
 } from './paths.js';
-import { commandFor, portablePath, spawnOptions } from './platform.js';
+import { commandFor, envGet, portablePath, spawnOptions } from './platform.js';
+import { discover, findSubagent, scanSetup } from './discover.js';
+import { importGroup, importProject, promoteSubagent } from './importer.js';
 import { SessionManager } from './sessions.js';
 import { TranscriptReader, claudeConfigDir, findTranscript } from './transcripts.js';
 import { Accounts } from './accounts.js';
@@ -395,6 +397,42 @@ export async function startServer(opts = {}) {
     const imessage = new IMessageGateway({ paths, org, donna, events, logger, env: testMode ? { ...env, CLAWDLING_TEST: '1' } : env });
     const transcripts = new TranscriptReader();
     const configDir = claudeConfigDir(cEnv);
+    // Orgs from before 1.2 get the /onboard-project skill (repo-rooted sessions find skills at the org root).
+    try {
+      org.ensureSkills();
+    } catch (err) {
+      logger.warn(`could not install the org's skills: ${err.message}`);
+    }
+
+    // "Bring in your projects": discovery is read-only and local (plus the user's own gh), so its
+    // answer is cached for 30 s; anything that changes the org clears it.
+    const userHome = (process.platform === 'win32' ? envGet(env, 'USERPROFILE') : envGet(env, 'HOME')) || os.homedir();
+    const found = { at: 0, key: null, body: null, pending: null };
+    const forgetDiscovery = () => Object.assign(found, { at: 0, key: null, body: null });
+    async function discovery({ github, refresh }) {
+      const key = github ? 'gh' : 'local';
+      if (!refresh && found.body && found.key === key && Date.now() - found.at < 30000) return found.body;
+      if (found.pending && found.pending.key === key) return found.pending.promise;
+      const promise = discover({ env: cEnv, homedir: userHome, configDir, orgHome: home, agents: org.agents(), github })
+        .then((body) => {
+          Object.assign(found, { at: Date.now(), key, body });
+          return body;
+        })
+        .finally(() => {
+          if (found.pending && found.pending.promise === promise) found.pending = null;
+        });
+      found.pending = { key, promise };
+      return promise;
+    }
+    const cloneRoot = () => found.body?.clone_root || path.join(userHome, 'code');
+    // One import at a time: ids and new domains are allocated without a race.
+    let importQueue = Promise.resolve();
+    const serially = (fn) => {
+      const run = importQueue.then(fn, fn);
+      importQueue = run.catch(() => {});
+      return run;
+    };
+    const projectRepos = () => org.agents().filter((a) => a.kind === 'project').flatMap((a) => [a.repo, ...(a.repos || [])]).filter(Boolean);
 
     const versions = { at: 0, claude: null, tmux: null };
     const backendInfo = { ...backend.describe(), reason: backend.reason || null, label: BACKEND_LABEL[backend.kind] || backend.kind };
@@ -439,6 +477,7 @@ export async function startServer(opts = {}) {
     }
 
     function publishOrg(reason, id) {
+      forgetDiscovery();
       try {
         events.publish('org', { reason, id, ...orgView() });
       } catch (err) {
@@ -494,6 +533,33 @@ export async function startServer(opts = {}) {
         events.record({ type: 'agent', action: 'archived', id });
         publishOrg('agent_archived', id);
         return [200, { ok: true, ...out }];
+      }],
+      // Bring in your projects (SPEC-1.2): candidates, the Claude Code setup, imports, standing agents.
+      ['GET', /^\/api\/discover$/, async (req, m, res, url) => [200, await discovery({ github: url.searchParams.get('github') !== '0', refresh: url.searchParams.get('refresh') === '1' })]],
+      ['GET', /^\/api\/setup$/, () => [200, scanSetup({ configDir, agents: org.agents(), homedir: userHome, env: cEnv })]],
+      ['POST', /^\/api\/import$/, async (req) => {
+        const b = await jsonBody(req);
+        const r = await serially(() => (b.group ? importGroup(org, { ...b.group, items: b.items }, { env: cEnv }) : importProject(org, b, { env: cEnv, cloneRoot: cloneRoot() })));
+        if (r.skipped) return [200, r];
+        if (r.domain_created) {
+          events.record({ type: 'agent', action: 'created', id: r.domain_created.id });
+          publishOrg('agent_created', r.domain_created.id);
+        }
+        events.record({ type: 'agent', action: 'imported', id: r.agent.id });
+        publishOrg('agent_created', r.agent.id);
+        return [201, r];
+      }],
+      ['POST', /^\/api\/setup\/promote$/, async (req) => {
+        const b = await jsonBody(req);
+        if (b.scope !== 'user' && b.scope !== 'repo') throw badRequest('scope must be "user" or "repo"');
+        if (typeof b.name !== 'string' || !b.name.trim()) throw badRequest('send the subagent name');
+        if (b.scope === 'repo' && (typeof b.repo !== 'string' || !projectRepos().includes(b.repo))) throw badRequest("repo must be one of your project agents' repos");
+        const subagent = findSubagent({ configDir, scope: b.scope, repo: b.repo, name: b.name.trim(), repos: projectRepos() });
+        if (!subagent) throw notFound(`no Claude Code subagent named "${b.name.trim()}"`);
+        const agent = promoteSubagent(org, { subagent, scope: b.scope, repo: b.repo });
+        events.record({ type: 'agent', action: 'created', id: agent.id });
+        publishOrg('agent_created', agent.id);
+        return [201, { ...agent, live: 0, needs_you: 0, last_activity_at: null }];
       }],
       ['GET', /^\/api\/sessions$/, () => [200, sessions.list()]],
       ['POST', /^\/api\/sessions$/, async (req) => {
