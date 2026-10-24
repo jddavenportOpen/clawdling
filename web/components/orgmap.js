@@ -14,7 +14,7 @@ import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL, countNee
 import { relTime, clamp, prefersReducedMotion, tildify, plural } from '../lib/util.js';
 import { load, save } from '../lib/prefs.js';
 import { OrgError, useImportStep } from './first-run.js';
-import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf } from './setup.js';
+import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf, countOf } from './setup.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 const TAU = Math.PI * 2;
@@ -322,9 +322,8 @@ export function OrgMap() {
   }, [sdata]);
   const chips = useMemo(() => {
     if (!sdata) return [];
-    const count = (k) => (k === 'hooks' ? (sdata.hooks || []).reduce((n, h) => n + (Number(h.count) || 1), 0) : (Array.isArray(sdata[k]) ? sdata[k].length : 0));
     return CHIPS.map(([k, side, row]) => {
-      const n = count(k);
+      const n = countOf(k, sdata[k]); // hooks: every hook, like the Settings card and the panel
       const label = kindOf(k).chip;
       const w = Math.round(22 + (label.length + String(n).length + 1) * 6.3);
       return { k, n, label, w, x: side * (CHIP_GAP + w / 2), y: row * (CHIP_H / 2 + 3) };
@@ -408,7 +407,7 @@ export function OrgMap() {
       </div>
       ${setupSel && sdata ? html`<${SetupPanel} kind=${setupSel} data=${sdata} onClose=${() => setSel(null)} />`
         : selNode ? html`<${MapPanel} n=${selNode} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName}
-          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} />` : null}
+          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} setupBusy=${layer && setup.refreshing} />` : null}
     </div>
   </div>`;
 }
@@ -481,7 +480,7 @@ function SetupPanel({ kind, data, onClose }) {
   </aside>`;
 }
 
-function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup }) {
+function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup, setupBusy }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState('');
   const now = useStore((s) => s.now);
@@ -503,6 +502,7 @@ function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup }) {
 
   const mine = sessions.filter((s) => s.agent === n.id && s.status !== 'ended');
   const a = n.agent;
+  const linked = !!(a && (a.repo || (Array.isArray(a.repos) && a.repos.length)));
   const nowMd = detail && typeof detail.now_md === 'string' ? detail.now_md : null;
 
   let body;
@@ -526,8 +526,8 @@ function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup }) {
       </div>
       ${n.kind === 'project' && repoSetup !== undefined ? html`<section class="panel-adds" data-testid="panel-repo-adds">
         <h3 class="panel-h">Its repo adds <span class="panel-h-sub">on top of your own setup</span></h3>
-        ${repoSetup === null ? html`<div class="panel-skel" aria-label="Loading"></div>`
-          : !repoSetup.length ? html`<p class="panel-quiet">No repo linked, so nothing extra.</p>`
+        ${repoSetup === null || (!repoSetup.length && linked && setupBusy) ? html`<div class="panel-skel" aria-label="Loading"></div>`
+          : !repoSetup.length ? html`<p class="panel-quiet">${linked ? 'Nothing beyond your own setup.' : 'No repo linked, so nothing extra.'}</p>`
           : repoSetup.map((p) => html`<div class="panel-adds-repo">
             ${repoSetup.length > 1 ? html`<p class="panel-adds-path mono">${tildify(p.path)}</p>` : null}
             <${RepoAdds} p=${p} /></div>`)}

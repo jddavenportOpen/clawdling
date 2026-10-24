@@ -269,6 +269,7 @@ const SETUP_USER = {
   agents: [
     ['code-reviewer', 'Reviews a diff for bugs, unclear names and missing tests before you merge'], ['test-writer', 'Writes the missing tests for a module and runs them'],
     ['release-notes', 'Turns merged pull requests into release notes people want to read'],
+    ['health', 'Checks a training week against sleep and recovery before it is final'], // same id as the Health domain, made by hand
   ].map(([name, description]) => ({ name, description, file: `${name}.md`, source: 'user' })),
   commands: [['review', 'Review the staged changes'], ['ship', 'Run the tests, then open a pull request'], ['fix-issue', 'Read a GitHub issue and fix it'], ['git:sync', 'Rebase on main and push']]
     .map(([name, description]) => ({ name, description })),
@@ -362,8 +363,13 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     disc: null, cloned: new Map(),
   };
   // /__mock/discover changes these until the next reset: how gh answers, how long discovery
-  // takes, and an import that fails `times` times (by candidate name or group name).
-  const discDefaults = () => ({ gh: 'ok', delay: 450, importDelay: 300, cloneDelay: 900, failImport: null });
+  // takes, and an import that fails `times` times (by candidate name or group name). `quiet`:
+  // imports publish no org event (this browser is not told, like a CLI import it missed).
+  // `cloneTaken`: names whose <clone_root>/<name> already holds something else, so a clone lands
+  // in <name>-2 like core's cloneRepo; `cloneRoot`: where clones go (discover's clone_root).
+  // `legacyGroup409`: a group whose repos all have agents answers 409, like servers before 1.2.0.
+  const discDefaults = () => ({ gh: 'ok', delay: 450, importDelay: 300, cloneDelay: 900, failImport: null, quiet: false, cloneTaken: [], cloneRoot: CODE, legacyGroup409: false });
+  const publishImport = (id) => { if (!st.disc.quiet) publishOrg('agent_created', id); };
   const sse = new Set();
   const timers = new Set();
   const later = (ms, fn) => { const t = setTimeout(() => { timers.delete(t); fn(); }, ms); timers.add(t); return t; };
@@ -683,7 +689,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         local: { roots: ['~/code', '~/projects'], found: list.filter((c) => c.cloned && c.git && c.sources.includes('local')).length },
         github,
       },
-      clone_root: CODE,
+      clone_root: st.disc.cloneRoot,
       took_ms: askGh ? st.disc.delay : 120,
     };
   }
@@ -718,7 +724,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (!c && !body.path) return [400, { error: 'send the path of a folder, or a GitHub repo to clone' }];
     if (c && !c.cloned && body.clone !== true) return [400, { error: `${c.name} is not on this computer yet: tick it to clone it first` }];
     const existing = c ? agentFor(c) : st.agents.find((a) => a.kind === 'project' && a.repo === body.path);
-    if (existing) return [200, { agent: publicAgent(existing), skipped: true, reason: `${existing.name} already has this repo` }];
+    if (existing) return [200, { agent: publicAgent(existing), skipped: true, reason: `already an agent: ${existing.name}` }];
     const cloning = !!(c && !c.cloned);
     await pause(cloning ? st.disc.cloneDelay : st.disc.importDelay);
     const err = failing((c && c.name) || path.basename(body.path));
@@ -726,16 +732,18 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     let domain;
     try { domain = resolveDomain(body); } catch (e) { return [e.status || 400, { error: e.message }]; }
     const name = String(body.name || (c && c.name) || path.basename(body.path)).trim();
-    const repo = cloning ? `${CODE}/${c.name}` : (c ? c.path : body.path);
+    const taken = (st.disc.cloneTaken || []).map((x) => String(x).toLowerCase());
+    const repo = cloning ? `${st.disc.cloneRoot}/${c.name}${taken.includes(c.name.toLowerCase()) ? '-2' : ''}` : (c ? c.path : body.path);
     if (cloning) st.cloned.set(c.key, repo);
-    const mission = String(body.mission || (c && c.description) || `Own the ${name} codebase: know how it works, keep it healthy and move the next change forward`).trim();
+    // Generic unless the person gave one: a repo's description is data, not the agent's goal.
+    const mission = String(body.mission || `Own the ${name} codebase: know how it works, keep it healthy and move the next change forward`).trim();
     const a = mkAgent(uniqueId(name), 'project', name, mission, { age: 0, repo, domain, icon: 'folder', color: null });
     a.source = { remote: c ? c.remote : null, remote_key: c && c.github ? c.key : null, github: c && c.github ? c.github.nameWithOwner : null, imported_at: new Date().toISOString() };
     a._claude = importedClaudeMd(a, c, st.org.owner);
     a._now = importedNow(a, c);
     a._log = [`${new Date().toISOString().slice(0, 10)} Imported from ${repo}.`];
     st.agents.push(a);
-    publishOrg('agent_created', a.id);
+    publishImport(a.id);
     return [201, { agent: publicAgent(a), created: true, cloned: cloning }];
   }
 
@@ -748,20 +756,26 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const all = candidates(true);
     const picked = items.map((it) => all.find((x) => x.path && x.path === it.path) || { name: path.basename(String(it.path || '')), path: it.path, key: `path:${it.path}` });
     if (picked.some((x) => !x.path)) return [400, { error: 'every repo in a group must already be on this computer' }];
-    if (picked.every((x) => agentFor(x))) return [409, { error: 'every one of these repos already has an agent' }];
+    const covered = picked.map((x) => agentFor(x));
+    if (covered.every(Boolean)) {
+      const owners = [...new Map(covered.map((a) => [a.id, a])).values()];
+      const reason = `every one of these repos already has an agent (${owners.map((a) => a.name).join(', ')})`;
+      if (st.disc.legacyGroup409) return [409, { error: reason }];
+      return [200, { agent: publicAgent(owners[0]), agents: owners.map(publicAgent), skipped: true, reason }];
+    }
     await pause(st.disc.importDelay);
     const err = failing(name);
     if (err) return [500, { error: err }];
     let domain;
     try { domain = resolveDomain(g); } catch (e) { return [e.status || 400, { error: e.message }]; }
-    const mission = String(g.mission || `Own ${picked.map((x) => x.name).join(', ')} together and move the next change forward`).trim();
+    const mission = String(g.mission || `Own the ${name} codebases (${picked.map((x) => x.name).join(', ')}): know how they fit together, keep them healthy and move the next change forward`).trim();
     const a = mkAgent(uniqueId(name), 'project', name, mission, { age: 0, domain, icon: 'folder', color: null });
     a.repos = picked.map((x) => x.path);
     a.source = { remote: null, remote_key: null, github: null, imported_at: new Date().toISOString() };
     a._claude = importedClaudeMd(a, null, st.org.owner);
     a._now = importedNow(a, null);
     st.agents.push(a);
-    publishOrg('agent_created', a.id);
+    publishImport(a.id);
     return [201, { agent: publicAgent(a), created: true, cloned: false }];
   }
 
@@ -1071,9 +1085,12 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const list = body.scope === 'repo' ? ((SETUP_REPOS[body.repo] || {}).agents || []) : SETUP_USER.agents;
       const sub = list.find((x) => x.name === name);
       if (!sub) { send(res, 404, { error: `no Claude Code subagent called "${name}"` }); return; }
-      const id = slug(name);
-      if (agentById(id)) { send(res, 409, { error: `an agent called "${id}" already exists` }); return; }
-      const a = mkAgent(id, 'domain', humanize(name), sub.description, { age: 0, icon: null, color: null });
+      // `as`: the person's own name for it, when the subagent's id is taken (the id is its slug).
+      const as = typeof body.as === 'string' ? body.as.trim().replace(/\s+/g, ' ').slice(0, 60) : '';
+      const id = slug(as || name);
+      if (agentById(id) || id === 'scratch') { send(res, 409, { error: `an agent with id "${id}" already exists` }); return; }
+      const a = mkAgent(id, 'domain', as || humanize(name), sub.description, { age: 0, icon: null, color: null });
+      a.source = { subagent: name, subagent_scope: body.scope === 'repo' ? 'repo' : 'user', imported_at: new Date().toISOString() };
       a._claude = `${defaultClaudeMd(a, st.org.owner)}\n## Working instructions (from your Claude Code subagent "${name}")\n${sub.description}\n\nCopied from ~/.claude/agents/${sub.file} on ${new Date().toISOString().slice(0, 10)}. Editing this file does not change the original.\n`;
       st.agents.push(a);
       publishOrg('agent_created', id);
@@ -1165,7 +1182,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     }
     if (p === '/__mock/discover' && req.method === 'POST') {
       // {gh: 'ok'|'missing'|'unauthed'|'error', delay, importDelay, cloneDelay,
-      //  failImport: {name, times, error}} until the next reset.
+      //  failImport: {name, times, error}, quiet, cloneTaken: [name], cloneRoot, legacyGroup409} until the next reset.
       const body = await readBody(req);
       Object.assign(st.disc, body);
       if (body.failImport) st.disc.failImport = { times: 1, ...body.failImport };

@@ -1155,6 +1155,9 @@ h3.chat-h { font-size: 16.5px; }
 .setup-promote { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
 .setup-promote .form-error { margin: 0; }
 .setup-made { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--ready-text); }
+.setup-taken { font-size: 12px; color: var(--text-2); }
+.setup-taken strong { font-weight: 600; color: var(--text); }
+.setup-as { width: 100%; max-width: 360px; }
 .setup-per { margin-top: 24px; }
 .setup-projects { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .setup-project { min-width: 0; padding: 12px 14px; border-radius: var(--r-md); background: var(--bg-stage); border: 1px solid var(--line); }

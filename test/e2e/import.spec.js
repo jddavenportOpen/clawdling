@@ -64,7 +64,9 @@ test.describe('bring in your projects', () => {
     await page.getByTestId('first-import-go').click();
     await expect(page.getByTestId('imp-loading')).toBeVisible();
     await expect(page.getByTestId('imp-loading')).toContainText('Looking for your projects');
-    await expect(page.getByTestId('imp-slow')).toBeVisible(); // after 2.5 s: GitHub is the slow part
+    await expect(page.getByTestId('imp-slow')).toBeVisible(); // after 2.5 s: still looking, and GitHub can be skipped
+    // It does not blame GitHub: the folder walk may be the slow part.
+    await expect(page.getByTestId('imp-slow')).toHaveText('Still looking… Asking GitHub can take a few seconds. Skip GitHub this time');
     await expect(page.getByTestId('imp-skip-github')).toBeVisible();
     await shot(page, '02-import-loading-1440x900');
     await expect(screen(page)).toHaveAttribute('data-phase', 'pick', { timeout: 6000 });
@@ -178,8 +180,8 @@ test.describe('bring in your projects', () => {
     await expect(screen(page)).toHaveAttribute('data-phase', 'running');
     await expect(page.locator('.imp-row[data-status="creating"]')).toHaveCount(1);
     await expect(page.locator('.imp-row[data-status="waiting"]')).toHaveCount(2);
-    await expect(page.getByTestId('imp-progress')).toContainText('Making 1 of 3: recipe-box');
-    await expect(cand(page, 'recipe-box').getByTestId('imp-status')).toHaveText('Making…');
+    await expect(page.getByTestId('imp-progress')).toContainText('Creating 1 of 3: recipe-box');
+    await expect(cand(page, 'recipe-box').getByTestId('imp-status')).toHaveText('Creating…');
     await expect(page.locator('.imp-row[data-status="created"]')).toHaveCount(1);
     await shot(page, '04-import-running-1440x900');
 
@@ -263,6 +265,21 @@ test.describe('bring in your projects', () => {
     expect((await orgAgents()).find((a) => a.id === 'work')).toMatchObject({ kind: 'domain', name: 'Work' });
   });
 
+  test('a clone goes to clone_root, and the result shows the folder it really got (<name>-2)', async ({ page }) => {
+    await reset('empty');
+    // The server's clone root is ~/src here, and ~/src/family-photos already holds something else.
+    await mock('discover', { cloneRoot: '/Users/ada/src', cloneTaken: ['family-photos'] });
+    await login(page);
+    await openFromCard(page);
+    await expect(cand(page, 'family-photos')).toContainText('GitHub · not on this computer yet · will clone to ~/src/family-photos');
+    await only(page, ['family-photos']);
+    await page.getByTestId('imp-create').click();
+    await expect(page.getByTestId('imp-done-title')).toHaveText('family-photos is ready');
+    await expect(page.locator('[data-result="family-photos"]').getByTestId('imp-result-repo')).toHaveText('~/src/family-photos-2');
+    await expect(page.locator('[data-result="family-photos"]')).toContainText('~/src/family-photos-2 · cloned just now');
+    expect((await orgAgents()).find((a) => a.id === 'family-photos')).toMatchObject({ repo: '/Users/ada/src/family-photos-2' });
+  });
+
   test('gh not installed: folders on this computer only, with what to do', async ({ page }) => {
     await reset('empty');
     await mock('discover', { gh: 'missing' });
@@ -340,6 +357,75 @@ test.describe('bring in your projects', () => {
     await expect(page.getByTestId('imp-group')).toHaveAttribute('title', 'Works only when every ticked project is already on this computer');
   });
 
+  test('"One agent" for repos that all became agents meanwhile: "Already in your org", no Try again (an older server\'s 409 too)', async ({ page }) => {
+    await reset('empty');
+    await login(page);
+    await openFromCard(page);
+    await only(page, ['recipe-box', 'garden-sensors']);
+    // Both become agents somewhere else, and this browser is not told (no org event).
+    await mock('discover', { quiet: true });
+    await api('POST', '/api/import', { path: '/Users/ada/code/recipe-box', domain: 'work' });
+    await api('POST', '/api/import', { path: '/Users/ada/projects/garden-sensors', domain: 'work' });
+    await page.getByTestId('imp-group').click();
+    await page.getByTestId('imp-group-name').fill('Kitchen');
+    await page.getByTestId('imp-group-create').click();
+    await expect(page.getByTestId('imp-done-title')).toHaveText('Already in your org');
+    await expect(page.getByTestId('imp-retry')).toHaveCount(0);
+    await expect(page.locator('[data-failed]')).toHaveCount(0);
+    for (const id of ['recipe-box', 'garden-sensors']) await expect(page.locator(`[data-result="${id}"]`)).toContainText('Already an agent, so nothing new was made.');
+    expect((await orgAgents()).filter((a) => a.kind === 'project').map((a) => a.id).sort()).toEqual(['garden-sensors', 'recipe-box']); // nothing new
+    await shot(page, '14-import-group-already-in-org-1440x900');
+
+    // A server from before this change answered 409: the same result, from the live org.
+    await mock('discover', { legacyGroup409: true });
+    await page.getByTestId('imp-again').click();
+    await expect(screen(page)).toHaveAttribute('data-phase', 'pick');
+    await expect(tick(page, 'recipe-box')).toBeDisabled();
+    await only(page, ['site', 'shop']);
+    await api('POST', '/api/import', { path: '/Users/ada/code/site', domain: 'work' });
+    await api('POST', '/api/import', { path: '/Users/ada/code/shop', domain: 'work' });
+    await page.getByTestId('imp-group').click();
+    await page.getByTestId('imp-group-name').fill('Web');
+    await page.getByTestId('imp-group-create').click();
+    await expect(page.getByTestId('imp-done-title')).toHaveText('Already in your org');
+    await expect(page.getByTestId('imp-retry')).toHaveCount(0);
+    for (const id of ['site', 'shop']) await expect(page.locator(`[data-result="${id}"]`)).toContainText('Already an agent');
+    expect((await importBodies()).filter((b) => b.group)).toHaveLength(2);
+  });
+
+  test('a repo that becomes an agent elsewhere while the screen is open is unticked and says so', async ({ page }) => {
+    await reset('empty');
+    await login(page);
+    await openFromCard(page);
+    await expect(tick(page, 'recipe-box')).toBeChecked();
+    await expect(page.getByTestId('imp-create')).toHaveText('Create 6 project agents');
+    // By its folder.
+    await api('POST', '/api/import', { path: '/Users/ada/code/recipe-box', domain: 'work' });
+    await expect(tick(page, 'recipe-box')).not.toBeChecked();
+    await expect(tick(page, 'recipe-box')).toBeDisabled();
+    await expect(cand(page, 'recipe-box').getByTestId('imp-agent')).toHaveText('Agent: recipe-box');
+    await expect(page.getByTestId('imp-create')).toHaveText('Create 5 project agents');
+    // By its remote: a GitHub repo cloned and imported elsewhere, though this row has no folder.
+    await tick(page, 'family-photos').check();
+    await expect(page.getByTestId('imp-create')).toHaveText('Create 6 project agents');
+    await api('POST', '/api/import', { clone: true, github: 'ada/family-photos', url: 'https://github.com/ada/family-photos.git', domain: 'work' });
+    await expect(tick(page, 'family-photos')).not.toBeChecked();
+    await expect(tick(page, 'family-photos')).toBeDisabled();
+    await expect(cand(page, 'family-photos').getByTestId('imp-agent')).toHaveText('Agent: family-photos');
+    // As one of a group's repos.
+    await api('POST', '/api/import', { group: { name: 'Shop and site', domain: 'work' }, items: [{ path: '/Users/ada/code/site' }, { path: '/Users/ada/code/shop' }] });
+    for (const name of ['site', 'shop']) {
+      await expect(tick(page, name)).not.toBeChecked();
+      await expect(cand(page, name).getByTestId('imp-agent')).toHaveText('Agent: Shop and site');
+    }
+    await expect(page.getByTestId('imp-create')).toHaveText('Create 3 project agents');
+    await shot(page, '15-import-live-already-an-agent-1440x900');
+    await page.getByTestId('imp-create').click();
+    await expect(page.getByTestId('imp-done-title')).toHaveText('3 project agents are ready');
+    // The cockpit made only the three still ticked.
+    expect((await importBodies()).slice(-3).map((b) => b.path)).toEqual(['/Users/ada/projects/garden-sensors', '/Users/ada/Documents/notes', '/Users/ada/code/dotfiles']);
+  });
+
   test('New agent → "From a repo" opens the import screen', async ({ page }) => {
     await reset('default');
     await login(page);
@@ -396,8 +482,11 @@ test.describe('your Claude Code setup', () => {
     await expect(skills.locator('.setup-item')).toHaveCount(9);
     await expect(card.locator('[data-setup="mcp"]')).toContainText('github');
     await expect(card.locator('[data-setup="mcp"]')).toContainText('in every project');
-    await expect(card.locator('[data-setup="hooks"]')).toContainText('PreToolUse');
-    await expect(card.locator('[data-setup="hooks"]')).toContainText('Runs before Claude uses a tool · 2 hooks');
+    // Hooks count every hook (2 + 1 + 1), listed per event, like the map chip.
+    await expect(card.locator('[data-setup="hooks"] .sec-count')).toHaveText('4');
+    await expect(card.locator('[data-setup="hooks"] .setup-item[data-item="PreToolUse"] .setup-name')).toHaveText('PreToolUse (2)');
+    await expect(card.locator('[data-setup="hooks"] .setup-item[data-item="PreToolUse"] .setup-desc')).toHaveText('Runs before Claude uses a tool');
+    await expect(card.locator('[data-setup="hooks"] .setup-item[data-item="Stop"]')).toContainText('Stop (1)');
     await expect(card.locator('[data-setup="commands"]')).toContainText('/git:sync');
     await expect(card.locator('[data-setup="plugins"]')).toContainText('Off');
     await expect(card.locator('[data-project="site"]')).toContainText('copy-editor');
@@ -414,17 +503,42 @@ test.describe('your Claude Code setup', () => {
     await expect(sub.getByTestId('setup-made')).toContainText('Standing agent: Code reviewer');
     const toast = page.locator('.toast', { hasText: 'Code reviewer is now a standing agent' });
     await expect(toast).toBeVisible();
-    const post = (await mockRequests()).find((r) => r.method === 'POST' && r.path === '/api/setup/promote');
-    expect(post.body).toEqual({ scope: 'user', name: 'code-reviewer' });
-    expect((await orgAgents()).find((a) => a.id === 'code-reviewer')).toMatchObject({ kind: 'domain', name: 'Code reviewer' });
+    const promotes = async () => (await mockRequests()).filter((r) => r.method === 'POST' && r.path === '/api/setup/promote').map((r) => r.body);
+    expect(await promotes()).toEqual([{ scope: 'user', name: 'code-reviewer' }]);
+    expect((await orgAgents()).find((a) => a.id === 'code-reviewer')).toMatchObject({ kind: 'domain', name: 'Code reviewer', source: { subagent: 'code-reviewer', subagent_scope: 'user' } });
     await toast.getByTestId('toast-action').click();
     await expect(page).toHaveURL(/#\/agent\/code-reviewer$/);
     await expect(page.getByTestId('agent-page')).toBeVisible();
+
+    // A subagent called "health" was never made into the built-in Health domain: the id is taken
+    // by another agent, so it says so and offers another name (sent as `as`).
+    await page.goto('/#/settings/setup');
+    const health = page.getByTestId('setup-card').locator('[data-setup="agents"] .setup-item[data-item="health"]');
+    await expect(health.getByTestId('setup-made')).toHaveCount(0);
+    await expect(health.getByTestId('setup-promote')).toHaveCount(0);
+    await expect(health.getByTestId('setup-taken')).toContainText('An agent called Health already exists.');
+    await health.getByTestId('setup-rename').click();
+    const as = health.getByTestId('setup-as');
+    await expect(as).toBeFocused();
+    await as.fill('work'); // taken too: says so and sends nothing
+    await as.press('Enter');
+    await expect(health.locator('.form-error')).toHaveText('An agent called "Work" already exists. Try another name.');
+    await as.fill('Health coach');
+    await page.getByTestId('setup-card').locator('[data-setup="agents"]').screenshot({ path: path.join(DIR, '10c-settings-subagent-name-taken-1440x900.png') });
+    await health.getByTestId('setup-as-submit').click();
+    await expect(health.getByTestId('setup-made')).toContainText('Standing agent: Health coach');
+    expect(await promotes()).toEqual([{ scope: 'user', name: 'code-reviewer' }, { scope: 'user', name: 'health', as: 'Health coach' }]);
+    expect((await orgAgents()).find((a) => a.id === 'health-coach')).toMatchObject({ kind: 'domain', name: 'Health coach', source: { subagent: 'health', subagent_scope: 'user' } });
+    // After a reload each says which agent was made from it: by its source, not by its name.
+    await page.reload();
+    const subs = page.getByTestId('setup-card').locator('[data-setup="agents"]');
+    await expect(subs.locator('.setup-item[data-item="health"]').getByTestId('setup-made')).toContainText('Standing agent: Health coach');
+    await expect(subs.locator('.setup-item[data-item="code-reviewer"]').getByTestId('setup-made')).toContainText('Standing agent: Code reviewer');
+    await expect(subs.locator('.setup-item[data-item="test-writer"]').getByTestId('setup-promote')).toBeVisible();
   });
 
   test('the org map layer: a halo of chips around you, project badges, and a chip opens its list', async ({ page }) => {
     await reset('default');
-    await api('POST', '/api/import', { path: '/Users/ada/code/shop', domain: 'work' }); // a second project with its own setup
     await login(page, '#/map');
     const toggle = page.getByTestId('map-setup-toggle');
     await expect(toggle).toHaveAttribute('aria-pressed', 'false');
@@ -434,10 +548,13 @@ test.describe('your Claude Code setup', () => {
     await expect(toggle).toHaveAttribute('aria-pressed', 'true');
     const halo = page.getByTestId('setup-halo');
     await expect(halo).toContainText('Loaded in every session');
-    for (const [k, text] of [['skills', 'Skills 9'], ['agents', 'Subagents 3'], ['mcp', 'MCP 3'], ['hooks', 'Hooks 4']]) {
+    for (const [k, text] of [['skills', 'Skills 9'], ['agents', 'Subagents 4'], ['mcp', 'MCP 3'], ['hooks', 'Hooks 4']]) {
       await expect(halo.locator(`[data-chip="${k}"]`)).toHaveText(text);
     }
     await expect(page.locator('[data-node="site"] [data-setup-badge]')).toHaveCount(1);
+    await expect(page.locator('[data-node="shop"]')).toHaveCount(0);
+    // A project imported while the layer is on: the layer reads the setup again and badges it.
+    await api('POST', '/api/import', { path: '/Users/ada/code/shop', domain: 'work' });
     await expect(page.locator('[data-node="shop"] [data-setup-badge]')).toHaveCount(1);
     await expect(page.locator('[data-node="marathon"] [data-setup-badge]')).toHaveCount(0); // no repo
     await expect(page.locator('[data-node="site"]')).toHaveAttribute('aria-label', /its repo adds its own Claude Code setup/);
@@ -474,6 +591,11 @@ test.describe('your Claude Code setup', () => {
     await halo.locator('[data-chip="mcp"]').focus();
     await page.keyboard.press('Enter');
     await expect(page.getByTestId('map-panel')).toContainText('postgres');
+    // The hooks chip's panel counts hooks the way the chip does.
+    await halo.locator('[data-chip="hooks"]').click();
+    await expect(page.getByTestId('map-panel')).toHaveAttribute('data-setup-panel', 'hooks');
+    await expect(page.getByTestId('map-panel').locator('.panel-text')).toHaveText('4 hooks from your own Claude Code setup. Claude Code loads them in every session, so every agent has them.');
+    await expect(page.getByTestId('map-panel')).toContainText('PreToolUse (2)');
 
     // A project's panel gains "Its repo adds".
     await page.locator('[data-node="shop"]').click();
@@ -482,7 +604,15 @@ test.describe('your Claude Code setup', () => {
     await expect(adds).toContainText('db-migrator');
     await expect(adds).toContainText('stripe');
     await expect(adds).toContainText('AGENTS.md');
+    await expect(adds).not.toContainText('No repo linked');
     await shot(page, '13-org-map-project-repo-adds-1440x900');
+    // "No repo linked" only for a project with no repo; a repo that adds nothing says that.
+    await page.locator('[data-node="marathon"]').click();
+    await expect(page.getByTestId('panel-repo-adds')).toContainText('No repo linked, so nothing extra.');
+    await api('POST', '/api/import', { path: '/Users/ada/code/recipe-box', domain: 'work' });
+    await page.locator('[data-node="recipe-box"]').click();
+    await expect(page.getByTestId('panel-repo-adds')).toContainText('Nothing beyond your own setup.');
+    await expect(page.locator('[data-node="recipe-box"] [data-setup-badge]')).toHaveCount(0);
 
     // Remembered in this browser; off again puts the map back.
     await page.reload();

@@ -17,7 +17,7 @@ import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
 // What Deep onboard types into the new session: the onboard-project skill every project agent has.
 export const ONBOARD_PROMPT = '/onboard-project';
-const SLOW_MS = 2500; // after this, say GitHub is the slow part and offer to skip it
+const SLOW_MS = 2500; // after this, say it is still looking and offer to skip GitHub
 const NEW = '__new'; // the domain picker's "New domain…": an inline name field is open
 const GROUP_MAX = 12;
 
@@ -34,6 +34,16 @@ export function ago(ts, now = Date.now()) {
   if (days < 365) return `${Math.round(days / 30)} months ago`;
   const y = Math.round(days / 365);
   return y === 1 ? 'a year ago' : `${y} years ago`;
+}
+
+// The project agent that already has this candidate's folder (as its repo or one of its repos) or
+// its remote, in `agents`: the live org, so a repo imported in another window or by the CLI while
+// this screen is open stops being offered.
+export function ownerIn(agents, c) {
+  if (!c || !Array.isArray(agents)) return null;
+  return agents.find((a) => a && (
+    (c.path && (a.repo === c.path || (Array.isArray(a.repos) && a.repos.includes(c.path))))
+    || (c.key && a.source && a.source.remote_key && a.source.remote_key === c.key))) || null;
 }
 
 // Recent (90 days), not archived, no agent yet, and already on this computer: ticked from the
@@ -66,6 +76,9 @@ function domainFields(v, domains) {
   return {};
 }
 
+// Where a clone goes, as the server names it: <clone_root>/<name>, in clone_root's own separator.
+const cloneDest = (root, name) => `${root}${root.includes('\\') && !root.includes('/') ? '\\' : '/'}${name}`;
+
 // The body for one row. A GitHub repo that is not on this computer is cloned first (clone: true).
 function itemBody(c, choice, domains) {
   const body = {};
@@ -94,6 +107,7 @@ export function ImportScreen() {
   const agentsById = useStore((s) => s.agentsById);
   const now = useStore((s) => s.now);
   const domains = useMemo(() => agents.filter((a) => a.kind === 'domain'), [agents]);
+  const projects = useMemo(() => agents.filter((a) => a.kind === 'project'), [agents]);
   const [phase, setPhase] = useState('loading'); // loading | error | pick | running | done
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
@@ -157,7 +171,9 @@ export function ImportScreen() {
   const all = data ? data.candidates : [];
   const recentCount = all.filter((c) => c.recent).length;
   const wide = showAll === null ? recentCount === 0 : showAll;
-  const isAgent = (c) => !!c.agent || (rows[c.key] && (rows[c.key].status === 'created' || rows[c.key].status === 'skipped'));
+  // The agent a row already has: what discovery said, or what the live org says now.
+  const ownerOf = (c) => (c.agent ? agentsById[c.agent.id] || c.agent : ownerIn(projects, c));
+  const isAgent = (c) => !!ownerOf(c) || (rows[c.key] && (rows[c.key].status === 'created' || rows[c.key].status === 'skipped'));
   const picked = all.filter((c) => rows[c.key] && rows[c.key].checked && !isAgent(c));
   const searching = !!q.trim();
   const visible = phase === 'running' || phase === 'done'
@@ -167,6 +183,22 @@ export function ImportScreen() {
   const hiddenPicked = picked.filter((c) => !visible.includes(c)).length;
   const groupable = picked.length >= 2 && picked.length <= GROUP_MAX && picked.every((c) => c.cloned && c.path);
   const cloneRoot = tildify((data && data.clone_root) || '') || '~/code';
+
+  // A repo that became an agent somewhere else while this screen is open: untick it (its row is
+  // disabled and says "Agent: <name>"), so it is not made twice.
+  useEffect(() => {
+    if (phase !== 'pick') return;
+    const r = rowsRef.current;
+    const gone = all.filter((c) => r[c.key] && r[c.key].checked && ownerIn(projects, c));
+    if (!gone.length) return;
+    setRows((x) => {
+      const next = { ...x };
+      for (const c of gone) next[c.key] = { ...next[c.key], checked: false };
+      return next;
+    });
+  }, [projects, phase, data]);
+  // "One agent for these N" needs 2 or more ticked: close its form when that stops being true.
+  useEffect(() => { if (grouping && !groupable) setGrouping(false); }, [grouping, groupable]);
 
   const toggle = (c, on) => patchRow(c.key, { checked: on });
   const choose = (c, v) => {
@@ -238,17 +270,26 @@ export function ImportScreen() {
     await refreshOrg();
     setPhase('done');
   };
+  // Every repo in the group already has an agent: nothing is made, and each row points at the
+  // agent that has its repo. The server answers 200 {skipped, agent, agents}; an older one answered
+  // 409, so then the live org says which agents they are (Results looks again after the refresh).
+  const skippedFor = (res) => {
+    const known = [...(Array.isArray(res.agents) ? res.agents : []), ...(res.agent ? [res.agent] : [])];
+    return (c) => ({ status: 'skipped', reason: res.reason || '', agent: ownerIn(known, c) || ownerIn(projects, c) || null });
+  };
   const runGroup = async (list, name, domain) => {
-    let patch;
+    let patchFor;
     try {
       const res = await api.importProject({ group: { name, ...domainFields(domain, domains) }, items: list.map((c) => ({ path: c.path })) });
-      patch = res && res.skipped ? { status: 'skipped', agent: res.agent || null, reason: res.reason || '' } : { status: 'created', agent: (res && res.agent) || null };
+      if (res && res.skipped) patchFor = skippedFor(res);
+      else { const p = { status: 'created', agent: (res && res.agent) || null }; patchFor = () => p; }
     } catch (e) {
-      patch = { status: 'failed', error: (e && e.message) || 'Something went wrong.' };
+      if (e && e.status === 409) patchFor = skippedFor({ reason: e.message });
+      else { const p = { status: 'failed', error: (e && e.message) || 'Something went wrong.' }; patchFor = () => p; }
     }
     setRows((r) => {
       const next = { ...r };
-      for (const c of list) next[c.key] = { ...next[c.key], ...patch };
+      for (const c of list) next[c.key] = { ...next[c.key], ...patchFor(c) };
       return next;
     });
   };
@@ -302,14 +343,14 @@ export function ImportScreen() {
 
   if (phase === 'done' && run) {
     return html`<${Modal} labelledby="imp-title" onClose=${close} size="xl" class="import-screen">
-      <${Results} run=${run} runRows=${runRows} rows=${rows} agentsById=${agentsById} onboarded=${onboarded} blocked=${blocked}
+      <${Results} run=${run} runRows=${runRows} rows=${rows} agentsById=${agentsById} lookup=${(c) => ownerIn(projects, c)} onboarded=${onboarded} blocked=${blocked}
         onOpen=${open} onOnboard=${onboard} onRetry=${retry} onAgain=${again} onDone=${closeOverlay} scope=${body} />
     </${Modal}>`;
   }
 
   return html`<${Modal} labelledby="imp-title" onClose=${close} size="xl" class=${`import-screen ${phase === 'pick' ? 'is-picking' : ''}`}>
     <div class="modal-head imp-head" ref=${body}>
-      <h2 id="imp-title" class="modal-title">${phase === 'running' ? 'Making your project agents' : 'Bring in your projects'}</h2>
+      <h2 id="imp-title" class="modal-title">${phase === 'running' ? 'Creating your project agents' : 'Bring in your projects'}</h2>
       <p class="modal-text">${phase === 'running'
         ? 'One at a time. Each agent gets notes drafted from its repo. Nothing in your repos changes.'
         : 'Tick the projects you want an agent for. Each agent knows its repo, how to run it and what changed lately. Nothing in your repos changes.'}</p>
@@ -346,23 +387,23 @@ export function ImportScreen() {
             <div class="imp-cols" aria-hidden="true"><span>Project</span><span>Last active</span><span>Domain</span>${phase === 'running' ? html`<span>Status</span>` : null}</div>
             <ul class="imp-list" aria-label="Projects">
               ${visible.map((c) => html`<${CandidateRow} key=${c.key} c=${c} row=${rows[c.key] || {}} phase=${phase} now=${now}
-                domains=${domains} newNames=${newNames} cloneRoot=${cloneRoot} isAgent=${isAgent(c)} agentsById=${agentsById}
+                domains=${domains} newNames=${newNames} cloneRoot=${cloneRoot} owner=${phase === 'pick' ? ownerOf(c) : null} agentsById=${agentsById}
                 onToggle=${toggle} onChoose=${choose} onCommitNew=${commitNew} onOpen=${open} />`)}
             </ul>
           </div>` : phase === 'pick' && all.length ? html`<p class="panel-quiet imp-nomatch">Nothing matches “${q.trim()}”.</p>` : null}`}
     </div>
-    ${grouping && phase === 'pick' ? html`<${GroupForm} n=${picked.length} names=${picked.map((c) => c.name)} name=${groupName} setName=${setGroupName}
+    ${grouping && phase === 'pick' && groupable ? html`<${GroupForm} n=${picked.length} names=${picked.map((c) => c.name)} name=${groupName} setName=${setGroupName}
       domain=${groupDomain} setDomain=${setGroupDomain} domains=${domains} newNames=${newNames} onBack=${() => setGrouping(false)} onCreate=${createGroup} />`
       : html`<div class="modal-foot imp-foot">
         <span class="imp-foot-note" role="status" aria-live="polite" data-testid="imp-progress">${phase === 'running'
-          ? (run.group ? `Making ${run.group.name} for ${plural(runRows.length, 'project')}`
+          ? (run.group ? `Creating ${run.group.name} for ${plural(runRows.length, 'project')}`
             : stopping ? `Stopping after ${current ? current.name : 'this one'}…`
-            : current ? `${current.cloned ? 'Making' : 'Cloning and making'} ${run.at + 1} of ${runRows.length}: ${current.name}` : '')
+            : current ? `${current.cloned ? 'Creating' : 'Cloning and creating'} ${run.at + 1} of ${runRows.length}: ${current.name}` : '')
           : phase === 'pick' ? (picked.length ? `${plural(picked.length, 'project')} ticked${hiddenPicked ? ` (${hiddenPicked} not shown)` : ''}` : all.length ? 'Tick at least one project' : '')
           : ''}</span>
         ${phase === 'running' ? html`<button class="btn btn-quiet" onClick=${() => { stop.current = true; setStopping(true); }} disabled=${!!(run && run.group) || stopping}
             data-phase-focus data-testid="imp-stop">${stopping ? 'Stopping…' : 'Stop after this one'}</button>
-          <button class="btn btn-primary" disabled>Making…</button>`
+          <button class="btn btn-primary" disabled>Creating…</button>`
         : html`<button class="btn btn-quiet" onClick=${close}>Cancel</button>
           ${phase === 'pick' && picked.length >= 2 ? html`<button class="btn btn-quiet" onClick=${openGroup} disabled=${!groupable} data-testid="imp-group"
             title=${groupable ? 'One project agent that works across all of these repos' : picked.length > GROUP_MAX ? `One agent can hold up to ${GROUP_MAX} repos` : 'Works only when every ticked project is already on this computer'}>
@@ -377,7 +418,7 @@ function Loading({ slow, github, onSkip }) {
   return html`<div class="imp-loading" role="status" aria-live="polite" data-testid="imp-loading">
     <p class="imp-loading-title"><span class="imp-spin" aria-hidden="true"></span> Looking for your projects…</p>
     <p class="panel-quiet">Reading Claude Code's history and the folders on this computer${github ? ', and asking GitHub through gh' : ''}. Nothing leaves this computer.</p>
-    ${slow ? html`<p class="imp-slow" data-testid="imp-slow">GitHub is taking a while. <button class="link-btn" onClick=${onSkip} data-phase-focus data-testid="imp-skip-github">Skip GitHub this time</button></p>` : null}
+    ${slow ? html`<p class="imp-slow" data-testid="imp-slow">Still looking… Asking GitHub can take a few seconds. <button class="link-btn" onClick=${onSkip} data-phase-focus data-testid="imp-skip-github">Skip GitHub this time</button></p>` : null}
     <div class="imp-skel" aria-hidden="true">${[0, 1, 2, 3].map(() => html`<div class="panel-skel imp-skel-row"></div>`)}</div>
   </div>`;
 }
@@ -450,22 +491,24 @@ function NewDomainField({ label, onCommit }) {
     }} />`;
 }
 
-const STATUS_TEXT = { waiting: 'Waiting', cloning: 'Cloning…', creating: 'Making…', created: 'Created', skipped: 'Already an agent', failed: "Didn't work" };
+const STATUS_TEXT = { waiting: 'Waiting', cloning: 'Cloning…', creating: 'Creating…', created: 'Created', skipped: 'Already an agent', failed: "Didn't work" };
 
-function CandidateRow({ c, row, phase, now, domains, newNames, cloneRoot, isAgent, agentsById, onToggle, onChoose, onCommitNew, onOpen }) {
+// `owner`: the agent this repo already has (while picking), from discovery or the live org.
+function CandidateRow({ c, row, phase, now, domains, newNames, cloneRoot, owner, agentsById, onToggle, onChoose, onCommitNew, onOpen }) {
   const id = `imp-${c.key.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
   const picking = phase === 'pick';
-  const existing = c.agent ? (agentsById[c.agent.id] || c.agent) : null;
   const gh = c.github;
-  const where = c.cloned && c.path
-    ? html`<span class="mono">${tildify(c.path)}</span>`
-    : html`GitHub · not on this computer yet · will clone to <span class="mono">${cloneRoot}/${c.name}</span>`;
   const status = row.status;
+  // Once made, the folder the agent really got (a clone may land in <name>-2).
+  const madeAt = status === 'created' && row.agent && row.agent.repo;
+  const where = madeAt ? html`<span class="mono">${tildify(madeAt)}</span>${row.cloned ? ' · cloned just now' : ''}`
+    : c.cloned && c.path ? html`<span class="mono">${tildify(c.path)}</span>`
+    : html`GitHub · not on this computer yet · will clone to <span class="mono">${cloneDest(cloneRoot, c.name)}</span>`;
   const busy = status === 'cloning' || status === 'creating';
-  return html`<li class=${`imp-row ${row.checked && !isAgent ? 'is-checked' : ''} ${c.agent ? 'is-agent' : ''}`} data-candidate=${c.name}
+  return html`<li class=${`imp-row ${row.checked && !owner ? 'is-checked' : ''} ${owner ? 'is-agent' : ''}`} data-candidate=${c.name}
       data-key=${c.key} data-status=${status || ''}>
     <label class="imp-main">
-      <input type="checkbox" checked=${!!row.checked && !c.agent} disabled=${!picking || isAgent} aria-label=${c.name}
+      <input type="checkbox" checked=${!!row.checked && !owner} disabled=${!picking || !!owner} aria-label=${c.name}
         aria-describedby=${`${id}-where`} onChange=${(e) => onToggle(c, e.currentTarget.checked)} data-testid="imp-check" />
       <span class="imp-text">
         <span class="imp-name-line">
@@ -484,7 +527,7 @@ function CandidateRow({ c, row, phase, now, domains, newNames, cloneRoot, isAgen
     </label>
     <span class="imp-when" title=${c.last_activity_at ? `Last activity ${longTime(c.last_activity_at)}` : undefined}>${ago(c.last_activity_at, now)}</span>
     <span class="imp-domain">
-      ${c.agent ? html`<span class="imp-agent" data-testid="imp-agent">Agent: <button class="link-btn" onClick=${() => onOpen(c.agent.id)}>${existing.name}</button></span>`
+      ${owner ? html`<span class="imp-agent" data-testid="imp-agent">Agent: <button class="link-btn" onClick=${() => onOpen(owner.id)}>${owner.name}</button></span>`
         : picking && row.checked ? html`<${DomainPicker} value=${row.domain} domains=${domains} newNames=${newNames} label=${`Domain for ${c.name}`}
             onChoose=${(v) => onChoose(c, v)} onCommitNew=${(v) => onCommitNew(c, v)} />`
         : picking ? null
@@ -525,23 +568,27 @@ function GroupForm({ n, names, name, setName, domain, setDomain, domains, newNam
   </form>`;
 }
 
-function Results({ run, runRows, rows, agentsById, onboarded, blocked, onOpen, onOnboard, onRetry, onAgain, onDone, scope }) {
+// `lookup(c)`: the live org's agent for a row, for a skipped row whose answer did not name one.
+function Results({ run, runRows, rows, agentsById, lookup, onboarded, blocked, onOpen, onOnboard, onRetry, onAgain, onDone, scope }) {
   const created = [];
   const skipped = [];
   const failed = [];
   const seen = new Set();
   for (const c of runRows) {
     const r = rows[c.key] || {};
-    if (r.status === 'failed') failed.push({ c, r });
-    else if ((r.status === 'created' || r.status === 'skipped') && r.agent && !seen.has(r.agent.id)) {
-      seen.add(r.agent.id); // a group makes one agent for every row
-      (r.status === 'created' ? created : skipped).push({ c, r });
-    }
+    if (r.status === 'failed') { failed.push({ c, r }); continue; }
+    if (r.status !== 'created' && r.status !== 'skipped') continue;
+    const agent = r.agent || (r.status === 'skipped' && lookup ? lookup(c) : null);
+    const id = agent ? agent.id : `?${c.key}`;
+    if (seen.has(id)) continue; // a group makes one agent for every row
+    seen.add(id);
+    if (r.status === 'created' && agent) created.push({ c, r });
+    else if (r.status === 'skipped') skipped.push({ c, r, agent });
   }
   const working = runRows.some((c) => rows[c.key] && (rows[c.key].status === 'creating' || rows[c.key].status === 'cloning'));
   const stopped = runRows.filter((c) => rows[c.key] && rows[c.key].status === 'waiting');
   const n = created.length;
-  const title = run.group ? (n ? `${created[0].r.agent.name} is ready` : skipped.length ? 'Already in your org' : `Couldn't make ${run.group.name}`)
+  const title = run.group ? (n ? `${created[0].r.agent.name} is ready` : skipped.length && !failed.length ? 'Already in your org' : `Couldn't make ${run.group.name}`)
     : n === 0 ? (failed.length ? 'No agent was made' : stopped.length ? 'Stopped before any agent was made' : 'Already in your org')
     : failed.length || stopped.length ? [`${plural(n, 'project agent')} ${n === 1 ? 'is' : 'are'} ready`,
       failed.length ? `${failed.length} didn't work` : '', stopped.length ? `${stopped.length} stopped` : ''].filter(Boolean).join(', ')
@@ -568,7 +615,7 @@ function Results({ run, runRows, rows, agentsById, onboarded, blocked, onOpen, o
             <span class="imp-result-text">
               <span class="imp-result-name">${a.name}</span>
               <span class="imp-result-meta">${dom ? `in ${dom.name} · ` : ''}${run.group ? plural(runRows.length, 'repo')
-                : html`<span class="mono">${tildify(a.repo || c.path || '')}</span>${r.cloned ? ' · cloned just now' : ''}`}</span>
+                : html`<span class="mono" data-testid="imp-result-repo">${tildify(r.agent.repo || a.repo || c.path || '')}</span>${r.cloned ? ' · cloned just now' : ''}`}</span>
             </span>
             <span class="imp-result-actions">
               <button class="btn btn-quiet btn-sm" onClick=${() => onOpen(a.id)} data-testid="imp-open">Open</button>
@@ -578,11 +625,12 @@ function Results({ run, runRows, rows, agentsById, onboarded, blocked, onOpen, o
             </span>
           </li>`;
         })}
-        ${skipped.map(({ r }) => html`<li class="imp-result is-skipped" data-result=${r.agent.id} key=${`s-${r.agent.id}`}>
+        ${skipped.map(({ c, agent }) => html`<li class="imp-result is-skipped" data-result=${agent ? agent.id : undefined} data-skipped=${c.name}
+            key=${`s-${agent ? agent.id : c.key}`}>
           <span class="imp-result-icon"><${Icon} name="folder" size=${16} /></span>
-          <span class="imp-result-text"><span class="imp-result-name">${(agentsById[r.agent.id] || r.agent).name}</span>
+          <span class="imp-result-text"><span class="imp-result-name">${agent ? (agentsById[agent.id] || agent).name : c.name}</span>
             <span class="imp-result-meta">Already an agent, so nothing new was made.</span></span>
-          <span class="imp-result-actions"><button class="btn btn-quiet btn-sm" onClick=${() => onOpen(r.agent.id)}>Open</button></span>
+          ${agent ? html`<span class="imp-result-actions"><button class="btn btn-quiet btn-sm" onClick=${() => onOpen(agent.id)}>Open</button></span>` : null}
         </li>`)}
         ${(run.group ? failed.slice(0, 1) : failed).map(({ c, r }) => html`<li class="imp-result is-failed" data-failed=${run.group ? run.group.name : c.name} key=${`f-${c.key}`}>
           <span class="imp-result-icon"><${Icon} name="alert" size=${16} /></span>
