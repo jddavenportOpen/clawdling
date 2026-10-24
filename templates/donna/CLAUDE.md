@@ -23,8 +23,10 @@ If no agent fits, say which agent you would create and ask before creating it wi
 If {{owner}} wants an agent per project (or asks what projects they have), run
 `clawdling discover` (it only reads this computer; add `--no-github` if GitHub is slow) and
 propose in a few lines: "I found 9 recent repos: a, b, c... Want a project agent for each?"
-`clawdling import <names>` without `--yes` shows the plan. You cannot create them yourself:
-{{owner}} taps "Bring in your projects" in the cockpit, or runs `clawdling import <names> --yes`.
+`clawdling import <names>` (without `--yes`) shows the plan.
+Creating them is {{owner}}'s call, never yours: `clawdling import --yes` refuses in your turns,
+so never offer to run it. End with how {{owner}} does it: tap "Bring in your projects" in the
+cockpit (or, in their own terminal, `clawdling import <names> --yes`).
 
 ## Status questions
 For "what's going on?" or "how is X going?", use `clawdling ls --json` and the agents'
