@@ -12,6 +12,7 @@ import {
   TOKEN_HEADER,
   allowedHosts,
   cookieHeader,
+  cookieValues,
   deviceCookieHeader,
   extractToken,
   hostAllowed,
@@ -39,7 +40,10 @@ import {
   loopbackPeer,
   parseRemoteUrl,
   remoteOriginAllowed,
+  serveCommand,
+  servePath,
   statusText,
+  stripServePath,
   tailscaleBin,
 } from './remote.js';
 import { DonnaRouter } from './channels/donna.js';
@@ -565,6 +569,14 @@ export async function startServer(opts = {}) {
         // Only the tunnel or serve process on this computer may use a remote name: with
         // --host 0.0.0.0, a computer on the Wi-Fi sending that Host is not on the tailnet.
         if (!loopbackPeer(req.socket.remoteAddress)) return { refused: 'unexpected Host header' };
+        if (entry.kind === 'tailscale') {
+          // Tailscale Serve forwards to this address's private path; anything else that connects to
+          // 127.0.0.1 does not know it. Strip it: handlers see the real path.
+          const rest = stripServePath(url.pathname, entry.path);
+          if (rest === null) return { refused: 'unexpected path: point the Tailscale serve entry at `clawdling remote serve-command`' };
+          url.pathname = rest;
+          req.url = rest + url.search;
+        }
         // The one exception to "on and checked": our own check reaching us through the address.
         if (url.pathname === '/api/remote/hello') return checkNonces.has(url.searchParams.get('nonce')) ? { remote: true, hello: true, entry } : { refused: 'unexpected Host header' };
         const st = remote.read();
@@ -604,15 +616,22 @@ export async function startServer(opts = {}) {
      */
     function remoteCredential(req, url) {
       const h = req.headers[TOKEN_HEADER];
-      if (typeof h === 'string' && h) return { token: h, via: 'header' };
-      const c = parseCookies(req.headers.cookie)[DEVICE_COOKIE];
-      if (!c) return null;
+      if (typeof h === 'string' && h) return { tokens: [h], via: 'header' };
+      const values = cookieValues(req.headers.cookie, DEVICE_COOKIE);
+      if (!values.length) return null;
       let key = req.headers[DEVICE_KEY_HEADER];
       if (typeof key !== 'string' && url && (url.pathname === '/api/events' || url.pathname.startsWith('/ws/'))) key = url.searchParams.get('k');
-      return { token: c, via: 'cookie', key: typeof key === 'string' ? key : null };
+      return { tokens: values, via: 'cookie', key: typeof key === 'string' ? key : null };
     }
 
-    const verifyCred = (cred, who) => (cred ? devices.verify(cred.token, { host: who.entry.url, via: cred.via, key: cred.key }) : null);
+    const verifyCred = (cred, who) => {
+      if (!cred) return null;
+      for (const t of cred.tokens) {
+        const d = devices.verify(t, { host: who.entry.url, via: cred.via, key: cred.key });
+        if (d) return d;
+      }
+      return null;
+    };
     const deviceFor = (req, url) => verifyCred(remoteCredential(req, url), req.who);
 
     function remoteAuth(req, who, url) {
@@ -623,6 +642,9 @@ export async function startServer(opts = {}) {
         devices.touch(d);
         return { device: d };
       }
+      // A cookie with no key is a page that lost its storage (or a cookie seen elsewhere): signed
+      // out, but not a guess worth counting.
+      if (cred.via === 'cookie' && !cred.key) return { status: 401, error: 'This device is signed out. On your computer, open Settings, Use from anywhere, and add it again.' };
       const key = throttleKey(who);
       if (throttle.blocked(key)) return { status: 429, error: 'Too many failed sign-ins through this address. Wait a few minutes, then try again.', retryAfter: throttle.retryAfter(key) };
       throttle.fail(key);
@@ -737,7 +759,8 @@ export async function startServer(opts = {}) {
         email = String(b.email).trim();
         if (!/^[^\s@]{1,200}@[^\s@]{1,200}$/.test(email)) throw new RemoteError('--email is the address you sign in to Cloudflare Access with');
       }
-      const draft = { email: email || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.email : null), url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null), login: null };
+      const draftPath = b.kind === 'tailscale' ? servePath(token, p.url) : null;
+      const draft = { path: draftPath, email: email || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.email : null), url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null), login: null };
       remote.update((s) => {
         s.hosts = s.hosts.filter((h) => h.url !== p.url);
         s.hosts.push(draft);
@@ -759,6 +782,7 @@ export async function startServer(opts = {}) {
         });
         const e = new HttpError(422, `Not added: ${r.detail}`);
         e.body = { status: r.status, status_text: statusText(done) };
+        if (b.kind === 'tailscale' && r.status === 'unreachable') e.body.serve_command = serveCommand({ entry: draft, port, token, bin: tsBin() || 'tailscale' });
         throw e;
       }
       // Turned off (or an address removed) while this check ran: that wins.
@@ -840,6 +864,11 @@ export async function startServer(opts = {}) {
           const b = await jsonBody(req);
           const h = await addHost(b);
           return [201, { ...remoteView(req.who), added: h.url }];
+        }, { local: true }],
+        // The exact `tailscale serve` command for an address: the private path is part of it.
+        ['GET', /^\/api\/remote\/serve-command$/, (req, m, res, url) => {
+          const p = parseRemoteUrl(url.searchParams.get('url'), 'tailscale');
+          return [200, { url: p.url, command: serveCommand({ entry: p, port, token, bin: tsBin() || 'tailscale' }) }];
         }, { local: true }],
         ['POST', /^\/api\/remote\/remove$/, async (req) => {
           const b = await jsonBody(req);
@@ -1017,7 +1046,16 @@ export async function startServer(opts = {}) {
       ['POST', /^\/api\/sessions$/, async (req) => {
         const b = await jsonBody(req);
         // A remote-access setup chat runs exactly the skill text this version ships.
-        if (typeof b.prompt === 'string' && /^\s*\/remote-access\b/.test(b.prompt)) org.ensureSkills();
+        if (typeof b.prompt === 'string' && /^\s*\/remote-access\b/.test(b.prompt)) {
+          org.ensureSkills();
+          // Claude Code prefers a personal skill or command of the same name over the org's.
+          const dirs = [configDir, ...(b.account && b.account !== 'default' ? [sessions.configDirFor({ account: b.account }, configDir)] : [])];
+          for (const d of dirs) {
+            for (const f of [path.join(d, 'skills', 'remote-access'), path.join(d, 'commands', 'remote-access.md')]) {
+              if (fs.existsSync(f)) throw new HttpError(409, `Your own Claude Code setup has a "remote-access" skill or command (${f}), which Claude Code would run instead of Clawdling's. Rename it, then start the setup again.`);
+            }
+          }
+        }
         return [201, await sessions.spawn({ agent: b.agent, prompt: b.prompt, model: b.model, effort: b.effort, account: b.account, title: b.title, cols: b.cols, rows: b.rows })];
       }],
       // Model / effort chips: the session restarts on the same conversation (--resume) with the new --model / --effort, only between turns.

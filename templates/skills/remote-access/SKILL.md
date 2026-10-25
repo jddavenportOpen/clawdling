@@ -64,7 +64,11 @@ Say the plan, for example:
 4. **Existing entries.** `TS serve status`. Remember what is there and leave it alone. Use HTTPS
    port 443 if nothing there uses it; otherwise, or if the owner asks for another port, use the
    one they choose (suggest 8443) that no entry uses. Call it PORT.
-5. **Add the entry**, after asking: `TS serve --bg --https=PORT http://127.0.0.1:CL_PORT`
+5. **The exact command.** `clawdling remote serve-command https://<DNSName>:PORT` (leave out
+   `:PORT` when PORT is 443) prints it: `TS serve --bg --https=PORT http://127.0.0.1:CL_PORT/_clawdling/...`.
+   The path at the end is private to this cockpit (Clawdling answers only requests that come
+   through it): copy the command exactly, never shorten or change it.
+   **Add the entry**, after asking: run that command.
    - "HTTPS ... not enabled" or a certificate error: tell the owner to open
      https://login.tailscale.com/admin/dns, find "HTTPS Certificates" and press "Enable HTTPS".
      Wait until they say it is done, then try once more.
@@ -97,10 +101,11 @@ Say the plan, for example:
 2. **The address.** Ask which hostname to use, a name under a domain on their Cloudflare account
    (like `cockpit.example.com`), and the email address that may sign in. Name the tunnel
    `clawdling` unless that is taken, and remember the name you used.
-3. **Sign in.** `cloudflared tunnel login`. It opens the browser; the owner signs in and picks
-   the domain. It saves a certificate file: do not open it.
-4. **The tunnel.** `cloudflared tunnel create clawdling`. It prints the tunnel ID and the path of
-   a credentials file. Note both; do not open the file.
+3. **Sign in.** Ask the owner to run `cloudflared tunnel login` in their own terminal (not in
+   this session: the link it prints is a sign-in for their Cloudflare account). It opens the
+   browser; they sign in and pick the domain. It saves a certificate file: do not open it.
+4. **The tunnel.** `cloudflared tunnel create <name>` (the name from step 2). It prints the
+   tunnel ID and the path of a credentials file. Note both; do not open the file.
 5. **Access first, so the address is never public.** Guide the owner through the dashboard, one
    step at a time, and wait for each:
    - https://one.dash.cloudflare.com (Zero Trust). The first time, it asks for a team name and a
@@ -108,7 +113,7 @@ Say the plan, for example:
    - Access, Applications, "Add an application", "Self-hosted".
    - Application domain: the hostname from step 2.
    - A policy: action "Allow", include "Emails", the owner's email address. Save.
-6. **The DNS name.** `cloudflared tunnel route dns clawdling <hostname>`.
+6. **The DNS name.** `cloudflared tunnel route dns <name> <hostname>`.
 7. **The config**, after asking. `~/.cloudflared/config.yml`; if it exists, show it first and
    only add to it, never remove someone else's rules:
 

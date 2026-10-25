@@ -10,7 +10,8 @@ import http from 'node:http';
 import { execFileP, sha256, writeFileAtomic } from './util.js';
 
 export const REMOTE_KINDS = ['tailscale', 'cloudflare'];
-export const DEVICE_COOKIE = 'cl_device';
+// __Host-: the browser keeps it host-only, so another site on the tailnet cannot plant one.
+export const DEVICE_COOKIE = '__Host-cl_device';
 export const DEVICE_KEY_HEADER = 'x-clawdling-device-key';
 export const DEVICE_PREFIX = 'cld_';
 export const PAIRING_TTL_MS = 10 * 60 * 1000;
@@ -29,6 +30,34 @@ const AUD_RE = /^[A-Za-z0-9_-]{16,128}$/;
 const DEVICE_RE = /^cld_([0-9a-f]{12})_([A-Za-z0-9_-]{43})$/;
 const STATUSES = ['pending', 'private', 'unconfirmed', 'unreachable', 'public', 'access', 'unverified', 'unprotected'];
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T[0-9:.]+Z$/;
+const SERVE_PATH_RE = /^\/_clawdling\/[A-Za-z0-9_-]{32}$/;
+
+/**
+ * The private path a Tailscale Serve entry forwards to (`http://127.0.0.1:<port>/_clawdling/<p>`):
+ * an HMAC of the address under the org's token. Only the serve config (and this org) knows it,
+ * so a process that can merely connect to 127.0.0.1 (a container, another user) cannot pass for
+ * Tailscale by writing its headers. Every request through the address must carry it.
+ */
+export function servePath(token, url) {
+  return `/_clawdling/${crypto.createHmac('sha256', String(token)).update(`remote-path:${url}`).digest('base64url').slice(0, 32)}`;
+}
+
+/** The exact Tailscale command that points an address at this cockpit's private path. */
+export function serveCommand({ entry, port, token, bin = 'tailscale' }) {
+  const b = /\s/.test(bin) ? `"${bin}"` : bin;
+  return `${b} serve --bg --https=${entry.port} http://127.0.0.1:${port}${servePath(token, entry.url)}`;
+}
+
+/**
+ * A request path through a Tailscale address must start with its private path: the rest is the
+ * real path. Null when it does not.
+ */
+export function stripServePath(pathname, prefix) {
+  if (!prefix || typeof pathname !== 'string') return null;
+  if (pathname === prefix) return '/';
+  if (pathname.startsWith(`${prefix}/`)) return pathname.slice(prefix.length);
+  return null;
+}
 
 export class RemoteError extends Error {
   constructor(message, status = 400) {
@@ -72,7 +101,7 @@ export function answerable(entry) {
   if (!entry) return false;
   // Tailscale: only once Funnel is known to be off ("unreachable" is only ever set after that),
   // and only with the owner's Tailscale login to compare each request against.
-  if (entry.kind === 'tailscale') return ['private', 'unreachable'].includes(entry.status) && !!entry.login;
+  if (entry.kind === 'tailscale') return ['private', 'unreachable'].includes(entry.status) && !!entry.login && !!entry.path;
   return entry.status === 'access' && !!entry.access;
 }
 
@@ -98,12 +127,17 @@ function validHost(h) {
     if (h.kind !== 'cloudflare' || typeof h.email !== 'string' || !/^[^\s@]{1,200}@[^\s@]{1,200}$/.test(h.email)) throw new Error(`host ${h.url} has a bad owner email`);
     email = h.email;
   }
+  let servePathValue = null;
+  if (h.path != null) {
+    if (h.kind !== 'tailscale' || typeof h.path !== 'string' || !SERVE_PATH_RE.test(h.path)) throw new Error(`host ${h.url} has a bad serve path`);
+    servePathValue = h.path;
+  }
   let login = null;
   if (h.login != null) {
     if (h.kind !== 'tailscale' || typeof h.login !== 'string' || !h.login || h.login.length > 320 || /[\u0000-\u001f\u007f]/.test(h.login)) throw new Error(`host ${h.url} has a bad Tailscale login`);
     login = h.login;
   }
-  return { url: p.url, host: p.host, port: p.port, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: cleanText(h.detail), access, login, email };
+  return { url: p.url, host: p.host, port: p.port, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: cleanText(h.detail), access, login, email, path: servePathValue };
 }
 
 /**
@@ -134,6 +168,7 @@ function persistable(state) {
       ...(h.access ? { access: { team_domain: h.access.team_domain, aud: h.access.aud } } : {}),
       ...(h.login ? { login: h.login } : {}),
       ...(h.email ? { email: h.email } : {}),
+      ...(h.path ? { path: h.path } : {}),
     })),
   };
 }
@@ -569,7 +604,9 @@ export async function checkCloudflare(entry, { env, testMode, probeImpl = probe 
       return { status: 'access', detail: 'A Cloudflare Access sign-in is required before anyone reaches it.', access: { team_domain: `https://${u.hostname}`, aud } };
     }
   }
-  if ((r.status === 401 || r.status === 403) && h['cf-ray'] && entry.access) {
+  // A block with no redirect only keeps an address that passed with the redirect before: on a first
+  // add it could just as well be a WAF or bot rule in front of a public page.
+  if ((r.status === 401 || r.status === 403) && h['cf-ray'] && entry.access && entry.status === 'access') {
     return { status: 'access', detail: 'Cloudflare Access blocks requests that are not signed in.', access: entry.access };
   }
   return { status: 'unverified', detail: `${entry.url} answered ${r.status}, which is not a Cloudflare Access sign-in. Clawdling will not answer it.` };

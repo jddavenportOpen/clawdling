@@ -5,7 +5,9 @@
 //   forward   pass the request to Clawdling (port in FAKE_TUNNEL_DIR/target) keeping the Host
 //             header and adding proxy headers, the way `tailscale serve` and cloudflared do;
 //             like Tailscale Serve, it drops any Tailscale-* header the client sent and sets
-//             Tailscale-User-Login to FAKE_TUNNEL_DIR/login (none if that file is empty)
+//             Tailscale-User-Login to FAKE_TUNNEL_DIR/login (none if that file is empty), and
+//             forwards to the path in FAKE_TUNNEL_DIR/prefix + the request path, like a serve
+//             entry whose target is http://127.0.0.1:<port>/_clawdling/<private path>
 //   access    a Cloudflare Access redirect to <team>.cloudflareaccess.com with the AUD as kid
 //   plain200  a page that answers without any sign-in
 //   down      drop the connection
@@ -23,6 +25,17 @@ const read = (f, d = '') => {
     return d;
   }
 };
+
+// FAKE_TUNNEL_DIR/prefix, or one per Host name in FAKE_TUNNEL_DIR/prefixes.json (several serve entries).
+function prefixFor(host) {
+  try {
+    const map = JSON.parse(read('prefixes.json', '{}'));
+    if (map[host]) return map[host];
+  } catch {
+    // no map
+  }
+  return read('prefix');
+}
 
 const server = http.createServer((req, res) => {
   if (read('mode', 'forward') === 'slow' && req.url !== '/certs') {
@@ -52,7 +65,7 @@ function handle(req, res) {
   for (const k of Object.keys(headers)) if (k.startsWith('tailscale-')) delete headers[k];
   const login = read('login', 'owner@example.com');
   if (login) headers['tailscale-user-login'] = login;
-  const up = http.request({ host: '127.0.0.1', port: Number(read('target')), path: req.url, method: req.method, headers }, (r) => {
+  const up = http.request({ host: '127.0.0.1', port: Number(read('target')), path: prefixFor(req.headers.host) + req.url, method: req.method, headers }, (r) => {
     res.writeHead(r.statusCode, r.headers);
     r.pipe(res);
   });

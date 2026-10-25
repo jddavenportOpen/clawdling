@@ -11,7 +11,8 @@
       "Bash(clawdling discover *)",
       "Bash(clawdling end *)",
       "Bash(clawdling doctor)",
-      "Bash(clawdling remote list)"
+      "Bash(clawdling remote list)",
+      "Bash(clawdling remote serve-command *)"
     ],
     "deny": [
       "Read(/.clawdling/**)",

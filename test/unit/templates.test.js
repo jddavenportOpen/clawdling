@@ -180,7 +180,10 @@ test('the /remote-access skill: installed at the org root only, and its safety r
     assert.match(flat, /bundleIdentifier is unknown to the registry/);
     assert.match(flat, /HTTPS Certificates/);
     assert.match(skill, /sudo tailscale set --operator=\$USER/);
-    assert.match(skill, /serve --bg --https=PORT http:\/\/127\.0\.0\.1:CL_PORT/);
+    assert.match(skill, /serve --bg --https=PORT http:\/\/127\.0\.0\.1:CL_PORT\/_clawdling\//);
+    assert.match(skill, /clawdling remote serve-command https:\/\/<DNSName>:PORT/);
+    assert.match(flat, /copy the command exactly, never shorten or change it/);
+    assert.match(flat, /Ask the owner to run `cloudflared tunnel login` in their own terminal/);
     assert.match(skill, /serve --https=PORT off/);
     assert.match(skill, /clawdling remote add https:\/\/<DNSName>:PORT --kind tailscale/);
     assert.match(skill, /clawdling remote add https:\/\/<hostname> --kind cloudflare/);

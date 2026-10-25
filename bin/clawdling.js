@@ -58,7 +58,8 @@ Usage:
   clawdling donna imessage --handle <you>   let Donna answer your iMessages (macOS, experimental)
   clawdling donna status
   clawdling remote list|check [--json]       Use from anywhere: is it on, and is each address private
-  clawdling remote add <https-url> --kind tailscale|cloudflare [--team-domain T --access-aud A]
+  clawdling remote serve-command <https-url> the exact tailscale serve command for an address
+  clawdling remote add <https-url> --kind tailscale|cloudflare [--email E] [--team-domain T --access-aud A]
                                             register a Tailscale Serve or Cloudflare Tunnel address
                                             (checked first: never a public one, never one without Access)
   clawdling remote remove <https-url>|--all  forget an address (--all: forget every one, turn it off)
@@ -79,6 +80,7 @@ const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-e
 const REMOTE_HELP = `usage:
   clawdling remote list [--json]
   clawdling remote check [--json]
+  clawdling remote serve-command <https-url>
   clawdling remote add <https-url> --kind tailscale|cloudflare [--email <you>] [--team-domain <team>.cloudflareaccess.com --access-aud <AUD tag>]
   clawdling remote remove <https-url> | --all
   clawdling remote off`;
@@ -158,7 +160,11 @@ async function api(ctx, method, p, body) {
   } catch {
     // empty
   }
-  if (!res.ok) throw new CliError(data.error || `HTTP ${res.status}`);
+  if (!res.ok) {
+    const e = new CliError(data.error || `HTTP ${res.status}`);
+    e.data = data;
+    throw e;
+  }
   return data;
 }
 
@@ -1026,8 +1032,26 @@ async function cmdRemote(args) {
     if (args.flags['team-domain'] !== undefined) body.team_domain = String(args.flags['team-domain']);
     if (args.flags['access-aud'] !== undefined) body.access_aud = String(args.flags['access-aud']);
     if (args.flags.email !== undefined) body.email = String(args.flags.email);
-    const v = await api(ctx, 'POST', '/api/remote/hosts', body);
+    let v;
+    try {
+      v = await api(ctx, 'POST', '/api/remote/hosts', body);
+    } catch (err) {
+      if (err.data && err.data.serve_command) err.message += `\nPoint Tailscale at this cockpit first (its private path is part of the command):\n  ${err.data.serve_command}`;
+      throw err;
+    }
     return out(v, `Added ${v.added}. Use from anywhere is on.\nNext: on your computer, open Settings, "Use from anywhere", and press "Add a device" to pair your phone.`);
+  }
+  if (sub === 'serve-command') {
+    const url = args._[2];
+    if (!url) throw new CliError('usage: clawdling remote serve-command <https-url>');
+    try {
+      parseRemoteUrl(url, 'tailscale');
+    } catch (err) {
+      throw new CliError(err.message);
+    }
+    needServer();
+    const r = await api(ctx, 'GET', `/api/remote/serve-command?url=${encodeURIComponent(url)}`);
+    return console.log(args.flags.json ? JSON.stringify(r, null, 2) : r.command);
   }
   if (sub === 'remove' || sub === 'off') {
     const all = sub === 'remove' && args.flags.all === true;

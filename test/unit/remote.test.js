@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { deviceCookieHeader, originAllowed } from '../../server/auth.js';
 import {
   AccessVerifier, DeviceStore, PAIRING_TTL_MS, Pairings, RemoteStore, Throttle, answerable, checkCloudflare, checkTailscale, deviceLabel,
-  funnelOn, funnelState, hostKeys, loopbackPeer, parseRemoteUrl, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
+  funnelOn, funnelState, hostKeys, loopbackPeer, parseRemoteUrl, serveCommand, servePath, stripServePath, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
 } from '../../server/remote.js';
 import { rmrf, tempHome } from '../helpers.mjs';
 import { fakeAccess } from '../fixtures/fake-access.mjs';
@@ -52,11 +52,12 @@ test('Host matching is exact: the port must match, and :443 is the same as no po
 });
 
 test('which addresses are answered: never a public, unchecked or unprotected one', () => {
-  const ts = (status, login = 'owner@example.com') => ({ kind: 'tailscale', status, login });
+  const ts = (status, login = 'owner@example.com') => ({ kind: 'tailscale', status, login, path: '/_clawdling/' + 'p'.repeat(32) });
   const cf = (status, access = { team_domain: 'https://team.cloudflareaccess.com', aud: 'a'.repeat(64) }) => ({ kind: 'cloudflare', status, access });
   for (const s of ['private', 'unreachable']) assert.equal(answerable(ts(s)), true, s);
   for (const s of ['public', 'pending', 'unconfirmed']) assert.equal(answerable(ts(s)), false, s);
   assert.equal(answerable(ts('private', null)), false, 'no owner login to check requests against');
+  assert.equal(answerable({ ...ts('private'), path: null }), false, 'no private serve path');
   assert.equal(answerable(cf('access')), true);
   assert.equal(answerable(cf('access', null)), false, 'Access with no team and AUD to check tokens against');
   for (const s of ['unprotected', 'unverified', 'unreachable', 'pending']) assert.equal(answerable(cf(s)), false, s);
@@ -67,7 +68,7 @@ test('which addresses are answered: never a public, unchecked or unprotected one
 
 test('remote.json: default off, strict on every field, and a bad file turns everything off', () => {
   assert.deepEqual(validateState(null), { enabled: false, hosts: [], invalid: null });
-  const good = { version: 1, enabled: true, hosts: [{ url: 'https://box.example.ts.net:8743', kind: 'tailscale', status: 'private', added_at: '2026-10-25T10:00:00.000Z', checked_at: null, detail: null }] };
+  const good = { version: 1, enabled: true, hosts: [{ url: 'https://box.example.ts.net:8743', kind: 'tailscale', status: 'private', added_at: '2026-10-25T10:00:00.000Z', checked_at: null, detail: null, path: '/_clawdling/' + 'a'.repeat(32) }] };
   const v = validateState(good);
   assert.equal(v.enabled, true);
   assert.equal(v.hosts[0].port, 8743);
@@ -82,6 +83,7 @@ test('remote.json: default off, strict on every field, and a bad file turns ever
     ['status', bad({}, { status: 'fine' })],
     ['date', bad({}, { added_at: 'yesterday' })],
     ['access on tailscale', bad({}, { access: { team_domain: 'https://t.cloudflareaccess.com', aud: 'a'.repeat(64) } })],
+    ['serve path', bad({}, { path: '/elsewhere' })],
     ['twice', validateState({ ...good, hosts: [good.hosts[0], good.hosts[0]] })],
     ['garbage', validateState('unreadable')],
     ['array', validateState([])],
@@ -179,6 +181,23 @@ test('devices: a browser needs its cookie AND its key, an app its token, each on
   }
 });
 
+test('the private serve path: an HMAC of the address, stripped from every request through it', () => {
+  const a = servePath('t'.repeat(64), 'https://box.example.ts.net:8743');
+  assert.match(a, /^\/_clawdling\/[A-Za-z0-9_-]{32}$/);
+  assert.equal(servePath('t'.repeat(64), 'https://box.example.ts.net:8743'), a, 'the same every time');
+  assert.notEqual(servePath('u'.repeat(64), 'https://box.example.ts.net:8743'), a, 'another org');
+  assert.notEqual(servePath('t'.repeat(64), 'https://box.example.ts.net'), a, 'another address');
+  assert.equal(stripServePath(`${a}/api/org`, a), '/api/org');
+  assert.equal(stripServePath(a, a), '/');
+  assert.equal(stripServePath(`${a}/`, a), '/');
+  assert.equal(stripServePath('/api/org', a), null);
+  assert.equal(stripServePath(`${a}x/api`, a), null, 'a longer path is not the prefix');
+  assert.equal(stripServePath('/api/org', null), null);
+  const entry = parseRemoteUrl('https://box.example.ts.net:8743', 'tailscale');
+  assert.equal(serveCommand({ entry, port: 4791, token: 't'.repeat(64), bin: '/Applications/Tailscale.app/Contents/MacOS/Tailscale' }),
+    `/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8743 http://127.0.0.1:4791${a}`);
+});
+
 test('remote names are answered only from this computer (the tunnel), never from the Wi-Fi', () => {
   for (const a of ['127.0.0.1', '127.0.0.53', '::1', '::ffff:127.0.0.1']) assert.equal(loopbackPeer(a), true, a);
   for (const a of ['192.168.1.20', '100.64.0.9', '::ffff:192.168.1.20', 'fe80::1', '', undefined]) assert.equal(loopbackPeer(a), false, String(a));
@@ -221,7 +240,7 @@ test('throttle: after 10 failures in 5 minutes an address refuses new attempts, 
 
 test('cookies: the device cookie is Secure, HttpOnly, SameSite=Strict', () => {
   const c = deviceCookieHeader('cld_x');
-  assert.match(c, /^cl_device=cld_x;/);
+  assert.match(c, /^__Host-cl_device=cld_x;/);
   for (const flag of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/', 'Max-Age=2592000']) assert.ok(c.includes(flag), flag);
   assert.match(deviceCookieHeader('', 0), /Max-Age=0/);
 });
@@ -305,7 +324,9 @@ test('Cloudflare check: only a redirect to Cloudflare Access passes; a page that
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'http://team.cloudflareaccess.com/x?kid=' + aud }) })).status, 'unverified', 'http');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'https://team.cloudflareaccess.com.evil.example/x?kid=' + aud }) })).status, 'unverified');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'https://team.cloudflareaccess.com/x' }) })).status, 'unverified', 'no AUD tag');
-  assert.equal((await checkCloudflare({ ...entry, access: { team_domain: 'https://team.cloudflareaccess.com', aud } }, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'access', 'blocked by Access, settings given');
+  const acc = { team_domain: 'https://team.cloudflareaccess.com', aud };
+  assert.equal((await checkCloudflare({ ...entry, access: acc, status: 'access' }, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'access', 'a block keeps an address that passed before');
+  assert.equal((await checkCloudflare({ ...entry, access: acc, status: 'pending' }, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'unverified', 'a first add needs the Access redirect (a WAF rule blocks too)');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'unverified', 'blocked, but whose block?');
   assert.equal((await checkCloudflare(entry, { probeImpl: async () => { throw new Error('ENOTFOUND'); } })).status, 'unreachable');
 });

@@ -42,6 +42,18 @@ export function tokenEquals(given, expected) {
   return crypto.timingSafeEqual(sha256(given), sha256(expected));
 }
 
+/** Every value sent for one cookie name (a page elsewhere may have planted a decoy before ours). */
+export function cookieValues(header, name) {
+  const out = [];
+  if (typeof header !== 'string') return out;
+  for (const part of header.split(';')) {
+    const i = part.indexOf('=');
+    if (i < 1 || part.slice(0, i).trim() !== name) continue;
+    out.push(part.slice(i + 1).trim());
+  }
+  return out.slice(0, 8);
+}
+
 export function parseCookies(header) {
   const out = {};
   if (typeof header !== 'string') return out;
@@ -79,13 +91,14 @@ export function cookieHeader(token) {
 }
 
 /**
- * A paired device's cookie on a remote address (Use from anywhere). Secure: only ever sent over
+ * A paired device's cookie on a remote address (Use from anywhere). `__Host-`: host-only, so no
+ * other site on the tailnet (ts.net is a public suffix) can set one in its place. Secure: only ever sent over
  * https. HttpOnly: page scripts never see it. SameSite=Strict: another site can neither send it
  * nor embed the cockpit; a link from elsewhere opens the page signed out for that one load, and
  * its own same-origin API calls carry the cookie. 30 days, the same as the server-side expiry.
  */
 export function deviceCookieHeader(value, maxAgeSec = 30 * 24 * 60 * 60) {
-  return `cl_device=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`;
+  return `__Host-cl_device=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`;
 }
 
 export function isLoopback(host) {
