@@ -486,13 +486,42 @@ export function tcpForwardsTo(config, port) {
   return [...hits];
 }
 
+/**
+ * Every handler any serve config (foreground ones included) has for this address. The cockpit
+ * must be the only one: another app on the same origin could read the page's storage.
+ */
+export function webHandlers(config, hostPort) {
+  const out = [];
+  const seen = new Set();
+  const walk = (o, depth) => {
+    if (!o || typeof o !== 'object' || depth > 6 || seen.has(o)) return;
+    seen.add(o);
+    const web = o.Web && typeof o.Web === 'object' ? o.Web[hostPort] : null;
+    if (web && web.Handlers && typeof web.Handlers === 'object') {
+      for (const [mount, h] of Object.entries(web.Handlers)) out.push({ mount, proxy: h && typeof h.Proxy === 'string' ? h.Proxy : null, other: !h || typeof h.Proxy !== 'string' });
+    }
+    for (const v of Object.values(o)) walk(v, depth + 1);
+  };
+  walk(config, 0);
+  return out;
+}
+
+/** Does this serve address forward everything, and only, to the cockpit's private path? */
+export function onlyCockpit(handlers, { port, path }) {
+  if (!handlers.length) return false;
+  const norm = (u) => String(u || '').trim().replace(/\/+$/, '').replace(/^http:\/\/localhost:/i, 'http://127.0.0.1:');
+  const want = norm(`http://127.0.0.1:${port}${path}`);
+  return handlers.every((h) => h.mount === '/' && !h.other && norm(h.proxy) === want);
+}
+
 export async function funnelState(entry, { bin, run = execFileP, port = null } = {}) {
   if (!bin) return { known: false, detail: 'the Tailscale command was not found' };
   try {
     const { stdout } = await run(bin, ['serve', 'status', '--json'], { timeout: 8000 });
     const text = String(stdout || '').trim();
     const config = text ? JSON.parse(text) : {};
-    return { known: true, funnel: funnelOn(config, `${entry.host}:${entry.port}`), tcp: port ? tcpForwardsTo(config, port) : [] };
+    const hostPort = `${entry.host}:${entry.port}`;
+    return { known: true, funnel: funnelOn(config, hostPort), tcp: port ? tcpForwardsTo(config, port) : [], handlers: webHandlers(config, hostPort) };
   } catch (err) {
     return { known: false, detail: `\`tailscale serve status\` failed (${String(err.message || err).split('\n')[0].slice(0, 120)})` };
   }
@@ -546,6 +575,10 @@ export async function checkTailscale(entry, { nonce, bin, run, env, testMode, po
   if (!f.known) return { status: 'unconfirmed', detail: `Clawdling could not confirm Tailscale Funnel is off (${f.detail}), so it does not answer this address.` };
   if (f.tcp && f.tcp.length) {
     return { status: 'unconfirmed', detail: `A Tailscale TCP forward on port ${f.tcp.join(', ')} sends raw connections straight to the cockpit, so whoever uses it could pretend to be you. Remove it (tailscale serve --tcp=${f.tcp[0]} off), then check again.` };
+  }
+  if (port && entry.path && f.handlers && f.handlers.length && !onlyCockpit(f.handlers, { port, path: entry.path })) {
+    const others = f.handlers.filter((h) => !(h.mount === '/' && h.proxy && h.proxy.includes('/_clawdling/'))).map((h) => h.mount);
+    return { status: 'unconfirmed', detail: `Something else is served on ${entry.url} too (${others.join(', ') || 'another target'}), and any app on the same address could read the cockpit's sign-in. Give the cockpit a port of its own, then check again.` };
   }
   let reached = false;
   let login = null;

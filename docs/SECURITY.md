@@ -69,7 +69,10 @@ the same power as sitting at the computer, so it is guarded as such.
   path: `http://127.0.0.1:<port>/_clawdling/<32 characters>`, an HMAC of the address under the
   org's token, which only the serve config and this org know (`clawdling remote serve-command`
   prints the exact command). A request through a Tailscale address without that path is refused
-  before anything else, and the server strips it so the cockpit sees its normal paths.
+  before anything else, and the server strips it so the cockpit sees its normal paths. What lock
+  1 admits, then, is the owner's own devices, including this computer: a process on any of them
+  (another account on this Mac, a container) can open the address like the owner's browser does.
+  Against those, lock 2 is the guard.
   Cloudflare: Cloudflare Access makes every visitor sign in (an email policy) before Cloudflare
   forwards anything; Clawdling then checks the `Cf-Access-Jwt-Assertion` header Access adds on
   every request (RS256, signed by the team's keys at `<team>.cloudflareaccess.com/cdn-cgi/access/certs`,
@@ -122,14 +125,20 @@ the same power as sitting at the computer, so it is guarded as such.
   (which also gives the AUD tag); a page that answers (any 2xx, or Clawdling's own refusal,
   marked with `X-Clawdling-Refused`) means the address is public, and it is refused. A first add
   needs that redirect: a bare 401/403 could be a firewall rule in front of a public page, so it
-  only keeps an address that passed before. Later checks
+  only keeps an address that passed before. The cockpit must be the only thing on its address:
+  a Tailscale address whose serve entry also has another handler (`--set-path`, another proxy)
+  is not answered, since an app on the same origin could read the page's storage. The skill
+  gives a Cloudflare hostname exactly one ingress rule with no `path:`; keep it that way. Later checks
   (Settings' Check again, `clawdling remote check`, and an automatic check every 10 minutes while
   it is on) apply the same rules: an address found public or unprotected is not answered until a
   check passes again. Other local forwarders Clawdling cannot see (ngrok, socat) are out of its
   reach: do not point one at the cockpit's port. A request marked `Tailscale-Funnel-Request` is always refused.
-- **Throttle.** Per remote address and per signed-in Tailscale login or Access email, 10 failed
-  sign-ins (a wrong device credential or pairing code) in 5 minutes make new attempts answer
-  `429` for the rest of the window, so nobody else can hold pairing shut for the owner. Paired
+- **Throttle.** Per remote address, signed-in Tailscale login or Access email, and source
+  address (the tailnet IP Tailscale Serve reports, or Cloudflare's client IP), 10 failed sign-ins
+  (a wrong device credential or pairing code) in 5 minutes make new attempts answer `429` for
+  the rest of the window, so another device or process failing on purpose fills only its own
+  bucket. A cookie whose key arrives only in a URL (`k=`, which any same-site page could add to
+  an `<img>`) is refused without counting. Paired
   devices keep working, and the computer itself is never throttled. A request with no credential
   is not counted. (The secrets are 192 and 256 bits, so this is defence in depth, not what
   stops guessing.)

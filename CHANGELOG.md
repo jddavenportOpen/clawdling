@@ -18,8 +18,9 @@ until you turn it on, in Settings.
   Linux operator setting. `/remote-access off` removes only what it set up.
 - **Only your own devices.** Tailscale requests must carry your own Tailscale login and arrive
   through the serve entry's private path (`clawdling remote serve-command` prints the exact
-  command), so another person on a shared tailnet, or a container on the same computer, gets
-  nothing. Cloudflare pins your Access email the same way.
+  command), so another person on a shared tailnet, or a program connecting to the cockpit's port
+  directly, gets nothing; the cockpit must also be the only thing served on its address.
+  Cloudflare pins your Access email the same way.
 - **Never public.** `clawdling remote add` registers an address only after a check passes:
   Tailscale Funnel off and the address reaching this cockpit, or, for Cloudflare, a signed-out
   visitor sent to the Access sign-in. Every request through a Cloudflare address must also carry a

@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { deviceCookieHeader, originAllowed } from '../../server/auth.js';
 import {
   AccessVerifier, DeviceStore, PAIRING_TTL_MS, Pairings, RemoteStore, Throttle, answerable, checkCloudflare, checkTailscale, deviceLabel,
-  funnelOn, funnelState, hostKeys, loopbackPeer, parseRemoteUrl, serveCommand, servePath, stripServePath, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
+  funnelOn, funnelState, hostKeys, loopbackPeer, onlyCockpit, parseRemoteUrl, webHandlers, serveCommand, servePath, stripServePath, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
 } from '../../server/remote.js';
 import { rmrf, tempHome } from '../helpers.mjs';
 import { fakeAccess } from '../fixtures/fake-access.mjs';
@@ -271,10 +271,23 @@ test('Funnel detection reads serve status, foreground configs included', async (
     assert.deepEqual(args, ['serve', 'status', '--json'], 'only ever serve status');
     return { stdout: JSON.stringify({ AllowFunnel: { 'box.example.ts.net:8743': true } }) };
   };
-  assert.deepEqual(await funnelState(entry, { bin: 'ts', run }), { known: true, funnel: true, tcp: [] });
-  assert.deepEqual(await funnelState(entry, { bin: 'ts', run: async () => ({ stdout: '' }) }), { known: true, funnel: false, tcp: [] }, 'no serve config');
+  assert.deepEqual(await funnelState(entry, { bin: 'ts', run }), { known: true, funnel: true, tcp: [], handlers: [] });
+  assert.deepEqual(await funnelState(entry, { bin: 'ts', run: async () => ({ stdout: '' }) }), { known: true, funnel: false, tcp: [], handlers: [] }, 'no serve config');
   assert.equal((await funnelState(entry, { bin: null })).known, false);
   assert.equal((await funnelState(entry, { bin: 'ts', run: async () => { throw new Error('boom'); } })).known, false);
+});
+
+test('the cockpit must be the only thing served on its address', () => {
+  const P = '/_clawdling/' + 'p'.repeat(32);
+  const one = { TCP: { 8743: { HTTPS: true } }, Web: { 'box.example.ts.net:8743': { Handlers: { '/': { Proxy: `http://127.0.0.1:4791${P}` } } } } };
+  assert.equal(onlyCockpit(webHandlers(one, 'box.example.ts.net:8743'), { port: 4791, path: P }), true);
+  assert.equal(onlyCockpit(webHandlers({ Web: { 'box.example.ts.net:8743': { Handlers: { '/': { Proxy: `http://localhost:4791${P}/` } } } } }, 'box.example.ts.net:8743'), { port: 4791, path: P }), true, 'localhost and a trailing slash');
+  const shared = { Web: { 'box.example.ts.net:8743': { Handlers: { '/': { Proxy: `http://127.0.0.1:4791${P}` }, '/grafana': { Proxy: 'http://127.0.0.1:3000' } } } } };
+  assert.equal(onlyCockpit(webHandlers(shared, 'box.example.ts.net:8743'), { port: 4791, path: P }), false);
+  assert.equal(onlyCockpit(webHandlers({ Web: { 'box.example.ts.net:8743': { Handlers: { '/': { Path: '/var/www' } } } } }, 'box.example.ts.net:8743'), { port: 4791, path: P }), false, 'a file server');
+  assert.equal(onlyCockpit(webHandlers({ Web: { 'box.example.ts.net:8743': { Handlers: { '/': { Proxy: 'http://127.0.0.1:4791' } } } } }, 'box.example.ts.net:8743'), { port: 4791, path: P }), false, 'no private path');
+  const fg = { Foreground: { s: { Web: { 'box.example.ts.net:8743': { Handlers: { '/x': { Proxy: 'http://127.0.0.1:9' } } } } } }, ...one };
+  assert.equal(onlyCockpit(webHandlers(fg, 'box.example.ts.net:8743'), { port: 4791, path: P }), false, 'a foreground serve too');
 });
 
 test('a Tailscale TCP forward onto the cockpit port is caught (headers through it are forgeable)', async () => {

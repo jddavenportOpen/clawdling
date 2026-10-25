@@ -66,12 +66,12 @@ const KEYS = new Map();
 let PREFIX = '';
 const viaServe = (host, p, noprefix) => (host === TS_HOST && !noprefix ? PREFIX + p : p);
 
-function raw(method, p0, { host = TS_HOST, headers = {}, body, login = host === TS_HOST ? OWNER : null, nokey = false, noprefix = false } = {}) {
+function raw(method, p0, { host = TS_HOST, headers = {}, body, login = host === TS_HOST ? OWNER : null, nokey = false, noprefix = false, source = host === TS_HOST ? '100.64.0.9' : null } = {}) {
   const p = viaServe(host, p0, noprefix);
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
     const key = !nokey && headers.cookie ? KEYS.get(headers.cookie) : null;
-    const h = { host, ...(login ? { 'tailscale-user-login': login } : {}), ...(key ? { 'x-clawdling-device-key': key } : {}), ...headers, ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}) };
+    const h = { host, ...(login ? { 'tailscale-user-login': login } : {}), ...(source ? { 'x-forwarded-for': source } : {}), ...(key ? { 'x-clawdling-device-key': key } : {}), ...headers, ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}) };
     const req = http.request({ host: '127.0.0.1', port: srv.port, path: p, method, headers: h, agent: false }, (res) => {
       let text = '';
       res.setEncoding('utf8');
@@ -208,7 +208,13 @@ test('remote add refuses http, a non-Tailscale name, an unreachable address and 
 });
 
 test('remote add (Tailscale): checked, private, on; Clawdling only ever ran `serve status --json`', async () => {
-  writeServe({ Web: { [TS_HOST]: { Handlers: { '/': { Proxy: `http://127.0.0.1:${srv.port}` } } } } });
+  // Another app on the same address (say `serve --set-path=/grafana`): refused, it would share the origin.
+  writeServe({ TCP: { 8743: { HTTPS: true } }, Web: { [TS_HOST]: { Handlers: { '/': { Proxy: `http://127.0.0.1:${srv.port}${PREFIX}` }, '/grafana': { Proxy: 'http://127.0.0.1:3000' } } } } });
+  const shared = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
+  assert.equal(shared.status, 422);
+  assert.match(shared.body.error, /Something else is served on .* too \(\/grafana\)/);
+  // The real shape of `tailscale serve status --json` for the entry the skill adds.
+  writeServe({ TCP: { 8743: { HTTPS: true } }, Web: { [TS_HOST]: { Handlers: { '/': { Proxy: `http://127.0.0.1:${srv.port}${PREFIX}` } } } } });
   const out = cli(['remote', 'add', TS_URL, '--kind', 'tailscale'], { env, home });
   assert.match(out, /Added https:\/\/box\.example\.ts\.net:8743\. Use from anywhere is on\./);
   assert.match(out, /Private to your devices ✓/);
@@ -482,6 +488,17 @@ test('throttle: too many bad credentials lock new attempts on that address; sign
   const code = new URL(p.body.links[0].link).searchParams.get('pair');
   assert.equal((await raw('POST', '/api/remote/pair', { headers: { ...phone, ...origin() }, body: { code } })).status, 429, 'pairing waits too');
   assert.equal((await raw('GET', '/api/org', { headers: { cookie } })).status, 200, 'a paired device is not locked out');
+  // Another device of the owner's (another tailnet IP) can still pair: the bucket is per source.
+  const p2 = await request(srv, 'POST', '/api/remote/pairing', {});
+  const code2 = new URL(p2.body.links[0].link).searchParams.get('pair');
+  assert.equal((await raw('POST', '/api/remote/pair', { source: '100.64.0.77', headers: { ...phone, ...origin() }, body: { code: code2 } })).status, 201, 'a different source is not locked out');
+  // A key only in a URL (k=) is refused but never counted: a same-site <img> could add it.
+  const before = (await raw('POST', '/api/remote/pair', { source: '100.64.0.88', headers: { ...phone, ...origin() }, body: { code: 'A'.repeat(32) } })).status;
+  assert.equal(before, 401);
+  for (let i = 0; i <= THROTTLE_MAX; i++) await raw('GET', `/api/events?k=${'x'.repeat(43)}`, { source: '100.64.0.99', headers: { cookie: `__Host-cl_device=cld_000000000000_${'A'.repeat(43)}` } });
+  const p3 = await request(srv, 'POST', '/api/remote/pairing', {});
+  const code3 = new URL(p3.body.links[0].link).searchParams.get('pair');
+  assert.equal((await raw('POST', '/api/remote/pair', { source: '100.64.0.99', headers: { ...phone, ...origin() }, body: { code: code3 } })).status, 201, 'k= failures were not counted');
   assert.equal((await request(srv, 'GET', '/api/org')).status, 200, 'the local cockpit is never throttled');
   assert.equal((await raw('GET', '/api/org')).status, 401, 'no credential at all is not a failed attempt');
 });
@@ -501,6 +518,22 @@ test('Turn off while an address is being checked wins: the add is dropped and no
     const st = readJsonFile(path.join(home, '.clawdling', 'remote.json'));
     assert.equal(st.enabled, false);
     assert.ok(!st.hosts.some((h) => h.url === other));
+  } finally {
+    setMode('forward');
+  }
+});
+
+test('removing an address while it is being re-added sticks', async () => {
+  // TS_URL is registered (and answering); re-add it slowly, and remove it meanwhile.
+  setMode('slow');
+  try {
+    const readd = request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
+    await sleep(400);
+    const rm = await request(srv, 'POST', '/api/remote/remove', { url: TS_URL });
+    assert.equal(rm.status, 200, rm.text);
+    const r = await readd;
+    assert.ok([409, 422].includes(r.status), r.text);
+    assert.ok(!readJsonFile(path.join(home, '.clawdling', 'remote.json')).hosts.some((h) => h.url === TS_URL), 'still removed');
   } finally {
     setMode('forward');
   }
@@ -540,8 +573,8 @@ test('Cloudflare: refused when it answers without Access; registered behind Acce
   assert.match(stranger.body.error, /only for your own email/);
   // A device works only through the address it paired through.
   const viaCf = cookie;
-  // (401, or 429 while the throttle test above still holds that address: a valid device would pass either way.)
-  assert.ok([401, 429].includes((await raw('GET', '/api/org', { headers: { cookie: viaCf } })).status), 'a Cloudflare device through the Tailscale address');
+  // Never 200: 401 (another address), or 403 once the Tailscale address was removed above.
+  assert.ok([401, 403, 429].includes((await raw('GET', '/api/org', { headers: { cookie: viaCf } })).status), 'a Cloudflare device through the Tailscale address');
 
   // Access removed later: the next check finds a page that answers, and the address stops.
   setMode('plain200');
@@ -598,13 +631,19 @@ test('while on, every address is checked again on its own: Funnel turned on late
 
 test('a personal remote-access skill or command (which Claude Code would prefer) blocks the setup chat', async () => {
   const cfg = env.CLAUDE_CONFIG_DIR; // a temp folder: never the developer's own ~/.claude
-  for (const f of [path.join(cfg, 'skills', 'remote-access', 'SKILL.md'), path.join(cfg, 'commands', 'remote-access.md')]) {
+  for (const [f, text] of [
+    [path.join(cfg, 'skills', 'remote-access', 'SKILL.md'), 'Turn on Funnel.\n'],
+    [path.join(cfg, 'skills', 'my-tools', 'SKILL.md'), '---\nname: remote-access\ndescription: x\n---\nTurn on Funnel.\n'],
+    [path.join(cfg, 'commands', 'remote-access.md'), 'Turn on Funnel.\n'],
+    [path.join(cfg, 'commands', 'ops', 'net', 'remote-access.md'), 'Turn on Funnel.\n'],
+  ]) {
     fs.mkdirSync(path.dirname(f), { recursive: true });
-    fs.writeFileSync(f, 'Turn on Funnel.\n');
+    fs.writeFileSync(f, text);
     const r = await request(srv, 'POST', '/api/sessions', { agent: 'scratch', prompt: '/remote-access tailscale' });
     assert.equal(r.status, 409, r.text);
     assert.match(r.body.error, /has a "remote-access" skill or command/);
     rmrf(f.endsWith('SKILL.md') ? path.dirname(f) : f);
+    if (f.includes(`${path.sep}ops${path.sep}`)) rmrf(path.join(cfg, 'commands', 'ops'));
   }
 });
 

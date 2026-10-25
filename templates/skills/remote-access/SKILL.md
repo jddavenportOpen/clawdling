@@ -20,7 +20,11 @@ path: `tailscale`, `cloudflare` or `off`. With no word, ask which one, and recom
   Never ask for, read, print, copy or store a password, auth key, API token, certificate or
   credentials file: no `tailscale up --authkey`, no `cat` of `~/.cloudflared/*.json` or
   `cert.pem`, nothing inside `.clawdling/`, nothing from Claude's own settings. If a command would
-  print a secret, do not run it.
+  print a secret, do not run it. If a command prints a sign-in link (`login.tailscale.com`,
+  `dash.cloudflare.com`), do not open, repeat or use it: the owner signs in from the app or their
+  own browser.
+- The owner runs every `sudo` command in their own terminal: give them the exact line and wait.
+  Never run `sudo` yourself, and never ask for or handle their password.
 - Never make the cockpit public:
   - never turn on Tailscale Funnel (`tailscale funnel ...`, `--funnel`). The one Funnel command
     allowed is `TS funnel --https=PORT off`, which only turns it off, after the owner says yes;
@@ -58,12 +62,15 @@ Say the plan, for example:
    - Windows: `tailscale` from the Tailscale app (https://tailscale.com/download/windows).
 2. **Signed in?** `TS status`. If it is logged out or stopped, ask the owner to sign in from the
    Tailscale app (menu bar or tray). On Linux without the app, the owner runs `sudo tailscale up`
-   in their own terminal and opens the link it prints. Do not run it for them. Check again.
+   in their own terminal and opens the link it prints. Do not run it for them. When they say it
+   is done, check again.
 3. **This computer's name.** `TS status --json` and take `Self.DNSName`, without the trailing
    dot (like `box.example.ts.net`). Do not repeat the other devices it lists.
-4. **Existing entries.** `TS serve status`. Remember what is there and leave it alone. Use HTTPS
-   port 443 if nothing there uses it; otherwise, or if the owner asks for another port, use the
-   one they choose (suggest 8443) that no entry uses. Call it PORT.
+4. **Existing entries.** `TS serve status`. Remember what is there and leave it alone. The cockpit
+   needs an HTTPS port of its own, with nothing else on it (Clawdling refuses an address that
+   shares its port with another app). Use 443 if nothing there uses it; otherwise, or if the
+   owner asks for another port, use the one they choose (suggest 8443) that no entry uses. Call
+   it PORT.
 5. **The exact command.** `clawdling remote serve-command https://<DNSName>:PORT` (leave out
    `:PORT` when PORT is 443) prints it: `TS serve --bg --https=PORT http://127.0.0.1:CL_PORT/_clawdling/...`.
    The path at the end is private to this cockpit (Clawdling answers only requests that come
@@ -73,8 +80,8 @@ Say the plan, for example:
      https://login.tailscale.com/admin/dns, find "HTTPS Certificates" and press "Enable HTTPS".
      Wait until they say it is done, then try once more.
    - Linux "Access denied" / "serve config denied": Tailscale lets only an admin change serve
-     settings. Explain that, and offer `sudo tailscale set --operator=$USER` (lets their own user
-     manage serve from now on). Run it only after a yes; they may prefer to run it themselves.
+     settings. Explain that, and ask the owner to run `sudo tailscale set --operator=$USER` in
+     their own terminal (it lets their own user manage serve from now on). Then try once more.
 6. `TS serve status` again, and show the owner the new entry.
 7. **Register it:** `clawdling remote add https://<DNSName>:PORT --kind tailscale` (leave out
    `:PORT` when PORT is 443). Clawdling checks it first: the address must reach this cockpit and
@@ -115,7 +122,8 @@ Say the plan, for example:
    - A policy: action "Allow", include "Emails", the owner's email address. Save.
 6. **The DNS name.** `cloudflared tunnel route dns <name> <hostname>`.
 7. **The config**, after asking. `~/.cloudflared/config.yml`; if it exists, show it first and
-   only add to it, never remove someone else's rules:
+   only add to it, never remove someone else's rules. The cockpit's hostname gets exactly one
+   rule, with no `path:` (nothing else may be served on that hostname):
 
    ```yaml
    tunnel: <tunnel ID>
@@ -126,13 +134,15 @@ Say the plan, for example:
      - service: http_status:404
    ```
 
-8. **Run it as a service**, after asking: `sudo cloudflared service install` (macOS and Linux;
-   on Windows, `cloudflared service install` in an administrator terminal, which the owner runs).
+8. **Run it as a service:** ask the owner to run `sudo cloudflared service install` in their own
+   terminal (macOS and Linux; on Windows, `cloudflared service install` in an administrator
+   terminal).
 9. **Prove Access is in front:**
    `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://<hostname>/`
    It must be a redirect (302) to `https://<team>.cloudflareaccess.com/...`. If it is 200, or a
    403 from Clawdling, Access is not protecting the address: stop, tell the owner, and help them
-   finish step 5. If they cannot, offer to stop the tunnel (`sudo cloudflared service uninstall`).
+   finish step 5. If they cannot, ask them to stop the tunnel (`sudo cloudflared service uninstall`
+   in their own terminal).
 10. **Register it:** `clawdling remote add https://<hostname> --kind cloudflare --email <their
     email>`. Clawdling makes
     the same check and refuses an address that answers without Access. If it says the AUD tag is
@@ -158,9 +168,10 @@ Remove only what this skill set up, then tell Clawdling.
    - Remove only that ingress rule.
    - If other hostname rules remain, the tunnel and the service also serve those: keep both, and
      restart the cloudflared service so it drops the rule.
-   - If it was the only hostname, the tunnel was this setup's: uninstall the service
-     (`sudo cloudflared service uninstall`), then `cloudflared tunnel delete <that tunnel>` (if it
-     says the tunnel has connections, `cloudflared tunnel cleanup <that tunnel>` first).
+   - If it was the only hostname, the tunnel was this setup's: ask the owner to run
+     `sudo cloudflared service uninstall` in their own terminal, then run
+     `cloudflared tunnel delete <that tunnel>` (if it says the tunnel has connections,
+     `cloudflared tunnel cleanup <that tunnel>` first).
    - cloudflared cannot delete the DNS record: ask the owner to delete it, and the Access
      application if they like, in the dashboard.
 4. `clawdling remote remove --all` (or `clawdling remote remove <url>` for just one address).

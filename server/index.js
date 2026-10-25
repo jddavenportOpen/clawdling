@@ -547,6 +547,48 @@ export async function startServer(opts = {}) {
     imessage.onChange = () => events.publish('channel', { channel: 'imessage', ...channelsStatus() });
 
     // ------------------------------------------------------------- Use from anywhere (1.3)
+    /**
+     * A personal skill or command that would answer /remote-access instead of the org's: a skill
+     * folder or a SKILL.md whose name is remote-access, or a remote-access.md command at any depth.
+     */
+    function personalRemoteAccess(dir) {
+      const skills = path.join(dir, 'skills');
+      try {
+        for (const e of fs.readdirSync(skills, { withFileTypes: true }).slice(0, 500)) {
+          if (!e.isDirectory() && !e.isSymbolicLink()) continue;
+          const f = path.join(skills, e.name, 'SKILL.md');
+          if (e.name === 'remote-access') return path.join(skills, e.name);
+          try {
+            const head = fs.readFileSync(f, 'utf8').slice(0, 2000);
+            if (/^name:\s*["']?remote-access["']?\s*$/m.test(head)) return f;
+          } catch {
+            // no SKILL.md
+          }
+        }
+      } catch {
+        // no skills folder
+      }
+      const walk = (d, depth) => {
+        if (depth > 4) return null;
+        let list = [];
+        try {
+          list = fs.readdirSync(d, { withFileTypes: true }).slice(0, 500);
+        } catch {
+          return null;
+        }
+        for (const e of list) {
+          const f = path.join(d, e.name);
+          if (e.isFile() && e.name === 'remote-access.md') return f;
+          if (e.isDirectory()) {
+            const hit = walk(f, depth + 1);
+            if (hit) return hit;
+          }
+        }
+        return null;
+      };
+      return walk(path.join(dir, 'commands'), 0);
+    }
+
     // The server stays on 127.0.0.1. A request whose Host is a registered remote address came
     // through the user's Tailscale Serve entry or Cloudflare Tunnel: it is answered only while
     // Use from anywhere is on, only if that address passed its last check, and only for a paired
@@ -588,20 +630,24 @@ export async function startServer(opts = {}) {
           // sent, and never sets it for Funnel: only the owner's own account gets through.
           const login = req.headers['tailscale-user-login'];
           if (typeof login !== 'string' || login !== entry.login) return { refused: 'Clawdling answers this address only for your own Tailscale account.' };
-          return { remote: true, entry, ident: login };
+          return { remote: true, entry, ident: login, source: firstForwarded(req.headers['x-forwarded-for']) };
         }
         const v = await access.verify(req.headers['cf-access-jwt-assertion'], entry.access);
         if (!v.ok) return { refused: `Cloudflare Access did not sign this request in (${v.reason}).` };
         // The owner's email, pinned by the first pairing (or --email): an Access policy that lets
         // others sign in still does not let them reach the cockpit.
         if (entry.email && v.email !== entry.email) return { refused: 'Clawdling answers this address only for your own email address.' };
-        return { remote: true, entry, ident: v.email || null };
+        return { remote: true, entry, ident: v.email || null, source: firstForwarded(req.headers['cf-connecting-ip']) };
       }
       if (!hostAllowed(req, allowed)) return { refused: 'unexpected Host header' };
       if (isLoopback(host) && PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) {
         return { refused: 'this request came through a proxy that changed the Host header. Register the address with `clawdling remote add` instead.' };
       }
       return { remote: false };
+    }
+
+    function firstForwarded(v) {
+      return typeof v === 'string' ? v.split(',')[0].trim().slice(0, 64) : '';
     }
 
     function refuse(res, msg) {
@@ -620,8 +666,12 @@ export async function startServer(opts = {}) {
       const values = cookieValues(req.headers.cookie, DEVICE_COOKIE);
       if (!values.length) return null;
       let key = req.headers[DEVICE_KEY_HEADER];
-      if (typeof key !== 'string' && url && (url.pathname === '/api/events' || url.pathname.startsWith('/ws/'))) key = url.searchParams.get('k');
-      return { tokens: values, via: 'cookie', key: typeof key === 'string' ? key : null };
+      let keyVia = typeof key === 'string' ? 'header' : null;
+      if (!keyVia && url && (url.pathname === '/api/events' || url.pathname.startsWith('/ws/'))) {
+        key = url.searchParams.get('k');
+        keyVia = typeof key === 'string' ? 'query' : null;
+      }
+      return { tokens: values, via: 'cookie', key: typeof key === 'string' ? key : null, keyVia };
     }
 
     const verifyCred = (cred, who) => {
@@ -644,7 +694,10 @@ export async function startServer(opts = {}) {
       }
       // A cookie with no key is a page that lost its storage (or a cookie seen elsewhere): signed
       // out, but not a guess worth counting.
-      if (cred.via === 'cookie' && !cred.key) return { status: 401, error: 'This device is signed out. On your computer, open Settings, Use from anywhere, and add it again.' };
+      // A key in a URL (k=) can come from any same-site page (an <img> or EventSource on another
+      // tailnet machine): refused, not counted. Only a header key, which no other page can send
+      // without our consent (CORS), counts as a real attempt.
+      if (cred.via === 'cookie' && cred.keyVia !== 'header') return { status: 401, error: 'This device is signed out. On your computer, open Settings, Use from anywhere, and add it again.' };
       const key = throttleKey(who);
       if (throttle.blocked(key)) return { status: 429, error: 'Too many failed sign-ins through this address. Wait a few minutes, then try again.', retryAfter: throttle.retryAfter(key) };
       throttle.fail(key);
@@ -654,7 +707,9 @@ export async function startServer(opts = {}) {
 
     // Failed sign-ins are counted per address AND per signed-in Tailscale or Access identity, so
     // someone else on the tailnet (or in the Access policy) cannot hold pairing shut for the owner.
-    const throttleKey = (who) => `${who.entry.url} ${who.ident || ''}`;
+    // And per source address (the tailnet IP Tailscale Serve reports, or Cloudflare's client IP):
+    // another device, or a process on this computer, that fails on purpose fills its own bucket.
+    const throttleKey = (who) => `${who.entry.url} ${who.ident || ''} ${who.source || ''}`;
 
     function trackRemote(who, close, emitter) {
       const c = { host: who.entry.url, device: who.device?.id, close };
@@ -775,10 +830,11 @@ export async function startServer(opts = {}) {
       const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: r.access || draft.access, login: r.login || null };
       // Added only once it is reachable and safe (a later "Not reachable" keeps it: that may pass).
       if (!answerable(done) || done.status === 'unreachable') {
-        // Not safe or not reachable: leave remote.json the way it was.
+        // Not safe or not reachable: leave remote.json the way it was (unless it was removed meanwhile).
         remote.update((s) => {
+          const ours = s.hosts.some((h) => h.url === p.url && h.status === 'pending');
           s.hosts = s.hosts.filter((h) => h.url !== p.url);
-          if (prev) s.hosts.push(prev);
+          if (prev && ours) s.hosts.push(prev);
         });
         const e = new HttpError(422, `Not added: ${r.detail}`);
         e.body = { status: r.status, status_text: statusText(done) };
@@ -787,9 +843,11 @@ export async function startServer(opts = {}) {
       }
       // Turned off (or an address removed) while this check ran: that wins.
       if (gen !== remoteGen) {
+        // Only undo our own draft: if a remove already took it out, the address stays removed.
         remote.update((s) => {
+          const ours = s.hosts.some((h) => h.url === p.url && h.status === 'pending');
           s.hosts = s.hosts.filter((h) => h.url !== p.url);
-          if (prev) s.hosts.push(prev);
+          if (prev && ours) s.hosts.push(prev);
         });
         throw new HttpError(409, 'Use from anywhere was turned off while this address was being checked. Nothing was added.');
       }
@@ -1051,9 +1109,8 @@ export async function startServer(opts = {}) {
           // Claude Code prefers a personal skill or command of the same name over the org's.
           const dirs = [configDir, ...(b.account && b.account !== 'default' ? [sessions.configDirFor({ account: b.account }, configDir)] : [])];
           for (const d of dirs) {
-            for (const f of [path.join(d, 'skills', 'remote-access'), path.join(d, 'commands', 'remote-access.md')]) {
-              if (fs.existsSync(f)) throw new HttpError(409, `Your own Claude Code setup has a "remote-access" skill or command (${f}), which Claude Code would run instead of Clawdling's. Rename it, then start the setup again.`);
-            }
+            const f = personalRemoteAccess(d);
+            if (f) throw new HttpError(409, `Your own Claude Code setup has a "remote-access" skill or command (${f}), which Claude Code would run instead of Clawdling's. Rename it, then start the setup again.`);
           }
         }
         return [201, await sessions.spawn({ agent: b.agent, prompt: b.prompt, model: b.model, effort: b.effort, account: b.account, title: b.title, cols: b.cols, rows: b.rows })];
