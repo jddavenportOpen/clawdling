@@ -94,7 +94,7 @@ test('the Cloudflare choice asks for Cloudflare and sends /remote-access cloudfl
   await card(page).getByTestId('remote-setup').click();
   await expect(page.getByTestId('remote-sheet')).toContainText('You sign in to Cloudflare yourself');
   await expect(page.getByTestId('remote-prompt')).toHaveText('/remote-access cloudflare');
-  await expect(page.getByTestId('remote-sheet')).toContainText('choose “Yes, I trust this folder”');
+  await expect(page.getByTestId('remote-sheet')).toContainText('press “Yes, trust it”');
   await shot(page, 'us58-cloudflare-sheet', page.locator('.modal'));
   await page.getByTestId('remote-sheet-start').click();
   await expect(focusedPane(page)).toBeVisible();
