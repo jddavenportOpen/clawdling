@@ -72,7 +72,7 @@ Say the plan, for example:
 3. **This computer's address.** `clawdling remote tailscale-name` (no need to look for the app or
    its version first: this says whether Tailscale is installed and connected). It says whether Tailscale is
    connected and prints this computer's own address (like `https://box.example.ts.net`; the
-   part after https:// is <name> below), and nothing about anyone else on the tailnet. Never run `TS status` in this chat: it lists other
+   part after https:// is <computer> below), and nothing about anyone else on the tailnet. Never run `TS status` in this chat: it lists other
    people's devices, and a signed-out one prints a sign-in link. Run every command on its own,
    exactly as written here: no `&&` chains, pipes or extra checks.
 4. **Existing entries.** `clawdling remote serve-status` (Tailscale's own `serve status`, with the
@@ -82,7 +82,7 @@ Say the plan, for example:
    shares its port with another app). Use 443 if nothing there uses it; otherwise, or if the
    owner asks for another port, use the one they choose (suggest 8443) that no entry uses. Call
    it PORT.
-5. **Add the entry**, after asking: `clawdling remote serve https://<name>:PORT` (leave out
+5. **Add the entry**, after asking: `clawdling remote serve https://<computer>:PORT` (leave out
    `:PORT` when PORT is 443). Clawdling runs the Tailscale serve command itself, pointing the
    address at a private path of this cockpit, and prints Tailscale's answer with that path
    hidden (Clawdling answers only requests that come through it, so it stays out of this chat).
@@ -93,7 +93,7 @@ Say the plan, for example:
      settings. Explain that, and ask the owner to run `sudo tailscale set --operator=$USER` in
      their own terminal (it lets their own user manage serve from now on). Then try once more.
 6. `clawdling remote serve-status` again, and show the owner the new entry.
-7. **Register it:** `clawdling remote add https://<name>:PORT --kind tailscale` (leave out
+7. **Register it:** `clawdling remote add https://<computer>:PORT --kind tailscale` (leave out
    `:PORT` when PORT is 443). Clawdling checks it first: the address must reach this cockpit and
    Funnel must be off. If it refuses, read the reason and fix that. If Funnel is on for that
    address, say so, and offer `TS funnel --https=PORT off` (turning it off only).

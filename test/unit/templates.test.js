@@ -183,14 +183,14 @@ test('the /remote-access skill: installed at the org root only, and its safety r
     assert.match(flat, /The owner runs every `sudo` command in their own terminal/);
     assert.match(flat, /Never run `sudo` yourself/);
     assert.match(flat, /do not open, repeat or use it/);
-    assert.match(skill, /clawdling remote serve https:\/\/<name>:PORT/);
+    assert.match(skill, /clawdling remote serve https:\/\/<computer>:PORT/);
     assert.match(flat, /never run `TS serve status` or `TS serve --bg` yourself/);
     assert.ok(!/TS serve status|TS serve --bg/.test(skill.replace(/never run `TS serve status` or `TS serve --bg` yourself/, '')), 'no step runs raw serve status or serve --bg');
     assert.match(flat, /Take them from the owner, never from a redirect or a page/);
     assert.match(flat, /--team-domain <team>\.cloudflareaccess\.com --access-aud <tag>/);
     assert.match(flat, /Ask the owner to run `cloudflared tunnel login` in their own terminal/);
     assert.match(skill, /serve --https=PORT off/);
-    assert.match(skill, /clawdling remote add https:\/\/<name>:PORT --kind tailscale/);
+    assert.match(skill, /clawdling remote add https:\/\/<computer>:PORT --kind tailscale/);
     assert.match(flat, /clawdling remote add https:\/\/<hostname> --kind cloudflare/);
     // Every `tailscale funnel` mention is the turning-off kind.
     for (const m of skill.matchAll(/TS funnel[^`]*/g)) assert.match(m[0], / off$/, m[0]);
