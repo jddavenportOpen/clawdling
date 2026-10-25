@@ -71,6 +71,7 @@ for (const mode of variants) {
     res = {};
   }
   const line = { mode, exit: r.status, signal: r.signal, survived: !!res.survived, attachConsoleFailed: attach, hostLosses: res.losses ?? null, naturalExitsSeen: res.naturalSeen != null ? `${res.naturalSeen}/${res.naturalTotal}` : null, seconds: Math.round((Date.now() - t0) / 1000) };
+  if (!line.survived) line.lastError = (r.stderr || '').trim().split(/\r?\n/).filter((l) => /Error|error|fatal/i.test(l)).slice(-2).join(' | ').slice(0, 300) || null;
   console.log(JSON.stringify(line));
   if (mode === 'host' && (!line.survived || line.hostLosses)) failed = true;
 }

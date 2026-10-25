@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 import { parseWinCommandLine } from '../../server/platform.js';
-import { PtyBackend, loadPtyModules, visibleText } from '../../server/pty.js';
+import { PtyBackend, loadPtyModules, ptySpawner, visibleText } from '../../server/pty.js';
 import { dialogFromScreen, parseChoices } from '../../server/sessions.js';
 import { ModeTracker } from '../../server/termfilter.js';
 import { waitFor } from '../helpers.mjs';
@@ -243,6 +243,8 @@ test('Windows: the command line is pre-quoted (node-pty would split "quoted word
 
 const mods = loadPtyModules();
 const realPty = mods.ok ? false : `node-pty did not load here (${mods.error})`;
+// node-pty in this process, with the same exit guard the pty host uses (pty-host.test.js runs the host).
+const inProcess = () => ptySpawner({ mods, env: { CLAWDLING_PTY_HOST: '0' } });
 
 // A tiny TUI: draws, turns on bracketed paste, logs its size on resize, echoes lines.
 // Raw mode and the listeners come BEFORE the banner: the test types as soon as it sees the banner,
@@ -263,7 +265,7 @@ process.stdout.write('\\x1b[?2004h> ');
 `;
 
 test('real node-pty: spawn, screen, snapshot, resize, input, paste, exit', { skip: realPty }, async () => {
-  const be = new PtyBackend({ pty: mods.pty, Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version });
+  const be = new PtyBackend({ pty: inProcess(), Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version });
   try {
     await be.newSession({ name: 'real', cols: 70, rows: 20, launch: { cwd: process.cwd(), env: { ...process.env }, argv: [process.execPath, '-e', APP] } });
     const viewer = be.control('real');
@@ -293,7 +295,7 @@ test('real node-pty: spawn, screen, snapshot, resize, input, paste, exit', { ski
 });
 
 test('real node-pty: killSession ends the process and its close event follows', { skip: realPty }, async () => {
-  const be = new PtyBackend({ pty: mods.pty, Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version });
+  const be = new PtyBackend({ pty: inProcess(), Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version });
   try {
     await be.newSession({ name: 'k', cols: 60, rows: 10, launch: { cwd: process.cwd(), env: { ...process.env }, argv: [process.execPath, '-e', 'process.stdout.write("up\\r\\n"); setInterval(() => {}, 1000)'] } });
     await waitFor(async () => /up/.test(await be.screenText('k')), { label: 'started', timeout: 15000 });
