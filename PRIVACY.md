@@ -1,6 +1,6 @@
 # Privacy
 
-_Last updated: 2026-10-22_
+_Last updated: 2026-10-25_
 
 Clawdling is open-source software you run on your own computer. This policy covers the
 Clawdling server and cockpit (this repository) and the Clawdling iPhone app.
@@ -27,6 +27,16 @@ no servers of its own. The author never receives any of your data.
   own terms and privacy policy. If you add a second Claude account in Settings, Clawdling only
   gives it its own folder (`~/.clawdling-accounts/<name>`) and passes that folder to `claude`;
   you sign in inside Claude Code, and Clawdling never sees, reads or stores that login.
+- **Use from anywhere** (optional, off until you turn it on): your phone or another computer
+  reaches the cockpit through your own Tailscale network or your own Cloudflare Tunnel, under
+  Tailscale's or Cloudflare's own terms. You sign in to those services yourself; Clawdling never
+  sees, reads or stores those logins, and the setup agent is told never to read their keys or
+  credential files. Clawdling keeps, on your computer only, the addresses you registered
+  (`.clawdling/remote.json`) and, for each paired device, a short label taken from its browser
+  (like "iPhone · Safari"), when it was paired and last used, and a hash of its sign-in. To check
+  an address it runs `tailscale serve status --json` and makes signed-out requests to your own
+  address; for Cloudflare it fetches your Access team's public signing keys. Nothing goes to the
+  author.
 - **Telegram or iMessage** (optional, only if you turn on Donna's text channel): messages pass
   through Telegram's or Apple's own services under their terms. Clawdling answers only the one
   chat you pair it with.

@@ -194,6 +194,39 @@ map has a matching toggle: the skills, subagents, MCP servers and hooks every ag
 name only, plus what each project's own repo adds. **Make it a standing agent** turns any of your
 Claude Code subagents into a domain agent of its own.
 
+## Use it from anywhere (optional)
+
+Off until you turn it on. **Settings → Use from anywhere** lets you open your cockpit from your
+phone or another computer, away from home. Pick one of two ways:
+
+- **Just my devices (recommended).** [Tailscale](https://tailscale.com), free for personal use,
+  makes a private network between your own devices. The cockpit gets an `https://….ts.net`
+  address that only your signed-in devices can open. Nothing goes on the public internet.
+- **A web address with a sign-in (beta).** A [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/)
+  on your own domain, with a Cloudflare Access email sign-in in front. Needs a free Cloudflare
+  account and a domain on Cloudflare.
+
+Why not a copy in the cloud? Your cockpit has to run on the computer where your Claude Code and
+your files live; a cloud copy could not reach them. Both ways keep it there and open one private
+door to it. Clawdling itself still listens on `127.0.0.1` only.
+
+**Set it up with an agent** opens a setup chat: a Claude Code session, on your own plan, whose
+first message is the one shown before you start (`/remote-access tailscale`). The agent explains
+the plan, asks before it installs or changes anything, and you sign in to Tailscale or
+Cloudflare yourself, in your browser: Clawdling never sees those logins. It registers the address
+with `clawdling remote add` only after a check passes (Tailscale Funnel off and the address
+reaching this cockpit; for Cloudflare, a signed-out visitor stopped by Access).
+
+Then press **Add a device** and scan the code with your phone. The code is a one-time link that
+works for 10 minutes and never holds your cockpit's private token; the phone gets its own
+sign-in, which you can sign out from Settings. **Turn off** stops answering every remote address
+at once, signs out every device, and can open a chat that removes the serve entry or tunnel too
+(`/remote-access off`).
+
+From a terminal: `clawdling remote list`, `clawdling remote check`, `clawdling remote add
+<https-url> --kind tailscale|cloudflare`, `clawdling remote remove <url>|--all`, `clawdling
+remote off`. How it is protected: [SECURITY.md](docs/SECURITY.md#use-from-anywhere).
+
 ## How it works
 
 ```
@@ -250,8 +283,10 @@ machine allow.
 **Where does my data go?** Nowhere. The cockpit binds to 127.0.0.1 and requires a local token.
 Your org is files in `~/clawdling`.
 
-**Can I reach it from my phone or another machine?** `clawdling start --host 0.0.0.0` makes it
-reachable on your Wi-Fi (the token is still required); away from home, use Tailscale.
+**Can I reach it from my phone or another machine?** Yes: turn on **Settings → Use from
+anywhere** ([above](#use-it-from-anywhere-optional)), which sets up Tailscale (or a Cloudflare
+Tunnel with a sign-in) with an agent's help. On the same Wi-Fi only, `clawdling start --host
+0.0.0.0` also works (the token is still required).
 
 **Can I keep my existing CLAUDE.md files and skills?** Yes. Agents are folders; put anything
 Claude Code understands in them.
@@ -297,9 +332,16 @@ install runs it.
   `npm install --omit=dev` again.
 - **"port 4747 is already in use".** Another program (or another org's cockpit) has the port:
   `clawdling start --port 4800`.
-- **Your phone cannot reach the cockpit.** It listens on 127.0.0.1 only. Restart it with
-  `clawdling start --host 0.0.0.0` (same Wi-Fi; the token is still required) or use Tailscale, then
-  open Settings, Use Clawdling on your phone.
+- **Your phone cannot reach the cockpit.** It listens on 127.0.0.1 only. Turn on Settings, Use
+  from anywhere (works from any network), or on the same Wi-Fi restart it with `clawdling start
+  --host 0.0.0.0` (the token is still required) and open Settings, Use Clawdling on your phone.
+- **Use from anywhere says "Not reachable".** The computer may be asleep, offline, or signed out
+  of Tailscale (`clawdling remote check` says why). "Public: Tailscale Funnel is on" or "Not
+  behind Cloudflare Access" means Clawdling has stopped answering that address on purpose: turn
+  Funnel off, or put Cloudflare Access back in front, then press Check again.
+- **The phone says "Pair this device".** Each phone signs in once with a code from Settings, Use
+  from anywhere, Add a device. Turning it off signs every device out; pair again after turning it
+  back on.
 - **Windows: hooks do not fire.** Clawdling needs Claude Code 2.1.139 or newer there: `claude update`.
 
 ## Development

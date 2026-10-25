@@ -1,5 +1,45 @@
 # Changelog
 
+## 1.3.0 (2026-10-25)
+
+**Use from anywhere.** Open your cockpit from your phone or another computer, away from home. Off
+until you turn it on, in Settings.
+
+- **Two ways, both private.** "Just my devices" (recommended) uses Tailscale, free for personal
+  use: a private network between your own devices, nothing on the public internet. "A web address
+  with a sign-in" (beta) uses a Cloudflare Tunnel on your own domain with a Cloudflare Access
+  email sign-in in front. There is no cloud copy: the cockpit has to run on the computer where your
+  Claude Code and files live. Clawdling still listens on `127.0.0.1` only.
+- **Set it up with an agent.** One button opens a setup chat (a Claude Code session on your own
+  plan) whose first message you see before it starts: `/remote-access tailscale`. The new
+  `/remote-access` skill explains the plan, asks before each install or change, leaves every
+  sign-in to you in your browser, never turns on Tailscale Funnel or touches other serve entries,
+  and handles the macOS Homebrew symlink crash, the tailnet's HTTPS certificate switch and the
+  Linux operator setting. `/remote-access off` removes only what it set up.
+- **Never public.** `clawdling remote add` registers an address only after a check passes:
+  Tailscale Funnel off and the address reaching this cockpit, or, for Cloudflare, a signed-out
+  visitor sent to the Access sign-in. Every request through a Cloudflare address must also carry a
+  valid Cloudflare Access token, so removing Access later cannot expose the cockpit.
+- **Pair a device.** "Add a device" shows a QR code with a one-time link (10 minutes, one use).
+  It never holds the cockpit's private token: through a remote address that token is refused in
+  every form. The phone gets its own sign-in (a `Secure`, `HttpOnly`, `SameSite=Strict` cookie,
+  30 days), listed in Settings with a Sign out button. Ten failed sign-ins in five minutes pause
+  new attempts on that address.
+- **Status and Turn off.** Settings shows each address with its last check: "Private to your
+  devices ✓", "Behind Cloudflare Access ✓" or "Not reachable". Turn off stops answering at once
+  (open terminals and live updates through it close), signs out every device, and offers "Remove
+  the tunnel too".
+- **CLI:** `clawdling remote list|check`, `clawdling remote add <https-url> --kind
+  tailscale|cloudflare`, `clawdling remote remove <url>|--all`, `clawdling remote off`. Donna's
+  text-message turns cannot run them.
+- **Safer by default, for everyone:** a request with a localhost `Host` that came through a proxy
+  (proxy headers present) is refused, so a tunnel that rewrites the `Host` header can never make
+  a remote request look local.
+- API: `GET /api/remote`, `POST /api/remote/hosts`, `/remove`, `/check`, `/enabled`, `/pairing`,
+  `/pair`, `DELETE /api/remote/devices[/<id>]`. The iPhone app is unchanged in this release; the
+  server already accepts an app's device sign-in (`{client: "app"}`), and pairing the app through
+  a remote address is the follow-up.
+
 ## 1.2.0 (2026-10-24)
 
 **Bring in your projects.** Clawdling finds the projects you already have and turns the ones you

@@ -225,6 +225,8 @@ Ask whether the cockpit should start automatically at login.
 
 Then `clawdling open` opens the cockpit in their browser, already signed in (the link carries the
 local token; `clawdling open --print` shows it). The cockpit listens on 127.0.0.1:4747 only.
+(Using it from a phone away from home is optional and not part of this setup: it is Settings, Use
+from anywhere, whenever the user wants it.)
 
 If sessions run in the built-in terminal (no tmux), tell the user once: stopping the cockpit
 (Ctrl-C, closing its window, a restart) ends the running sessions; each one resumes with one

@@ -1,4 +1,4 @@
-# Clawdling 1.0 / 1.1 / 1.2 - test users and user stories
+# Clawdling 1.0 / 1.1 / 1.2 / 1.3 - test users and user stories
 
 Every story below is an acceptance test. The release gate is: every P0 story passes
 for every persona it names, run from a clean home directory with no prior state.
@@ -249,3 +249,71 @@ Bring in your projects, and Your Claude Code setup.
   - Accept: the interview in SETUP.md stays at five questions or fewer; "Bring in your projects"
     is asked after init, as one yes/no question plus a pick, and `clawdling import --yes` never
     runs without a name or selection the user gave.
+
+## New in 1.3: Use from anywhere
+
+Optional and off by default. The cockpit stays on `127.0.0.1`; a Tailscale Serve entry or a
+Cloudflare Tunnel behind Cloudflare Access is the one door in. Hal is the dad, Sam and Dev the
+newcomers, Rin the skeptic, Maya the phone-only check.
+
+- **US-52 (P0, Sam, Dev; 1.3)** As a newcomer, Settings has a "Use from anywhere" card that is Off
+  by default and says in plain words what it is for ("Open your cockpit from your phone or another
+  computer"), offers two choices, "Just my devices" (Tailscale, recommended) and "A web address
+  with a sign-in" (Cloudflare, beta), each with what it needs, and says why there is no cloud copy.
+  - Accept: a fresh org has no `.clawdling/remote.json`; `clawdling remote list` says
+    "Use from anywhere: off"; a request with any non-localhost `Host` is refused; the card shows
+    Off, both choices (Tailscale pre-selected) and one "Set it up with an agent" button.
+- **US-53 (P0, Hal; 1.3)** As the dad, "Set it up with an agent" first shows a sheet that says it
+  opens a setup chat, the agent asks before it installs or changes anything, it uses my Claude
+  plan, and I sign in to Tailscale (or Cloudflare) myself in my browser, which Clawdling never
+  sees; it shows the exact first message. "Start setup" opens that chat.
+  - Accept: Cancel and Escape start nothing; Start setup creates one Scratch session at the org
+    root whose first message is exactly the prompt shown (`/remote-access tailscale` or
+    `/remote-access cloudflare`); the org has the `remote-access` skill at `.claude/skills/`.
+- **US-54 (P0, Hal, Rin; 1.3)** As the dad, the setup agent explains the plan in three lines,
+  asks before each install or command, works around the macOS Tailscale symlink crash, tells me
+  exactly where to enable HTTPS certificates if they are off, never touches other serve entries,
+  and registers the address only once it is private; Settings then shows it as "Private to your
+  devices ✓".
+  - Accept: on a real Mac with Tailscale, the agent's commands are only the app binary's `status`,
+    `serve status`, `serve --bg --https=<port> http://127.0.0.1:<port>`, and `clawdling remote ...`;
+    `clawdling remote add` refuses an address with Funnel on or one that does not reach this
+    Clawdling and leaves `remote.json` unchanged; Clawdling itself only ever runs
+    `tailscale serve status --json`.
+- **US-55 (P0, Maya; 1.3)** As a founder, "Add a device" shows a QR code I scan with my phone's
+  camera; my phone opens the cockpit, I press "Sign in this device", and from then on I use the
+  cockpit on my phone, on cellular, as on the computer. The card says when my phone signed in and
+  lists it so I can sign it out.
+  - Accept: the link is `https://<address>/?pair=<code>`, works once, for 10 minutes, and never
+    contains the token; the phone gets a `Secure; HttpOnly; SameSite=Strict` device cookie; the
+    cockpit (agents, chat, terminal WebSocket, live updates) works through the remote address; a
+    signed-out device can sign out from Settings.
+- **US-56 (P0, Rin, Dev; 1.3)** As a skeptic, "Turn off" stops answering every remote address at
+  once, signs out every device, and offers "Remove the tunnel too", which opens a chat
+  (`/remote-access off`) that removes only what setup added.
+  - Accept: after Turn off, open remote WebSockets and event streams close within a second, every
+    remote request answers "Use from anywhere is turned off on this computer.", old device cookies
+    stay signed out after turning it on again, and after `/remote-access off` the
+    `tailscale serve status` output is the same as before setup.
+- **US-57 (P0, Rin; 1.3)** As a skeptic, I can check that the long-lived token never leaves my
+  computer and that nothing is public: SECURITY.md has the threat model, and the code backs it.
+  - Accept: through a remote address the token is refused as a header, a cookie, a `/?t=` link and
+    a WebSocket `?t=`; `/api/pair` is refused; only the exact registered `Host` and port are
+    answered and only an `https://` same origin may write; ten bad credentials in five minutes
+    give `429`; a localhost `Host` with proxy headers is refused; a Cloudflare address that
+    answers without Access is never registered, and every request through one needs a valid
+    Access token; a malformed `remote.json` turns remote off.
+- **US-58 (P1, Hal; 1.3)** As the dad with a domain on Cloudflare, "A web address with a sign-in"
+  walks me through `cloudflared tunnel login`, the tunnel, the Access application with my email,
+  and the service, and registers the address only after a signed-out visitor is sent to the
+  Access sign-in; Settings shows "Behind Cloudflare Access ✓". (Beta.)
+  - Accept: against a fake edge, a redirect to `<team>.cloudflareaccess.com` passes (and stores
+    the team and AUD tag), a plain 200 or Clawdling's own page is refused as "Not behind
+    Cloudflare Access ✗", and a later check that finds Access gone stops the address.
+- **US-59 (P1, Maya; 1.3)** As a founder checking from my phone alone, Settings on the phone says
+  which address I came through, shows each address's last check, lists my devices with this one
+  marked, and lets me turn it off, but not turn it on or add devices (those need the computer).
+  - Accept: through a remote address, `POST /api/remote/pairing`, adding or removing addresses
+    and `{enabled: true}` answer 403 "Only the computer Clawdling runs on…"; `{enabled: false}`
+    works; the phone viewport shows the card without horizontal scrolling.
+

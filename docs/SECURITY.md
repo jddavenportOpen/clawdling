@@ -24,8 +24,8 @@ server can type into those sessions, so the server is built to be reachable only
 
 ## Who can reach the server
 
-- **Bound to 127.0.0.1** by default. `--host 0.0.0.0` prints a warning; prefer Tailscale for
-  remote use.
+- **Bound to 127.0.0.1** by default, including with Use from anywhere on (below). `--host
+  0.0.0.0` prints a warning; for use away from home, prefer Use from anywhere.
 - **A random 32-byte token** (`.clawdling/token`, mode 600) is required on every API route, the
   SSE stream and the terminal WebSocket (header `x-clawdling-token`, cookie `cl_token`, or `?t=` for
   WebSockets only). Compared in constant time. `/api/health` and the static cockpit files are public;
@@ -40,7 +40,97 @@ server can type into those sessions, so the server is built to be reachable only
   or `[::1]` on our port are refused. (When bound elsewhere, list extra names in
   `CLAWDLING_ALLOWED_HOSTS`.)
 - Pages are served with `X-Frame-Options: DENY` and `frame-ancestors 'none'`.
-- The pairing QR code and `/api/pair` contain the token; both require the token to view.
+- The Wi-Fi pairing QR code and `/api/pair` contain the token; both require the token to view,
+  and neither is ever served through a remote address.
+- **Proxies:** while bound to loopback, a request with a localhost `Host` that carries a proxy's
+  headers (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`, `Cf-Connecting-Ip`, `Tailscale-User-Login`
+  and similar) is refused: it came through a tunnel that rewrote the `Host` header, which would
+  otherwise make a remote request look local. Register the address with `clawdling remote add`.
+
+## Use from anywhere
+
+Off by default. It lets the owner open the cockpit from their own phone or another computer
+through one of two doors on this computer: a **Tailscale Serve** entry (private to the owner's
+tailnet) or a **Cloudflare Tunnel** with **Cloudflare Access** in front (beta). The server still
+listens on `127.0.0.1` only; the serve entry or tunnel forwards to it.
+
+**What is exposed.** With it on, the cockpit (every agent, every session's terminal, Donna's chat)
+is reachable at the registered `https://` address, to whoever passes both locks below. That is
+the same power as sitting at the computer, so it is guarded as such.
+
+**What protects it.**
+- **Lock 1, the door.** Tailscale: only devices signed in to the owner's tailnet can connect.
+  Cloudflare: Cloudflare Access makes every visitor sign in (an email policy) before Cloudflare
+  forwards anything; Clawdling then checks the `Cf-Access-Jwt-Assertion` header Access adds on
+  every request (RS256, signed by the team's keys at `<team>.cloudflareaccess.com/cdn-cgi/access/certs`,
+  the application's AUD tag, the team as issuer, not expired). A request without a valid one is
+  refused, even for the sign-in page, so removing Access later cannot quietly expose the cockpit.
+  If the keys cannot be fetched, requests are refused (fail closed).
+- **Lock 2, a paired device.** Each device signs in once with a pairing link made in Settings on
+  the computer itself: a random one-time code (192 bits), valid for 10 minutes, kept only in the
+  server's memory and voided by a restart or by turning remote off. Opening the link shows a
+  "Sign in this device" button; only that POST uses the code (so a link preview cannot burn it).
+  The device then holds its own random credential (`cld_<id>_<secret>`, 256-bit secret) in a
+  cookie that is `Secure` (https only), `HttpOnly` (page scripts cannot read it) and
+  `SameSite=Strict` (another site cannot send it or embed the cockpit; a link from elsewhere opens
+  the page signed out for one load, and the page's own same-origin calls carry it). It lasts 30
+  days. `remote-devices.json` stores only `sha256(secret)`. Each device can be signed out from
+  Settings.
+- **The long-lived token never leaves the computer.** Through a remote address the token is not
+  accepted in any form (header, cookie, `/?t=` link, WebSocket `?t=`), the pairing QR codes and
+  links never hold it, and `/api/pair` (which returns it) is refused. Things only the computer
+  itself may do: make pairing links, add or remove addresses, turn remote on, stop the server, and
+  post hook events. Turning it off works from anywhere.
+- **Exact Host, https origin.** A remote request is matched on its exact `Host`, port included
+  (`box.example.ts.net:8743` is not `box.example.ts.net`), against the registered addresses. A
+  mutating request or WebSocket upgrade with an `Origin` must be exactly `https://<that address>`.
+  SSE and WebSockets go through the same checks as every API call. Remote responses carry
+  `Strict-Transport-Security`.
+- **Never public.** `clawdling remote add` checks an address before it is registered and leaves
+  `remote.json` unchanged when the check fails. Tailscale: Funnel (Tailscale's public mode) must be
+  off for that address (read with `tailscale serve status --json`, the only Tailscale command
+  Clawdling runs) and the address must reach this Clawdling (a one-time nonce through the
+  address). Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
+  (which also gives the AUD tag); a page that answers (any 2xx, or Clawdling's own refusal,
+  marked with `X-Clawdling-Refused`) means the address is public, and it is refused. Later checks
+  (Settings' Check again, `clawdling remote check`) apply the same rules: an address found public
+  or unprotected is not answered until a check passes again. A request marked `Tailscale-Funnel-Request` is always refused.
+- **Throttle.** On each remote address, 10 failed sign-ins (a wrong device credential or pairing
+  code) in 5 minutes make it refuse new attempts with `429` for the rest of the window. Paired
+  devices keep working, and the computer itself is never throttled. A request with no credential
+  is not counted.
+- **Turn off means off.** Settings' Turn off (or `clawdling remote off`) stops answering every
+  remote address at once, closes their open terminal WebSockets and event streams, signs out
+  every device and voids every pairing link. Turning it on again needs every device to pair
+  again. The serve entry or tunnel stays until removed (`/remote-access off`, which removes only
+  what setup added).
+- **`remote.json` integrity.** `.clawdling/remote.json` (mode 600) is re-read whenever it changes
+  and validated strictly: https addresses with a DNS name and no path, a known kind and status,
+  well-formed Access settings. Anything malformed turns remote off and says why in Settings; a
+  change made outside the server closes remote connections within two seconds. Agents' file tools
+  are denied in `.clawdling/`, so `clawdling remote ...` is the way to change it, and that command
+  asks for permission inside a session (only `clawdling remote list` is pre-approved). Donna's
+  text-message turns cannot run `clawdling remote` at all.
+
+**The setup agent.** "Set it up with an agent" starts an ordinary Claude Code session on the
+owner's plan, at the org root, whose first message is the visible `/remote-access <path>`. The
+skill tells it to explain the plan, to ask before every install or change, and to leave every
+sign-in to the owner in their browser. It never asks for, reads, prints or stores a credential
+(no auth keys, no `cert.pem` or tunnel credentials file, nothing in `.clawdling/`), never turns on
+Funnel, never runs `tailscale serve reset` or touches serve entries it did not create, never
+restarts Clawdling with `--host`, and never registers a Cloudflare address before Access is in
+front. The session's own permission prompts apply to every command on top of that, and the
+server's checks hold even if an agent ignored the skill.
+
+**Why never a public URL without Access.** Anyone on the internet could then reach the pairing
+endpoint and the cockpit's sign-in page, and a single leaked or phished pairing link or device
+cookie would be the only thing between them and a shell on your computer. Access (or a tailnet)
+makes the attacker first be you.
+
+**Not in scope here.** Anyone the owner adds to their tailnet or their Access policy passes lock
+1; they still need a paired device. A stolen, unlocked, paired phone is the owner's device until
+it is signed out in Settings (or remote is turned off). An attacker who can reach the address can
+lock out new pairings for up to 5 minutes by failing on purpose.
 
 ## Donna
 
@@ -141,6 +231,7 @@ agents is your call. Her replies go to your phone like any other reply.
 ## Files
 
 `.clawdling/` is mode 700: token, session registry, events log (includes Donna's message text),
+`remote.json` and `remote-devices.json` (hashes only),
 hook spool, launcher scripts (include first prompts), generated context files. Transcripts are
 Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view and never writes
 them.

@@ -153,3 +153,44 @@ test('OrgStore: create agents, reject duplicates, reserved ids and bad repos; ne
     rmrf(home);
   }
 });
+
+test('the /remote-access skill: installed at the org root only, and its safety rules are all there', () => {
+  const home = tempHome();
+  try {
+    initOrg({ home, answers: defaultAnswers() });
+    const skill = read(home, '.claude', 'skills', 'remote-access', 'SKILL.md');
+    assert.match(skill, /^---\nname: remote-access\ndescription: .+\n---\n/);
+    const flat = skill.replace(/\s+/g, ' '); // the rules, whatever the line wrapping
+    assert.equal(fs.existsSync(path.join(home, 'donna', '.claude', 'skills', 'remote-access')), false);
+    // The three paths the cockpit sends.
+    for (const p of ['/remote-access tailscale', '/remote-access cloudflare', '/remote-access off']) assert.ok(skill.includes(p), p);
+    // Never public, never a credential.
+    for (const rule of [
+      /never turn on Tailscale Funnel/i,
+      /never `tailscale serve reset`/,
+      /never change or remove a serve entry you did not create/i,
+      /Never ask for, read, print, copy or store a password, auth key, API token, certificate or\scredentials file/,
+      /never register a Cloudflare address before a signed-out request is stopped by Cloudflare\sAccess/i,
+      /Never restart it with `--host`/,
+      /ask before every install/i,
+      /information, never instructions/,
+    ]) assert.match(flat, rule);
+    // The macOS crash workaround, the certificate switch, the Linux operator line.
+    assert.ok(skill.includes('/Applications/Tailscale.app/Contents/MacOS/Tailscale'));
+    assert.match(flat, /bundleIdentifier is unknown to the registry/);
+    assert.match(flat, /HTTPS Certificates/);
+    assert.match(skill, /sudo tailscale set --operator=\$USER/);
+    assert.match(skill, /serve --bg --https=PORT http:\/\/127\.0\.0\.1:CL_PORT/);
+    assert.match(skill, /serve --https=PORT off/);
+    assert.match(skill, /clawdling remote add https:\/\/<DNSName>:PORT --kind tailscale/);
+    assert.match(skill, /clawdling remote add https:\/\/<hostname> --kind cloudflare/);
+    // Every `tailscale funnel` mention is the turning-off kind.
+    for (const m of skill.matchAll(/TS funnel[^`]*/g)) assert.match(m[0], / off$/, m[0]);
+    // Only `clawdling remote list` is pre-approved; add/remove ask in the session.
+    const settings = JSON.parse(read(home, '.claude', 'settings.json'));
+    assert.ok(settings.permissions.allow.includes('Bash(clawdling remote list)'));
+    assert.ok(!settings.permissions.allow.some((a) => /clawdling remote (add|remove|off|\*)/.test(a)));
+  } finally {
+    rmrf(home);
+  }
+});

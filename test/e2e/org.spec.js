@@ -289,7 +289,7 @@ test.describe('settings: use Clawdling on your phone', () => {
     const warn = page.getByTestId('pair-warning');
     await expect(warn).toContainText("Your phone can't reach this cockpit yet.");
     await expect(warn).toContainText(`${h.cli} start --host 0.0.0.0`); // spelled the way this computer runs it
-    await expect(warn).toContainText('Tailscale');
+    await expect(warn).toContainText('Use from anywhere');
     // The app is honest about not being out yet.
     await expect(page.getByTestId('pair-app')).toContainText('public beta');
     await expect(page.getByTestId('pair-app')).toContainText('public beta on TestFlight');

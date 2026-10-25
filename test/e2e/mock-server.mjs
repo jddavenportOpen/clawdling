@@ -42,6 +42,11 @@ const MIME = {
 };
 
 const MIN = 60e3;
+const REMOTE_GOOD = new Set(['private', 'unconfirmed', 'access']);
+const REMOTE_TEXT = {
+  private: 'Private to your devices ✓', access: 'Behind Cloudflare Access ✓', unreachable: 'Not reachable',
+  unconfirmed: 'Reachable on your tailnet (Funnel not confirmed off)', public: 'Public: Tailscale Funnel is on ✗', unprotected: 'Not behind Cloudflare Access ✗',
+};
 const HOUR = 60 * MIN;
 const DAY = 24 * HOUR;
 const CLAUDE = '\x1b[38;2;217;119;87m';
@@ -400,6 +405,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.accounts = [];
     st.disc = discDefaults();
     st.cloned = new Map();
+    // Use from anywhere (1.3): off by default, like core. /__mock/remote stands in for the setup
+    // agent's `clawdling remote add`; /__mock/remote-pair for a phone using its pairing link.
+    st.remote = { enabled: false, hosts: [], devices: [], pairing: null };
     st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
     for (const s of fx.sessions) ensureTerm(s);
@@ -1068,6 +1076,36 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       res.end(placeholderQr(url.searchParams.get('target') === 'browser' ? `browser:${token}` : token));
       return;
     }
+    if (p === '/api/remote' && m === 'GET') { send(res, 200, remoteView()); return; }
+    if (p === '/api/remote/check' && m === 'POST') {
+      for (const h of st.remote.hosts) h.checked_at = new Date().toISOString();
+      await pause(250);
+      send(res, 200, remoteView());
+      return;
+    }
+    if (p === '/api/remote/enabled' && m === 'POST') {
+      if (body.enabled === true && !st.remote.hosts.length) { send(res, 409, { error: 'There is no remote address yet: set it up first.' }); return; }
+      st.remote.enabled = body.enabled === true;
+      if (!st.remote.enabled) { st.remote.devices = []; st.remote.pairing = null; }
+      send(res, 200, remoteView());
+      return;
+    }
+    if (p === '/api/remote/pairing' && m === 'POST') {
+      const hosts = st.remote.enabled ? st.remote.hosts.filter((h) => REMOTE_GOOD.has(h.status)) : [];
+      if (!hosts.length) { send(res, 409, { error: 'Use from anywhere is off, or no address passed its check.' }); return; }
+      const code = crypto.randomBytes(24).toString('base64url');
+      st.remote.pairing = code;
+      send(res, 201, { expires_at: new Date(Date.now() + 10 * MIN).toISOString(), minutes: 10, links: hosts.map((h) => ({ url: h.url, kind: h.kind, link: `${h.url}/?pair=${code}`, qr_svg: placeholderQr(code) })) });
+      return;
+    }
+    mm = p.match(/^\/api\/remote\/devices\/([0-9a-f]{12})$/);
+    if (mm && m === 'DELETE') {
+      const before = st.remote.devices.length;
+      st.remote.devices = st.remote.devices.filter((d) => d.id !== mm[1]);
+      if (st.remote.devices.length === before) { send(res, 404, { error: 'no such device' }); return; }
+      send(res, 200, { ok: true });
+      return;
+    }
     if (p === '/api/discover' && m === 'GET') {
       const askGh = url.searchParams.get('github') !== '0';
       await pause(askGh ? st.disc.delay : 120);
@@ -1117,6 +1155,15 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     send(res, 404, { error: 'not found' });
+  }
+
+  function remoteView() {
+    const r = st.remote;
+    return {
+      enabled: r.enabled, invalid: null, port: 4747, pairing_minutes: 10,
+      hosts: r.hosts.map((h) => ({ ...h, status_text: REMOTE_TEXT[h.status] || h.status, answering: r.enabled && h.status !== 'public' && h.status !== 'unprotected' })),
+      devices: r.devices, here: { remote: false, url: null, device: null },
+    };
   }
 
   async function onMock(req, res, url) {
@@ -1186,6 +1233,23 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const body = await readBody(req);
       Object.assign(st.disc, body);
       if (body.failImport) st.disc.failImport = { times: 1, ...body.failImport };
+      send(res, 204);
+      return;
+    }
+    if (p === '/__mock/remote' && req.method === 'POST') {
+      const body = await readBody(req);
+      const ago = (min) => new Date(Date.now() - min * MIN).toISOString();
+      st.remote.hosts = (body.hosts || []).map((h) => ({ detail: null, checked_at: ago(h.ago ?? 1), ...h }));
+      st.remote.enabled = body.enabled ?? st.remote.hosts.length > 0;
+      st.remote.devices = (body.devices || []).map((d, i) => ({ id: `${'0'.repeat(11)}${i}`, host: st.remote.hosts[0]?.url || null, created_at: ago(d.ago ?? 60), expires_at: ago(-30 * 24 * 60), last_seen_at: ago(d.seen ?? 5), ...d }));
+      send(res, 204);
+      return;
+    }
+    if (p === '/__mock/remote-pair' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (!st.remote.pairing) { send(res, 409, { error: 'no pairing link' }); return; }
+      st.remote.pairing = null;
+      st.remote.devices.push({ id: crypto.randomBytes(6).toString('hex'), label: body.label || 'iPhone · Safari', host: st.remote.hosts[0]?.url || null, created_at: new Date().toISOString(), expires_at: new Date(Date.now() + 30 * DAY).toISOString(), last_seen_at: new Date().toISOString() });
       send(res, 204);
       return;
     }
