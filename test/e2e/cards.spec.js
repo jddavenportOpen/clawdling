@@ -175,3 +175,28 @@ test.describe('question cards on a phone', () => {
     await expect(p.getByTestId('chat-msg').last()).toContainText('You chose Green.');
   });
 });
+
+test.describe('an agent needs you', () => {
+  test('CS-21: Settings turns on the browser notification; a hidden tab gets one when a session starts waiting', async ({ page }) => {
+    await page.addInitScript(() => {
+      window.__shown = [];
+      window.Notification = class {
+        constructor(title, opts) { window.__shown.push({ title, body: opts && opts.body }); }
+        static permission = 'default';
+        static requestPermission() { window.Notification.permission = 'granted'; return Promise.resolve('granted'); }
+      };
+    });
+    const sid = await chatSession('Pinged');
+    await login(page, '#/settings');
+    const card = page.getByTestId('notify-card');
+    await expect(card).toContainText('When an agent needs you');
+    // No paired channel in this org: the message switch explains what to do first.
+    await expect(card.getByTestId('notify-message')).toBeDisabled();
+    await expect(card).toContainText('Pair Donna with Telegram or iMessage first');
+    await card.locator('label.switch').filter({ has: page.getByTestId('notify-browser') }).click();
+    await expect(card.getByTestId('notify-browser')).toBeChecked();
+    await page.evaluate(() => Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }));
+    await fetch(new URL(`/api/sessions/${sid}/send`, process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json', 'x-clawdling-token': process.env.CLAWDLING_E2E_TOKEN }, body: JSON.stringify({ text: 'permission? now' }) });
+    await expect.poll(() => page.evaluate(() => window.__shown)).toEqual([{ title: 'Work needs you', body: 'Claude needs your permission to use Bash' }]);
+  });
+});

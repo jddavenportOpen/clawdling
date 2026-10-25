@@ -997,6 +997,7 @@ export class SessionManager {
     this.events.record({ type: 'status', sid: rec.sid, agent: rec.agent, status: rec.status, ...(rec.notification ? { notification: rec.notification } : {}) });
     this.scheduleSave();
     this.publish(rec);
+    if (rec.status === 'needs_you') this.onNeedsYou?.(rec); // the opt-in ping (needs-you.js)
   }
 
   /**

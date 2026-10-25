@@ -14,6 +14,7 @@ import { api } from '../lib/api.js';
 import { Icon } from './icons.js';
 import { SetupCard } from './setup.js';
 import { RemoteCard } from './remote.js';
+import { notifySupported, notifyOn, setNotify } from '../lib/notify.js';
 
 export function SettingsPage() {
   const health = useStore((s) => s.health);
@@ -90,6 +91,7 @@ export function SettingsPage() {
           <div><dt>Double-click a title</dt><dd>Rename the session</dd></div>
         </dl>
       </section>
+      <${NotifyCard} />
       <${AccountsCard} />
       <section class="card" aria-labelledby="set-server">
         <h2 id="set-server" class="card-title">Server <button class="link-btn" onClick=${refreshHealth}>Refresh</button></h2>
@@ -186,6 +188,44 @@ function PhoneCard() {
 // Extra Claude logins. Clawdling never touches credentials: an added account is only a folder
 // (~/.clawdling-accounts/<name>) passed to claude as CLAUDE_CONFIG_DIR, and the user signs in
 // inside Claude Code itself. GET /api/accounts -> [{id, name, default, dir}].
+// "Tell me when an agent needs me": this browser (a system notification while the tab is hidden)
+// and, opt-in, one line to the Telegram or iMessage chat Donna is paired with.
+function NotifyCard() {
+  const [browser, setBrowser] = useState(() => notifyOn());
+  const [denied, setDenied] = useState(() => notifySupported() && window.Notification.permission === 'denied');
+  const [srv, setSrv] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.notify().then(setSrv).catch(() => setSrv({ needs_you: false, channel: null, error: true })); }, []);
+  const pickBrowser = async (on) => {
+    const st = await setNotify(on);
+    setBrowser(st === 'on');
+    setDenied(st === 'denied');
+    if (st === 'denied') toast('The browser blocked notifications for this page. Allow them in the site settings, then try again.', { ms: 5200 });
+  };
+  const pickServer = async (on) => {
+    setBusy(true);
+    try {
+      setSrv(await api.setNotify(on));
+    } catch (e) {
+      errorToast('Could not change that', e);
+    }
+    setBusy(false);
+  };
+  const channel = srv && srv.channel === 'telegram' ? 'Telegram' : srv && srv.channel === 'imessage' ? 'iMessage' : null;
+  return html`<section class="card" aria-labelledby="set-notify" data-testid="notify-card">
+    <h2 id="set-notify" class="card-title">When an agent needs you</h2>
+    <div class="set-row"><span class="set-label" id="set-notify-browser">Notify this browser<span class="set-sub">${!notifySupported() ? 'This browser cannot show notifications.'
+      : denied ? 'Blocked by the browser. Allow notifications for this page in its site settings.' : 'A system notification when this tab is in the background and a session starts waiting on you.'}</span></span>
+      <label class="switch"><input type="checkbox" checked=${browser} disabled=${!notifySupported()} onChange=${(e) => pickBrowser(e.currentTarget.checked)}
+        aria-labelledby="set-notify-browser" data-testid="notify-browser" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    <div class="set-row"><span class="set-label" id="set-notify-msg">Message me${channel ? ` on ${channel}` : ''}<span class="set-sub">${!srv ? 'Checking…'
+      : channel ? `One line to the ${channel} chat Donna is paired with: which agent needs you, never what it asked. At most one per session every 10 minutes.`
+      : html`Pair Donna with Telegram or iMessage first (<a href="#/donna">Donna</a>).`}</span></span>
+      <label class="switch"><input type="checkbox" checked=${!!(srv && srv.needs_you)} disabled=${!srv || busy || (!channel && !(srv && srv.needs_you))} onChange=${(e) => pickServer(e.currentTarget.checked)}
+        aria-labelledby="set-notify-msg" data-testid="notify-message" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+  </section>`;
+}
+
 function AccountsCard() {
   const [accounts, setAccounts] = useState(null);
   const [unsupported, setUnsupported] = useState(false);

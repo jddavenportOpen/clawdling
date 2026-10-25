@@ -130,6 +130,8 @@ export const api = {
   },
   remoteSignOut: (id) => request('DELETE', `/api/remote/devices/${enc(id)}`),
   channels: () => request('GET', '/api/channels'),
+  notify: () => request('GET', '/api/notify'),
+  setNotify: (needsYou) => request('POST', '/api/notify', { needs_you: !!needsYou }),
   telegram: (body) => request('POST', '/api/channels/telegram', body),
   imessage: (body) => request('POST', '/api/channels/imessage', body),
 };

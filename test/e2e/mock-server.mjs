@@ -1206,6 +1206,13 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (p === '/api/channels' && m === 'GET') { send(res, 200, channelStatus()); return; }
+    if (p === '/api/notify' && m === 'GET') { send(res, 200, { needs_you: !!st.notifyNeedsYou, channel: st.org.channels?.telegram?.chat_id ? 'telegram' : null }); return; }
+    if (p === '/api/notify' && m === 'POST') {
+      if (typeof body.needs_you !== 'boolean') { send(res, 400, { error: 'send {needs_you: true|false}' }); return; }
+      st.notifyNeedsYou = body.needs_you;
+      send(res, 200, { needs_you: st.notifyNeedsYou, channel: st.org.channels?.telegram?.chat_id ? 'telegram' : null });
+      return;
+    }
     if (p === '/api/channels/telegram' && m === 'POST') {
       const t = st.channels.telegram;
       if (typeof body.token === 'string' && body.token.trim()) { t.configured = true; t.paired = false; t.chat_id_masked = null; }

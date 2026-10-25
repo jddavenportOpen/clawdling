@@ -1,0 +1,44 @@
+// "An agent needs you" in this browser: a system notification when the cockpit tab is hidden and
+// a session starts waiting on you. Off until turned on in Settings (the browser asks permission
+// then). One per session a minute; a click brings the tab back on that session.
+import { load, save } from './prefs.js';
+import { agentLabel, statusText } from './model.js';
+
+const PREF = 'notifyNeedsYou';
+const PER_SESSION_MS = 60000;
+const last = new Map();
+
+export const notifySupported = () => typeof window !== 'undefined' && 'Notification' in window;
+export const notifyOn = () => notifySupported() && !!load(PREF, false) && window.Notification.permission === 'granted';
+
+/** Turn it on (asks the browser) or off. Returns the state it ended in: 'on' | 'off' | 'denied'. */
+export async function setNotify(on) {
+  if (!on || !notifySupported()) {
+    save(PREF, false);
+    return 'off';
+  }
+  let perm = window.Notification.permission;
+  if (perm === 'default') perm = await window.Notification.requestPermission();
+  save(PREF, perm === 'granted');
+  return perm === 'granted' ? 'on' : 'denied';
+}
+
+/** Called with a session's old and new row: notify when it just started needing you. */
+export function maybeNotify(prev, next, { agentsById = {}, onOpen = () => {} } = {}) {
+  if (!next || next.status !== 'needs_you' || (prev && prev.status === 'needs_you')) return false;
+  if (typeof document === 'undefined' || !document.hidden || !notifyOn()) return false;
+  const t = Date.now();
+  if (t - (last.get(next.sid) || 0) < PER_SESSION_MS) return false;
+  last.set(next.sid, t);
+  try {
+    const n = new window.Notification(`${agentLabel(next, agentsById)} needs you`, { body: statusText(next), tag: `clawdling-${next.sid}` });
+    n.onclick = () => {
+      window.focus();
+      onOpen(next.sid);
+      n.close();
+    };
+    return true;
+  } catch {
+    return false; // some browsers only allow notifications from a service worker
+  }
+}

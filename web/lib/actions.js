@@ -6,6 +6,7 @@ import { load, save } from './prefs.js';
 import { terms } from './term.js';
 import { copyText } from './util.js';
 import { attachCommand } from './model.js';
+import { maybeNotify } from './notify.js';
 import { nextPaneSize } from './layout.js';
 
 const LAYOUTS = ['focus', 'split', 'grid'];
@@ -112,11 +113,14 @@ const touched = new Map(); // sid -> ms of a local write; protects fresh rows fr
 export function mergeSession(patch) {
   if (!patch || !patch.sid) return;
   touched.set(patch.sid, Date.now());
+  const before = getState().sessions[patch.sid];
   setState((s) => {
     const prev = s.sessions[patch.sid];
     const next = prev ? { ...prev, ...patch } : patch;
     return { sessions: { ...s.sessions, [patch.sid]: next } };
   });
+  const st = getState();
+  maybeNotify(before, st.sessions[patch.sid], { agentsById: st.agentsById, onOpen: focusSession });
 }
 
 // A poll that STARTED before a local write may carry stale rows for that sid,

@@ -76,6 +76,7 @@ import { discover, findSubagent, scanSetup } from './discover.js';
 import { importGroup, importProject, promoteSubagent } from './importer.js';
 import { SessionManager } from './sessions.js';
 import { claudeConfigDir, findTranscript } from './transcripts.js';
+import { NeedsYouPinger } from './needs-you.js';
 import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
@@ -427,6 +428,8 @@ export async function startServer(opts = {}) {
       blocked: testMode && apiBase === TELEGRAM_OFFICIAL_BASE ? 'test mode: TELEGRAM_API_BASE must point at a local stub' : null,
     });
     const imessage = new IMessageGateway({ paths, org, donna, events, logger, env: testMode ? { ...env, CLAWDLING_TEST: '1' } : env });
+    const pinger = new NeedsYouPinger({ org, sessions, telegram, imessage, events, logger, delayMs: testMode && Number(env.CLAWDLING_PING_DELAY_MS) >= 0 && env.CLAWDLING_PING_DELAY_MS ? Number(env.CLAWDLING_PING_DELAY_MS) : 4000 });
+    sessions.onNeedsYou = (rec) => pinger.onNeedsYou(rec);
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
     // Orgs from before 1.2 get the /onboard-project skill (repo-rooted sessions find skills at the org root).
@@ -1320,6 +1323,13 @@ export async function startServer(opts = {}) {
       }, { local: true }],
       ...remoteRoutes(),
       ['GET', /^\/api\/channels$/, () => [200, channelsStatus()]],
+      // "Message me when an agent needs me": off by default; {needs_you: true|false}.
+      ['GET', /^\/api\/notify$/, () => [200, pinger.status()]],
+      ['POST', /^\/api\/notify$/, async (req) => {
+        const b = await jsonBody(req);
+        if (typeof b.needs_you !== 'boolean') throw badRequest('send {needs_you: true|false}');
+        return [200, pinger.setEnabled(b.needs_you)];
+      }],
       ['POST', /^\/api\/channels\/telegram$/, async (req) => {
         const b = await jsonBody(req);
         const out = await telegram.configure({ token: b.token, enabled: b.enabled, pair: b.pair });
@@ -1561,6 +1571,7 @@ export async function startServer(opts = {}) {
       clearInterval(remoteQuick);
       telegram.stop();
       imessage.stop();
+      pinger.stop();
       donna.stop();
       found.worker?.terminate().catch(() => {});
       await sessions.shutdown();
