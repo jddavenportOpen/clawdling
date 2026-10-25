@@ -54,7 +54,7 @@ test('the confirm sheet says what will happen and shows the exact prompt; Cancel
   for (const line of [
     'This opens a setup chat with a Claude Code agent.',
     'The agent asks before it installs or changes anything.',
-    'It uses your Claude plan.',
+    'It uses your Claude Code sign-in (your plan, or an API key).',
     'You sign in to Tailscale yourself, in your browser. Clawdling never sees those logins.',
   ]) await expect(sheet).toContainText(line);
   await expect(sheet.getByTestId('remote-prompt')).toHaveText('/remote-access tailscale');

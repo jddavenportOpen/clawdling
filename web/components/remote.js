@@ -198,9 +198,9 @@ function SetupSheet({ path, busy, onStart, onClose }) {
       <h2 id="remote-setup-title" class="modal-title">Set up “${p.title}”?</h2>
       <ul class="remote-promises">
         <li>This opens a setup chat with a Claude Code agent.</li>
-        <li>If Claude Code first asks whether you trust your org folder, press “Yes, trust it”. The commands it lists are Clawdling's own, for working with your agents and reading this setup's status. None of them installs anything.</li>
+        <li>If Claude Code first asks whether you trust your org folder, press “Yes, trust it”. The commands it lists are Clawdling's own; in this setup chat Clawdling blocks the ones that start or change other agents, and the agent asks you before each step.</li>
         <li>The agent asks before it installs or changes anything.</li>
-        <li>It uses your Claude plan.</li>
+        <li>It uses your Claude Code sign-in (your plan, or an API key).</li>
         <li>You sign in to ${p.service} yourself, in your browser. Clawdling never sees those logins.</li>
       </ul>
       <p class="modal-text">The agent's first message, so you can see exactly what it is asked:</p>
