@@ -16,21 +16,27 @@ until you turn it on, in Settings.
   sign-in to you in your browser, never turns on Tailscale Funnel or touches other serve entries,
   and handles the macOS Homebrew symlink crash, the tailnet's HTTPS certificate switch and the
   Linux operator setting. `/remote-access off` removes only what it set up.
+- **Only your own devices.** Tailscale requests must carry your own Tailscale login and arrive
+  through the serve entry's private path (`clawdling remote serve-command` prints the exact
+  command), so another person on a shared tailnet, or a container on the same computer, gets
+  nothing. Cloudflare pins your Access email the same way.
 - **Never public.** `clawdling remote add` registers an address only after a check passes:
   Tailscale Funnel off and the address reaching this cockpit, or, for Cloudflare, a signed-out
   visitor sent to the Access sign-in. Every request through a Cloudflare address must also carry a
   valid Cloudflare Access token, so removing Access later cannot expose the cockpit.
 - **Pair a device.** "Add a device" shows a QR code with a one-time link (10 minutes, one use).
   It never holds the cockpit's private token: through a remote address that token is refused in
-  every form. The phone gets its own sign-in (a `Secure`, `HttpOnly`, `SameSite=Strict` cookie,
-  30 days), listed in Settings with a Sign out button. Ten failed sign-ins in five minutes pause
+  every form. The phone gets its own sign-in (a `__Host-` cookie that is `Secure`, `HttpOnly` and
+  `SameSite=Strict`, plus a key in the page's own storage, 30 days), listed in Settings with a
+  Sign out button. Ten failed sign-ins in five minutes pause
   new attempts on that address.
 - **Status and Turn off.** Settings shows each address with its last check: "Private to your
   devices ✓", "Behind Cloudflare Access ✓" or "Not reachable". Turn off stops answering at once
   (open terminals and live updates through it close), signs out every device, and offers "Remove
   the tunnel too".
-- **CLI:** `clawdling remote list|check`, `clawdling remote add <https-url> --kind
-  tailscale|cloudflare`, `clawdling remote remove <url>|--all`, `clawdling remote off`. Donna's
+- **CLI:** `clawdling remote list|check`, `clawdling remote serve-command <https-url>`,
+  `clawdling remote add <https-url> --kind tailscale|cloudflare [--email you@example.com]`,
+  `clawdling remote remove <url>|--all`, `clawdling remote off`. Donna's
   text-message turns cannot run them.
 - **Safer by default, for everyone:** a request with a localhost `Host` that came through a proxy
   (proxy headers present) is refused, so a tunnel that rewrites the `Host` header can never make

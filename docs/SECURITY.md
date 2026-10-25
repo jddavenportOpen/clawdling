@@ -64,6 +64,12 @@ the same power as sitting at the computer, so it is guarded as such.
   copy a client sent, and never sets it for Funnel or tagged devices). The check records the
   owner's login from its own request through the address, and every later request must carry
   exactly that login, so another person on a shared tailnet is refused before they see a page.
+  Those headers can be written by anything that can open a connection to `127.0.0.1` (a
+  container, another account on the computer), so the serve entry also forwards to a private
+  path: `http://127.0.0.1:<port>/_clawdling/<32 characters>`, an HMAC of the address under the
+  org's token, which only the serve config and this org know (`clawdling remote serve-command`
+  prints the exact command). A request through a Tailscale address without that path is refused
+  before anything else, and the server strips it so the cockpit sees its normal paths.
   Cloudflare: Cloudflare Access makes every visitor sign in (an email policy) before Cloudflare
   forwards anything; Clawdling then checks the `Cf-Access-Jwt-Assertion` header Access adds on
   every request (RS256, signed by the team's keys at `<team>.cloudflareaccess.com/cdn-cgi/access/certs`,
@@ -78,7 +84,10 @@ the same power as sitting at the computer, so it is guarded as such.
   server's memory and voided by a restart or by turning remote off. Opening the link shows a
   "Sign in this device" button; only that POST uses the code (so a link preview cannot burn it).
   The device then holds its own random credential (`cld_<id>_<secret>`, 256-bit secret) in a
-  cookie that is `Secure` (https only), `HttpOnly` (page scripts cannot read it) and
+  cookie named `__Host-cl_device` (host-only: since `ts.net` is a public suffix, every machine on
+  a tailnet is the same site, and without the prefix another one could plant a decoy cookie; a
+  decoy that arrives anyway is skipped, not counted) that is `Secure` (https only), `HttpOnly`
+  (page scripts cannot read it) and
   `SameSite=Strict` (a link from another site opens the page signed out for one load, and the
   page's own same-origin calls carry it). Browsers send a cookie to every port of a host name,
   so another service on the same Tailscale name (say a NAS app on port 443) would receive it; the
@@ -111,7 +120,9 @@ the same power as sitting at the computer, so it is guarded as such.
   sender writes, including a Tailscale login), and the address must reach this Clawdling (a
   one-time nonce through the address) with a Tailscale login on it. Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
   (which also gives the AUD tag); a page that answers (any 2xx, or Clawdling's own refusal,
-  marked with `X-Clawdling-Refused`) means the address is public, and it is refused. Later checks
+  marked with `X-Clawdling-Refused`) means the address is public, and it is refused. A first add
+  needs that redirect: a bare 401/403 could be a firewall rule in front of a public page, so it
+  only keeps an address that passed before. Later checks
   (Settings' Check again, `clawdling remote check`, and an automatic check every 10 minutes while
   it is on) apply the same rules: an address found public or unprotected is not answered until a
   check passes again. Other local forwarders Clawdling cannot see (ngrok, socat) are out of its
@@ -142,7 +153,10 @@ the same power as sitting at the computer, so it is guarded as such.
 **The setup agent.** "Set it up with an agent" starts an ordinary Claude Code session on the
 owner's plan, at the org root, whose first message is the visible `/remote-access <path>`. The
 skill's file is rewritten from this version's text when the server starts and before each such
-session (an edited copy is kept as `SKILL.md.old`), so the sheet's promises hold. The
+session (an edited copy is kept as `SKILL.md.old`), so the sheet's promises hold, and a personal
+skill or command named `remote-access` in the user's own Claude Code folder (which Claude Code
+would run instead) blocks the setup chat until it is renamed. The owner runs `cloudflared tunnel
+login` in their own terminal, so its sign-in link never reaches the agent. The
 skill tells it to explain the plan, to ask before every install or change, and to leave every
 sign-in to the owner in their browser. It never asks for, reads, prints or stores a credential
 (no auth keys, no `cert.pem` or tunnel credentials file, nothing in `.clawdling/`), never turns on
