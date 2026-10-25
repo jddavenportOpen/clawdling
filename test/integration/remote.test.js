@@ -169,6 +169,14 @@ before(async () => {
   assert.ok(!st.includes(PREFIX.split('/').pop()));
   assert.match(st, /\|-- \/ proxy http:\/\/127\.0\.0\.1:\d+\/_clawdling\/<private path>/);
   fs.writeFileSync(path.join(tunnelDir, 'prefix'), PREFIX);
+  // This computer's address, and nothing about anyone else on the tailnet (or a sign-in link).
+  const me = cli(['remote', 'tailscale-name'], { env, home });
+  assert.match(me, /Tailscale is connected\. This computer's address: https:\/\/box\.example\.ts\.net/);
+  assert.ok(!/someone|owner@|login\.tailscale/.test(me), me);
+  const out2 = cliResult(['remote', 'tailscale-name'], { env: { ...env, FAKE_TS_STATE: 'NeedsLogin' }, home });
+  assert.equal(out2.code, 1);
+  assert.match(out2.stdout, /not connected on this computer \(NeedsLogin\)/);
+  assert.ok(!out2.stdout.includes('secret-sign-in'), 'never the sign-in link');
 });
 
 after(async () => {
@@ -260,7 +268,7 @@ test('remote add (Tailscale): checked, private, on; Clawdling only ever ran `ser
   assert.ok(calls.length >= 2);
   // The server only ever reads serve status; the CLI's `remote serve` (approved by the owner) and
   // `serve-status` made the other calls.
-  assert.ok(calls.every((c) => c === 'serve status --json' || c === 'serve status' || c === `serve --bg --https=8743 http://127.0.0.1:${srv.port}${PREFIX}`), calls.join(' | '));
+  assert.ok(calls.every((c) => c === 'serve status --json' || c === 'serve status' || c === 'status --json' || c === `serve --bg --https=8743 http://127.0.0.1:${srv.port}${PREFIX}`), calls.join(' | '));
   if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(home, '.clawdling', 'remote.json')).mode & 0o777, 0o600);
 });
 

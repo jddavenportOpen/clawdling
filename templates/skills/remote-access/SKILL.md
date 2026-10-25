@@ -12,8 +12,8 @@ path: `tailscale`, `cloudflare` or `off`. With no word, ask which one, and recom
 
 - Start by explaining the plan in three short lines. Then ask before every install and before
   every command that changes something, one command at a time, saying in plain words what it does.
-  Read-only checks (`status`, `--version`, `clawdling remote list`, `clawdling remote
-  serve-status`, and the one
+  Read-only checks (`--version`, `clawdling remote list`, `clawdling remote tailscale-name`,
+  `clawdling remote serve-status`, and the one
   `curl` in the Cloudflare steps, a plain GET to the owner's own address) need no extra question,
   but the session may still ask for permission: that is expected. Never pipe a download into a
   shell.
@@ -64,10 +64,12 @@ Say the plan, for example:
 2. **Signed in?** First ask the owner whether the Tailscale app says it is connected (signed in).
    If not, they sign in from the app (menu bar or tray); on Linux without the app, they run
    `sudo tailscale up` in their own terminal and open the link it prints. Wait until they say it
-   is connected (a signed-out status can print a sign-in link you must not see). Then run
-   `TS status` to confirm.
-3. **This computer's name.** `TS status --json` and take `Self.DNSName`, without the trailing
-   dot (like `box.example.ts.net`). Do not repeat the other devices it lists.
+   is connected.
+3. **This computer's address.** `clawdling remote tailscale-name`. It says whether Tailscale is
+   connected and prints this computer's own address (like `https://box.example.ts.net`; the
+   name part is DNSName below), and nothing about anyone else on the tailnet. Never run `TS status` in this chat: it lists other
+   people's devices, and a signed-out one prints a sign-in link. Run every command on its own,
+   exactly as written here: no `&&` chains, pipes or extra checks.
 4. **Existing entries.** `clawdling remote serve-status` (Tailscale's own `serve status`, with the
    cockpit's private path hidden: never run `TS serve status` or `TS serve --bg` yourself in
    this chat). Remember what is there and leave it alone. The cockpit

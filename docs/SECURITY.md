@@ -175,7 +175,8 @@ the same power as sitting at the computer, so it is guarded as such.
   well-formed Access settings. Anything malformed turns remote off and says why in Settings; a
   change made outside the server closes remote connections within two seconds. Agents' file tools
   are denied in `.clawdling/`, so `clawdling remote ...` is the way to change it, and that command
-  asks for permission inside a session (only the read-only `clawdling remote list` and `clawdling remote serve-status` are pre-approved). Donna's
+  asks for permission inside a session (only the read-only `clawdling remote list`, `remote serve-status` and `remote tailscale-name`
+are pre-approved). Donna's
   text-message turns cannot run `clawdling remote` at all.
 
 **The setup agent.** "Set it up with an agent" starts an ordinary Claude Code session on the
@@ -193,9 +194,11 @@ restarts Clawdling with `--host`, and never registers a Cloudflare address befor
 front. Those "never" rules are also enforced in code: a setup chat runs with a PreToolUse hook
 (`bin/clawdling-guard.js`, only in that session's `--settings`) that refuses turning Funnel on,
 `serve reset`, TCP forwards, auth keys, `tailscale up/down/logout/login/set/switch`, `sudo`,
-`cloudflared tunnel login`, raw `tailscale serve` adds and status (the CLI's redacted `remote
+`cloudflared tunnel login`, `tailscale status` (it lists everyone on the tailnet: `clawdling
+remote tailscale-name` prints only this computer's address), `clawdling spawn/send/new/end`, raw
+`tailscale serve` adds and status (the CLI's redacted `remote
 serve` and `remote serve-status` instead), and any access to `cert.pem`, `~/.cloudflared/` (but
-its `config.yml`) or `.clawdling/`. It checks each part of a command, and in this one session it
+its `config.yml`) or `.clawdling/`. In this one session it allows one command at a time (no chains or pipes), and
 refuses quoting, `$(...)`, scripts and interpreters, and handing work to another session; its
 settings file sets `disableAllHooks: false`. It is a pattern guard, defence in depth for the case
 where the session was fed other instructions (an edited `CLAUDE.md` or rule file), not a

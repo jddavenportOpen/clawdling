@@ -144,7 +144,7 @@ export function RemoteCard() {
               <span class="set-sub">${KIND_LABEL[h.kind] || h.kind}${h.checked_at ? ` · checked ${ago(h.checked_at)}` : ''}</span>
             </span>
             <span class=${`remote-status ${!on ? 'is-off' : GOOD.has(h.status) ? 'is-good' : h.answering ? 'is-warn' : 'is-bad'}`} data-testid="remote-status">
-              ${on && GOOD.has(h.status) ? null : html`<${Icon} name="alert" size=${13} />`}
+              ${!on || GOOD.has(h.status) ? null : html`<${Icon} name="alert" size=${13} />`}
               ${on ? h.status_text : 'Turned off'}</span>
             ${on && !GOOD.has(h.status) && h.detail ? html`<span class="set-sub remote-detail">${h.detail}</span>` : null}
           </li>`)}

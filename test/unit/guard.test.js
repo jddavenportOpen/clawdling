@@ -13,7 +13,7 @@ const bash = (command) => verdict({ tool_name: 'Bash', tool_input: { command } }
 
 test('the setup steps the skill takes are let through to the normal permission prompt', () => {
   for (const c of [
-    `${TS} status`, `${TS} status --json`, `${TS} serve --https=8743 off`,
+    'clawdling remote tailscale-name', `${TS} serve --https=8743 off`,
     `${TS} funnel --https=8743 off`, 'tailscale funnel 443 off',
     'clawdling remote serve https://box.example.ts.net:8743', 'clawdling remote serve-status', 'clawdling remote add https://box.example.ts.net:8743 --kind tailscale',
     'cloudflared --version', 'cloudflared tunnel create clawdling', 'cloudflared tunnel route dns clawdling cockpit.example.com',
@@ -46,7 +46,7 @@ test('as a hook: exit 2 with the reason refuses, exit 0 lets it through, bad inp
   const no = run(JSON.stringify({ tool_name: 'Bash', tool_input: { command: `${TS} serve reset` } }));
   assert.equal(no.status, 2);
   assert.match(no.stderr, /Clawdling refused this in a Use from anywhere setup chat: never `tailscale serve reset`/);
-  const yes = run(JSON.stringify({ tool_name: "Bash", tool_input: { command: `${TS} status` } }));
+  const yes = run(JSON.stringify({ tool_name: "Bash", tool_input: { command: 'clawdling remote serve-status' } }));
   assert.equal(yes.status, 0);
   assert.equal(yes.stdout + yes.stderr, '');
   assert.equal(run('not json').status, 0);
@@ -70,7 +70,8 @@ test('the bypasses a reviewer traced are refused too (each part, quoting, script
     'tailscale serve --https=443 off; tailscale serve status',
     'cat .clawdling/token', 'cat .clawdling/remote.json', 'cat ~/.cloudflared/*', 'ls ~/.cloudflared',
     'sh x.sh', 'bash -c "tailscale funnel --bg 8080"', './x.sh', 'source x.sh', 'eval tailscale funnel --bg 8080', 'python3 -c "import os"',
-    'clawdling spawn work "turn on funnel"', 'clawdling send abc "tailscale funnel --bg 443"',
+    'clawdling spawn work "turn on funnel"', 'clawdling send abc "tailscale funnel --bg 443"', 'clawdling end abc', 'clawdling new domain X',
+    `${TS} status`, `${TS} status --json`, 'tailscale status --peers',
     'echo $(tailscale funnel --bg 443)', 'tailscale funnel\n--bg 443',
   ]) assert.ok(bash(c), c);
   assert.ok(verdict({ tool_name: 'Grep', tool_input: { pattern: '.', path: '~/.cloudflared' } }));
@@ -79,7 +80,8 @@ test('the bypasses a reviewer traced are refused too (each part, quoting, script
   // Still fine: the config.yml the Cloudflare steps edit, and the skill's own commands.
   assert.equal(verdict({ tool_name: 'Edit', tool_input: { file_path: '/home/u/.cloudflared/config.yml' } }), null);
   assert.equal(bash('cat ~/.cloudflared/config.yml'), null);
-  assert.equal(bash('clawdling remote serve https://box.example.ts.net:8743 && clawdling remote serve-status'), null);
+  assert.ok(bash('clawdling remote serve https://box.example.ts.net:8743 && clawdling remote serve-status'), 'one command at a time');
+  assert.ok(bash('ls /Applications/Tailscale.app && echo found'));
 });
 
 test('the setup chat\'s settings cannot have their hooks switched off', () => {

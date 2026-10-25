@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // A stand-in for the Tailscale CLI in the Use from anywhere tests, keeping its serve config in a
 // JSON file the way tailscaled does. It answers the calls Clawdling makes:
+//   status --json                       this node and its peers (`clawdling remote tailscale-name`)
 //   serve status --json                 the config (the server's checks)
 //   serve status                        the config as text (`clawdling remote serve-status`)
 //   serve --bg --https=N <target>       add an entry (`clawdling remote serve`)
@@ -24,7 +25,10 @@ const read = () => {
 };
 const line = args.join(' ');
 let m;
-if (line === 'serve status --json') {
+if (line === 'status --json') {
+  // Like the real one: this node, and the other people's devices on the tailnet.
+  process.stdout.write(JSON.stringify({ BackendState: process.env.FAKE_TS_STATE || 'Running', AuthURL: process.env.FAKE_TS_STATE === 'NeedsLogin' ? 'https://login.tailscale.com/a/secret-sign-in' : '', Self: { DNSName: `${host}.`, UserID: 1 }, Peer: { a: { DNSName: 'someone-elses-laptop.example.ts.net.', UserID: 2 } }, User: { 1: { LoginName: 'owner@example.com' }, 2: { LoginName: 'someone@example.org' } } }));
+} else if (line === 'serve status --json') {
   let text = '{}';
   try {
     text = fs.readFileSync(file, 'utf8');

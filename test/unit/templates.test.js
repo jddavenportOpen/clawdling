@@ -198,6 +198,8 @@ test('the /remote-access skill: installed at the org root only, and its safety r
     const settings = JSON.parse(read(home, '.claude', 'settings.json'));
     assert.ok(settings.permissions.allow.includes('Bash(clawdling remote list)'));
     assert.ok(settings.permissions.allow.includes('Bash(clawdling remote serve-status)'));
+    assert.ok(settings.permissions.allow.includes('Bash(clawdling remote tailscale-name)'));
+    assert.match(flat, /Never run `TS status` in this chat/);
     assert.ok(!settings.permissions.allow.some((a) => /clawdling remote (add|remove|off|\*)/.test(a)));
   } finally {
     rmrf(home);

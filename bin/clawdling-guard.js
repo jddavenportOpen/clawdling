@@ -17,7 +17,8 @@ function part(cmd) {
   const rules = [
     [/\bsudo\b/i, 'the owner runs every sudo command in their own terminal'],
     [/\b(eval|exec)\b|\b(sh|bash|zsh|dash|fish|ksh|pwsh|powershell|cmd|python3?|node|perl|ruby|osascript)(\.exe)?\b|(^|\s)(source|\.)\s+\S|(^|\s)\.\/\S/i, 'no scripts or interpreters in this chat: run each command directly'],
-    [/\bclawdling\s+(spawn|send|new)\b/i, 'this setup chat does its own steps: no other sessions'],
+    [/\bclawdling\s+(spawn|send|new|end|resume|attach|import)\b/i, 'this setup chat does only its own steps: no other sessions or agents'],
+    [/tailscale\s+status\b/i, 'use `clawdling remote tailscale-name`: it shows only this computer\'s address, not everyone on the tailnet (or a sign-in link)'],
     [/\b(tailscale|cloudflared)\b[^]*["'`\\$]/i, 'write Tailscale and cloudflared commands plainly, with no quotes, escapes or variables'],
     [/\bserve\b\s.*\breset\b|\bserve\s+reset\b/i, 'never `tailscale serve reset`: it would wipe the owner\'s other serve entries'],
     [/\bserve\b.*--(tcp|tls-terminated-tcp)\b/i, 'never a TCP forward: whoever uses one can write their own headers'],
@@ -46,7 +47,9 @@ export function verdict(input) {
   if (/^(Bash|PowerShell)$/.test(tool)) {
     const cmd = String(ti.command || '');
     if (/[\n\r`]|\$\(/.test(cmd)) return 'one plain command at a time in this chat (no newlines, backticks or $(...))';
-    for (const seg of cmd.split(/;|&&|\|\||\||&/)) {
+    const segs = cmd.split(/;|&&|\|\||\||&/);
+    if (segs.length > 1) return 'one command at a time in this chat, exactly as the setup steps write it (no chains or pipes)';
+    for (const seg of segs) {
       const why = part(seg.replace(/\s+/g, ' ').trim());
       if (why) return why;
     }

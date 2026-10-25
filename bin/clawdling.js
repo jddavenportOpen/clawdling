@@ -58,6 +58,7 @@ Usage:
   clawdling donna imessage --handle <you>   let Donna answer your iMessages (macOS, experimental)
   clawdling donna status
   clawdling remote list|check [--json]       Use from anywhere: is it on, and is each address private
+  clawdling remote tailscale-name           this computer's Tailscale address (nothing about others)
   clawdling remote serve <https-url>        point a Tailscale Serve entry at the cockpit (its private
                                             path is set and never printed)
   clawdling remote serve-status             tailscale serve status, with private paths hidden
@@ -82,6 +83,7 @@ const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-e
 const REMOTE_HELP = `usage:
   clawdling remote list [--json]
   clawdling remote check [--json]
+  clawdling remote tailscale-name
   clawdling remote serve <https-url>
   clawdling remote serve-status
   clawdling remote add <https-url> --kind tailscale|cloudflare [--email <you>] [--team-domain <team>.cloudflareaccess.com --access-aud <AUD tag>]
@@ -1054,6 +1056,31 @@ async function cmdRemote(args) {
   }
   // The Tailscale serve step, run here so the private path (an HMAC under the org's token) never
   // shows up in a terminal or an agent's transcript: all output is printed with it hidden.
+  // This computer's own Tailscale address, and nothing about anyone else on the tailnet: plain
+  // `tailscale status` lists every member's devices and logins, and a signed-out one prints a
+  // sign-in link. This prints neither.
+  if (sub === 'tailscale-name') {
+    const bin = tailscaleBin({ env: process.env, which: (c) => which(c, process.env.PATH || '') });
+    if (!bin) throw new CliError('Tailscale is not installed here (or its command was not found). Install it from https://tailscale.com/download and sign in, then try again.');
+    const c = commandFor(bin, ['status', '--json'], { env: process.env });
+    const r = spawnSync(c.file, c.args, spawnOptions(c, { encoding: 'utf8', timeout: 15000 }));
+    let j = null;
+    try {
+      j = JSON.parse(String(r.stdout || ''));
+    } catch {
+      // below
+    }
+    if (!j) throw new CliError('Tailscale did not answer. Is the Tailscale app running?');
+    const state = String(j.BackendState || 'unknown');
+    const name = j.Self && typeof j.Self.DNSName === 'string' ? j.Self.DNSName.replace(/\.$/, '') : '';
+    if (state !== 'Running' || !name) {
+      console.log(`Tailscale is not connected on this computer (${state}). Sign in from the Tailscale app, then run this again.`);
+      process.exitCode = 1;
+      return;
+    }
+    console.log(`Tailscale is connected. This computer's address: https://${name}`);
+    return;
+  }
   if (sub === 'serve' || sub === 'serve-status') {
     const bin = tailscaleBin({ env: process.env, which: (c) => which(c, process.env.PATH || '') });
     if (!bin) throw new CliError('Tailscale is not installed here (or its command was not found). Install it from https://tailscale.com/download and sign in, then try again.');

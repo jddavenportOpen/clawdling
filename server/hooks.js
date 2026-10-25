@@ -59,6 +59,7 @@ export const CLI_ALLOW = [
   // Use from anywhere, read-only: the addresses and Tailscale's serve status with private paths hidden.
   'Bash(clawdling remote list)',
   'Bash(clawdling remote serve-status)',
+  'Bash(clawdling remote tailscale-name)',
 ];
 
 /** On Windows an agent's shell may be PowerShell (no Git for Windows): same rules for that tool. */

@@ -37,8 +37,8 @@ until you turn it on, in Settings.
   devices ✓", "Behind Cloudflare Access ✓" or "Not reachable". Turn off stops answering at once
   (open terminals and live updates through it close), signs out every device, and offers "Remove
   the tunnel too".
-- **CLI:** `clawdling remote list|check`, `clawdling remote serve <https-url>`, `clawdling remote
-  serve-status`, `clawdling remote add <https-url> --kind tailscale|cloudflare [--email
+- **CLI:** `clawdling remote list|check`, `clawdling remote tailscale-name`, `clawdling remote serve
+  <https-url>`, `clawdling remote serve-status`, `clawdling remote add <https-url> --kind tailscale|cloudflare [--email
   you@example.com --team-domain <team>.cloudflareaccess.com --access-aud <tag>]`,
   `clawdling remote remove <url>|--all`, `clawdling remote off`. Donna's
   text-message turns cannot run them.
