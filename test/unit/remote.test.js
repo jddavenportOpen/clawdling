@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { deviceCookieHeader, originAllowed } from '../../server/auth.js';
 import {
   AccessVerifier, DeviceStore, PAIRING_TTL_MS, Pairings, RemoteStore, Throttle, answerable, checkCloudflare, checkTailscale, deviceLabel,
-  funnelOn, funnelState, hostKeys, parseRemoteUrl, remoteOriginAllowed, statusText, tailscaleBin, validateState,
+  funnelOn, funnelState, hostKeys, loopbackPeer, parseRemoteUrl, remoteOriginAllowed, statusText, tailscaleBin, validateState,
 } from '../../server/remote.js';
 import { rmrf, tempHome } from '../helpers.mjs';
 import { fakeAccess } from '../fixtures/fake-access.mjs';
@@ -52,10 +52,11 @@ test('Host matching is exact: the port must match, and :443 is the same as no po
 });
 
 test('which addresses are answered: never a public, unchecked or unprotected one', () => {
-  const ts = (status) => ({ kind: 'tailscale', status });
+  const ts = (status, login = 'owner@example.com') => ({ kind: 'tailscale', status, login });
   const cf = (status, access = { team_domain: 'https://team.cloudflareaccess.com', aud: 'a'.repeat(64) }) => ({ kind: 'cloudflare', status, access });
-  for (const s of ['private', 'unconfirmed', 'unreachable']) assert.equal(answerable(ts(s)), true, s);
-  for (const s of ['public', 'pending']) assert.equal(answerable(ts(s)), false, s);
+  for (const s of ['private', 'unreachable']) assert.equal(answerable(ts(s)), true, s);
+  for (const s of ['public', 'pending', 'unconfirmed']) assert.equal(answerable(ts(s)), false, s);
+  assert.equal(answerable(ts('private', null)), false, 'no owner login to check requests against');
   assert.equal(answerable(cf('access')), true);
   assert.equal(answerable(cf('access', null)), false, 'Access with no team and AUD to check tokens against');
   for (const s of ['unprotected', 'unverified', 'unreachable', 'pending']) assert.equal(answerable(cf(s)), false, s);
@@ -144,9 +145,25 @@ test('devices: a token works until revoked or expired; the file holds only a has
     const b = store.add({ label: 'Mac', host: 'x' });
     assert.equal(store.revokeAll(), 1);
     assert.equal(store.verify(b.token), null);
+    // Two processes, one file: a device signed out by one is signed out for the other, and a
+    // later "last used" write by the other never brings it back.
+    const c = store.add({ label: 'Phone', host: 'x' });
+    const other = new DeviceStore(file, { now: () => now });
+    const seen = other.verify(c.token);
+    assert.equal(seen.id, c.device.id);
+    assert.equal(store.revoke(c.device.id), true);
+    now += 120000;
+    other.touch(seen);
+    assert.equal(other.verify(c.token), null);
+    assert.equal(new DeviceStore(file, { now: () => now }).verify(c.token), null);
   } finally {
     rmrf(home);
   }
+});
+
+test('remote names are answered only from this computer (the tunnel), never from the Wi-Fi', () => {
+  for (const a of ['127.0.0.1', '127.0.0.53', '::1', '::ffff:127.0.0.1']) assert.equal(loopbackPeer(a), true, a);
+  for (const a of ['192.168.1.20', '100.64.0.9', '::ffff:192.168.1.20', 'fe80::1', '', undefined]) assert.equal(loopbackPeer(a), false, String(a));
 });
 
 test('pairing codes: single use, short expiry, at most a few outstanding', () => {
@@ -227,11 +244,17 @@ test('Tailscale check: public is refused; it must reach THIS Clawdling', async (
   const entry = parseRemoteUrl('https://box.example.ts.net:8743', 'tailscale');
   const off = async () => ({ stdout: '{}' });
   const on = async () => ({ stdout: JSON.stringify({ AllowFunnel: { 'box.example.ts.net:8743': true } }) });
-  const hello = (nonce) => async () => ({ status: 200, headers: {}, body: JSON.stringify({ clawdling: true, nonce }) });
+  const hello = (nonce, login = 'owner@example.com') => async () => ({ status: 200, headers: {}, body: JSON.stringify({ clawdling: true, nonce, ...(login ? { login } : {}) }) });
   assert.equal((await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: on, probeImpl: hello('n1') })).status, 'public');
-  assert.equal((await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1') })).status, 'private');
+  const ok = await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1') });
+  assert.equal(ok.status, 'private');
+  assert.equal(ok.login, 'owner@example.com');
   assert.equal((await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('other') })).status, 'unreachable', 'another Clawdling answered');
-  assert.equal((await checkTailscale(entry, { nonce: 'n1', bin: null, probeImpl: hello('n1') })).status, 'unconfirmed');
+  const unknown = await checkTailscale(entry, { nonce: 'n1', bin: null, probeImpl: hello('n1') });
+  assert.equal(unknown.status, 'unconfirmed', 'Funnel not confirmed off: fails closed');
+  assert.equal(answerable({ ...entry, ...unknown }), false);
+  assert.equal((await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1', null) })).status, 'unconfirmed', 'no Tailscale login (a tagged device)');
+  assert.equal((await checkTailscale({ ...entry, login: 'a@example.com' }, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1', 'b@example.com') })).status, 'unconfirmed', 'signed in as someone else now');
   const down = async () => { throw new Error('connect ECONNREFUSED'); };
   const r = await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: down });
   assert.equal(r.status, 'unreachable');

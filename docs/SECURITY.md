@@ -59,7 +59,11 @@ is reachable at the registered `https://` address, to whoever passes both locks 
 the same power as sitting at the computer, so it is guarded as such.
 
 **What protects it.**
-- **Lock 1, the door.** Tailscale: only devices signed in to the owner's tailnet can connect.
+- **Lock 1, the door.** Tailscale: only the owner's own devices get through. Tailscale Serve
+  adds a `Tailscale-User-Login` header for a request from a signed-in user's device (it strips any
+  copy a client sent, and never sets it for Funnel or tagged devices). The check records the
+  owner's login from its own request through the address, and every later request must carry
+  exactly that login, so another person on a shared tailnet is refused before they see a page.
   Cloudflare: Cloudflare Access makes every visitor sign in (an email policy) before Cloudflare
   forwards anything; Clawdling then checks the `Cf-Access-Jwt-Assertion` header Access adds on
   every request (RS256, signed by the team's keys at `<team>.cloudflareaccess.com/cdn-cgi/access/certs`,
@@ -81,6 +85,9 @@ the same power as sitting at the computer, so it is guarded as such.
   links never hold it, and `/api/pair` (which returns it) is refused. Things only the computer
   itself may do: make pairing links, add or remove addresses, turn remote on, stop the server, and
   post hook events. Turning it off works from anywhere.
+- **Only through the door.** A remote name is answered only on a connection from this computer
+  itself (the serve or tunnel process connects from `127.0.0.1`). With `--host 0.0.0.0`, a
+  computer on the Wi-Fi sending a remote `Host` is refused.
 - **Exact Host, https origin.** A remote request is matched on its exact `Host`, port included
   (`box.example.ts.net:8743` is not `box.example.ts.net`), against the registered addresses. A
   mutating request or WebSocket upgrade with an `Origin` must be exactly `https://<that address>`.
@@ -89,20 +96,24 @@ the same power as sitting at the computer, so it is guarded as such.
 - **Never public.** `clawdling remote add` checks an address before it is registered and leaves
   `remote.json` unchanged when the check fails. Tailscale: Funnel (Tailscale's public mode) must be
   off for that address (read with `tailscale serve status --json`, the only Tailscale command
-  Clawdling runs) and the address must reach this Clawdling (a one-time nonce through the
-  address). Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
+  Clawdling runs; if Clawdling cannot read it, the address is not answered) and the address must
+  reach this Clawdling (a one-time nonce through the address) with a Tailscale login on it. Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
   (which also gives the AUD tag); a page that answers (any 2xx, or Clawdling's own refusal,
   marked with `X-Clawdling-Refused`) means the address is public, and it is refused. Later checks
   (Settings' Check again, `clawdling remote check`) apply the same rules: an address found public
   or unprotected is not answered until a check passes again. A request marked `Tailscale-Funnel-Request` is always refused.
-- **Throttle.** On each remote address, 10 failed sign-ins (a wrong device credential or pairing
-  code) in 5 minutes make it refuse new attempts with `429` for the rest of the window. Paired
+- **Throttle.** Per remote address and per signed-in Tailscale login or Access email, 10 failed
+  sign-ins (a wrong device credential or pairing code) in 5 minutes make new attempts answer
+  `429` for the rest of the window, so nobody else can hold pairing shut for the owner. Paired
   devices keep working, and the computer itself is never throttled. A request with no credential
-  is not counted.
+  is not counted. (The secrets are 192 and 256 bits, so this is defence in depth, not what
+  stops guessing.)
 - **Turn off means off.** Settings' Turn off (or `clawdling remote off`) stops answering every
   remote address at once, closes their open terminal WebSockets and event streams, signs out
-  every device and voids every pairing link. Turning it on again needs every device to pair
-  again. The serve entry or tunnel stays until removed (`/remote-access off`, which removes only
+  every device and voids every pairing link. Turning it on again (from Settings, or a
+  `clawdling remote add` while it is off) signs out every device again, so each one pairs again.
+  `clawdling remote off` and `remove` go through the running server whenever one owns the org;
+  if it does not answer, the change is written to disk and the server re-reads both files. The serve entry or tunnel stays until removed (`/remote-access off`, which removes only
   what setup added).
 - **`remote.json` integrity.** `.clawdling/remote.json` (mode 600) is re-read whenever it changes
   and validated strictly: https addresses with a DNS name and no path, a known kind and status,
@@ -127,10 +138,10 @@ endpoint and the cockpit's sign-in page, and a single leaked or phished pairing 
 cookie would be the only thing between them and a shell on your computer. Access (or a tailnet)
 makes the attacker first be you.
 
-**Not in scope here.** Anyone the owner adds to their tailnet or their Access policy passes lock
-1; they still need a paired device. A stolen, unlocked, paired phone is the owner's device until
-it is signed out in Settings (or remote is turned off). An attacker who can reach the address can
-lock out new pairings for up to 5 minutes by failing on purpose.
+**Not in scope here.** Anyone the owner adds to their Access policy passes Cloudflare's lock 1
+(they still need a paired device); on Tailscale only the owner's own login does. A stolen,
+unlocked, paired phone is the owner's device until it is signed out in Settings (or remote is
+turned off).
 
 ## Donna
 

@@ -3,7 +3,9 @@
 // own process (the tests call the CLI synchronously, which would freeze an in-process server).
 // Prints its port on the first line of stdout. Each request reads FAKE_TUNNEL_DIR/mode:
 //   forward   pass the request to Clawdling (port in FAKE_TUNNEL_DIR/target) keeping the Host
-//             header and adding proxy headers, the way `tailscale serve` and cloudflared do
+//             header and adding proxy headers, the way `tailscale serve` and cloudflared do;
+//             like Tailscale Serve, it drops any Tailscale-* header the client sent and sets
+//             Tailscale-User-Login to FAKE_TUNNEL_DIR/login (none if that file is empty)
 //   access    a Cloudflare Access redirect to <team>.cloudflareaccess.com with the AUD as kid
 //   plain200  a page that answers without any sign-in
 //   down      drop the connection
@@ -37,7 +39,11 @@ const server = http.createServer((req, res) => {
     res.writeHead(302, { location: `https://team.cloudflareaccess.com/cdn-cgi/access/login/${host}?kid=${read('aud')}&redirect_url=%2F` });
     return res.end();
   }
-  const up = http.request({ host: '127.0.0.1', port: Number(read('target')), path: req.url, method: req.method, headers: { ...req.headers, 'x-forwarded-for': '100.64.0.9', 'x-forwarded-proto': 'https' } }, (r) => {
+  const headers = { ...req.headers, 'x-forwarded-for': '100.64.0.9', 'x-forwarded-proto': 'https' };
+  for (const k of Object.keys(headers)) if (k.startsWith('tailscale-')) delete headers[k];
+  const login = read('login', 'owner@example.com');
+  if (login) headers['tailscale-user-login'] = login;
+  const up = http.request({ host: '127.0.0.1', port: Number(read('target')), path: req.url, method: req.method, headers }, (r) => {
     res.writeHead(r.statusCode, r.headers);
     r.pipe(res);
   });

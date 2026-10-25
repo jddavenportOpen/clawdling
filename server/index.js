@@ -35,6 +35,7 @@ import {
   checkCloudflare,
   checkTailscale,
   deviceLabel,
+  loopbackPeer,
   parseRemoteUrl,
   remoteOriginAllowed,
   statusText,
@@ -559,17 +560,25 @@ export async function startServer(opts = {}) {
     async function classify(req, url) {
       const entry = remote.match(req.headers.host);
       if (entry) {
+        // Only the tunnel or serve process on this computer may use a remote name: with
+        // --host 0.0.0.0, a computer on the Wi-Fi sending that Host is not on the tailnet.
+        if (!loopbackPeer(req.socket.remoteAddress)) return { refused: 'unexpected Host header' };
         // The one exception to "on and checked": our own check reaching us through the address.
         if (url.pathname === '/api/remote/hello') return checkNonces.has(url.searchParams.get('nonce')) ? { remote: true, hello: true, entry } : { refused: 'unexpected Host header' };
         const st = remote.read();
         if (!st.enabled) return { refused: 'Use from anywhere is turned off on this computer.' };
         if (!answerable(entry)) return { refused: `Clawdling does not answer ${entry.url}: ${statusText(entry)}.` };
-        if (entry.kind === 'tailscale' && req.headers['tailscale-funnel-request'] !== undefined) return { refused: 'Clawdling never answers through Tailscale Funnel.' };
-        if (entry.kind === 'cloudflare') {
-          const v = await access.verify(req.headers['cf-access-jwt-assertion'], entry.access);
-          if (!v.ok) return { refused: `Cloudflare Access did not sign this request in (${v.reason}).` };
+        if (entry.kind === 'tailscale') {
+          if (req.headers['tailscale-funnel-request'] !== undefined) return { refused: 'Clawdling never answers through Tailscale Funnel.' };
+          // Tailscale Serve sets this for a signed-in user's device, strips any copy a client
+          // sent, and never sets it for Funnel: only the owner's own account gets through.
+          const login = req.headers['tailscale-user-login'];
+          if (typeof login !== 'string' || login !== entry.login) return { refused: 'Clawdling answers this address only for your own Tailscale account.' };
+          return { remote: true, entry, ident: login };
         }
-        return { remote: true, entry };
+        const v = await access.verify(req.headers['cf-access-jwt-assertion'], entry.access);
+        if (!v.ok) return { refused: `Cloudflare Access did not sign this request in (${v.reason}).` };
+        return { remote: true, entry, ident: v.email || 'access' };
       }
       if (!hostAllowed(req, allowed)) return { refused: 'unexpected Host header' };
       if (isLoopback(host) && PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) {
@@ -600,12 +609,16 @@ export async function startServer(opts = {}) {
         devices.touch(d);
         return { device: d };
       }
-      const key = who.entry.url;
+      const key = throttleKey(who);
       if (throttle.blocked(key)) return { status: 429, error: 'Too many failed sign-ins through this address. Wait a few minutes, then try again.', retryAfter: throttle.retryAfter(key) };
       throttle.fail(key);
       if (throttle.blocked(key)) logger.warn(`remote: too many failed sign-ins through ${key}; refusing new ones for a few minutes`);
       return { status: 401, error: 'This device is signed out. On your computer, open Settings, Use from anywhere, and add it again.' };
     }
+
+    // Failed sign-ins are counted per address AND per signed-in Tailscale or Access identity, so
+    // someone else on the tailnet (or in the Access policy) cannot hold pairing shut for the owner.
+    const throttleKey = (who) => `${who.entry.url} ${who.ident || ''}`;
 
     function trackRemote(who, close, emitter) {
       const c = { host: who.entry.url, device: who.device?.id, close };
@@ -682,7 +695,7 @@ export async function startServer(opts = {}) {
             Object.assign(h, { checked_at: r.checked_at, detail: `${r.detail} It passed its last check, and Clawdling still requires a Cloudflare Access sign-in on every request.` });
             continue;
           }
-          Object.assign(h, { status: r.status, detail: r.detail, checked_at: r.checked_at, ...(r.access ? { access: r.access } : {}) });
+          Object.assign(h, { status: r.status, detail: r.detail, checked_at: r.checked_at, ...(r.access ? { access: r.access } : {}), ...(r.login ? { login: r.login } : {}) });
         }
       });
       remoteChanged('checked');
@@ -704,7 +717,7 @@ export async function startServer(opts = {}) {
       const cur = remote.read();
       const prev = cur.hosts.find((h) => h.url === p.url) || null;
       if (!prev && cur.hosts.length >= MAX_HOSTS) throw new RemoteError(`Clawdling keeps at most ${MAX_HOSTS} remote addresses: remove one first`);
-      const draft = { url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null) };
+      const draft = { url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null), login: null };
       remote.update((s) => {
         s.hosts = s.hosts.filter((h) => h.url !== p.url);
         s.hosts.push(draft);
@@ -715,7 +728,7 @@ export async function startServer(opts = {}) {
       } catch (err) {
         r = { status: 'unreachable', detail: `The check failed: ${err.message}` };
       }
-      const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: r.access || draft.access };
+      const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: r.access || draft.access, login: r.login || null };
       // Added only once it is reachable and safe (a later "Not reachable" keeps it: that may pass).
       if (!answerable(done) || done.status === 'unreachable') {
         // Not safe or not reachable: leave remote.json the way it was.
@@ -726,6 +739,11 @@ export async function startServer(opts = {}) {
         const e = new HttpError(422, `Not added: ${r.detail}`);
         e.body = { status: r.status, status_text: statusText(done) };
         throw e;
+      }
+      // Off to on: nothing paired before comes back.
+      if (!remote.read().enabled) {
+        devices.revokeAll();
+        pairings.clear();
       }
       remote.update((s) => {
         s.hosts = s.hosts.map((h) => (h.url === p.url ? done : h));
@@ -784,7 +802,8 @@ export async function startServer(opts = {}) {
         ['GET', /^\/api\/remote\/hello$/, (req, m, res, url) => {
           const nonce = url.searchParams.get('nonce');
           if (!req.who.hello || !checkNonces.has(nonce)) throw notFound('no such API route');
-          return [200, { clawdling: true, nonce }];
+          const login = req.headers['tailscale-user-login'];
+          return [200, { clawdling: true, nonce, ...(typeof login === 'string' && login ? { login } : {}) }];
         }, { public: true, hello: true }],
         ['POST', /^\/api\/remote\/hosts$/, async (req) => {
           const b = await jsonBody(req);
@@ -811,6 +830,11 @@ export async function startServer(opts = {}) {
           }
           if (req.who.remote) throw new HttpError(403, 'Only the computer Clawdling runs on can turn this on.');
           if (!remote.read().hosts.length) throw new HttpError(409, 'There is no remote address yet: set it up first.');
+          if (!remote.read().enabled) {
+            // Off to on: every device pairs again.
+            devices.revokeAll();
+            pairings.clear();
+          }
           remote.update((s) => {
             s.enabled = true;
           });
@@ -840,7 +864,7 @@ export async function startServer(opts = {}) {
         ['POST', /^\/api\/remote\/pair$/, async (req, m, res) => {
           const who = req.who;
           if (!who.remote) throw new HttpError(403, 'Pairing links work only through your remote address.');
-          const key = who.entry.url;
+          const key = throttleKey(who);
           if (throttle.blocked(key)) {
             const e = new HttpError(429, 'Too many failed sign-ins through this address. Wait a few minutes, then try again.');
             e.retryAfter = throttle.retryAfter(key);

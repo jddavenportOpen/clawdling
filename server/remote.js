@@ -69,7 +69,9 @@ export function hostKeys(entry) {
 /** Can requests through this address be answered? Safety failures and unchecked ones cannot. */
 export function answerable(entry) {
   if (!entry) return false;
-  if (entry.kind === 'tailscale') return ['private', 'unconfirmed', 'unreachable'].includes(entry.status);
+  // Tailscale: only once Funnel is known to be off ("unreachable" is only ever set after that),
+  // and only with the owner's Tailscale login to compare each request against.
+  if (entry.kind === 'tailscale') return ['private', 'unreachable'].includes(entry.status) && !!entry.login;
   return entry.status === 'access' && !!entry.access;
 }
 
@@ -90,7 +92,12 @@ function validHost(h) {
     access = { team_domain: h.access.team_domain, aud: h.access.aud };
   }
   if (h.kind === 'cloudflare' && h.status === 'access' && !access) throw new Error(`host ${h.url} is marked as behind Access with no Access settings`);
-  return { url: p.url, host: p.host, port: p.port, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: cleanText(h.detail), access };
+  let login = null;
+  if (h.login != null) {
+    if (h.kind !== 'tailscale' || typeof h.login !== 'string' || !h.login || h.login.length > 320 || /[\u0000-\u001f\u007f]/.test(h.login)) throw new Error(`host ${h.url} has a bad Tailscale login`);
+    login = h.login;
+  }
+  return { url: p.url, host: p.host, port: p.port, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: cleanText(h.detail), access, login };
 }
 
 /**
@@ -119,6 +126,7 @@ function persistable(state) {
     hosts: state.hosts.map((h) => ({
       url: h.url, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: h.detail || null,
       ...(h.access ? { access: { team_domain: h.access.team_domain, aud: h.access.aud } } : {}),
+      ...(h.login ? { login: h.login } : {}),
     })),
   };
 }
@@ -197,23 +205,45 @@ export class DeviceStore {
     this.file = file;
     this.now = now;
     this.devices = [];
-    this.dirty = false;
+    this.stamp = null;
+    this.load();
+  }
+
+  /**
+   * Re-read the file whenever it changed on disk (one stat), before every read and write: a
+   * device signed out by another process (the CLI while this server was busy) stays signed out,
+   * and is never written back.
+   */
+  load() {
+    let st = null;
     try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8'));
+      st = fs.statSync(this.file);
+    } catch {
+      // no file: no devices
+    }
+    const stamp = st ? `${st.mtimeMs}:${st.size}:${st.ino}` : 'none';
+    if (stamp === this.stamp) return;
+    this.stamp = stamp;
+    this.devices = [];
+    if (!st) return;
+    try {
+      const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       if (raw && Array.isArray(raw.devices)) {
         this.devices = raw.devices.filter((d) => d && /^[0-9a-f]{12}$/.test(d.id) && /^[0-9a-f]{64}$/.test(d.hash) && typeof d.expires_at === 'string');
       }
     } catch {
-      // none yet (or unreadable: every device signs in again)
+      // unreadable: every device signs in again
     }
   }
 
   save() {
     writeFileAtomic(this.file, JSON.stringify({ version: 1, devices: this.devices }, null, 2) + '\n', 0o600);
-    this.dirty = false;
+    this.stamp = null;
+    this.load();
   }
 
   live() {
+    this.load();
     const t = this.now();
     return this.devices.filter((d) => Date.parse(d.expires_at) > t);
   }
@@ -246,7 +276,11 @@ export class DeviceStore {
   touch(d) {
     const t = this.now();
     if (d.last_seen_at && t - Date.parse(d.last_seen_at) < 60000) return;
-    d.last_seen_at = new Date(t).toISOString();
+    this.load();
+    const cur = this.devices.find((x) => x.id === d.id && x.hash === d.hash);
+    if (!cur) return; // signed out meanwhile: never written back
+    cur.last_seen_at = new Date(t).toISOString();
+    d.last_seen_at = cur.last_seen_at;
     try {
       this.save();
     } catch {
@@ -255,6 +289,7 @@ export class DeviceStore {
   }
 
   revoke(id) {
+    this.load();
     const before = this.devices.length;
     this.devices = this.devices.filter((d) => d.id !== id);
     if (this.devices.length !== before) this.save();
@@ -406,13 +441,20 @@ export async function probe(url, pathname, { env = process.env, testMode = false
   return { status: res.status, headers, body };
 }
 
-/** Tailscale: Funnel must be off for this address, and the address must reach THIS Clawdling. */
+/**
+ * Tailscale: Funnel must be known to be off for this address, and the address must reach THIS
+ * Clawdling. The check's own request comes from this computer through Tailscale Serve, which
+ * says who sent it (Tailscale-User-Login): that login is the owner's, and later requests must
+ * carry the same one.
+ */
 export async function checkTailscale(entry, { nonce, bin, run, env, testMode, probeImpl = probe } = {}) {
   const f = await funnelState(entry, { bin, run });
   if (f.known && f.funnel) {
     return { status: 'public', detail: 'Tailscale Funnel is on for this address, so anyone on the internet can reach it. Clawdling will not answer it until Funnel is off.' };
   }
+  if (!f.known) return { status: 'unconfirmed', detail: `Clawdling could not confirm Tailscale Funnel is off (${f.detail}), so it does not answer this address.` };
   let reached = false;
+  let login = null;
   let why = '';
   try {
     const r = await probeImpl(entry.url, `/api/remote/hello?nonce=${encodeURIComponent(nonce)}`, { env, testMode });
@@ -422,14 +464,21 @@ export async function checkTailscale(entry, { nonce, bin, run, env, testMode, pr
     } catch {
       // not ours
     }
-    if (r.status === 200 && j && j.clawdling === true && j.nonce === nonce) reached = true;
-    else why = r.status === 200 ? 'something else answers there' : `it answered ${r.status}`;
+    if (r.status === 200 && j && j.clawdling === true && j.nonce === nonce) {
+      reached = true;
+      login = typeof j.login === 'string' && j.login ? j.login : null;
+    } else why = r.status === 200 ? 'something else answers there' : `it answered ${r.status}`;
   } catch (err) {
     why = err.message;
   }
   if (!reached) return { status: 'unreachable', detail: `Could not reach this Clawdling at ${entry.url}${why ? ` (${why})` : ''}.` };
-  if (!f.known) return { status: 'unconfirmed', detail: `Reachable, but ${f.detail}, so Clawdling could not confirm Funnel is off.` };
-  return { status: 'private', detail: 'Only devices signed in to your tailnet can reach it.' };
+  if (!login && !entry.login) {
+    return { status: 'unconfirmed', detail: 'Tailscale did not say which account this computer is signed in to (a tagged device?), so Clawdling cannot tell your devices from others on the tailnet.' };
+  }
+  if (login && entry.login && login !== entry.login) {
+    return { status: 'unconfirmed', detail: 'This computer is now signed in to Tailscale as someone else. Remove the address and set it up again.' };
+  }
+  return { status: 'private', detail: 'Only your own devices, signed in to your Tailscale account, can reach it.', login: login || entry.login };
 }
 
 /**
@@ -537,7 +586,7 @@ export class AccessVerifier {
 export function statusText(entry) {
   const map = {
     private: 'Private to your devices ✓',
-    unconfirmed: 'Reachable on your tailnet (Funnel not confirmed off)',
+    unconfirmed: 'Not confirmed private ✗',
     access: 'Behind Cloudflare Access ✓',
     unreachable: 'Not reachable',
     public: 'Public: Tailscale Funnel is on ✗',
@@ -546,6 +595,12 @@ export function statusText(entry) {
     pending: 'Checking…',
   };
   return map[entry.status] || entry.status;
+}
+
+/** A peer address on this computer itself (the tunnel or serve process connects from here). */
+export function loopbackPeer(addr) {
+  const a = String(addr || '');
+  return a === '::1' || /^127\./.test(a) || /^::ffff:127\./i.test(a);
 }
 
 /** Origin check on a remote address: none (native apps, curl), or exactly https://<this address>. */

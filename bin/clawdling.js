@@ -967,11 +967,26 @@ function offlineRemote(ctx) {
   return { ...st, hosts: st.hosts.map((h) => ({ ...h, status_text: statusText(h) })), devices: new DeviceStore(ctx.paths.remoteDevices).list(), port: null };
 }
 
+/** Change remote.json and the devices file directly (no server answering). Both are re-read by a running server. */
+function remoteOffline(ctx, { all = false, target = null, off = false }) {
+  const store = new RemoteStore(ctx.paths.remote);
+  const devices = new DeviceStore(ctx.paths.remoteDevices);
+  if (target && !store.read().hosts.some((x) => x.url === target)) throw new CliError(`${target} is not a remote address of this Clawdling`);
+  store.update((s) => {
+    if (all) s.hosts = [];
+    else if (target) s.hosts = s.hosts.filter((x) => x.url !== target);
+    if (off || !s.hosts.length) s.enabled = false;
+  });
+  if (all || off || !store.read().hosts.length) devices.revokeAll();
+  else for (const d of devices.list()) if (d.host === target) devices.revoke(d.id);
+}
+
 async function cmdRemote(args) {
   const sub = args._[1] || 'list';
   const ctx = context(args.flags);
-  const h = await serverUp(ctx);
-  const running = !!h && h.home === ctx.home;
+  // A live pid in server.json means a server owns this org, even if it is slow to answer: its
+  // API is used (with the CLI's long timeout), never a quiet edit behind its back.
+  const running = !!ctx.info;
   const needServer = () => {
     if (!running) throw new CliError(`Clawdling isn't running for ${ctx.home}. Start it first: ${cliCmd(ctx.home, 'start')}`);
   };
@@ -981,12 +996,12 @@ async function cmdRemote(args) {
     printRemote(v);
   };
   if (sub === 'list' || sub === 'status') {
-    if (!running) {
-      const v = offlineRemote(ctx);
-      if (args.flags.json) return console.log(JSON.stringify(v, null, 2));
-      return printRemote(v, { stale: true });
-    }
-    return out(await api(ctx, 'GET', '/api/remote'));
+    let v = null;
+    if (running) v = await api(ctx, 'GET', '/api/remote').catch(() => null);
+    if (v) return out(v);
+    v = offlineRemote(ctx);
+    if (args.flags.json) return console.log(JSON.stringify(v, null, 2));
+    return printRemote(v, { stale: true });
   }
   if (sub === 'check') {
     needServer();
@@ -1012,44 +1027,35 @@ async function cmdRemote(args) {
     const v = await api(ctx, 'POST', '/api/remote/hosts', body);
     return out(v, `Added ${v.added}. Use from anywhere is on.\nNext: on your computer, open Settings, "Use from anywhere", and press "Add a device" to pair your phone.`);
   }
-  if (sub === 'remove') {
-    const all = args.flags.all === true;
+  if (sub === 'remove' || sub === 'off') {
+    const all = sub === 'remove' && args.flags.all === true;
     const url = args._[2];
-    if (!all && !url) throw new CliError(REMOTE_HELP);
+    if (sub === 'remove' && !all && !url) throw new CliError(REMOTE_HELP);
     let target = null;
-    if (!all) {
+    if (sub === 'remove' && !all) {
       try {
         target = parseRemoteUrl(url).url;
       } catch (err) {
         throw new CliError(err.message);
       }
     }
+    const done = sub === 'off' ? 'Use from anywhere is off. Every paired device is signed out.'
+      : all ? 'Removed every remote address. Use from anywhere is off.' : `Removed ${target}.`;
     if (running) {
-      const v = await api(ctx, 'POST', '/api/remote/remove', all ? { all: true } : { url: target });
-      return out(v, all ? 'Removed every remote address. Use from anywhere is off.' : `Removed ${target}.`);
+      try {
+        const v = sub === 'off' ? await api(ctx, 'POST', '/api/remote/enabled', { enabled: false })
+          : await api(ctx, 'POST', '/api/remote/remove', all ? { all: true } : { url: target });
+        return out(v, done);
+      } catch (err) {
+        // A 4xx is the server's answer (an unknown address): say it. A server that did not answer
+        // at all still gets the change, on disk, which it re-reads within seconds.
+        if (!/isn't running|nothing answered/.test(err.message)) throw err;
+        console.error(`clawdling: the cockpit (pid ${ctx.info.pid}) did not answer, so the change is written to disk; it applies within a few seconds.`);
+      }
     }
-    // Not running: nothing is answering, so edit the files directly.
-    const store = new RemoteStore(ctx.paths.remote);
-    const devices = new DeviceStore(ctx.paths.remoteDevices);
-    if (!all && !store.read().hosts.some((x) => x.url === target)) throw new CliError(`${target} is not a remote address of this Clawdling`);
-    store.update((s) => {
-      s.hosts = all ? [] : s.hosts.filter((x) => x.url !== target);
-      if (!s.hosts.length) s.enabled = false;
-    });
-    if (all || !store.read().hosts.length) devices.revokeAll();
-    else for (const d of devices.list()) if (d.host === target) devices.revoke(d.id);
-    console.log(all ? 'Removed every remote address. Use from anywhere is off.' : `Removed ${target}.`);
-    return printRemote(offlineRemote(ctx), { stale: true });
-  }
-  if (sub === 'off') {
-    if (running) return out(await api(ctx, 'POST', '/api/remote/enabled', { enabled: false }), 'Use from anywhere is off. Every paired device is signed out.');
-    const store = new RemoteStore(ctx.paths.remote);
-    store.update((s) => {
-      s.enabled = false;
-    });
-    new DeviceStore(ctx.paths.remoteDevices).revokeAll();
-    console.log('Use from anywhere is off. Every paired device is signed out.');
-    return;
+    remoteOffline(ctx, { all, target, off: sub === 'off' });
+    console.log(done);
+    return printRemote(offlineRemote(ctx), { stale: !running });
   }
   throw new CliError(REMOTE_HELP);
 }

@@ -51,11 +51,16 @@ function setMode(mode) {
   fs.writeFileSync(path.join(tunnelDir, 'mode'), mode);
 }
 
-/** A request as it arrives through the door: any Host, any headers. */
-function raw(method, p, { host = TS_HOST, headers = {}, body } = {}) {
+const OWNER = 'owner@example.com';
+
+/**
+ * A request as it arrives through the door: any Host, any headers. Through the Tailscale address
+ * it carries the owner's Tailscale-User-Login, as Tailscale Serve adds it (pass login: null for none).
+ */
+function raw(method, p, { host = TS_HOST, headers = {}, body, login = host === TS_HOST ? OWNER : null } = {}) {
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
-    const h = { host, ...headers, ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}) };
+    const h = { host, ...(login ? { 'tailscale-user-login': login } : {}), ...headers, ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}) };
     const req = http.request({ host: '127.0.0.1', port: srv.port, path: p, method, headers: h, agent: false }, (res) => {
       let text = '';
       res.setEncoding('utf8');
@@ -150,6 +155,19 @@ test('remote add refuses http, a non-Tailscale name, an unreachable address and 
   assert.equal(down.code, 1);
   assert.match(down.stderr, /Not added: Could not reach this Clawdling/);
   setMode('forward');
+  // Funnel cannot be confirmed off (the Tailscale command fails): refused, it fails closed.
+  fs.writeFileSync(serveFile, 'not json');
+  const bad = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
+  assert.equal(bad.status, 422);
+  assert.equal(bad.body.status, 'unconfirmed');
+  assert.match(bad.body.error, /could not confirm Tailscale Funnel is off/);
+  // Requests from this computer carry no Tailscale login (a tagged device): refused too.
+  fs.writeFileSync(path.join(tunnelDir, 'login'), '');
+  writeServe({});
+  const tagged = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
+  assert.equal(tagged.status, 422);
+  assert.match(tagged.body.error, /did not say which account/);
+  fs.writeFileSync(path.join(tunnelDir, 'login'), OWNER);
   writeServe({ AllowFunnel: { [`${TS_HOST}`]: true } });
   const pub = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
   assert.equal(pub.status, 422);
@@ -168,6 +186,7 @@ test('remote add (Tailscale): checked, private, on; Clawdling only ever ran `ser
   assert.equal(v.enabled, true);
   assert.equal(v.hosts[0].status, 'private');
   assert.equal(v.hosts[0].answering, true);
+  assert.equal(readJsonFile(path.join(home, '.clawdling', 'remote.json')).hosts[0].login, OWNER, 'the owner\'s Tailscale login, from the check\'s own request');
   const calls = fs.readFileSync(tsLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l).args.join(' '));
   assert.ok(calls.length >= 2);
   assert.ok(calls.every((c) => c === 'serve status --json'), calls.join(' | '));
@@ -179,6 +198,10 @@ test('Host allowlist: exactly the registered host and port; the hello check answ
   assert.equal((await raw('GET', '/api/org', { host: 'box.example.ts.net' })).status, 403, 'port missing');
   assert.equal((await raw('GET', '/api/org', { host: 'box.example.ts.net:8744' })).status, 403, 'other port');
   assert.equal((await raw('GET', '/api/org', { host: 'evil.example.com' })).status, 403);
+  const other = await raw('GET', '/api/org', { login: 'someone-else@example.com' });
+  assert.equal(other.status, 403, 'another account on the tailnet');
+  assert.match(other.body.error, /only for your own Tailscale account/);
+  assert.equal((await raw('GET', '/api/org', { login: null })).status, 403, 'no Tailscale login (Funnel, a tagged device, or not through Serve)');
   assert.equal((await raw('GET', '/api/remote/hello?nonce=abc')).status, 403);
   assert.equal((await request(srv, 'GET', '/api/remote/hello?nonce=abc')).status, 404, 'never on the local host');
   const health = await raw('GET', '/api/health');
@@ -284,14 +307,14 @@ test('pairing links expire', async () => {
     cli(['init', '--defaults'], { env: s2env, home: h2 });
     const s2 = await startServerProc({ home: h2, env: s2env });
     try {
-      fs.writeFileSync(path.join(h2, '.clawdling', 'remote.json'), JSON.stringify({ version: 1, enabled: true, hosts: [{ url: TS_URL, kind: 'tailscale', status: 'private', added_at: new Date().toISOString(), checked_at: null, detail: null }] }));
+      fs.writeFileSync(path.join(h2, '.clawdling', 'remote.json'), JSON.stringify({ version: 1, enabled: true, hosts: [{ url: TS_URL, kind: 'tailscale', status: 'private', added_at: new Date().toISOString(), checked_at: null, detail: null, login: OWNER }] }));
       const p = await request(s2, 'POST', '/api/remote/pairing', {});
       assert.equal(p.status, 201, p.text);
       const code = new URL(p.body.links[0].link).searchParams.get('pair');
       await sleep(450);
       const r = await new Promise((resolve) => {
         const data = JSON.stringify({ code });
-        const req = http.request({ host: '127.0.0.1', port: s2.port, path: '/api/remote/pair', method: 'POST', headers: { host: TS_HOST, 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (res) => {
+        const req = http.request({ host: '127.0.0.1', port: s2.port, path: '/api/remote/pair', method: 'POST', headers: { host: TS_HOST, 'tailscale-user-login': OWNER, 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } }, (res) => {
           res.resume();
           res.on('end', () => resolve(res.statusCode));
         });
@@ -317,7 +340,7 @@ test('proxy headers on a localhost Host, and Tailscale Funnel requests, are refu
 
 function openWs({ cookie, originUrl = TS_URL, query = '' }, sid) {
   return new Promise((resolve) => {
-    const headers = { Host: TS_HOST, ...(originUrl ? { Origin: originUrl } : {}), ...(cookie ? { Cookie: cookie } : {}) };
+    const headers = { Host: TS_HOST, 'Tailscale-User-Login': OWNER, ...(originUrl ? { Origin: originUrl } : {}), ...(cookie ? { Cookie: cookie } : {}) };
     const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/ws/term/${sid}${query}`, { headers });
     ws.once('open', () => resolve({ ws, open: true }));
     ws.once('unexpected-response', (req, res) => resolve({ ws, open: false, status: res.statusCode }));
@@ -327,7 +350,7 @@ function openWs({ cookie, originUrl = TS_URL, query = '' }, sid) {
 
 function openSse(cookie) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port: srv.port, path: '/api/events', headers: { host: TS_HOST, cookie }, agent: false }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port: srv.port, path: '/api/events', headers: { host: TS_HOST, 'tailscale-user-login': OWNER, cookie }, agent: false }, (res) => {
       const st = { status: res.statusCode, closed: false, res };
       res.on('close', () => (st.closed = true));
       res.on('data', () => {});

@@ -120,7 +120,7 @@ test('status rows: each address with its last check, in plain words', async ({ p
   await expect(rows.nth(1).getByTestId('remote-status')).toHaveText('Behind Cloudflare Access ✓');
   await expect(rows.nth(2).getByTestId('remote-status')).toHaveText('Not reachable');
   await expect(rows.nth(2)).toContainText('timed out');
-  await expect(rows.nth(0)).toContainText('checked 2m ago');
+  await expect(rows.nth(0)).toContainText('checked 2 min ago');
   await expect(c.getByTestId('remote-device')).toHaveCount(1);
   await expect(c.getByTestId('remote-device')).toContainText('iPhone · Safari');
   await shot(page, 'us54-status-rows', c);

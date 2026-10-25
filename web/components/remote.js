@@ -32,6 +32,16 @@ export const REMOTE_PATHS = {
 export const remotePrompt = (path) => `/remote-access ${path}`;
 
 const KIND_LABEL = { tailscale: 'Tailscale', cloudflare: 'Cloudflare (beta)' };
+/** "just now", "2 min ago", "3 h ago", "yesterday", "Oct 3": plain words for a past time. */
+export function ago(ts) {
+  const r = relTime(ts);
+  if (!r) return '';
+  if (r === 'now') return 'just now';
+  if (/^\d+m$/.test(r)) return `${r.slice(0, -1)} min ago`;
+  if (/^\d+h$/.test(r)) return `${r.slice(0, -1)} h ago`;
+  if (/^\d+d$/.test(r)) return `${r.slice(0, -1)} days ago`;
+  return r;
+}
 const GOOD = new Set(['private', 'access']);
 
 export function RemoteCard() {
@@ -131,7 +141,7 @@ export function RemoteCard() {
           ${hosts.map((h) => html`<li class="remote-host" data-testid="remote-host" data-status=${h.status} key=${h.url}>
             <span class="remote-host-main">
               <span class="mono remote-url">${h.url}</span>
-              <span class="set-sub">${KIND_LABEL[h.kind] || h.kind}${h.checked_at ? ` · checked ${relTime(h.checked_at)}` : ''}</span>
+              <span class="set-sub">${KIND_LABEL[h.kind] || h.kind}${h.checked_at ? ` · checked ${ago(h.checked_at)}` : ''}</span>
             </span>
             <span class=${`remote-status ${!on ? 'is-off' : GOOD.has(h.status) ? 'is-good' : h.answering ? 'is-warn' : 'is-bad'}`} data-testid="remote-status">
               <${Icon} name=${on && GOOD.has(h.status) ? 'check' : 'alert'} size=${13} />
@@ -153,7 +163,7 @@ export function RemoteCard() {
           ${devices.length ? html`<ul class="acct-list">
             ${devices.map((d) => html`<li class="set-row" data-testid="remote-device" key=${d.id}>
               <span class="set-label">${d.label}${d.id === here.device ? html` <span class="card-tag">This device</span>` : null}
-                <span class="set-sub">Paired ${relTime(d.created_at)}${d.last_seen_at ? ` · last used ${relTime(d.last_seen_at)}` : ''}</span></span>
+                <span class="set-sub">Paired ${ago(d.created_at)}${d.last_seen_at ? ` · last used ${ago(d.last_seen_at)}` : ''}</span></span>
               <button class="btn btn-quiet btn-sm" onClick=${() => signOut(d)} disabled=${!!busy} data-testid="remote-signout">Sign out</button>
             </li>`)}
           </ul>` : html`<p class="set-note remote-none">No device is paired yet.</p>`}
