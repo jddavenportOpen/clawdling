@@ -12,6 +12,7 @@ import { selectBackend } from '../server/backend.js';
 import { cliInvocation, stopMessage } from '../server/hints.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
+import { DeviceStore, RemoteStore, parseRemoteUrl, statusText } from '../server/remote.js';
 import { oneLine, readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
@@ -56,6 +57,12 @@ Usage:
   clawdling donna telegram --token <T>      connect Donna to a Telegram bot, print a pairing code
   clawdling donna imessage --handle <you>   let Donna answer your iMessages (macOS, experimental)
   clawdling donna status
+  clawdling remote list|check [--json]       Use from anywhere: is it on, and is each address private
+  clawdling remote add <https-url> --kind tailscale|cloudflare [--team-domain T --access-aud A]
+                                            register a Tailscale Serve or Cloudflare Tunnel address
+                                            (checked first: never a public one, never one without Access)
+  clawdling remote remove <https-url>|--all  forget an address (--all: forget every one, turn it off)
+  clawdling remote off                      stop answering remote addresses and sign out every device
   clawdling service install|uninstall [--dry-run]
                                             start the cockpit at login (macOS launchd, Linux
                                             systemd, Windows Startup folder)
@@ -69,6 +76,12 @@ picks one (tmux or pty).
 // ------------------------------------------------------------------------------------- args
 
 const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-enter', 'print', 'dry-run', 'disable', 'pair', 'help', 'version', 'setup', 'no-github', 'recent', 'clone', 'yes']);
+const REMOTE_HELP = `usage:
+  clawdling remote list [--json]
+  clawdling remote check [--json]
+  clawdling remote add <https-url> --kind tailscale|cloudflare [--team-domain <team>.cloudflareaccess.com --access-aud <AUD tag>]
+  clawdling remote remove <https-url> | --all
+  clawdling remote off`;
 
 export function parseArgs(argv) {
   const out = { _: [], flags: {} };
@@ -194,7 +207,7 @@ function openInBrowser(url) {
   }
 }
 
-const DONNA_FORBIDDEN = new Set(['init', 'start', 'stop', 'service', 'donna', 'attach', 'open']);
+const DONNA_FORBIDDEN = new Set(['init', 'start', 'stop', 'service', 'donna', 'attach', 'open', 'remote']);
 
 // ------------------------------------------------------------------------------------- commands
 
@@ -927,6 +940,120 @@ function runClaude(bin, args, env, opts = {}) {
   return spawnSync(cmd.file, cmd.args, spawnOptions(cmd, { env, ...opts }));
 }
 
+// ------------------------------------------------------------------- Use from anywhere (1.3)
+
+function printRemote(v, { stale = false } = {}) {
+  const hosts = v.hosts || [];
+  if (!hosts.length) {
+    console.log('Use from anywhere: off. Nothing outside this computer can reach the cockpit.');
+    if (v.invalid) console.log(v.invalid);
+    console.log('To turn it on, open Settings in the cockpit, "Use from anywhere".');
+    return;
+  }
+  console.log(`Use from anywhere: ${v.enabled ? 'on' : 'off'}${stale ? ' (Clawdling is not running, so nothing answers right now)' : ''}`);
+  if (v.port) console.log(`Clawdling itself listens on http://127.0.0.1:${v.port} only; these addresses are the doors in:`);
+  for (const h of hosts) {
+    const when = h.checked_at ? `, checked ${rel(h.checked_at)}` : '';
+    const answering = v.enabled && h.answering === false ? ' [not answering]' : '';
+    console.log(`  ${pad(h.url, 46)}${pad(h.kind, 12)}${h.status_text || statusText(h)}${answering}${when}`);
+    if (h.detail && h.status !== 'private' && h.status !== 'access') console.log(`    ${h.detail}`);
+  }
+  const devices = v.devices || [];
+  console.log(`Paired devices: ${devices.length}${devices.length ? ` (${devices.map((d) => d.label).join(', ')})` : ''}`);
+}
+
+function offlineRemote(ctx) {
+  const st = new RemoteStore(ctx.paths.remote).read();
+  return { ...st, hosts: st.hosts.map((h) => ({ ...h, status_text: statusText(h) })), devices: new DeviceStore(ctx.paths.remoteDevices).list(), port: null };
+}
+
+async function cmdRemote(args) {
+  const sub = args._[1] || 'list';
+  const ctx = context(args.flags);
+  const h = await serverUp(ctx);
+  const running = !!h && h.home === ctx.home;
+  const needServer = () => {
+    if (!running) throw new CliError(`Clawdling isn't running for ${ctx.home}. Start it first: ${cliCmd(ctx.home, 'start')}`);
+  };
+  const out = (v, extra) => {
+    if (args.flags.json) return console.log(JSON.stringify(v, null, 2));
+    if (extra) console.log(extra);
+    printRemote(v);
+  };
+  if (sub === 'list' || sub === 'status') {
+    if (!running) {
+      const v = offlineRemote(ctx);
+      if (args.flags.json) return console.log(JSON.stringify(v, null, 2));
+      return printRemote(v, { stale: true });
+    }
+    return out(await api(ctx, 'GET', '/api/remote'));
+  }
+  if (sub === 'check') {
+    needServer();
+    const v = await api(ctx, 'POST', '/api/remote/check');
+    out(v);
+    if (v.hosts.some((x) => !x.answering)) process.exitCode = 1;
+    return;
+  }
+  if (sub === 'add') {
+    const url = args._[2];
+    if (!url) throw new CliError(REMOTE_HELP);
+    const kind = args.flags.kind;
+    if (kind !== 'tailscale' && kind !== 'cloudflare') throw new CliError('add needs --kind tailscale or --kind cloudflare');
+    try {
+      parseRemoteUrl(url, kind);
+    } catch (err) {
+      throw new CliError(err.message);
+    }
+    needServer();
+    const body = { url, kind };
+    if (args.flags['team-domain'] !== undefined) body.team_domain = String(args.flags['team-domain']);
+    if (args.flags['access-aud'] !== undefined) body.access_aud = String(args.flags['access-aud']);
+    const v = await api(ctx, 'POST', '/api/remote/hosts', body);
+    return out(v, `Added ${v.added}. Use from anywhere is on.\nNext: on your computer, open Settings, "Use from anywhere", and press "Add a device" to pair your phone.`);
+  }
+  if (sub === 'remove') {
+    const all = args.flags.all === true;
+    const url = args._[2];
+    if (!all && !url) throw new CliError(REMOTE_HELP);
+    let target = null;
+    if (!all) {
+      try {
+        target = parseRemoteUrl(url).url;
+      } catch (err) {
+        throw new CliError(err.message);
+      }
+    }
+    if (running) {
+      const v = await api(ctx, 'POST', '/api/remote/remove', all ? { all: true } : { url: target });
+      return out(v, all ? 'Removed every remote address. Use from anywhere is off.' : `Removed ${target}.`);
+    }
+    // Not running: nothing is answering, so edit the files directly.
+    const store = new RemoteStore(ctx.paths.remote);
+    const devices = new DeviceStore(ctx.paths.remoteDevices);
+    if (!all && !store.read().hosts.some((x) => x.url === target)) throw new CliError(`${target} is not a remote address of this Clawdling`);
+    store.update((s) => {
+      s.hosts = all ? [] : s.hosts.filter((x) => x.url !== target);
+      if (!s.hosts.length) s.enabled = false;
+    });
+    if (all || !store.read().hosts.length) devices.revokeAll();
+    else for (const d of devices.list()) if (d.host === target) devices.revoke(d.id);
+    console.log(all ? 'Removed every remote address. Use from anywhere is off.' : `Removed ${target}.`);
+    return printRemote(offlineRemote(ctx), { stale: true });
+  }
+  if (sub === 'off') {
+    if (running) return out(await api(ctx, 'POST', '/api/remote/enabled', { enabled: false }), 'Use from anywhere is off. Every paired device is signed out.');
+    const store = new RemoteStore(ctx.paths.remote);
+    store.update((s) => {
+      s.enabled = false;
+    });
+    new DeviceStore(ctx.paths.remoteDevices).revokeAll();
+    console.log('Use from anywhere is off. Every paired device is signed out.');
+    return;
+  }
+  throw new CliError(REMOTE_HELP);
+}
+
 async function cmdDoctor(args) {
   const ctx = context(args.flags);
   let bad = 0;
@@ -1044,6 +1171,7 @@ export async function main(argv = process.argv.slice(2)) {
     end: cmdEnd,
     resume: cmdResume,
     donna: cmdDonna,
+    remote: cmdRemote,
     service: cmdService,
   };
   const fn = table[cmd];
