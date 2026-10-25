@@ -33,7 +33,11 @@ function runHook(event, payload, env) {
 
 test('generated settings register every hook with safely quoted paths (macOS / Linux shell form)', () => {
   const s = buildHooksSettings({ nodePath: "/opt/my node/bin/node", hookScript: "/Users/o'brien/app/bin/clawdling-hook.js", platform: 'linux', stopFailure: true });
-  assert.deepEqual(Object.keys(s.hooks), HOOK_EVENTS);
+  assert.deepEqual(Object.keys(s.hooks), [...HOOK_EVENTS, 'PreToolUse', 'PostToolUse']);
+  for (const ev of ['PreToolUse', 'PostToolUse']) {
+    assert.deepEqual(s.hooks[ev].map((g) => g.matcher), ['AskUserQuestion|ExitPlanMode'], `${ev}: only the two tools that ask the person something`);
+    assert.equal(s.hooks[ev][0].hooks[0].command, `'/opt/my node/bin/node' '/Users/o'\\''brien/app/bin/clawdling-hook.js' ${ev}`);
+  }
   for (const ev of HOOK_EVENTS) {
     const h = s.hooks[ev][0].hooks[0];
     assert.equal(h.type, 'command');

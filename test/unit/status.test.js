@@ -245,7 +245,7 @@ test('StopFailure is registered only for a Claude Code that has it (2.1.229+)', 
   for (const v of ['2.1.229 (Claude Code)', '2.1.283 (Claude Code)', '2.2.0', '3.0.1 (Claude Code)']) assert.equal(supportsStopFailure(v), true, v);
   for (const v of ['2.1.228 (Claude Code)', '2.0.999', '1.9.0', '', null, 'claude: command not found']) assert.equal(supportsStopFailure(v), false, String(v));
   const args = { nodePath: '/usr/bin/node', hookScript: '/app/bin/clawdling-hook.js', platform: 'linux' };
-  assert.deepEqual(Object.keys(buildHooksSettings(args).hooks), ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd']);
+  assert.deepEqual(Object.keys(buildHooksSettings(args).hooks), ['SessionStart', 'UserPromptSubmit', 'Stop', 'Notification', 'SessionEnd', 'PreToolUse', 'PostToolUse']);
   const withIt = buildHooksSettings({ ...args, stopFailure: true }).hooks;
   assert.ok(withIt.StopFailure[0].hooks[0].command.endsWith(" 'StopFailure'") || withIt.StopFailure[0].hooks[0].command.endsWith(' StopFailure'), withIt.StopFailure[0].hooks[0].command);
 });

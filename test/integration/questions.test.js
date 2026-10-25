@@ -51,10 +51,10 @@ test('a question: the card has it (question, options, descriptions) and answerin
   assert.equal(v.status, 'needs_you');
   assert.equal(v.asking.kind, 'question');
   assert.match(v.notification, /^Claude asks: Which color do you like best\?/);
-  const tool = (await messages(s.sid)).flatMap((m) => m.tools || []).find((t) => t.ask);
-  assert.equal(tool.id, v.asking.tool_id);
-  assert.deepEqual(tool.ask.questions[0].options.map((o) => o.label), ['Red', 'Green', 'Blue']);
-  assert.equal(tool.ask.questions[0].options[1].description, 'A calm, natural color.');
+  // The card comes from the PreToolUse hook: the transcript has no line for it yet (as in 2.1.283).
+  assert.equal((await messages(s.sid)).flatMap((m) => m.tools || []).find((t) => t.ask), undefined);
+  assert.deepEqual(v.asking.card.questions[0].options.map((o) => o.label), ['Red', 'Green', 'Blue']);
+  assert.equal(v.asking.card.questions[0].options[1].description, 'A calm, natural color.');
 
   // Wrong id, bad shapes: refused, nothing typed.
   assert.equal((await answer(s.sid, { tool_id: 'toolu_other', answers: [{ choices: [0] }] })).status, 409);
@@ -67,7 +67,9 @@ test('a question: the card has it (question, options, descriptions) and answerin
   const done = await until(s.sid, (x) => x.status === 'ready', 'turn done');
   assert.equal(done.last_message, 'you chose Blue');
   assert.equal(done.asking, null);
-  const ans = (await messages(s.sid)).find((m) => m.role === 'answer');
+  const after = await messages(s.sid);
+  assert.equal(after.flatMap((m) => m.tools || []).find((t) => t.ask)?.id, v.asking.tool_id, 'the transcript has it once answered');
+  const ans = after.find((m) => m.role === 'answer');
   assert.deepEqual(ans.answers, { 'Which color do you like best?': 'Blue' });
   assert.equal(ans.tool_id, v.asking.tool_id);
 });
@@ -102,8 +104,7 @@ test('a plan: approve, or send it back with what to change', async () => {
   assert.equal(v.asking.kind, 'plan');
   assert.match(v.notification, /plan ready/);
   assert.deepEqual(v.choices.map((c) => c.label.replace(/\s+shift\+tab.*$/, '')), ['1. Yes, auto-accept edits', '2. Yes, manually approve edits', '3. Tell Claude what to change']);
-  const plan = (await messages(s.sid)).flatMap((m) => m.tools || []).find((t) => t.ask?.kind === 'plan');
-  assert.match(plan.ask.plan, /Write hi into it/);
+  assert.match(v.asking.card.plan, /Write hi into it/);
   assert.equal((await answer(s.sid, { option: 2, text: 'nope' })).status, 400, 'text only goes with "Tell Claude what to change"');
   let r = await answer(s.sid, { option: 3, text: 'Add a step that prints it' });
   assert.equal(r.status, 200, JSON.stringify(r.body));

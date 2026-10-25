@@ -54,10 +54,11 @@ test('as a hook: exit 2 with the reason refuses, exit 0 lets it through, bad inp
 
 test('only the setup chat\'s settings file registers the guard', () => {
   const base = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', home: '/h', platform: 'linux' });
-  assert.equal(base.hooks.PreToolUse, undefined);
+  assert.deepEqual(base.hooks.PreToolUse.map((g) => g.matcher), ['AskUserQuestion|ExitPlanMode'], 'only the question-card hook, no guard');
   const guarded = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', home: '/h', guardScript: '/x/guard.js', platform: 'linux' });
   assert.equal(guarded.hooks.PreToolUse[0].matcher, GUARDED_TOOLS);
   assert.match(guarded.hooks.PreToolUse[0].hooks[0].command, /'\/x\/guard\.js'$/);
+  assert.equal(guarded.hooks.PreToolUse.length, 2);
   const win = buildHooksSettings({ nodePath: 'C:\\node.exe', hookScript: 'C:\\x\\hook.js', guardScript: 'C:\\x\\guard.js', platform: 'win32' });
   assert.deepEqual(win.hooks.PreToolUse[0].hooks[0].args, ['C:/x/guard.js']);
 });

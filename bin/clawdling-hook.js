@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Claude Code hook → Clawdling server. Registered for SessionStart, UserPromptSubmit, Stop,
-// Notification and SessionEnd via the generated --settings file.
+// Notification and SessionEnd via the generated --settings file, and for PreToolUse of the two
+// tools that ask the person something (AskUserQuestion, ExitPlanMode: the chat's question cards).
 //
 // Contract: never block or alter Claude. It prints nothing (stdout of some hooks is added to the
 // conversation), always exits 0, and gives up after 1.5 seconds. If the event is not delivered
@@ -79,6 +80,13 @@ async function main() {
     error_details: clip(payload.error_details, 500),
     permission_mode: clip(payload.permission_mode, 40), // the mode the session is in now
   };
+  // A question or a plan Claude is about to show: its id and input (only these two tools, bounded).
+  if ((event === 'PreToolUse' || event === 'PostToolUse') && (payload.tool_name === 'AskUserQuestion' || payload.tool_name === 'ExitPlanMode')) {
+    slim.tool_name = payload.tool_name;
+    slim.tool_use_id = clip(payload.tool_use_id, 100);
+    const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : null;
+    if (event === 'PreToolUse' && input && JSON.stringify(input).length <= 64 * 1024) slim.tool_input = input;
+  }
   const record = { event, sid, payload: slim, ts: new Date().toISOString(), ...(process.env.CLAWDLING_LAUNCH ? { launch: process.env.CLAWDLING_LAUNCH } : {}) };
   let token = '';
   let port = Number(process.env.CLAWDLING_PORT) || 0;

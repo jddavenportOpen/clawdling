@@ -587,17 +587,21 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const tool = plan
       ? { name: 'ExitPlanMode', summary: '', detail: MOCK_PLAN, id, ask: { kind: 'plan', plan: MOCK_PLAN } }
       : { name: 'AskUserQuestion', summary: MOCK_QUESTIONS[kind][0].question, detail: '', id, ask: { kind: 'question', questions: MOCK_QUESTIONS[kind] } };
-    chat.push({ n: chat.length, role: 'assistant', text: '', tools: [tool], ts: new Date().toISOString(), model: 'claude-sonnet-5' });
+    // Like Claude Code 2.1.283, the tool's transcript line comes only with its answer (answerAsk);
+    // until then the card comes from `asking.card` (core: the PreToolUse hook).
+    s.pendingTool = tool;
     out(s, `\r\n${BOLD}${plan ? 'Ready to code?' : MOCK_QUESTIONS[kind][0].question}${RESET}\r\n`);
     const choices = plan ? ['1. Yes, auto-accept edits', '2. Yes, manually approve edits', '3. Tell Claude what to change shift+tab to approve with this feedback'].map((label, i) => ({ option: i + 1, label })) : null;
     setStatus(s, 'needs_you', {
       waiting_on: 'permission_prompt', choices,
       notification: plan ? 'Claude has a plan ready and asks you to approve it.' : `Claude asks: ${MOCK_QUESTIONS[kind][0].question}`,
-      asking: { kind: plan ? 'plan' : 'question', tool_id: id, questions: plan ? 0 : MOCK_QUESTIONS[kind].length },
+      asking: { kind: plan ? 'plan' : 'question', tool_id: id, questions: plan ? 0 : MOCK_QUESTIONS[kind].length, card: tool.ask },
     });
   }
   function answerAsk(s, entry, said) {
     const chat = st.transcripts.get(s.sid) || [];
+    if (s.pendingTool) chat.push({ n: chat.length, role: 'assistant', text: '', tools: [s.pendingTool], ts: new Date().toISOString(), model: 'claude-sonnet-5' });
+    s.pendingTool = null;
     chat.push({ n: chat.length, role: 'answer', text: '', tools: [], ts: new Date().toISOString(), ...entry });
     s.asking = null;
     setStatus(s, 'working');
@@ -1067,8 +1071,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       if (mm[2] === '/answer' && m === 'POST' && Array.isArray(body.answers)) {
         // A question card: {tool_id, answers: [{choices} | {text}]} (core: sessions.answerQuestion).
         if (s.status !== 'needs_you' || s.asking?.kind !== 'question' || body.tool_id !== s.asking.tool_id) { send(res, 409, { error: 'that question has already been answered or replaced' }); return; }
-        const tool = (st.transcripts.get(s.sid) || []).flatMap((e) => e.tools || []).find((t) => t.id === body.tool_id);
-        const qs = tool.ask.questions;
+        const qs = s.pendingTool.ask.questions;
         if (body.answers.length !== qs.length) { send(res, 400, { error: `send one answer per question (${qs.length})` }); return; }
         const labels = body.answers.map((a, i) => (a.text ? String(a.text) : (a.choices || []).map((c) => qs[i].options[c]?.label).join(', ')));
         const answers = Object.fromEntries(qs.map((q, i) => [q.question, labels[i]]));

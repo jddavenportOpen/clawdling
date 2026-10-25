@@ -152,7 +152,7 @@ if (opts.print) {
 }
 
 // ------------------------------------------------------------------ interactive mode
-function hookCommands(event) {
+function hookCommands(event, toolName = null) {
   if (!opts.settings) return [];
   let s;
   try {
@@ -160,7 +160,8 @@ function hookCommands(event) {
   } catch {
     return [];
   }
-  const groups = s?.hooks?.[event] || [];
+  // Tool events run only the groups whose matcher matches the tool, like Claude Code.
+  const groups = (s?.hooks?.[event] || []).filter((g) => !toolName || !g.matcher || new RegExp(`^(?:${g.matcher})$`).test(toolName));
   return groups.flatMap((g) => (g.hooks || []).filter((h) => h.type === 'command'));
 }
 
@@ -173,7 +174,7 @@ const transcriptPath = process.env.CLAUDE_CONFIG_DIR
 function runHook(event, extra = {}) {
   const payload = JSON.stringify({ session_id: sid, transcript_path: transcriptPath, cwd: process.cwd(), permission_mode: opts.permissionMode || 'default', hook_event_name: event, ...extra });
   return Promise.all(
-    hookCommands(event).map(
+    hookCommands(event, extra.tool_name || null).map(
       (h) =>
         new Promise((resolve) => {
           // Exec form (`args`) spawns the program directly; shell form goes to sh -c.
@@ -328,7 +329,10 @@ function questionKey(q) {
 
 async function askUserQuestion(questions) {
   const id = `toolu_ask${crypto.randomBytes(5).toString('hex')}`;
-  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }] });
+  // Like Claude Code 2.1.283: PreToolUse first; the tool_use line reaches the transcript only once
+  // it is answered (a real session showed nothing in the transcript while the question was open).
+  await runHook('PreToolUse', { tool_name: 'AskUserQuestion', tool_input: { questions }, tool_use_id: id });
+  const late = () => transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }] });
   process.stdout.write('\x1b[2J\x1b[H');
   const notified = runHook('Notification', { message: 'Claude needs your permission', notification_type: 'permission_prompt' });
   const answers = {};
@@ -352,10 +356,12 @@ async function askUserQuestion(questions) {
     if (r.cancel) cancelled = true;
   }
   await notified;
+  late();
   if (cancelled) {
     transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: "The user doesn't want to proceed with this tool use." }] }, { toolUseResult: 'User rejected tool use' });
     return null;
   }
+  await runHook('PostToolUse', { tool_name: 'AskUserQuestion', tool_use_id: id });
   const said = Object.entries(answers).map(([k, v]) => `"${k}"="${v}"`).join(', ');
   transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `Your questions have been answered: ${said}. You can now continue with these answers in mind.` }] }, { toolUseResult: { questions, answers, annotations: {} } });
   return answers;
@@ -365,7 +371,7 @@ const PLAN_CHOICES = ['Yes, auto-accept edits', 'Yes, manually approve edits', '
 
 async function planApproval(plan) {
   const id = `toolu_plan${crypto.randomBytes(5).toString('hex')}`;
-  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input: { plan } }] });
+  await runHook('PreToolUse', { tool_name: 'ExitPlanMode', tool_input: { plan }, tool_use_id: id });
   process.stdout.write('\x1b[2J\x1b[H');
   const notified = runHook('Notification', { message: 'Claude Code needs your approval for the plan', notification_type: 'permission_prompt' });
   const view = (st) => [`  ${RULE}`, '   Ready to code?', "   Here is Claude's plan:", `  ${DOTS}`, ...plan.split('\n').filter(Boolean).map((l) => `   ${l.replace(/^#+\s*/, '')}`), `  ${DOTS}`,
@@ -383,6 +389,8 @@ async function planApproval(plan) {
     return undefined;
   });
   await notified;
+  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input: { plan } }] });
+  await runHook('PostToolUse', { tool_name: 'ExitPlanMode', tool_use_id: id });
   if (r.feedback !== undefined) {
     transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n${r.feedback}` }] }, { toolUseResult: `Error: The user doesn't want to proceed with this tool use. To tell you how to proceed, the user said:\n${r.feedback}` });
     return { feedback: r.feedback };

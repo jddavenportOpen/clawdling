@@ -88,6 +88,17 @@ export function ChatView({ s, agent, messages }) {
   }, []);
 
   const ended = s.status === 'ended';
+  // Claude Code writes a question's line to the transcript only once it is answered: until then
+  // the card comes from the session (`asking.card`, from its PreToolUse hook), and stays mounted
+  // until the transcript has it, so its "Sent" state does not blink away.
+  const early = useRef(null);
+  const inTranscript = (id) => messages.some((m) => (m.tools || []).some((t) => t && t.id === id));
+  if (s.asking && s.asking.card && s.asking.tool_id && !inTranscript(s.asking.tool_id)) {
+    if (!early.current || early.current.tool_id !== s.asking.tool_id) early.current = { tool_id: s.asking.tool_id, card: s.asking.card };
+  } else if (early.current && inTranscript(early.current.tool_id)) {
+    early.current = null;
+  }
+  const pendingMsg = early.current ? { n: `ask-${early.current.tool_id}`, role: 'assistant', text: '', tools: [{ name: early.current.card.kind === 'plan' ? 'ExitPlanMode' : 'AskUserQuestion', id: early.current.tool_id, ask: early.current.card }] } : null;
   // A question's or a plan's answer is its own transcript entry; the card shows it.
   const answers = useMemo(() => {
     const m = {};
@@ -98,6 +109,7 @@ export function ChatView({ s, agent, messages }) {
     <div class="chat-list" ref=${list} onScroll=${onScroll} role="log" aria-label="Conversation" aria-live="polite">
       <div class="chat-inner">
         ${messages.map((m) => (m.role === 'answer' ? null : html`<${Message} key=${m.n} m=${m} s=${s} answers=${answers} />`))}
+        ${pendingMsg ? html`<${Message} key=${pendingMsg.n} m=${pendingMsg} s=${s} answers=${answers} />` : null}
         ${s.status === 'working' ? html`<p class="chat-working" aria-hidden="true">Working…</p>` : null}
       </div>
     </div>

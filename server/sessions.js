@@ -8,7 +8,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { HOOK_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
+import { ACCEPTED_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { cliPermissionMode } from './permissions.js';
 import { prependPath } from './platform.js';
@@ -17,7 +17,7 @@ import { HOST_LOST } from './pty-host.js';
 import { answerLabels, checkAnswers, driveAnswers } from './questions.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
 import { cleanTitle, deriveTitle } from './titles.js';
-import { TranscriptReader, claudeConfigDir, findTranscript } from './transcripts.js';
+import { ASK_TOOLS, TranscriptReader, askOf, claudeConfigDir, findTranscript } from './transcripts.js';
 import {
   HttpError,
   badRequest,
@@ -82,7 +82,7 @@ const CHOICE_RETRY_MS = [300, 1000, 2500, 5000, 9000];
 // How often live sessions are checked for background work (Watching), and how long a missing
 // transcript is remembered as missing.
 const BACKGROUND_POLL_MS = 3000;
-const TRANSCRIPT_MISS_MS = 15000;
+const TRANSCRIPT_MISS_MS = 2000;
 const PLAN_FEEDBACK = /^tell claude what to change\b/i;
 
 /**
@@ -476,22 +476,26 @@ export class SessionManager {
    * Is the permission prompt on screen Claude asking a question (AskUserQuestion) or for a plan
    * approval (ExitPlanMode)? The transcript says: its newest tool call still waiting for a result.
    */
-  captureAsk(rec, delays = [150, 600, 1500, 3500]) {
+  captureAsk(rec, delays = [150, 600, 1500, 3500, 6000, 10000]) {
     const asking = () => rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt';
     const attempt = (i) => {
       if (i >= delays.length) return;
       setTimeout(() => {
         if (!asking() || rec.asking) return;
-        let ask = null;
-        try {
-          const file = this.transcriptFile(rec);
-          ask = file ? this.transcripts.pendingAsk(file) : null;
-        } catch {
-          ask = null;
+        let ask = rec.pending_ask || null; // from its PreToolUse hook: there before the transcript has it
+        if (!ask) {
+          try {
+            const file = this.transcriptFile(rec);
+            ask = file ? this.transcripts.pendingAsk(file) : null;
+          } catch {
+            ask = null;
+          }
         }
         if (ask && asking() && !rec.asking) {
           const q = ask.kind === 'question' ? ask.questions[0]?.question : null;
-          rec.asking = { kind: ask.kind, tool_id: ask.tool_id, questions: ask.kind === 'question' ? ask.questions.length : 0 };
+          const { tool_id: toolId, ...card } = ask;
+          // `card`: what the chat's card shows, for as long as the transcript does not have it yet.
+          rec.asking = { kind: ask.kind, tool_id: toolId, questions: ask.kind === 'question' ? ask.questions.length : 0, card };
           rec.notification = ask.kind === 'plan' ? 'Claude has a plan ready and asks you to approve it.' : `Claude asks: ${oneLine(q || 'a question', 240)}`;
           this.scheduleSave();
           this.publish(rec);
@@ -548,7 +552,7 @@ export class SessionManager {
       if (!line) continue;
       try {
         const e = JSON.parse(line);
-        if (isUuid(e.sid) && this.records.has(e.sid) && HOOK_EVENTS.includes(e.event)) {
+        if (isUuid(e.sid) && this.records.has(e.sid) && ACCEPTED_EVENTS.includes(e.event)) {
           this.applyHook(e.event, e.sid, e.payload || {}, e.ts, e.launch);
           n++;
         }
@@ -1006,7 +1010,7 @@ export class SessionManager {
    * but the server had in fact received it) cannot roll a session back to "working".
    */
   applyHook(event, sid, payload = {}, ts, launch) {
-    if (!HOOK_EVENTS.includes(event)) throw badRequest('unknown hook event');
+    if (!ACCEPTED_EVENTS.includes(event)) throw badRequest('unknown hook event');
     const rec = this.require(sid);
     // From a claude this session has since replaced (ended, then resumed or relaunched).
     if (typeof launch === 'string' && launch && rec.launch_id && launch !== rec.launch_id) return this.view(rec);
@@ -1018,7 +1022,15 @@ export class SessionManager {
     rec.hooked = true;
     const rt = this.runtime.get(sid);
     if (rt) clearTimeout(rt.stallTimer);
-    const { statusChanged, titleChanged } = applyHookEvent(rec, event, payload && typeof payload === 'object' ? payload : {});
+    const p = payload && typeof payload === 'object' ? payload : {};
+    // A question or a plan about to be shown: keep it (its transcript line can come much later).
+    if (event === 'PreToolUse') {
+      const card = ASK_TOOLS[p.tool_name] ? askOf(p.tool_name, p.tool_input) : null;
+      if (card && typeof p.tool_use_id === 'string' && p.tool_use_id) rec.pending_ask = { tool_id: p.tool_use_id.slice(0, 100), ...card };
+    } else if (event !== 'Notification') {
+      rec.pending_ask = null;
+    }
+    const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);
     if (event === 'Notification' && payload && payload.notification_type === 'auth_success') this.signedIn(rec);
     // Trust is saved per Claude login (its own config folder): only the default login's counts.
     if (event === 'SessionStart' && rec.cwd === this.home && !rec.account) this.markOrgTrusted(`session ${sid} started in the org folder`);
@@ -1308,7 +1320,8 @@ export class SessionManager {
     if (rec.waiting_on !== 'permission_prompt' || rec.asking?.kind !== 'question') throw conflict('Claude is not asking a question right now');
     if (typeof toolId !== 'string' || toolId !== rec.asking.tool_id) throw conflict('that question has already been answered or replaced');
     const file = this.transcriptFile(rec);
-    const ask = file ? this.transcripts.pendingAsk(file) : null;
+    let ask = file ? this.transcripts.pendingAsk(file) : null;
+    if ((!ask || ask.tool_id !== toolId) && rec.pending_ask?.tool_id === toolId) ask = rec.pending_ask;
     if (!ask || ask.kind !== 'question' || ask.tool_id !== toolId) throw conflict('that question has already been answered or replaced');
     const clean = checkAnswers(ask.questions, answers);
     const rt = this.rt(rec.sid);
