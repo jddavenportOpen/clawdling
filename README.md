@@ -107,7 +107,7 @@ your machine, and `clawdling doctor` says which one you have:
 - **The built-in terminal** (Windows, or macOS and Linux without tmux): a pseudo-terminal per
   session from node-pty, the library VS Code's terminal uses (ConPTY on Windows). The cockpit,
   the phone app, Donna, hooks and the trust and permission buttons all work the same. The
-  difference: sessions run inside the cockpit process, so **they end when the cockpit stops**.
+  difference: sessions run in a helper process of the cockpit, so **they end when the cockpit stops**.
   They come back as ended, and one click resumes each where it left off (`claude --resume`).
   `clawdling attach <sid>` opens a session in your terminal (Ctrl-] detaches).
 

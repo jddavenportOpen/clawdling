@@ -43,7 +43,7 @@ a control client per live session (`output`/`close` events, `sendBytes`, `fit`, 
 
 | | tmux (`server/tmux.js`) | pty (`server/pty.js`) |
 |---|---|---|
-| Where a session lives | Clawdling's own tmux server (`tmux -L clawdling`) | a pseudo-terminal inside the server process (node-pty; ConPTY on Windows) |
+| Where a session lives | Clawdling's own tmux server (`tmux -L clawdling`) | a pseudo-terminal held by the *pty host*, a child process of the server (node-pty; ConPTY on Windows) |
 | Survives a Clawdling restart | yes, reattached on start | no: ended (with a notice) and resumable with `claude --resume` |
 | Screen model | tmux | one `@xterm/headless` terminal per session |
 | Snapshot for a late viewer | `capture-pane` through the control client | `@xterm/addon-serialize` of the model |
@@ -55,6 +55,15 @@ a control client per live session (`output`/`close` events, `sendBytes`, `fit`, 
 this is not Windows, else pty when node-pty loads, else `clawdling start` and `doctor` stop with the
 one-line fix for this OS. The choice is recorded in `server.json`, `sessions.json` and
 `/api/health`.
+
+**The pty host** (`server/pty-host.js`). node-pty runs in a child process, never in the server:
+on Windows, node-pty 1.1.0's native ConPTY code can crash its whole process (an exit thread erases
+a session from a global, unlocked list while the main thread reads it), and a crash in the host
+ends only the host's sessions. The server marks them ended with a note ("Clawdling's terminal
+process stopped unexpectedly…") and starts a new host for the next session. The host also never
+kills or releases a ConPTY whose process has already exited. Output and input cross the IPC
+channel; the screen model below stays in the server. `CLAWDLING_PTY_HOST=0` runs node-pty in the
+server instead (debugging only). `test/stress/conpty-kill-exited.mjs` reproduces the crash.
 
 **The pty screen model.** pty output is written into the session's headless terminal and reaches
 viewers only from the write callback, after the model has parsed it. A snapshot is serialized in

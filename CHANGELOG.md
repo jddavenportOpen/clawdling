@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.3.1 (2026-10-25)
+
+**Windows: the cockpit no longer crashes when a session ends** (#4).
+
+- **The crash.** On Windows (the built-in terminal, node-pty 1.1.0), ending a session whose
+  Claude Code had just exited could take the whole Clawdling server down with an access violation
+  (`0xC0000005`), after node-pty printed "AttachConsole failed". Every open session went with it.
+  The cause is in node-pty's native ConPTY code: each session's exit thread removes the session
+  from a shared list with no lock while the main thread reads the same list, and a kill sent after
+  the shell exited runs a helper against a console that is gone.
+- **The fix.** node-pty now runs in its own child process, the *pty host*. If it ever crashes,
+  only the host goes: Clawdling keeps running, marks the sessions it held as ended with a note
+  ("Clawdling's terminal process stopped unexpectedly…"), and the next session starts a new host.
+  Resume picks each one up where it left off. The host also never kills or releases a ConPTY
+  whose process has already exited.
+- **Evidence.** A new Windows CI job (`test/stress/conpty-kill-exited.mjs`, 30 rounds of six
+  sessions ended right after they exit) shows the 1.3.0 behaviour dying, and the pty host
+  surviving every round. node-pty's bundled `conpty.dll` option was tried and crashed faster, so it
+  is not used.
+- **Tests.** The guard, the host protocol, a host that dies (its sessions end with a reason, the
+  next session gets a new host), and ending sessions whose claude just exited, at the server level.
+- tmux sessions, and the built-in terminal's behaviour on macOS and Linux, are unchanged.
+
 ## 1.3.0 (2026-10-25)
 
 **Use from anywhere.** Open your cockpit from your phone or another computer, away from home. Off
