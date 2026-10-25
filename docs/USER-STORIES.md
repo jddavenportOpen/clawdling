@@ -320,3 +320,41 @@ newcomers, Rin the skeptic, Maya the phone-only check.
     and `{enabled: true}` answer 403 "Only the computer Clawdling runs on…"; `{enabled: false}`
     works; the phone viewport shows the card without horizontal scrolling.
 
+## New in 1.4: answer in the chat, Watching, and pings
+
+The core stories every cockpit on this spec shares are in [CORE-STORIES.md](CORE-STORIES.md)
+(CS-01 to CS-30; the end-to-end tests carry their ids). These are 1.4's, with their personas.
+
+- **US-60 (P0, Maya, Dev; 1.4)** As someone working from the chat view, when Claude asks me a
+  question (AskUserQuestion) I see the question, its options and their descriptions as a card, I
+  pick one (or several, when it asks for any that apply) or type my own answer, and Send; the
+  card then shows what I answered, after a reload too. (CS-14, CS-15)
+  - Accept: the card comes from Claude Code's PreToolUse hook (the transcript has no line for it
+    until it is answered, verified with 2.1.283); answering presses keys only after the screen
+    shows that very question with those options; a permission prompt never becomes a card;
+    `test/live/questions-live.mjs` passes against the real CLI.
+- **US-61 (P0, Maya; 1.4)** As someone who plans first, when Claude has a plan I read it in a
+  card and approve it with Claude Code's own choices, or send it back with what to change. (CS-16)
+  - Accept: the card names its plan; nothing is pressed unless that plan's approval is on screen;
+    a plan sent back followed by a tool permission in the same turn shows the permission's own
+    buttons, not a plan card.
+- **US-62 (P0, Rin, Maya; 1.4)** As someone who leaves agents running watchers and background
+  jobs, a session whose turn is over but whose background work still runs reads "Watching · N",
+  not Ready, and a click lists each task's kind, purpose and age. A session that needs me still
+  says so, and Watching is never counted as needing me. (CS-19, CS-20)
+  - Accept: background shells, async agents, workflows and Monitors from the transcript and its
+    sub-agents' files; ends matched by id; only tasks from the session's current process; the CLI's
+    own process record (only `<pid>.json`, five fields) decides for shells and watchers; unknown
+    is null, never zero.
+- **US-63 (P1, Dev, Tom; 1.4)** As someone who switches tabs, I can turn on a browser
+  notification for when a session starts waiting on me; it names the agent and the kind of wait,
+  never what was asked. (CS-21)
+- **US-64 (P1, Dev, Maya; 1.4)** As someone away from the computer, I can turn on one line to the
+  chat I paired with Donna when an agent needs me; it is off by default, at most one per session
+  every 10 minutes and six an hour, never includes what was asked, and only ever goes to my own
+  paired chat or the iMessage handle I saved and texted from. (CS-22)
+  - Accept: consent, the paired chat, the proven handle and the send history live in
+    `.clawdling/` (agents cannot edit them); an org.json edit never redirects or turns it on; on a
+    folder path where agents cannot be kept out of `.clawdling/`, it stays off and says why;
+    agent names in messages are the ones shown when it was turned on.
+

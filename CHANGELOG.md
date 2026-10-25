@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.4.0 (2026-10-25)
+
+**Answer Claude in the chat, know when "Ready" really means done, and hear when an agent needs you.**
+
+- **Question cards.** When Claude asks you something (AskUserQuestion), the chat view shows the
+  question and its options, with their descriptions, as a card: pick one, tick several when it asks
+  for any that apply, or type your own answer, then Send. Several questions go in one Send. When
+  Claude has a plan ready, the plan shows as a card with Claude Code's own choices: approve it, or
+  send it back with what to change. Cards keep what you answered (after a reload too) and work on a
+  phone. Answers go through the same route as the trust and permission buttons, and are typed the
+  way you would: the screen must show that very question (or plan) before any key is pressed.
+  Tool permissions answer exactly as before; a card can never approve one.
+  - Found with a real Claude Code 2.1.283: the question's line reaches the transcript only after
+    it is answered, and a plan sent back fires no PostToolUse. Sessions therefore register
+    PreToolUse and PostToolUse for `AskUserQuestion|ExitPlanMode` only, and the card is taken from
+    there. `test/live/questions-live.mjs` checks a question, a typed answer that starts with a
+    digit, and a plan sent back, against the real CLI.
+- **Watching · N.** A session whose turn is over but whose background work is still running
+  (Monitor watchers, background commands, background agents, workflows, including ones a
+  sub-agent started) reads **Watching · N** on its pane, the rail and the phone, not Ready. Click it
+  for the list: kind, what it is for, when it started, when a watcher ends by itself. A session
+  that needs you still says so, Ready means nothing is running, and Watching never counts as
+  needing you. Read from the session's transcript and Claude Code's own per-process record (only
+  `~/.claude/sessions/<pid>.json`, five fields); unknown is shown as nothing, never as zero.
+- **An agent needs you.** Settings, "When an agent needs you": a browser notification while the
+  cockpit is in the background, and, optionally, one line to the Telegram chat (or iMessage
+  handle) you paired with Donna: "Clawdling: Health needs you (a question). Open the cockpit to
+  answer." Both are off by default and never say what was asked. The message goes only to the
+  chat that sent the pairing code, or the iMessage handle you saved and texted from; at most one
+  per session every 10 minutes and six an hour. Its switch, the pairing proof and the send
+  history live in `.clawdling/`, where agents cannot edit them (see SECURITY.md). Telegram
+  pairings from before 1.4 pair once more to use it.
+- **Docs.** [docs/CORE-STORIES.md](docs/CORE-STORIES.md): 30 core user stories (CS-01 to CS-30)
+  that the end-to-end tests carry in their titles. [docs/PARITY.md](docs/PARITY.md): which core
+  features Clawdling and its sibling cockpit each have.
+- **Fixes.** `clawdling doctor` and `clawdling donna status` no longer print the Telegram pairing
+  code; the iMessage send script takes `--` before its arguments, and a handle can no longer start
+  with `-`.
+- **Tests.** New: `test/unit/questions.test.js` (real 2.1.283 screens), `background.test.js`
+  (redacted real transcripts), `needs-you.test.js`; `test/integration/questions.test.js` and
+  `needs-you.test.js` on both backends; `test/e2e/cards.spec.js` (desktop and phone). Reviews: the
+  question cards and Watching each had an independent review at high effort (their High and
+  Medium findings fixed and re-verified); the ping had the top tier, a fresh `claude -p --effort
+  xhigh` reviewer and a second-model reviewer, until both passed with no Medium or higher open.
+- **Not yet in the iPhone app** (#10): it still shows the generic needs-you banner and Ready.
+
 ## 1.3.1 (2026-10-25)
 
 **Windows: the cockpit no longer crashes when a session ends** (#4).

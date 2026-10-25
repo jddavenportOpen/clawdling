@@ -244,6 +244,28 @@ turned off).
   normal permission prompts in the cockpit.
 - The Telegram bot token lives in `.env` (mode 600). It is never logged, echoed by the API, or put
   in an error message.
+- Neither `clawdling doctor` (which agents may run) nor `clawdling donna status` prints the pairing
+  code: whoever sends it first is paired, so it is shown only in the cockpit.
+
+## "An agent needs you" (1.4)
+
+- **Off by default.** Turned on in Settings (`POST /api/notify`, which takes only `{needs_you}`),
+  it sends one line when a session starts waiting on its owner, a few seconds later (an answer in
+  the meantime sends nothing): "Clawdling: Health needs you (a question). Open the cockpit to answer."
+- **No conversation in it.** The kind of wait is one of a fixed set of words; the question, the
+  title, prompts and tool input are never used. The agent's name is the one shown in Settings when
+  it was turned on (letters, digits, spaces and hyphens, 40 at most): an agent that renames itself
+  later never reaches a message, and a new agent reads "An agent".
+- **Only to the owner.** Telegram: only the chat that sent the pairing code (recorded in
+  `.clawdling/telegram.json` at pairing; a new bot token drops it; pairings from before 1.4 pair once
+  more). iMessage: only the handle saved in the cockpit, and only after a message from that exact
+  handle (every digit) has been seen (`.clawdling/imessage.json`). org.json alone never decides,
+  because agents can edit it; the switch and the send history are in `.clawdling/notify.json`.
+- **Rate-limited, across restarts:** one per session per 10 minutes, six an hour in all.
+- **Fail closed.** If the org folder's path has characters that Claude Code's file rules cannot
+  express (so agents could not be kept out of `.clawdling/`), it stays off and Settings says why.
+- The browser notification (also off until turned on) uses the same fixed words and approved
+  names, so a lock screen never shows what was asked.
 
 ## Agents
 
@@ -318,9 +340,14 @@ agents is your call. Her replies go to your phone like any other reply.
 
 `.clawdling/` is mode 700: token, session registry, events log (includes Donna's message text),
 `remote.json` and `remote-devices.json` (hashes only),
-hook spool, launcher scripts (include first prompts), generated context files. Transcripts are
-Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view and never writes
-them.
+hook spool, launcher scripts (include first prompts), generated context files, `notify.json`.
+Transcripts are Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view,
+question cards and Watching, and never writes them. For Watching it also reads Claude Code's
+per-process records, `~/.claude/sessions/<pid>.json`: only files with that name, only five fields
+(`sessionId`, `startedAt`, `status`, `statusUpdatedAt`, `version`); never anything else in that
+folder. Hooks: besides the lifecycle events, PreToolUse and PostToolUse are registered for
+`AskUserQuestion|ExitPlanMode` only, and forward those two tools' input (the question or plan) to
+the local server; they never decide anything.
 
 ## Tests
 

@@ -41,7 +41,8 @@ no servers of its own. The author never receives any of your data.
   author.
 - **Telegram or iMessage** (optional, only if you turn on Donna's text channel): messages pass
   through Telegram's or Apple's own services under their terms. Clawdling answers only the one
-  chat you pair it with.
+  chat you pair it with. If you also turn on "Message me when an agent needs me" (off by default),
+  it sends that chat one line naming the agent and the kind of wait, never what was asked.
 
 ## The iPhone app
 

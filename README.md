@@ -137,6 +137,20 @@ it.
 - Every agent page shows its `CLAUDE.md` and `memory/NOW.md`, editable in place, so you can see
   exactly what each agent knows.
 
+**Answer Claude in the chat.** When Claude asks you something (its multiple-choice questions),
+or wants a plan approved, the chat shows it as a card: tap an option, type your own answer, or
+send the plan back with what to change. It works the same on your phone, and the card keeps what
+you answered. Tool permissions still show Claude Code's own buttons, exactly as before.
+
+**Ready means done.** When Claude's turn is over but work it started is still running in the
+background (a watcher, a background command, a sub-agent), the session reads **Watching · N**
+instead of Ready; one click lists what is running, what for, and since when.
+
+**Told when an agent needs you.** Turn it on in Settings: a browser notification when the
+cockpit is in the background, and, if you like, one line to the Telegram chat (or iMessage
+handle) you paired with Donna, such as "Clawdling: Health needs you (a question)". It never
+includes what was asked, and it only goes to your own paired chat.
+
 **Agents that remember.** Every session starts with the org context, the agent's `CLAUDE.md`
 and its `memory/NOW.md`. Before an agent finishes it updates that memory (the `/handoff` skill
 does it), so the next session picks up where the last one stopped.
