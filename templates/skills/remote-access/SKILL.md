@@ -1,6 +1,7 @@
 ---
 name: remote-access
-description: Set up, check or remove "Use from anywhere" for this Clawdling cockpit, so the owner can open it from their phone or another computer. Two paths, a private Tailscale Serve address (recommended) or a Cloudflare Tunnel behind Cloudflare Access (beta). Use when the user runs /remote-access tailscale, /remote-access cloudflare or /remote-access off, or asks to reach the cockpit from outside this computer.
+description: Set up, check or remove "Use from anywhere" for this Clawdling cockpit, so the owner can open it from their phone or another computer. Two paths, a private Tailscale Serve address (recommended) or a Cloudflare Tunnel behind Cloudflare Access (beta). Run only from the cockpit's Settings ("Set it up with an agent"), as /remote-access tailscale, /remote-access cloudflare or /remote-access off.
+disable-model-invocation: true
 ---
 
 # Use from anywhere
@@ -151,7 +152,7 @@ Say the plan, for example:
    terminal (macOS and Linux; on Windows, `cloudflared service install` in an administrator
    terminal).
 9. **Prove Access is in front:**
-   `curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\n' https://<hostname>/`
+   `curl -sSI https://<hostname>/` (the first lines show the status and the Location)
    It must be a redirect (302) to `https://<team>.cloudflareaccess.com/...`. If it is 200, or a
    403 from Clawdling, Access is not protecting the address: stop, tell the owner, and help them
    finish step 5. If they cannot, ask them to stop the tunnel (`sudo cloudflared service uninstall`

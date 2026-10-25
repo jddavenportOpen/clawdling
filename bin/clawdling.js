@@ -1109,7 +1109,16 @@ async function cmdRemote(args) {
         // unreadable: refuse below
       }
       if (st.status !== 0 || !config) throw new CliError(`could not read Tailscale's serve status (${redactServePaths(String(st.stderr || st.error?.message || '').trim()).slice(0, 200) || 'no answer'}). Is Tailscale running and signed in?`);
-      const handlers = webHandlers(config, `${entry.host}:${entry.port}`);
+      // `serve --https=PORT` always lands on this computer's own name: look at every name's entry on
+      // that port, not just the one typed.
+      const names = new Set([`${entry.host}:${entry.port}`]);
+      const walk = (o, d) => {
+        if (!o || typeof o !== 'object' || d > 6) return;
+        if (o.Web && typeof o.Web === 'object') for (const k of Object.keys(o.Web)) if (k.endsWith(`:${entry.port}`)) names.add(k);
+        for (const v of Object.values(o)) walk(v, d + 1);
+      };
+      walk(config, 0);
+      const handlers = [...names].flatMap((n) => webHandlers(config, n));
       const tcp = config.TCP && config.TCP[String(entry.port)];
       const mine = onlyCockpit(handlers, { port: ctx.info.port, path: tsArgs[3].slice(`http://127.0.0.1:${ctx.info.port}`.length) });
       if ((handlers.length && !mine) || (tcp && (tcp.TCPForward || tcp.TerminateTLS))) {

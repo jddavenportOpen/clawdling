@@ -159,6 +159,8 @@ before(async () => {
   // Run again: it points at exactly this cockpit already, fine. Another app on the port: refused.
   assert.equal(cliResult(['remote', 'serve', TS_URL], { env, home }).code, 0);
   const keep = fs.readFileSync(serveFile, 'utf8');
+  writeServe({ TCP: { 8743: { HTTPS: true } }, Web: { 'mybox.example.ts.net:8743': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3000' } } } } });
+  assert.equal(cliResult(['remote', 'serve', TS_URL], { env, home }).code, 1, 'another name on the same port counts too');
   writeServe({ TCP: { 8743: { HTTPS: true } }, Web: { [TS_HOST]: { Handlers: { '/': { Proxy: 'http://127.0.0.1:3000' } } } } });
   const taken = cliResult(['remote', 'serve', TS_URL], { env, home });
   assert.equal(taken.code, 1);
@@ -432,6 +434,9 @@ test('proxy headers on a localhost Host, and Tailscale Funnel requests, are refu
   assert.match(r.body.error, /proxy/);
   assert.equal((await raw('GET', '/api/health', { host: `localhost:${srv.port}`, headers: { 'tailscale-user-login': 'x@example.com' } })).status, 403);
   assert.equal((await raw('GET', '/api/health', { headers: { 'tailscale-funnel-request': '?1' } })).status, 403);
+  // A tunnel for a name Clawdling does not know (Host not local, from this computer): refused.
+  assert.equal((await raw('GET', '/api/health', { host: 'unregistered.example.com', login: null, source: null })).status, 403);
+  assert.equal((await raw('GET', '/api/health', { host: `127.0.0.1:${srv.port}`, headers: { 'cf-ray': 'abc' } })).status, 403, 'a Cloudflare edge header on a local name');
 });
 
 function openWs({ cookie, originUrl = TS_URL, query = '', nokey = false }, sid) {

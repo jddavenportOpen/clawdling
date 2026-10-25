@@ -181,7 +181,8 @@ are pre-approved). Donna's
 
 **The setup agent.** "Set it up with an agent" starts an ordinary Claude Code session on the
 owner's plan, at the org root, whose first message is the visible `/remote-access <path>`. The
-skill's file is rewritten from this version's text when the server starts and before each such
+skill is marked `disable-model-invocation`, so only that guarded chat runs it, never a chat that
+merely mentions remote access. The skill's file is rewritten from this version's text when the server starts and before each such
 session (an edited copy is kept as `SKILL.md.old`), so the sheet's promises hold, and a personal
 skill or command named `remote-access` in the user's own Claude Code folder (which Claude Code
 would run instead) blocks the setup chat until it is renamed. The owner runs `cloudflared tunnel
@@ -198,8 +199,10 @@ front. Those "never" rules are also enforced in code: a setup chat runs with a P
 remote tailscale-name` prints only this computer's address), `clawdling spawn/send/new/end`, raw
 `tailscale serve` adds and status (the CLI's redacted `remote
 serve` and `remote serve-status` instead), and any access to `cert.pem`, `~/.cloudflared/` (but
-its `config.yml`) or `.clawdling/`. In this one session it allows one command at a time (no chains or pipes), and
-refuses quoting, `$(...)`, scripts and interpreters, and handing work to another session; its
+its `config.yml`) or `.clawdling/`. In this one session it allows one command at a time (no chains or pipes), written plainly (no
+quotes, escapes, variables, wildcards or redirects), only the setup steps' `cloudflared` commands
+(never `tunnel token`, `tunnel run --token` or `access token/login`), and refuses scripts,
+interpreters and command runners, and handing work to another session; its
 settings file sets `disableAllHooks: false`. It is a pattern guard, defence in depth for the case
 where the session was fed other instructions (an edited `CLAUDE.md` or rule file), not a
 sandbox: the session's own permission prompt, which the owner answers for every command, stays

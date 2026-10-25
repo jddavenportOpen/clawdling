@@ -254,7 +254,8 @@ test('the Tailscale command: the macOS app binary, never the crashing Homebrew s
   assert.equal(tailscaleBin({ env: {}, platform: 'darwin', exists: () => true, which: () => '/opt/homebrew/bin/tailscale' }), '/Applications/Tailscale.app/Contents/MacOS/Tailscale');
   assert.equal(tailscaleBin({ env: {}, platform: 'linux', exists: () => true, which: () => '/usr/bin/tailscale' }), '/usr/bin/tailscale');
   assert.equal(tailscaleBin({ env: {}, platform: 'darwin', exists: () => false, which: () => null }), null);
-  assert.equal(tailscaleBin({ env: { CLAWDLING_TAILSCALE_BIN: '/x/ts' }, platform: 'darwin' }), '/x/ts');
+  assert.equal(tailscaleBin({ env: { CLAWDLING_TAILSCALE_BIN: '/x/ts', CLAWDLING_TEST: '1' }, platform: 'darwin' }), '/x/ts', 'tests may point it at a fake');
+  assert.equal(tailscaleBin({ env: { CLAWDLING_TAILSCALE_BIN: '/bin/tcsh' }, platform: 'darwin', exists: () => false, which: () => null }), null, 'outside test mode it is ignored');
 });
 
 test('Funnel detection reads serve status, foreground configs included', async () => {

@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // PreToolUse guard for a Use from anywhere setup chat (a session started with /remote-access).
-// The skill's "never" list, enforced in code: whatever else the session was told (an edited
+// The skill's "never" list, enforced by patterns: if the session was told otherwise (an edited
 // CLAUDE.md, a rule file, a web page), these tool calls are refused before they run, and Claude
-// is told why. Registered only in that session's --settings file (hooks-settings-remote.json).
+// is told why. A pattern guard, not a sandbox: the owner's permission prompt stays the gate. Registered only in that session's --settings file (hooks-settings-remote.json).
 //
 // Contract: read the tool call on stdin; exit 2 with the reason on stderr to refuse it; exit 0
 // (printing nothing) to let Claude Code's normal permission flow decide. Any error lets it through
@@ -26,6 +26,9 @@ function part(cmd) {
     [/--auth-?key\b/i, 'never an auth key: the owner signs in to Tailscale themselves'],
     [/tailscale\s+(up|down|logout|login|set|switch|cert)\b/i, 'never `tailscale up/down/logout/login/set/switch/cert`: the owner does that in the Tailscale app or their own terminal'],
     [/cloudflared\s+(tunnel\s+)?login\b/i, 'the owner runs `cloudflared tunnel login` in their own terminal'],
+    // cloudflared: only the setup steps' commands. `tunnel token`, `tunnel run --token` and
+    // `access token/login` print or use credentials.
+    [/(?:^|[\s/])cloudflared(?:\.exe)?(?!\s+(--version|tunnel\s+(create|route\s+dns|list|info|delete|cleanup)\b)(\s|$))/i, 'only the setup steps\' cloudflared commands run here (--version, tunnel create, route dns, list, info, delete, cleanup): never one that prints or uses a tunnel token or an Access token'],
     [SECRET, 'never read a credential file (cert.pem, anything in ~/.cloudflared but config.yml, anything in .clawdling)'],
   ];
   for (const [re, why] of rules) if (re.test(cmd)) return why;
@@ -48,6 +51,11 @@ export function verdict(input) {
   if (/^(Bash|PowerShell)$/.test(tool)) {
     const cmd = String(ti.command || '');
     if (/[\n\r`]|\$\(/.test(cmd)) return 'one plain command at a time in this chat (no newlines, backticks or $(...))';
+    // Plain words only: no quoting, escapes, variables, globs or redirects, which can spell a
+    // refused command so no rule sees it. None of the setup steps needs them.
+    if (/['"\\$*?<>\[\]{}]/.test(cmd)) return 'write the command plainly, exactly as the setup steps give it (no quotes, escapes, variables, wildcards or redirects)';
+    if (/\bclawdling\s+-/.test(cmd)) return 'run clawdling commands as the setup steps write them, with no options before the command';
+    if (/\b(xargs|awk|gawk|find|env|nohup|timeout|watch|tcsh|csh)\b/i.test(cmd)) return 'no command runners in this chat: run each command directly'
     const segs = cmd.split(/;|&&|\|\||\||&/);
     if (segs.length > 1) return 'one command at a time in this chat, exactly as the setup steps write it (no chains or pipes)';
     for (const seg of segs) {

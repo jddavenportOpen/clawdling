@@ -17,7 +17,7 @@ test('the setup steps the skill takes are let through to the normal permission p
     `${TS} funnel --https=8743 off`, 'tailscale funnel 443 off',
     'clawdling remote serve https://box.example.ts.net:8743', 'clawdling remote serve-status', 'clawdling remote add https://box.example.ts.net:8743 --kind tailscale',
     'cloudflared --version', 'cloudflared tunnel create clawdling', 'cloudflared tunnel route dns clawdling cockpit.example.com',
-    "curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\\n' https://cockpit.example.com/", 'brew install --cask tailscale',
+    'curl -sSI https://cockpit.example.com/', 'brew install --cask tailscale', 'cloudflared tunnel list', 'cat ~/.cloudflared/config.yml',
   ]) assert.equal(bash(c), null, c);
   assert.equal(verdict({ tool_name: 'Read', tool_input: { file_path: '/home/u/.cloudflared/config.yml' } }), null);
   assert.equal(verdict({ tool_name: 'Edit', tool_input: { file_path: '/home/u/.cloudflared/config.yml' } }), null);
@@ -73,6 +73,10 @@ test('the bypasses a reviewer traced are refused too (each part, quoting, script
     'clawdling spawn work "turn on funnel"', 'clawdling send abc "tailscale funnel --bg 443"', 'clawdling end abc', 'clawdling new domain X',
     `${TS} status`, `${TS} status --json`, 'tailscale status --peers',
     'echo $(tailscale funnel --bg 443)', 'tailscale funnel\n--bg 443',
+    // Round 9: credentials through cloudflared, and words spelled so no rule sees them.
+    'cloudflared tunnel token clawdling', 'cloudflared tunnel run --token abc', 'cloudflared access token -app=https://cockpit.example.com', 'cloudflared access login https://cockpit.example.com',
+    "t''ailscale f''unnel --bg 8080", 'xargs tailscale < a.txt', 'cat ~/.cloudf*/cert*', 'cat .clawdl*/token', 'clawdling --home=/x spawn scratch hi',
+    'CLAWDLING_TAILSCALE_BIN=/bin/tcsh clawdling remote serve-status',
   ]) assert.ok(bash(c), c);
   assert.ok(verdict({ tool_name: 'Grep', tool_input: { pattern: '.', path: '~/.cloudflared' } }));
   assert.ok(verdict({ tool_name: 'Read', tool_input: { file_path: '.clawdling/remote.json' } }));

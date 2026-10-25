@@ -159,7 +159,7 @@ test('the /remote-access skill: installed at the org root only, and its safety r
   try {
     initOrg({ home, answers: defaultAnswers() });
     const skill = read(home, '.claude', 'skills', 'remote-access', 'SKILL.md');
-    assert.match(skill, /^---\nname: remote-access\ndescription: .+\n---\n/);
+    assert.match(skill, /^---\nname: remote-access\ndescription: .+\ndisable-model-invocation: true\n---\n/, 'only the cockpit\'s guarded setup chat runs it');
     const flat = skill.replace(/\s+/g, ' '); // the rules, whatever the line wrapping
     assert.equal(fs.existsSync(path.join(home, 'donna', '.claude', 'skills', 'remote-access')), false);
     // The three paths the cockpit sends.

@@ -655,9 +655,12 @@ export async function startServer(opts = {}) {
         return { remote: true, entry, ident: v.email || null, source: firstForwarded(req.headers['cf-connecting-ip']) };
       }
       if (!hostAllowed(req, allowed)) return { refused: 'unexpected Host header' };
-      if (isLoopback(host) && PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) {
-        return { refused: 'this request came through a proxy that changed the Host header. Register the address with `clawdling remote add` instead.' };
-      }
+      // Whatever the bind address (--host 0.0.0.0 included): a request a tunnel or proxy carried
+      // in for a name that is not registered is not a local request.
+      const proxied = PROXY_HEADERS.some((h) => req.headers[h] !== undefined) || req.headers['cf-ray'] !== undefined || Object.keys(req.headers).some((k) => k.startsWith('tailscale-'));
+      if (proxied) return { refused: 'this request came through a proxy or tunnel for an address Clawdling does not know. Register the address with `clawdling remote add` instead.' };
+      const hostName = String(req.headers.host || '').toLowerCase().replace(/:\d+$/, '');
+      if (loopbackPeer(req.socket.remoteAddress) && !isLoopback(hostName)) return { refused: 'unexpected Host header' };
       return { remote: false };
     }
 

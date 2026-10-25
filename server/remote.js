@@ -452,7 +452,8 @@ export class Throttle {
 
 /** The Tailscale command to ask for `serve status` (never anything that changes Tailscale). */
 export function tailscaleBin({ env = process.env, platform = process.platform, exists = fs.existsSync, which = () => null } = {}) {
-  if (env.CLAWDLING_TAILSCALE_BIN) return env.CLAWDLING_TAILSCALE_BIN;
+  // Tests point this at a fake; outside test mode it is ignored (an agent could aim it at a script).
+  if (env.CLAWDLING_TAILSCALE_BIN && env.CLAWDLING_TEST === '1') return env.CLAWDLING_TAILSCALE_BIN;
   if (platform === 'darwin' && exists(MAC_TAILSCALE)) return MAC_TAILSCALE;
   return which('tailscale') || null;
 }
