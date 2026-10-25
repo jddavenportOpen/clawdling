@@ -295,3 +295,43 @@ describe('a sub-agent\'s background work (its own transcript, ends often in the 
     assert.deepEqual(activeTasksAcross([main(), sub()], { ...opts, nowMs: T('2026-10-24T12:13:00Z') }), []);
   });
 });
+
+describe('BackgroundReader: the files it reads', () => {
+  it('reads appended bytes only, holds a partial line, starts over on a new file', async () => {
+    const os = await import('node:os');
+    const { BackgroundReader } = await import('../../server/background.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-bg-'));
+    const file = path.join(dir, 'projects', 'x', '11111111-1111-4111-8111-111111111111.jsonl');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const r = new BackgroundReader({ now: () => T('2026-10-24T10:05:00Z') });
+    const use = JSON.stringify({ type: 'assistant', timestamp: '2026-10-24T10:00:00Z', message: { content: [{ type: 'tool_use', id: 'tu1', name: 'Bash', input: { description: 'Build', run_in_background: true } }] } });
+    const res = JSON.stringify({ type: 'user', timestamp: '2026-10-24T10:00:01Z', message: { content: [{ type: 'tool_result', tool_use_id: 'tu1', content: 'bg' }] }, toolUseResult: { backgroundTaskId: 'b1' } });
+    fs.writeFileSync(file, `${use}\n${res.slice(0, 40)}`);
+    const ref = { file, configDir: dir, sessionIds: ['11111111-1111-4111-8111-111111111111'], launchedAtMs: T('2026-10-24T09:00:00Z') };
+    assert.deepEqual(r.summarize(ref), { count: 0, tasks: [] }, 'half a line is not read yet');
+    fs.appendFileSync(file, `${res.slice(40)}\n`);
+    assert.equal(r.summarize(ref).count, 1);
+    fs.writeFileSync(file, `${use}\n`); // replaced by a shorter file: read again from the start
+    assert.equal(r.summarize(ref).count, 0);
+    assert.equal(r.summarize({ ...ref, launchedAtMs: null }), null, 'no process start: unknown, not zero');
+    assert.equal(r.summarize({ ...ref, file: null }), null);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('the CLI process record: only <pid>.json, only a live pid, never older than the launch', async () => {
+    const os = await import('node:os');
+    const { BackgroundReader } = await import('../../server/background.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-bg-'));
+    fs.mkdirSync(path.join(dir, 'sessions'));
+    const sid = '22222222-2222-4222-8222-222222222222';
+    const rec = { pid: process.pid, sessionId: sid, startedAt: 2000, status: 'idle', statusUpdatedAt: 2500, version: '2.1.283', secret: 'never-kept' };
+    fs.writeFileSync(path.join(dir, 'sessions', `${process.pid}.json`), JSON.stringify(rec));
+    fs.writeFileSync(path.join(dir, 'sessions', `${process.pid}.abcdef.key`), JSON.stringify({ ...rec, startedAt: 9000 }));
+    fs.writeFileSync(path.join(dir, 'sessions', 'foo.json'), JSON.stringify({ ...rec, startedAt: 9000 }));
+    fs.writeFileSync(path.join(dir, 'sessions', '999999999.json'), JSON.stringify({ ...rec, pid: 999999999, startedAt: 9000 }));
+    const r = new BackgroundReader();
+    assert.deepEqual(r.processRecord(dir, [sid]), { pid: process.pid, sessionId: sid, startedAtMs: 2000, status: 'idle', statusUpdatedAtMs: 2500, version: '2.1.283' });
+    assert.equal(new BackgroundReader().processRecord(dir, [sid], { notBeforeMs: 100000 }), null, 'older than this launch: another process');
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+});

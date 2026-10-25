@@ -1256,7 +1256,7 @@ export async function startServer(opts = {}) {
         const b = await jsonBody(req);
         if (Array.isArray(b.answers)) return [200, await sessions.answer(sid, null, { answers: b.answers, toolId: b.tool_id })];
         if (!('option' in b)) throw badRequest('send {option: 1|2}');
-        return [200, await sessions.answer(sid, b.option, { text: typeof b.text === 'string' ? b.text : null })];
+        return [200, await sessions.answer(sid, b.option, { text: typeof b.text === 'string' ? b.text : null, toolId: typeof b.tool_id === 'string' ? b.tool_id : null })];
       }],
       ['POST', /^\/api\/hooks$/, async (req) => {
         const b = await jsonBody(req);

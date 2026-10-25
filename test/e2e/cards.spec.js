@@ -99,7 +99,7 @@ test.describe('question cards', () => {
     await card.getByTestId('plan-change').click();
     await card.getByTestId('plan-feedback-input').fill('Add a step that prints it');
     await card.getByTestId('plan-feedback-send').click();
-    await expect.poll(() => answerBody(sid)).toEqual({ option: 3, text: 'Add a step that prints it' });
+    await expect.poll(() => answerBody(sid)).toEqual({ option: 3, text: 'Add a step that prints it', tool_id: expect.stringMatching(/^toolu_mock/) });
     await expect(card).toHaveAttribute('data-state', 'feedback', { timeout: 15000 });
     await expect(card.getByTestId('plan-feedback')).toHaveText('“Add a step that prints it”');
 
@@ -107,7 +107,7 @@ test.describe('question cards', () => {
     card = p.getByTestId('plan-card').last();
     await expect(card).toHaveAttribute('data-state', 'pending');
     await card.getByTestId('plan-choice').nth(1).click();
-    await expect.poll(() => answerBody(sid)).toEqual({ option: 2 });
+    await expect.poll(() => answerBody(sid)).toEqual({ option: 2, tool_id: expect.stringMatching(/^toolu_mock/) });
     await expect(card).toHaveAttribute('data-state', 'approved', { timeout: 15000 });
     await expect(card).toContainText('Plan approved');
   });

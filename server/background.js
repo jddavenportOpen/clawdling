@@ -359,7 +359,7 @@ export class BackgroundReader {
   }
 
   /** The CLI's process record for `sessionId` under `configDir`: {startedAtMs, status, statusUpdatedAtMs, version} or null. */
-  processRecord(configDir, sessionIds) {
+  processRecord(configDir, sessionIds, { notBeforeMs = null } = {}) {
     const want = new Set(sessionIds.filter((id) => typeof id === 'string' && SAFE_ID.test(id)));
     if (!want.size || !configDir) return null;
     let cached = this.records.get(configDir);
@@ -376,7 +376,8 @@ export class BackgroundReader {
         try {
           const r = JSON.parse(fs.readFileSync(path.join(dir, n), 'utf8'));
           if (!isRec(r) || typeof r.sessionId !== 'string' || typeof r.startedAt !== 'number') continue;
-          list.push({ sessionId: r.sessionId, startedAtMs: r.startedAt, status: typeof r.status === 'string' ? r.status : null, statusUpdatedAtMs: typeof r.statusUpdatedAt === 'number' ? r.statusUpdatedAt : null, version: typeof r.version === 'string' ? r.version : null });
+          const pid = Number(n.slice(0, -5));
+          list.push({ pid, sessionId: r.sessionId, startedAtMs: r.startedAt, status: typeof r.status === 'string' ? r.status : null, statusUpdatedAtMs: typeof r.statusUpdatedAt === 'number' ? r.statusUpdatedAt : null, version: typeof r.version === 'string' ? r.version : null });
         } catch {
           // being written, or not a record
         }
@@ -385,8 +386,24 @@ export class BackgroundReader {
       this.records.set(configDir, cached);
     }
     let best = null;
-    for (const r of cached.list) if (want.has(r.sessionId) && (!best || r.startedAtMs > best.startedAtMs)) best = r;
+    for (const r of cached.list) {
+      if (!want.has(r.sessionId) || (best && r.startedAtMs <= best.startedAtMs)) continue;
+      // A record left by a process that is gone (it crashed, or an older run of this session).
+      if (notBeforeMs !== null && r.startedAtMs < notBeforeMs - PROCESS_START_SLACK_MS) continue;
+      if (!this.pidAlive(r.pid)) continue;
+      best = r;
+    }
     return best;
+  }
+
+  pidAlive(pid) {
+    if (!Number.isInteger(pid) || pid <= 0) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch (e) {
+      return e.code === 'EPERM';
+    }
   }
 
   advance(file, sidechain = false) {
@@ -471,7 +488,7 @@ export class BackgroundReader {
   summarize({ file, configDir, sessionIds, launchedAtMs = null }) {
     this.sweep();
     if (!file) return null;
-    const rec = this.processRecord(configDir, sessionIds);
+    const rec = this.processRecord(configDir, sessionIds, { notBeforeMs: launchedAtMs });
     // The CLI's own start time when it has one; else when Clawdling launched it.
     const processStartMs = rec?.startedAtMs ?? launchedAtMs ?? null;
     if (processStartMs === null) return null;

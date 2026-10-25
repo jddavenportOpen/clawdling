@@ -122,6 +122,36 @@ test('a plan: approve, or send it back with what to change', async () => {
   assert.equal((await messages(s.sid)).filter((m) => m.role === 'answer').pop().approved, true);
 });
 
+test('a plan sent back, then a tool permission in the same turn: no card for it, and the plan card cannot press it', async () => {
+  const s = await session('plan then bash');
+  await send(s.sid, 'planperm? go');
+  const v = await until(s.sid, (x) => x.asking?.kind === 'plan' && x.choices, 'plan');
+  const plan = v.asking.tool_id;
+  assert.equal((await answer(s.sid, { option: 3, text: 'Change it', tool_id: plan })).status, 200);
+  // The Bash prompt that follows: Claude Code sent no PostToolUse for the rejected plan.
+  const b = await until(s.sid, (x) => x.status === 'needs_you' && x.notification === 'Claude needs your permission to use Bash' && x.choices, 'bash prompt');
+  await new Promise((r) => setTimeout(r, 4000)); // every ask-detection attempt has had its chance
+  assert.equal((await view(s.sid)).asking, null, 'not dressed up as the old plan');
+  assert.equal((await answer(s.sid, { option: 1, tool_id: plan })).status, 409, 'the plan card cannot approve Bash');
+  assert.equal((await answer(s.sid, { option: 1, text: 'x', tool_id: plan })).status, 409);
+  assert.equal(b.choices.length, 3);
+  // The ordinary permission answer still works, as before.
+  assert.equal((await answer(s.sid, { option: 3 })).status, 200);
+  const done = await until(s.sid, (x) => x.status === 'ready', 'turn done');
+  assert.equal(done.last_message, 'plan feedback, then permission no');
+});
+
+test('two answers at once: the second is refused, nothing is typed twice', async () => {
+  const s = await session('double');
+  await send(s.sid, 'ask? double');
+  const v = await until(s.sid, (x) => x.asking, 'asking');
+  const body = { tool_id: v.asking.tool_id, answers: [{ text: 'Teal' }] };
+  const [a, b] = await Promise.all([answer(s.sid, body), answer(s.sid, body)]);
+  assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+  const done = await until(s.sid, (x) => x.status === 'ready', 'turn done');
+  assert.equal(done.last_message, 'you chose Teal');
+});
+
 test('a permission prompt is not a question: no card, and the card form is refused', async () => {
   const s = await session('perm');
   await send(s.sid, 'permission? please');

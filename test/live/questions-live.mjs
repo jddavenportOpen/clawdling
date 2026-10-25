@@ -121,13 +121,24 @@ async function main() {
   results.push({ check: 'AskUserQuestion answered from the card', ok: ok1, picked: pick, said: s.last_message });
   await api('DELETE', `/api/sessions/${q.sid}`);
 
+  // 1b. A typed answer that starts with a digit: the digit must not jump to an option.
+  const t = await api('POST', '/api/sessions', { agent: 'colors', model: MODEL, prompt: 'Use AskUserQuestion to ask me which of three colors I like, then say my answer back word for word.' });
+  s = await until(t.sid, (x) => x.asking && x.asking.kind === 'question', 'a second question');
+  const typed = '2 shades of teal';
+  await api('POST', `/api/sessions/${t.sid}/answer`, { tool_id: s.asking.tool_id, answers: [{ text: typed }] });
+  s = await until(t.sid, (x) => x.status === 'ready' && x.last_message, 'the reply to a typed answer');
+  const tAns = (await api('GET', `/api/sessions/${t.sid}/messages`)).messages.find((m) => m.role === 'answer');
+  log(`typed answer entry: ${JSON.stringify(tAns && tAns.answers)}; Claude said: ${s.last_message}`);
+  results.push({ check: 'a typed answer starting with a digit arrives as typed', ok: !!tAns && Object.values(tAns.answers || {})[0] === typed && /teal/i.test(s.last_message) });
+  await api('DELETE', `/api/sessions/${t.sid}`);
+
   // 2. Plan approval: send it back with what to change.
   const p = await api('POST', '/api/sessions', { agent: 'planner', model: MODEL, prompt: 'Write a two-step plan to create hello.txt containing the word hi. Do not research or read anything; call ExitPlanMode with the plan right away.' });
   s = await until(p.sid, (x) => x.asking && x.asking.kind === 'plan' && Array.isArray(x.choices) && x.choices.length, 'a plan');
   log(`plan choices: ${JSON.stringify(s.choices.map((c) => c.label))}`);
   const fb = s.choices.find((c) => /tell claude what to change/i.test(c.label));
   const first = s.asking.tool_id;
-  await api('POST', `/api/sessions/${p.sid}/answer`, { option: fb.option, text: 'Add a third step that prints the file.' });
+  await api('POST', `/api/sessions/${p.sid}/answer`, { option: fb.option, text: 'Add a third step that prints the file.', tool_id: first });
   s = await until(p.sid, (x) => x.asking && x.asking.kind === 'plan' && x.asking.tool_id !== first, 'the revised plan');
   const revised = await pendingTool(p.sid, s.asking.tool_id);
   const fbEntry = (await api('GET', `/api/sessions/${p.sid}/messages`)).messages.find((m) => m.role === 'answer' && m.tool_id === first);

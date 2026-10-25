@@ -14,10 +14,10 @@ import { cliPermissionMode } from './permissions.js';
 import { prependPath } from './platform.js';
 import { BackgroundReader } from './background.js';
 import { HOST_LOST } from './pty-host.js';
-import { answerLabels, checkAnswers, driveAnswers } from './questions.js';
+import { answerLabels, checkAnswers, driveAnswers, isPlanScreen, screenShowsAsk } from './questions.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
 import { cleanTitle, deriveTitle } from './titles.js';
-import { ASK_TOOLS, TranscriptReader, askOf, claudeConfigDir, findTranscript } from './transcripts.js';
+import { ASK_TOOLS, TranscriptReader, askOf, claudeConfigDir } from './transcripts.js';
 import {
   HttpError,
   badRequest,
@@ -79,10 +79,8 @@ const KEY = { up: Buffer.from('\x1b[A'), down: Buffer.from('\x1b[B'), enter: Buf
 const DIALOG_ARM_MS = 1500; // Claude Code ignores keys for a moment after a dialog opens
 // When to look for a question's choices after its Notification (ms): the list may draw late.
 const CHOICE_RETRY_MS = [300, 1000, 2500, 5000, 9000];
-// How often live sessions are checked for background work (Watching), and how long a missing
-// transcript is remembered as missing.
+// How often live sessions are checked for background work (Watching).
 const BACKGROUND_POLL_MS = 3000;
-const TRANSCRIPT_MISS_MS = 2000;
 const PLAN_FEEDBACK = /^tell claude what to change\b/i;
 
 /**
@@ -402,7 +400,8 @@ export class SessionManager {
     for (const r of this.records.values()) {
       const s = (out[r.agent] ||= { live: 0, needs_you: 0, last_activity_at: null });
       if (isLive(r.status)) s.live++;
-      if (r.status === 'needs_you' || r.status === 'ready') s.needs_you++;
+      // Waiting on the owner: a question, or a finished turn (not one still watching background work).
+      if (r.status === 'needs_you' || (r.status === 'ready' && !this.runtime.get(r.sid)?.background?.count)) s.needs_you++;
       const t = r.last_activity_at || r.created_at;
       if (!s.last_activity_at || t > s.last_activity_at) s.last_activity_at = t;
     }
@@ -425,17 +424,31 @@ export class SessionManager {
 
   // ---------------------------------------------------------------- transcripts: Watching, questions
 
-  /** The session's transcript file, or null (a miss is remembered for a few seconds). */
+  /**
+   * The session's transcript file, or null. Cheap enough for the 3 s poll: the path its hooks
+   * reported, else the file Claude Code would write for its folder; never a search through every
+   * project folder (tens of thousands on a busy machine, seconds of blocked server).
+   */
   transcriptFile(rec) {
-    const rt = this.rt(rec.sid);
-    const ids = [rec.claude_session_id, rec.sid].filter(Boolean);
-    const key = `${ids.join(',')}|${rec.transcript_path || ''}`;
-    if (rt.transcript && rt.transcript.key === key && (rt.transcript.file || Date.now() - rt.transcript.at < TRANSCRIPT_MISS_MS)) {
-      if (!rt.transcript.file || fs.existsSync(rt.transcript.file)) return rt.transcript.file;
+    const ids = [...new Set([rec.claude_session_id, rec.sid].filter((id) => isUuid(id)))];
+    const hint = rec.transcript_path;
+    if (typeof hint === 'string' && ids.includes(path.basename(hint, '.jsonl')) && /[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(hint)) {
+      return fs.existsSync(hint) ? hint : null;
     }
-    const file = findTranscript({ ids, hint: rec.transcript_path, configDir: this.configDirFor(rec, this.configDir) });
-    rt.transcript = { key, file, at: Date.now() };
-    return file;
+    const projects = path.join(this.configDirFor(rec, this.configDir), 'projects');
+    const dirs = new Set([String(rec.cwd || '').replace(/[^A-Za-z0-9]/g, '-')]);
+    try {
+      dirs.add(fs.realpathSync(rec.cwd).replace(/[^A-Za-z0-9]/g, '-'));
+    } catch {
+      // the folder is gone
+    }
+    for (const id of ids) {
+      for (const d of dirs) {
+        const f = path.join(projects, d, `${id}.jsonl`);
+        if (d && fs.existsSync(f)) return f;
+      }
+    }
+    return null;
   }
 
   /** Recompute one session's background work; publish when it changed. */
@@ -448,7 +461,7 @@ export class SessionManager {
           file: this.transcriptFile(rec),
           configDir: this.configDirFor(rec, this.configDir),
           sessionIds: [rec.claude_session_id, rec.sid].filter(Boolean),
-          launchedAtMs: rt.launchedAt || null,
+          launchedAtMs: rt.launchedAt || Date.parse(rec.launched_at || '') || null,
         });
       } catch (err) {
         this.logger?.warn?.(`background tasks of ${rec.sid}: ${err.message}`);
@@ -474,22 +487,36 @@ export class SessionManager {
 
   /**
    * Is the permission prompt on screen Claude asking a question (AskUserQuestion) or for a plan
-   * approval (ExitPlanMode)? The transcript says: its newest tool call still waiting for a result.
+   * approval (ExitPlanMode)? Its PreToolUse hook (or else the transcript's newest unanswered tool
+   * call) says which, and the screen must agree: a pending ask left over from an earlier question
+   * (a plan sent back fires no PostToolUse) never turns a tool permission into a card.
    */
   captureAsk(rec, delays = [150, 600, 1500, 3500, 6000, 10000]) {
     const asking = () => rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt';
     const attempt = (i) => {
       if (i >= delays.length) return;
-      setTimeout(() => {
+      setTimeout(async () => {
         if (!asking() || rec.asking) return;
-        let ask = rec.pending_ask || null; // from its PreToolUse hook: there before the transcript has it
-        if (!ask) {
+        const candidates = [];
+        if (rec.pending_ask) candidates.push(rec.pending_ask); // from its PreToolUse hook: there before the transcript has it
+        try {
+          const file = this.transcriptFile(rec);
+          const t = file ? this.transcripts.pendingAsk(file) : null;
+          if (t && !candidates.some((c) => c.tool_id === t.tool_id)) candidates.push(t);
+        } catch {
+          // no transcript yet
+        }
+        let ask = null;
+        if (candidates.length) {
+          let screen = '';
           try {
-            const file = this.transcriptFile(rec);
-            ask = file ? this.transcripts.pendingAsk(file) : null;
+            screen = await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`);
           } catch {
-            ask = null;
+            screen = '';
           }
+          ask = candidates.find((c) => screenShowsAsk(screen, c)) || null;
+          // The screen shows a prompt, and it is not the pending ask: that ask is over.
+          if (!ask && rec.pending_ask && parseChoices(screen)) rec.pending_ask = null;
         }
         if (ask && asking() && !rec.asking) {
           const q = ask.kind === 'question' ? ask.questions[0]?.question : null;
@@ -1245,12 +1272,28 @@ export class SessionManager {
    * so the answer is given the way a person would: read the screen, move the pointer with the arrow
    * keys onto the chosen line, check it is there, then press Enter.
    */
-  async answer(sid, option, { text = null, answers = null, toolId = null } = {}) {
+  async answer(sid, option, opts = {}) {
     const rec = this.require(sid);
+    const rt = this.rt(sid);
+    // One answer at a time per session: two would interleave their keys.
+    if (rt.answering) throw conflict('an answer is already being sent to this session');
+    rt.answering = true;
+    try {
+      return await this.answerNow(rec, option, opts);
+    } finally {
+      rt.answering = false;
+    }
+  }
+
+  async answerNow(rec, option, { text = null, answers = null, toolId = null } = {}) {
+    const sid = rec.sid;
     if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) {
       throw conflict('this session is not waiting on a question that can be answered here');
     }
     if (answers !== null) return this.answerQuestion(rec, answers, toolId);
+    // The plan card names the plan it shows: it must be the one on screen now.
+    const planCard = typeof toolId === 'string' && toolId.length > 0;
+    if (planCard && (rec.asking?.kind !== 'plan' || rec.asking.tool_id !== toolId)) throw conflict('that plan has already been answered or replaced');
     const n = Number(option);
     if (!Number.isInteger(n) || n < 1 || n > 9) throw badRequest('option must be the number of a choice (1 or 2)');
     let typed = null;
@@ -1266,7 +1309,9 @@ export class SessionManager {
     const kind = rec.waiting_on;
     let chosen = null;
     for (let attempt = 0; attempt < 8 && !chosen; attempt++) {
-      const c = parseChoices(await this.backend.screenText(target));
+      const screen = await this.backend.screenText(target);
+      if ((planCard || typed !== null) && !isPlanScreen(screen)) throw conflict('the plan is no longer on screen');
+      const c = parseChoices(screen);
       if (!c) {
         if (attempt < 3) {
           await sleep(250);
@@ -1299,6 +1344,7 @@ export class SessionManager {
   answered(rec, rt, kind, answered) {
     rec.choices = null;
     rec.asking = null;
+    rec.pending_ask = null;
     // A fast answer can be overtaken by the session's own next hook (Stop): it already moved on.
     if (rec.status !== 'needs_you' || rec.waiting_on !== kind) {
       this.scheduleSave();

@@ -146,6 +146,7 @@ function QuestionCard({ t, s, answer }) {
   const [texts, setTexts] = useState(() => qs.map(() => null)); // null = Other not chosen
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const sending = useRef(false); // a key-repeat Enter or a double tap must not send twice
   const pick = (qi, oi) => {
     setTexts((x) => x.map((v, i) => (i === qi && !qs[qi].multiSelect ? null : v)));
     setPicks((x) => x.map((p, i) => (i !== qi ? p : qs[qi].multiSelect ? (p.includes(oi) ? p.filter((o) => o !== oi) : [...p, oi]) : [oi])));
@@ -156,10 +157,13 @@ function QuestionCard({ t, s, answer }) {
   };
   const ready = qs.every((q, i) => (texts[i] !== null ? texts[i].trim().length > 0 : picks[i].length > 0));
   const send = async () => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(true);
     const body = { tool_id: t.id, answers: qs.map((q, i) => (texts[i] !== null ? { text: texts[i].trim() } : { choices: [...picks[i]].sort((a, b) => a - b) })) };
     const ok = await answerCard(s.sid, body);
     setBusy(false);
+    sending.current = false;
     if (ok) setSent(true);
   };
   const given = answer && answer.answers ? answer.answers : null;
@@ -169,12 +173,13 @@ function QuestionCard({ t, s, answer }) {
     <p class="ask-kicker">${state === 'answered' ? 'You answered' : state === 'declined' ? 'Not answered' : 'Claude asks'}</p>
     ${qs.map((q, qi) => {
       const chosen = given ? String(given[q.question] ?? '') : '';
-      const chosenSet = new Set(chosen.split(', ').filter(Boolean));
+      // A one-pick answer is one label (it may contain a comma); a multiSelect one is "A, B".
+      const chosenSet = new Set(q.multiSelect ? chosen.split(', ').filter(Boolean) : [chosen]);
       const known = q.options.some((o) => chosenSet.has(o.label));
       return html`<fieldset key=${qi} class="ask-q" disabled=${!live || busy}>
         <legend class="ask-legend">${q.header ? html`<span class="ask-header">${q.header}</span>` : null}<span class="ask-text">${q.question}</span></legend>
         ${q.multiSelect && live ? html`<p class="ask-hint">Pick any that apply.</p>` : null}
-        <div class="ask-options" role=${q.multiSelect ? 'group' : 'radiogroup'}>
+        <div class="ask-options" role=${q.multiSelect ? 'group' : 'radiogroup'} aria-label=${q.question}>
           ${q.options.map((o, oi) => {
             const on = live ? picks[qi].includes(oi) : chosenSet.has(o.label);
             return html`<button type="button" key=${oi} class=${`ask-opt ${on ? 'is-on' : ''}`} data-testid="ask-option" data-option=${oi}
@@ -211,11 +216,16 @@ function PlanCard({ t, s, answer }) {
   const [busy, setBusy] = useState(0);
   const [feedback, setFeedback] = useState(null);
   const [sent, setSent] = useState(false);
+  const sending = useRef(false);
   const choices = pending && Array.isArray(s.choices) ? s.choices : [];
   const send = async (option, text) => {
+    if (sending.current) return;
+    sending.current = true;
     setBusy(option);
-    const ok = await answerCard(s.sid, text ? { option, text } : { option });
+    // The plan's id: the server presses nothing unless this plan is the one on screen.
+    const ok = await answerCard(s.sid, text ? { option, text, tool_id: t.id } : { option, tool_id: t.id });
     setBusy(0);
+    sending.current = false;
     if (ok) setSent(true);
   };
   const state = answer ? (answer.approved ? 'approved' : answer.feedback ? 'feedback' : 'declined') : sent ? 'sent' : pending ? 'pending' : 'waiting';

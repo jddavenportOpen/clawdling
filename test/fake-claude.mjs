@@ -390,7 +390,9 @@ async function planApproval(plan) {
   });
   await notified;
   transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input: { plan } }] });
-  await runHook('PostToolUse', { tool_name: 'ExitPlanMode', tool_use_id: id });
+  // A plan sent back is a rejected tool call: Claude Code runs no PostToolUse for it (only for a
+  // tool that went through).
+  if (r.feedback === undefined) await runHook('PostToolUse', { tool_name: 'ExitPlanMode', tool_use_id: id });
   if (r.feedback !== undefined) {
     transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n${r.feedback}` }] }, { toolUseResult: `Error: The user doesn't want to proceed with this tool use. To tell you how to proceed, the user said:\n${r.feedback}` });
     return { feedback: r.feedback };
@@ -463,12 +465,20 @@ async function interactive() {
       return;
     }
     // "ask?" / "ask2?": AskUserQuestion (one question; or two, the second multiSelect). "plan?": ExitPlanMode.
-    if (text.includes('ask?') || text.includes('ask2?') || text.includes('plan?')) {
+    if (text.includes('ask?') || text.includes('ask2?') || text.includes('plan?') || text.includes('planperm?')) {
       inSelect = true;
       let said;
-      if (text.includes('plan?')) {
+      if (text.includes('plan?') || text.includes('planperm?')) {
         const r = await planApproval('# Make hello.txt\n\n## Plan\n1. Create hello.txt.\n2. Write hi into it.');
         said = r.feedback !== undefined ? `plan feedback: ${r.feedback}` : `plan approved (${r.approved})`;
+        // "planperm?": sent back, Claude carries on in the same turn and asks to run a command.
+        if (text.includes('planperm?') && r.feedback !== undefined) {
+          process.stdout.write('\x1b[2J\x1b[H');
+          const asked = select({ header: [' Bash command', '   ls', '   List files', '', ' Do you want to proceed?'], choices: ['Yes', "Yes, and don't ask again for ls commands", 'No, and tell Claude what to do differently (esc)'], numbered: true });
+          await runHook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+          const choice = await asked;
+          said = `plan feedback, then permission ${['yes', 'yes, always', 'no'][choice]}`;
+        }
       } else {
         const questions = [{ question: 'Which color do you like best?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'A warm, bold color.' }, { label: 'Green', description: 'A calm, natural color.' }, { label: 'Blue', description: 'A cool, steady color.' }] }];
         if (text.includes('ask2?')) questions.push({ question: 'Which pets do you like?', header: 'Pets', multiSelect: true, options: [{ label: 'Cat', description: 'Independent.' }, { label: 'Dog', description: 'Loyal.' }, { label: 'Fish', description: 'Quiet.' }] });

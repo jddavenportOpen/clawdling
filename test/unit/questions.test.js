@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { checkAnswers, driveAnswers, readQuestion } from '../../server/questions.js';
+import { checkAnswers, driveAnswers, isPlanScreen, readQuestion, screenShowsAsk } from '../../server/questions.js';
 import { parseChoices } from '../../server/sessions.js';
 import { TranscriptReader, askAnswerOf, askOf } from '../../server/transcripts.js';
 
@@ -27,8 +27,11 @@ test('readQuestion: the real 2.1.283 screen of one question (descriptions, "Type
   // Not this question, or not these options: no answer is typed.
   assert.equal(readQuestion(screen('screen-askuserquestion-2.1.283.txt'), { ...SLEEP, question: 'Something else?' }), null);
   assert.equal(readQuestion(screen('screen-askuserquestion-2.1.283.txt'), { ...SLEEP, options: [{ label: 'Yes' }, { label: 'No' }] }), null);
-  // A permission prompt is not a question.
+  // A permission prompt is not a question, even one whose lines a stale question matches.
   assert.equal(readQuestion(' Bash command\n   rm -rf build\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. No\n', { question: 'Do you want to proceed?', options: [{ label: 'Yes' }, { label: 'No' }] }), null);
+  const bash = ' Bash command\n   ls\n\n Do you want to proceed?\n ❯ 1. Yes\n   2. Yes, and don\'t ask again for ls commands\n   3. No, and tell Claude what to do differently (esc)\n\n Esc to cancel\n';
+  assert.equal(readQuestion(bash, { question: 'Do you want to proceed?', options: [{ label: 'Yes' }, { label: "Yes, and don't ask again for ls commands" }] }), null, 'the third line is not "Type something"');
+  assert.equal(screenShowsAsk(bash, { kind: 'plan', plan: 'x' }), false);
 });
 
 test('readQuestion: a multiSelect question: ticked boxes, the pointer, the Submit line', () => {
@@ -37,6 +40,12 @@ test('readQuestion: a multiSelect question: ticked boxes, the pointer, the Submi
   assert.equal(r.selected, 2);
   assert.deepEqual(r.submit, { selected: false });
   assert.equal(readQuestion(screen('screen-askuserquestion-multi-2.1.283.txt').replace('     Submit', ''), PETS), null, 'multiSelect needs its Submit line');
+});
+
+test('isPlanScreen: the plan approval, and nothing else', () => {
+  assert.equal(isPlanScreen(screen('screen-exitplanmode-2.1.283.txt')), true);
+  assert.equal(isPlanScreen(screen('screen-askuserquestion-2.1.283.txt')), false);
+  assert.equal(isPlanScreen(' Do you want to proceed?\n ❯ 1. Yes\n   2. No\n'), false);
 });
 
 test('the plan prompt\'s choices are read by the existing parser (the card answers it by option)', () => {
@@ -62,8 +71,9 @@ test('driveAnswers: arrows onto the choice, Enter; the review is submitted; a ch
   const ticks = new Set();
   const sent = [];
   const draw = () => {
-    if (step === 0) return ['Favorite color?', '', ...['Red', 'Blue', 'Type something.'].map((l, i) => `${sel === i ? '❯' : ' '} ${i + 1}. ${l}`), '─'.repeat(20)].join('\n');
-    if (step === 1) return ['Which pets do you like?', '', ...['Cat', 'Dog', 'Fish', 'Type something'].map((l, i) => `${sel === i ? '❯' : ' '} ${i + 1}. [${ticks.has(i) ? '✔' : ' '}] ${l}`), `${sel === 4 ? '❯' : ' '}    Submit`, '─'.repeat(20)].join('\n');
+    const foot = ['  4. Chat about this', '', 'Enter to select · ↑/↓ to navigate · Esc to cancel'];
+    if (step === 0) return ['Favorite color?', '', ...['Red', 'Blue', 'Type something.'].map((l, i) => `${sel === i ? '❯' : ' '} ${i + 1}. ${l}`), '─'.repeat(20), ...foot].join('\n');
+    if (step === 1) return ['Which pets do you like?', '', ...['Cat', 'Dog', 'Fish', 'Type something'].map((l, i) => `${sel === i ? '❯' : ' '} ${i + 1}. [${ticks.has(i) ? '✔' : ' '}] ${l}`), `${sel === 4 ? '❯' : ' '}    Submit`, '─'.repeat(20), ...foot].join('\n');
     if (step === 2) return ['Ready to submit your answers?', '', `${sel === 0 ? '❯' : ' '} 1. Submit answers`, `${sel === 1 ? '❯' : ' '} 2. Cancel`].join('\n');
     return 'done';
   };

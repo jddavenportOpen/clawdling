@@ -28,6 +28,10 @@ const SUBMIT_RE = new RegExp(`^\\s*(${POINTER})?\\s*Submit\\s*$`);
 const BOX_RE = /^\[([ ✔✓xX])\]\s*/;
 const RULE_RE = /^\s*[─━╌┄-]{8,}/;
 const REVIEW_RE = /Ready to submit your answers\?/;
+const OTHER_RE = /^Type something\.?$/i; // the free-text line every AskUserQuestion list ends with
+const FOOTER_RE = /Enter to select\b/; // AskUserQuestion's own footer (a permission prompt has another)
+const PLAN_RE = /Would you like to proceed\?/;
+const PLAN_FEEDBACK_RE = new RegExp(`^\\s*(?:${POINTER}\\s*)?\\d+\\.\\s+Tell Claude what to change\\b`, 'i');
 const TEXT_MAX = 1000;
 
 const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
@@ -79,12 +83,30 @@ export function readQuestion(screen, q) {
   }
   const n = q.options.length;
   if (items.length < n + 1) return null; // the options, then "Type something"
+  // An AskUserQuestion list, not some other prompt with the same lines: its free-text line, and
+  // its own footer below the list.
+  // (With the pointer on it, a one-pick question's free-text line holds what was typed so far.)
+  if (!OTHER_RE.test(norm(items[n].label)) && !(items[n].selected && !q.multiSelect)) return null;
+  if (!lines.slice(at + 1).some((l) => FOOTER_RE.test(l))) return null;
   for (let i = 0; i < n; i++) if (!sameLabel(items[i].label, q.options[i].label)) return null;
   if (q.multiSelect && !submit) return null;
   let selected = items.findIndex((it) => it.selected);
   if (selected === -1 && submit?.selected) selected = n + 1;
   if (selected === -1) return null;
   return { items: items.slice(0, n + 1), submit, selected };
+}
+
+/** Is `screen` Claude Code's plan approval ("Would you like to proceed?" with "Tell Claude what to change")? */
+export function isPlanScreen(screen) {
+  const lines = String(screen || '').split('\n');
+  return lines.some((l) => PLAN_RE.test(l)) && lines.some((l) => PLAN_FEEDBACK_RE.test(l));
+}
+
+/** Does `screen` show this pending ask (its first question, or a plan approval)? */
+export function screenShowsAsk(screen, ask) {
+  if (!ask) return false;
+  if (ask.kind === 'plan') return isPlanScreen(screen);
+  return !!(ask.questions && ask.questions[0] && readQuestion(screen, ask.questions[0]));
 }
 
 /**
