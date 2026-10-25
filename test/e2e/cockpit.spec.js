@@ -46,7 +46,7 @@ test.describe('rail and workspace', () => {
     await login(page);
   });
 
-  test('rail rows show each session by its real name', async ({ page }) => {
+  test('CS-06: rail rows show each session by its real name', async ({ page }) => {
     const roadmap = await sessionBySid(ids.roadmap);
     await expect(row(page, ids.roadmap).getByTestId('row-title')).toHaveText(roadmap.title);
     await expect(row(page, ids.roadmap)).toHaveAttribute('data-section', 'needs');
@@ -156,7 +156,7 @@ test.describe('rail and workspace', () => {
     }
   });
 
-  test('rename by double-clicking the pane title', async ({ page }) => {
+  test('CS-04: rename by double-clicking the pane title', async ({ page }) => {
     await openPanes(page, [ids.brief]);
     await pane(page, ids.brief).getByTestId('pane-title').dblclick();
     const input = pane(page, ids.brief).getByTestId('pane-title-input');
@@ -177,7 +177,7 @@ test.describe('rail and workspace', () => {
     await expect.poll(async () => (await sessionBySid(ids.brief)).title).toBe('Brief, typed fast');
   });
 
-  test('ending a session asks first and keeps the other panes', async ({ page }) => {
+  test('CS-03: ending a session asks first and keeps the other panes', async ({ page }) => {
     await openPanes(page, [ids.roadmap, ids.brief, ids.quotes]);
     await pane(page, ids.brief).getByTestId('pane-end').click();
     const dialog = page.getByRole('dialog');
@@ -200,7 +200,7 @@ test.describe('rail and workspace', () => {
     expect((await sessionBySid(ids.quotes)).status).not.toBe('ended');
   });
 
-  test('a Recent row resumes the session and focuses it', async ({ page }) => {
+  test('CS-02: a Recent row resumes the session and focuses it', async ({ page }) => {
     await openPanes(page, [ids.roadmap]);
     await expect(row(page, ids.reconcile)).toHaveAttribute('data-section', 'recent');
     await rowButton(page, ids.reconcile).click();
@@ -227,7 +227,7 @@ test.describe('rail and workspace', () => {
     await expect(panes(page)).toHaveCount(2);
   });
 
-  test('Option/Alt+N focuses pane N (browsers keep Cmd/Ctrl+N) and layouts never drop panes', async ({ page }) => {
+  test('CS-05: Option/Alt+N focuses pane N (browsers keep Cmd/Ctrl+N) and layouts never drop panes', async ({ page }) => {
     await openPanes(page, [ids.roadmap, ids.brief, ids.quotes]);
     await page.keyboard.press('Alt+Digit1');
     await expect(pane(page, ids.roadmap)).toHaveAttribute('data-focused', 'true');
@@ -245,7 +245,7 @@ test.describe('rail and workspace', () => {
     await expect(page.locator('[data-pane]:not(.is-hidden)')).toHaveCount(3);
   });
 
-  test('new session from the rail opens focused in the workspace', async ({ page }) => {
+  test('CS-01: new session from the rail opens focused in the workspace', async ({ page }) => {
     await openPanes(page, [ids.roadmap]);
     await page.getByTestId('new-session').click();
     const dialog = page.getByRole('dialog');
@@ -281,7 +281,7 @@ test.describe('rail and workspace', () => {
     await expect(termText(page, sid)).toContainText(isMock() ? 'You said: first message' : 'first message', { timeout: 10_000 });
   });
 
-  test('live status changes reach the rail without a reload', async ({ page }) => {
+  test('CS-13: live status changes reach the rail without a reload', async ({ page }) => {
     const sid = await spawn({ agent: 'money', title: 'Pay the water bill', status: 'working' });
     await expect(row(page, sid)).toHaveAttribute('data-section', 'live', { timeout: 12_000 });
     await api('POST', '/api/hooks', { event: 'Notification', sid, payload: { message: 'Approve the payment?' } });
@@ -429,7 +429,7 @@ test.describe('startup dialogs', () => {
     }
   });
 
-  test('"Yes, trust it" answers the trust dialog; the terminal still takes keys', async ({ page }) => {
+  test('CS-18: "Yes, trust it" answers the trust dialog; the terminal still takes keys', async ({ page }) => {
     const sid = await trustDialogSession('home', 'Sort the garage');
     await login(page);
     await openPanes(page, [sid]);

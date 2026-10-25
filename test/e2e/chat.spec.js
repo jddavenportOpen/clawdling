@@ -39,7 +39,7 @@ async function chatSession(title = 'Chat test') {
 }
 
 test.describe('chat view', () => {
-  test('a session with a transcript opens in chat: messages, code block, table, safe text', async ({ page }) => {
+  test('CS-08: a session with a transcript opens in chat: messages, code block, table, safe text', async ({ page }) => {
     const sid = await chatSession();
     await login(page);
     await openPanes(page, [sid]);
@@ -78,7 +78,7 @@ test.describe('chat view', () => {
     await expect(p.getByTestId('chat-pending-note')).toHaveCount(0);
   });
 
-  test('a tool call is one line and expands to its detail', async ({ page }) => {
+  test('CS-09: a tool call is one line and expands to its detail', async ({ page }) => {
     const sid = await chatSession();
     await login(page);
     await openPanes(page, [sid]);
@@ -97,7 +97,7 @@ test.describe('chat view', () => {
     await expect(tools.nth(1).getByTestId('chat-tool-detail')).toHaveText('npm test');
   });
 
-  test('the chat composer sends and the reply appears live', async ({ page }) => {
+  test('CS-10: the chat composer sends and the reply appears live', async ({ page }) => {
     const sid = await chatSession();
     await login(page);
     await openPanes(page, [sid]);
@@ -114,7 +114,7 @@ test.describe('chat view', () => {
     await expect(p.getByTestId('chat-msg').nth(3).locator('strong')).toHaveText('hello chat');
   });
 
-  test('Raw shows the terminal, is remembered per pane across a reload, and Chat comes back', async ({ page }) => {
+  test('CS-11: Raw shows the terminal, is remembered per pane across a reload, and Chat comes back', async ({ page }) => {
     const sid = await chatSession();
     await login(page);
     await openPanes(page, [sid]);
@@ -157,7 +157,7 @@ test.describe('chat view', () => {
 test.describe('chat view on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
-  test('chat with the composer, 16 px field, 44 px toggles, no sideways scroll', async ({ page }) => {
+  test('CS-12: chat with the composer, 16 px field, 44 px toggles, no sideways scroll', async ({ page }) => {
     const sid = await chatSession();
     await login(page);
     await page.locator(`.rail .row-wrap[data-sid="${sid}"] button.row`).tap();

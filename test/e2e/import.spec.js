@@ -158,7 +158,7 @@ test.describe('bring in your projects', () => {
     await expect(page.getByTestId('imp-create')).toHaveText('Create 7 project agents');
   });
 
-  test('create 3 with a new domain for one: per-row progress, results, and the map shows them', async ({ page }) => {
+  test('CS-27: create 3 with a new domain for one: per-row progress, results, and the map shows them', async ({ page }) => {
     await reset('empty');
     await mock('discover', { importDelay: 700 });
     await login(page);
@@ -468,7 +468,7 @@ test.describe('bring in your projects', () => {
 });
 
 test.describe('your Claude Code setup', () => {
-  test('Settings lists names only, collapses long lists, and promotes a subagent', async ({ page }) => {
+  test('CS-28: Settings lists names only, collapses long lists, and promotes a subagent', async ({ page }) => {
     await reset('default');
     await login(page, '#/settings/setup');
     const card = page.getByTestId('setup-card');

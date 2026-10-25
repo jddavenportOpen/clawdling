@@ -158,6 +158,25 @@ test.describe('Watching', () => {
 test.describe('question cards on a phone', () => {
   test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
 
+  test('CS-19 (phone): Watching · N is a 44 px target and its list stays on screen', async ({ page }) => {
+    const sid = await chatSession('Phone watch');
+    await login(page);
+    await page.locator(`.rail .row-wrap[data-sid="${sid}"] button.row`).tap();
+    const p = pane(page, sid);
+    await expect(p.getByTestId('chat-view')).toBeVisible();
+    await ask(page, sid, 'watch? the build');
+    const pill = p.getByTestId('watching-pill');
+    await expect(pill).toBeVisible();
+    expect((await pill.boundingBox()).height).toBeGreaterThanOrEqual(44);
+    await pill.tap();
+    const pop = p.getByTestId('watching-pop');
+    await expect(pop).toBeVisible();
+    const box = await pop.boundingBox();
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  });
+
   test('CS-14 (phone): the card fits, its targets are 44 px, and a tap answers', async ({ page }) => {
     const sid = await chatSession('Phone');
     await login(page);

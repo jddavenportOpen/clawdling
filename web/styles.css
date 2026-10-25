@@ -1308,7 +1308,7 @@ h3.chat-h { font-size: 16.5px; }
 .watch-age { font-size: 11.5px; color: var(--text-3); }
 .watch-more { color: var(--text-3); }
 @media (pointer: coarse) { .watch-pill { min-height: 44px; padding: 0 12px; } }
-@media (max-width: 640px) { .watch-pop { left: auto; right: 0; } }
+@media (max-width: 640px) { .watch-pop { position: fixed; top: auto; left: 12px; right: 12px; width: auto; margin-top: 6px; } }
 
 /* ---------- Question and plan cards in the chat view ---------- */
 .ask-card { margin: 8px 0 2px; padding: 12px 14px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line-2); max-width: 640px; }

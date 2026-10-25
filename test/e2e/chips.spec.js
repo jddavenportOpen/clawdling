@@ -14,7 +14,7 @@ test.describe('pane chips', () => {
     await login(page);
   });
 
-  test('chips show the session model and effort, and switch them between turns', async ({ page }) => {
+  test('CS-25: chips show the session model and effort, and switch them between turns', async ({ page }) => {
     const site = await byTitle('Fix the hero layout on mobile');
     await rowButton(page, site.sid).click();
     const working = pane(page, site.sid);
@@ -110,7 +110,7 @@ test.describe('dictation on the phone', () => {
     await expect(pane(page, brief.sid).getByTestId('composer-mic')).toHaveCount(0);
   });
 
-  test('the mic fills the box, notes the speech service once, and never sends', async ({ page }) => {
+  test('CS-26: the mic fills the box, notes the speech service once, and never sends', async ({ page }) => {
     await page.addInitScript(() => {
       class FakeRecognition {
         start() {

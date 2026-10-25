@@ -33,7 +33,7 @@ test.describe('org map', () => {
     await expect(page.getByTestId('agent-page')).toBeVisible();
   });
 
-  test('"need you" is one honest number everywhere: amber = Claude asked, green = your turn', async ({ page }) => {
+  test('CS-24: "need you" is one honest number everywhere: amber = Claude asked, green = your turn', async ({ page }) => {
     await reset('default');
     await login(page, '#/map');
     await expect(page.locator('[data-node]').first()).toBeVisible();
@@ -102,7 +102,7 @@ test.describe('org map', () => {
 });
 
 test.describe('agent page', () => {
-  test('edits NOW.md and saves it with PUT /context', async ({ page }) => {
+  test('CS-29: edits NOW.md and saves it with PUT /context', async ({ page }) => {
     await reset('default');
     await login(page, '#/agent/health/memory');
     const editor = page.getByTestId('editor-now_md');
@@ -240,7 +240,7 @@ test.describe('new agent wizard', () => {
 test.describe('donna page', () => {
   test.skip(() => !isMock() && !process.env.CLAWDLING_E2E_ALLOW_CHANNELS, 'real server: would store a bot token; opt in with CLAWDLING_E2E_ALLOW_CHANNELS=1 and a stub TELEGRAM_API_BASE');
 
-  test('connecting a Telegram bot shows a pairing code', async ({ page }) => {
+  test('CS-30: connecting a Telegram bot shows a pairing code', async ({ page }) => {
     await reset('default');
     await login(page, '#/donna');
     await expect(page.getByTestId('telegram-card')).toContainText('Not set up');

@@ -165,7 +165,7 @@ test.describe('first run (P0-4)', () => {
 test.describe('questions in a pane', () => {
   test.skip(() => !isMock(), 'uses the mock to raise the screens');
 
-  test('not signed in: one click opens Sign in for your own login, then Start again picks it up (1.1.1)', async ({ page }) => {
+  test('CS-23: not signed in: one click opens Sign in for your own login, then Start again picks it up (1.1.1)', async ({ page }) => {
     const ids = await seedStandard();
     await mock('dialog', { sid: ids.quotes, kind: 'login' });
     await login(page);
@@ -195,7 +195,7 @@ test.describe('questions in a pane', () => {
     await expect(pane(page, ids.quotes).getByTestId('pane-dialog')).toHaveCount(0);
   });
 
-  test('a permission prompt is answered with one click, choices in screen order (P1-8)', async ({ page }) => {
+  test('CS-17: a permission prompt is answered with one click, choices in screen order (P1-8)', async ({ page }) => {
     await reset('default');
     const s = (await sessions()).find((x) => x.waiting_on === 'permission_prompt');
     await login(page);
