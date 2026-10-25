@@ -78,6 +78,16 @@ export function cookieHeader(token) {
   return `${COOKIE_NAME}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000`;
 }
 
+/**
+ * A paired device's cookie on a remote address (Use from anywhere). Secure: only ever sent over
+ * https. HttpOnly: page scripts never see it. SameSite=Strict: another site can neither send it
+ * nor embed the cockpit; a link from elsewhere opens the page signed out for that one load, and
+ * its own same-origin API calls carry the cookie. 30 days, the same as the server-side expiry.
+ */
+export function deviceCookieHeader(value, maxAgeSec = 30 * 24 * 60 * 60) {
+  return `cl_device=${value}; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=${maxAgeSec}`;
+}
+
 export function isLoopback(host) {
   return host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]' || /^127\./.test(host);
 }
@@ -110,8 +120,11 @@ export function hostAllowed(req, allowed) {
   return allowed.has(h);
 }
 
-/** Same-origin or no Origin at all (CLI, curl, the hook script). `Origin: null` is rejected. */
-export function originAllowed(req) {
+/**
+ * Same-origin or no Origin at all (CLI, curl, the hook script). `Origin: null` is rejected.
+ * `secure`: a remote address, where only an https origin counts.
+ */
+export function originAllowed(req, { secure = false } = {}) {
   const o = req.headers.origin;
   if (o === undefined) return true;
   if (!o || o === 'null') return false;
@@ -122,5 +135,6 @@ export function originAllowed(req) {
     return false;
   }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+  if (secure && u.protocol !== 'https:') return false;
   return u.host.toLowerCase() === String(req.headers.host || '').toLowerCase();
 }

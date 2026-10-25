@@ -57,6 +57,8 @@ export function runtimePaths(home) {
     imessageState: path.join(rt, 'imessage.json'),
     donnaChat: path.join(rt, 'donna-chat.jsonl'),
     trust: path.join(rt, 'trust.json'),
+    remote: path.join(rt, 'remote.json'),
+    remoteDevices: path.join(rt, 'remote-devices.json'),
   };
 }
 

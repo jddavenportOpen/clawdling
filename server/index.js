@@ -1,4 +1,5 @@
 // The Clawdling server: HTTP API + static cockpit + terminal WebSockets + SSE, all on 127.0.0.1.
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -8,15 +9,37 @@ import { Worker } from 'node:worker_threads';
 import { WebSocketServer } from 'ws';
 import {
   COOKIE_NAME,
+  TOKEN_HEADER,
   allowedHosts,
   cookieHeader,
+  deviceCookieHeader,
   extractToken,
   hostAllowed,
   isLoopback,
   loadOrCreateToken,
   originAllowed,
+  parseCookies,
   tokenEquals,
 } from './auth.js';
+import {
+  AccessVerifier,
+  DEVICE_COOKIE,
+  DeviceStore,
+  MAX_HOSTS,
+  PAIRING_TTL_MS,
+  Pairings,
+  RemoteError,
+  RemoteStore,
+  Throttle,
+  answerable,
+  checkCloudflare,
+  checkTailscale,
+  deviceLabel,
+  parseRemoteUrl,
+  remoteOriginAllowed,
+  statusText,
+  tailscaleBin,
+} from './remote.js';
 import { DonnaRouter } from './channels/donna.js';
 import { IMessageGateway } from './channels/imessage.js';
 import { TelegramGateway } from './channels/telegram.js';
@@ -517,10 +540,346 @@ export async function startServer(opts = {}) {
     telegram.onChange = () => events.publish('channel', { channel: 'telegram', ...channelsStatus() });
     imessage.onChange = () => events.publish('channel', { channel: 'imessage', ...channelsStatus() });
 
+    // ------------------------------------------------------------- Use from anywhere (1.3)
+    // The server stays on 127.0.0.1. A request whose Host is a registered remote address came
+    // through the user's Tailscale Serve entry or Cloudflare Tunnel: it is answered only while
+    // Use from anywhere is on, only if that address passed its last check, and only for a paired
+    // device. Everything else about the cockpit is unchanged.
+    const remote = new RemoteStore(paths.remote);
+    const devices = new DeviceStore(paths.remoteDevices);
+    const pairings = new Pairings({ ttlMs: testMode && Number(env.CLAWDLING_PAIRING_TTL_MS) > 0 ? Number(env.CLAWDLING_PAIRING_TTL_MS) : PAIRING_TTL_MS });
+    const throttle = new Throttle();
+    const access = new AccessVerifier(testMode && env.CLAWDLING_CF_CERTS_URL ? { certsUrl: () => env.CLAWDLING_CF_CERTS_URL } : {});
+    const checkNonces = new Set();
+    const remoteConns = new Set(); // live SSE and terminal connections through a remote address
+    // Headers only a proxy adds. On a loopback Host they mean a tunnel rewrote the Host header,
+    // which would make a remote request look local: refused.
+    const PROXY_HEADERS = ['x-forwarded-for', 'x-forwarded-host', 'forwarded', 'x-real-ip', 'cf-connecting-ip', 'cf-access-jwt-assertion', 'tailscale-user-login', 'tailscale-funnel-request'];
+
+    async function classify(req, url) {
+      const entry = remote.match(req.headers.host);
+      if (entry) {
+        // The one exception to "on and checked": our own check reaching us through the address.
+        if (url.pathname === '/api/remote/hello') return checkNonces.has(url.searchParams.get('nonce')) ? { remote: true, hello: true, entry } : { refused: 'unexpected Host header' };
+        const st = remote.read();
+        if (!st.enabled) return { refused: 'Use from anywhere is turned off on this computer.' };
+        if (!answerable(entry)) return { refused: `Clawdling does not answer ${entry.url}: ${statusText(entry)}.` };
+        if (entry.kind === 'tailscale' && req.headers['tailscale-funnel-request'] !== undefined) return { refused: 'Clawdling never answers through Tailscale Funnel.' };
+        if (entry.kind === 'cloudflare') {
+          const v = await access.verify(req.headers['cf-access-jwt-assertion'], entry.access);
+          if (!v.ok) return { refused: `Cloudflare Access did not sign this request in (${v.reason}).` };
+        }
+        return { remote: true, entry };
+      }
+      if (!hostAllowed(req, allowed)) return { refused: 'unexpected Host header' };
+      if (isLoopback(host) && PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) {
+        return { refused: 'this request came through a proxy that changed the Host header. Register the address with `clawdling remote add` instead.' };
+      }
+      return { remote: false };
+    }
+
+    function refuse(res, msg) {
+      res.setHeader('X-Clawdling-Refused', '1'); // lets a Cloudflare check tell "reached Clawdling" from "stopped by Access"
+      sendJson(res, 403, { error: msg });
+    }
+
+    /** The credential a remote request presents: a device token in the header (the app) or cookie. */
+    function remoteCredential(req) {
+      const h = req.headers[TOKEN_HEADER];
+      if (typeof h === 'string' && h) return h;
+      return parseCookies(req.headers.cookie)[DEVICE_COOKIE] || null;
+    }
+
+    const deviceFor = (req) => devices.verify(remoteCredential(req));
+
+    function remoteAuth(req, who) {
+      const cred = remoteCredential(req);
+      if (!cred) return { status: 401, error: 'This device is not signed in. On your computer, open Settings, Use from anywhere, and add this device.' };
+      const d = devices.verify(cred);
+      if (d) {
+        devices.touch(d);
+        return { device: d };
+      }
+      const key = who.entry.url;
+      if (throttle.blocked(key)) return { status: 429, error: 'Too many failed sign-ins through this address. Wait a few minutes, then try again.', retryAfter: throttle.retryAfter(key) };
+      throttle.fail(key);
+      if (throttle.blocked(key)) logger.warn(`remote: too many failed sign-ins through ${key}; refusing new ones for a few minutes`);
+      return { status: 401, error: 'This device is signed out. On your computer, open Settings, Use from anywhere, and add it again.' };
+    }
+
+    function trackRemote(who, close, emitter) {
+      const c = { host: who.entry.url, device: who.device?.id, close };
+      remoteConns.add(c);
+      emitter.once('close', () => remoteConns.delete(c));
+    }
+
+    /** Close every remote connection whose address or device is no longer allowed. */
+    function sweepRemote() {
+      const st = remote.read();
+      const live = new Set(devices.list().map((d) => d.id));
+      for (const c of [...remoteConns]) {
+        const e = st.hosts.find((h) => h.url === c.host);
+        if (st.enabled && e && answerable(e) && live.has(c.device)) continue;
+        remoteConns.delete(c);
+        try {
+          c.close();
+        } catch {
+          // already closed
+        }
+      }
+    }
+
+    function remoteView(who = {}) {
+      const st = remote.read();
+      return {
+        enabled: st.enabled,
+        invalid: st.invalid,
+        port,
+        pairing_minutes: Math.round(pairings.ttlMs / 60000),
+        hosts: st.hosts.map((h) => ({ url: h.url, kind: h.kind, status: h.status, status_text: statusText(h), detail: h.detail, checked_at: h.checked_at, answering: st.enabled && answerable(h) })),
+        devices: devices.list(),
+        here: { remote: !!who.remote, url: who.entry?.url || null, device: who.device?.id || null },
+      };
+    }
+
+    function remoteChanged(reason) {
+      sweepRemote();
+      events.record({ type: 'remote', action: reason });
+    }
+
+    const tsBin = () => tailscaleBin({ env, which: (c) => which(c, cEnv.PATH || '') });
+    // `tailscale serve status --json`, the only Tailscale command Clawdling itself ever runs.
+    const runReadOnly = (bin, args, o = {}) => {
+      const cmd = commandFor(bin, args, { env: cEnv });
+      return execFileP(cmd.file, cmd.args, { ...o, env: cEnv, spawn: spawnOptions(cmd) });
+    };
+
+    /** One check of one address: {status, detail, access?, checked_at}. Never sends a credential. */
+    async function runCheck(entry) {
+      const nonce = crypto.randomBytes(16).toString('hex');
+      checkNonces.add(nonce);
+      try {
+        const r = entry.kind === 'tailscale'
+          ? await checkTailscale(entry, { nonce, bin: tsBin(), run: runReadOnly, env, testMode })
+          : await checkCloudflare(entry, { env, testMode });
+        return { ...r, checked_at: new Date().toISOString() };
+      } finally {
+        checkNonces.delete(nonce);
+      }
+    }
+
+    async function checkAll() {
+      const st = remote.read();
+      const results = new Map();
+      for (const h of st.hosts) results.set(h.url, await runCheck(h));
+      remote.update((s) => {
+        for (const h of s.hosts) {
+          const r = results.get(h.url);
+          if (!r) continue;
+          // A Cloudflare address that passed before and simply could not be reached now keeps
+          // its status: every request through it must still carry a valid Access token.
+          if (h.kind === 'cloudflare' && h.status === 'access' && r.status === 'unreachable') {
+            Object.assign(h, { checked_at: r.checked_at, detail: `${r.detail} It passed its last check, and Clawdling still requires a Cloudflare Access sign-in on every request.` });
+            continue;
+          }
+          Object.assign(h, { status: r.status, detail: r.detail, checked_at: r.checked_at, ...(r.access ? { access: r.access } : {}) });
+        }
+      });
+      remoteChanged('checked');
+    }
+
+    async function addHost(b) {
+      if (!b.kind) throw new RemoteError('send --kind tailscale or --kind cloudflare');
+      const p = parseRemoteUrl(b.url, b.kind);
+      let access = null;
+      if (b.team_domain !== undefined || b.access_aud !== undefined) {
+        if (b.kind !== 'cloudflare') throw new RemoteError('--team-domain and --access-aud are for Cloudflare addresses');
+        const team = String(b.team_domain || '').trim().toLowerCase().replace(/\/+$/, '');
+        const teamUrl = team.startsWith('https://') ? team : `https://${team}`;
+        const aud = String(b.access_aud || '').trim();
+        if (!/^https:\/\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.cloudflareaccess\.com$/.test(teamUrl)) throw new RemoteError('--team-domain is your <team>.cloudflareaccess.com name');
+        if (!/^[A-Za-z0-9_-]{16,128}$/.test(aud)) throw new RemoteError('--access-aud is the application AUD tag from Cloudflare Zero Trust');
+        access = { team_domain: teamUrl, aud };
+      }
+      const cur = remote.read();
+      const prev = cur.hosts.find((h) => h.url === p.url) || null;
+      if (!prev && cur.hosts.length >= MAX_HOSTS) throw new RemoteError(`Clawdling keeps at most ${MAX_HOSTS} remote addresses: remove one first`);
+      const draft = { url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null) };
+      remote.update((s) => {
+        s.hosts = s.hosts.filter((h) => h.url !== p.url);
+        s.hosts.push(draft);
+      });
+      let r;
+      try {
+        r = await runCheck(draft);
+      } catch (err) {
+        r = { status: 'unreachable', detail: `The check failed: ${err.message}` };
+      }
+      const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: r.access || draft.access };
+      // Added only once it is reachable and safe (a later "Not reachable" keeps it: that may pass).
+      if (!answerable(done) || done.status === 'unreachable') {
+        // Not safe or not reachable: leave remote.json the way it was.
+        remote.update((s) => {
+          s.hosts = s.hosts.filter((h) => h.url !== p.url);
+          if (prev) s.hosts.push(prev);
+        });
+        const e = new HttpError(422, `Not added: ${r.detail}`);
+        e.body = { status: r.status, status_text: statusText(done) };
+        throw e;
+      }
+      remote.update((s) => {
+        s.hosts = s.hosts.map((h) => (h.url === p.url ? done : h));
+        s.enabled = true;
+      });
+      logger.info(`remote: added ${p.url} (${b.kind}, ${statusText(done)}); Use from anywhere is on`);
+      remoteChanged('added');
+      return done;
+    }
+
+    function removeHosts({ url, all }) {
+      if (all === true) {
+        const n = remote.read().hosts.length;
+        remote.update((s) => {
+          s.hosts = [];
+          s.enabled = false;
+        });
+        devices.revokeAll();
+        pairings.clear();
+        logger.info('remote: removed every remote address; Use from anywhere is off');
+        remoteChanged('removed');
+        return n;
+      }
+      const p = parseRemoteUrl(url);
+      const st = remote.read();
+      if (!st.hosts.some((h) => h.url === p.url)) throw notFound(`${p.url} is not a remote address of this Clawdling (see \`clawdling remote list\`)`);
+      remote.update((s) => {
+        s.hosts = s.hosts.filter((h) => h.url !== p.url);
+        if (!s.hosts.length) s.enabled = false;
+      });
+      for (const d of devices.list()) if (d.host === p.url) devices.revoke(d.id);
+      if (!remote.read().hosts.length) {
+        devices.revokeAll();
+        pairings.clear();
+      }
+      logger.info(`remote: removed ${p.url}`);
+      remoteChanged('removed');
+      return 1;
+    }
+
+    function turnOff() {
+      remote.update((s) => {
+        s.enabled = false;
+      });
+      devices.revokeAll();
+      pairings.clear();
+      logger.info('remote: Use from anywhere turned off; every paired device is signed out');
+      remoteChanged('off');
+    }
+
+    function remoteRoutes() {
+      return [
+        ['GET', /^\/api\/remote$/, (req) => [200, remoteView(req.who)]],
+        // Our own check, reaching this server through the remote address. Answers only a nonce
+        // this process is waiting for, and says nothing else.
+        ['GET', /^\/api\/remote\/hello$/, (req, m, res, url) => {
+          const nonce = url.searchParams.get('nonce');
+          if (!req.who.hello || !checkNonces.has(nonce)) throw notFound('no such API route');
+          return [200, { clawdling: true, nonce }];
+        }, { public: true, hello: true }],
+        ['POST', /^\/api\/remote\/hosts$/, async (req) => {
+          const b = await jsonBody(req);
+          const h = await addHost(b);
+          return [201, { ...remoteView(req.who), added: h.url }];
+        }, { local: true }],
+        ['POST', /^\/api\/remote\/remove$/, async (req) => {
+          const b = await jsonBody(req);
+          if (b.all !== true && typeof b.url !== 'string') throw badRequest('send {url} or {all: true}');
+          const removed = removeHosts(b);
+          return [200, { ...remoteView(req.who), removed }];
+        }, { local: true }],
+        ['POST', /^\/api\/remote\/check$/, async (req) => {
+          await checkAll();
+          return [200, remoteView(req.who)];
+        }],
+        // Off works from anywhere (you may be out when you want it off). On: only at the computer.
+        ['POST', /^\/api\/remote\/enabled$/, async (req) => {
+          const b = await jsonBody(req);
+          if (typeof b.enabled !== 'boolean') throw badRequest('send {enabled: true|false}');
+          if (!b.enabled) {
+            turnOff();
+            return [200, remoteView(req.who)];
+          }
+          if (req.who.remote) throw new HttpError(403, 'Only the computer Clawdling runs on can turn this on.');
+          if (!remote.read().hosts.length) throw new HttpError(409, 'There is no remote address yet: set it up first.');
+          remote.update((s) => {
+            s.enabled = true;
+          });
+          await checkAll();
+          logger.info('remote: Use from anywhere turned on');
+          return [200, remoteView(req.who)];
+        }],
+        // A one-time link per address. The QR codes hold that link, never the long-lived token.
+        ['POST', /^\/api\/remote\/pairing$/, () => {
+          const st = remote.read();
+          const hosts = st.enabled ? st.hosts.filter(answerable) : [];
+          if (!hosts.length) throw new HttpError(409, 'Use from anywhere is off, or no address passed its check.');
+          const { code, expires_at } = pairings.create();
+          const links = hosts.map((h) => {
+            const link = `${h.url}/?pair=${code}`;
+            let qr_svg = null;
+            try {
+              qr_svg = qrSvg(link);
+            } catch {
+              // QR unavailable: the link still works
+            }
+            return { url: h.url, kind: h.kind, link, qr_svg };
+          });
+          return [201, { expires_at, minutes: Math.round(pairings.ttlMs / 60000), links }];
+        }, { local: true }],
+        // The phone's side of a pairing link: one code, once, through a remote address only.
+        ['POST', /^\/api\/remote\/pair$/, async (req, m, res) => {
+          const who = req.who;
+          if (!who.remote) throw new HttpError(403, 'Pairing links work only through your remote address.');
+          const key = who.entry.url;
+          if (throttle.blocked(key)) {
+            const e = new HttpError(429, 'Too many failed sign-ins through this address. Wait a few minutes, then try again.');
+            e.retryAfter = throttle.retryAfter(key);
+            throw e;
+          }
+          const b = await jsonBody(req);
+          if (!pairings.consume(b.code)) {
+            throttle.fail(key);
+            throw new HttpError(401, 'This link has expired or was already used. On your computer, open Settings, Use from anywhere, and make a new one.');
+          }
+          const { token: deviceToken, device } = devices.add({ label: deviceLabel(req.headers['user-agent']), host: key });
+          logger.info(`remote: paired ${device.label} through ${key}`);
+          remoteChanged('paired');
+          const out = { ok: true, device: { id: device.id, label: device.label, expires_at: device.expires_at } };
+          // The app keeps its credential itself (a header); a browser gets the cookie.
+          if (b.client === 'app') return [201, { ...out, device_token: deviceToken }];
+          res.setHeader('Set-Cookie', deviceCookieHeader(deviceToken));
+          return [201, out];
+        }, { public: true }],
+        ['DELETE', /^\/api\/remote\/devices$/, () => {
+          const n = devices.revokeAll();
+          remoteChanged('signed_out');
+          return [200, { signed_out: n }];
+        }],
+        ['DELETE', /^\/api\/remote\/devices\/([0-9a-f]{12})$/, (req, m, res) => {
+          if (!devices.revoke(m[1])) throw notFound('no such device');
+          if (req.who.device && req.who.device.id === m[1]) res.setHeader('Set-Cookie', deviceCookieHeader('', 0));
+          remoteChanged('signed_out');
+          return [200, { ok: true }];
+        }],
+      ];
+    }
+
     const routes = [
-      ['GET', /^\/api\/health$/, async () => {
+      ['GET', /^\/api\/health$/, async (req) => {
+        // Through a remote address, a device that has not signed in learns nothing about this computer.
+        if (req.who.remote && !deviceFor(req)) return [200, { ok: true, remote: true, signed_in: false }];
         const v = await toolVersions();
-        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, permission_modes: modeChoices, home, cli, platform: process.platform }];
+        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, permission_modes: modeChoices, home, cli, platform: process.platform, remote: !!req.who.remote }];
       }, { public: true }],
       ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
       // `clawdling stop`: a clean stop on every OS (Windows has no SIGTERM for another process).
@@ -528,7 +887,7 @@ export async function startServer(opts = {}) {
         if (typeof opts.onShutdown !== 'function') throw new HttpError(501, 'this server cannot be stopped over the API');
         setImmediate(() => opts.onShutdown('clawdling stop'));
         return [202, { ok: true, stopping: true, sessions_keep_running: backend.persistent !== false }];
-      }],
+      }, { local: true }],
       ['GET', /^\/api\/org$/, () => [200, orgView()]],
       ['POST', /^\/api\/agents$/, async (req) => {
         const body = await jsonBody(req);
@@ -652,9 +1011,10 @@ export async function startServer(opts = {}) {
         if (!isUuid(b.sid)) throw badRequest('invalid sid');
         sessions.applyHook(String(b.event), b.sid, b.payload && typeof b.payload === 'object' ? b.payload : {}, b.ts, b.launch);
         return [204];
-      }],
+      }, { local: true }],
       ['GET', /^\/api\/events$/, (req, m, res) => {
         events.attachSse(req, res);
+        if (req.who.remote) trackRemote(req.who, () => res.destroy(), res);
         return null;
       }],
       ['GET', /^\/api\/sessions\/([^/]+)\/messages$/, (req, m, res, url) => {
@@ -694,7 +1054,8 @@ export async function startServer(opts = {}) {
         const limit = Number(url.searchParams.get('limit') || 50);
         return [200, { messages: donna.messages(Number.isInteger(limit) ? limit : 50) }];
       }],
-      ['GET', /^\/api\/pair$/, () => [200, pairingInfo({ host, port, token })]],
+      // These carry the long-lived token: never through a remote address.
+      ['GET', /^\/api\/pair$/, () => [200, pairingInfo({ host, port, token })], { local: true }],
       ['GET', /^\/api\/pair\/qr\.svg$/, (req, m, res, url) => {
         let svg;
         try {
@@ -707,7 +1068,8 @@ export async function startServer(opts = {}) {
         res.writeHead(200, { 'Content-Type': 'image/svg+xml; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Length': Buffer.byteLength(svg) });
         res.end(req.method === 'HEAD' ? undefined : svg);
         return null;
-      }],
+      }, { local: true }],
+      ...remoteRoutes(),
       ['GET', /^\/api\/channels$/, () => [200, channelsStatus()]],
       ['POST', /^\/api\/channels\/telegram$/, async (req) => {
         const b = await jsonBody(req);
@@ -725,15 +1087,31 @@ export async function startServer(opts = {}) {
     const webDir = path.resolve(opts.webDir || env.CLAWDLING_WEB_DIR || path.join(PKG_ROOT, 'web'));
 
     async function handleApi(req, res, url) {
+      const who = req.who;
       const matches = routes.filter(([, re]) => re.test(url.pathname));
       if (!matches.length) return sendJson(res, 404, { error: 'no such API route' });
       const route = matches.find(([method]) => method === req.method || (method === 'GET' && req.method === 'HEAD'));
       if (!route) return sendJson(res, 405, { error: 'method not allowed' });
       const [, re, fn, meta] = route;
-      if (!meta?.public) {
-        if (!tokenEquals(extractToken(req, url), token)) return sendJson(res, 401, { error: 'missing or wrong token: open the link printed by `clawdling start`' });
+      if (who.hello && !meta?.hello) return refuse(res, 'unexpected Host header');
+      if (who.remote) {
+        // A remote address takes only a paired device's credential, never the long-lived token.
+        if (!meta?.public) {
+          const a = remoteAuth(req, who);
+          if (!a.device) {
+            if (a.retryAfter) res.setHeader('Retry-After', String(a.retryAfter));
+            return sendJson(res, a.status, { error: a.error });
+          }
+          who.device = a.device;
+        }
+        if (meta?.local) return sendJson(res, 403, { error: 'Only the computer Clawdling runs on can do this. Open Settings there.' });
+        if (req.method !== 'GET' && req.method !== 'HEAD' && !remoteOriginAllowed(req, who.entry)) return sendJson(res, 403, { error: 'cross-origin request refused' });
+      } else {
+        if (!meta?.public) {
+          if (!tokenEquals(extractToken(req, url), token)) return sendJson(res, 401, { error: 'missing or wrong token: open the link printed by `clawdling start`' });
+        }
+        if (req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req)) return sendJson(res, 403, { error: 'cross-origin request refused' });
       }
-      if (req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req)) return sendJson(res, 403, { error: 'cross-origin request refused' });
       const out = await fn(req, url.pathname.match(re), res, url);
       if (out === null) return; // handler streamed its own response
       const [status, body] = out;
@@ -763,10 +1141,12 @@ export async function startServer(opts = {}) {
     }
 
     function handleStatic(req, res, url) {
+      if (req.who.hello) return refuse(res, 'unexpected Host header');
       if (req.method !== 'GET' && req.method !== 'HEAD') return sendJson(res, 405, { error: 'method not allowed' });
       if (url.pathname === '/' && url.searchParams.has('t')) {
         const headers = { Location: '/', 'Cache-Control': 'no-store' };
-        if (tokenEquals(url.searchParams.get('t'), token)) headers['Set-Cookie'] = cookieHeader(token);
+        // The long-lived token signs in a local browser only; a remote address pairs instead.
+        if (!req.who.remote && tokenEquals(url.searchParams.get('t'), token)) headers['Set-Cookie'] = cookieHeader(token);
         res.writeHead(302, headers);
         return res.end();
       }
@@ -801,12 +1181,17 @@ export async function startServer(opts = {}) {
       } catch {
         return sendJson(res, 400, { error: 'bad url' });
       }
-      if (!hostAllowed(req, allowed)) return sendJson(res, 403, { error: 'unexpected Host header' });
-      const work = url.pathname.startsWith('/api/') ? handleApi(req, res, url) : Promise.resolve(handleStatic(req, res, url));
+      const work = classify(req, url).then((who) => {
+        if (who.refused) return refuse(res, who.refused);
+        req.who = who;
+        if (who.remote) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+        return url.pathname.startsWith('/api/') ? handleApi(req, res, url) : handleStatic(req, res, url);
+      });
       work.catch((err) => {
-        const status = err instanceof HttpError ? err.status : 500;
+        const status = err instanceof HttpError || err instanceof RemoteError ? err.status : 500;
         if (status >= 500) logger.error(`${req.method} ${url.pathname}: ${err.stack || err.message}`);
-        if (!res.headersSent) sendJson(res, status, { error: status >= 500 && !(err instanceof HttpError) ? 'internal error' : err.message });
+        if (err.retryAfter && !res.headersSent) res.setHeader('Retry-After', String(err.retryAfter));
+        if (!res.headersSent) sendJson(res, status, { error: status >= 500 && !(err instanceof HttpError) ? 'internal error' : err.message, ...(err.body || {}) });
         else res.end();
       });
     };
@@ -823,17 +1208,46 @@ export async function startServer(opts = {}) {
       } catch {
         return reject(400, 'Bad Request');
       }
-      if (!hostAllowed(req, allowed) || !originAllowed(req)) return reject(403, 'Forbidden');
-      if (!tokenEquals(extractToken(req, url, { allowQuery: true }), token)) return reject(401, 'Unauthorized');
-      const m = url.pathname.match(/^\/ws\/term\/([^/]+)$/);
-      if (!m || !isUuid(m[1]) || !sessions.get(m[1])) return reject(404, 'Not Found');
-      const size = { cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
-      wss.handleUpgrade(req, sock, head, (ws) => sessions.attachViewer(m[1], ws, size));
+      classify(req, url).then((who) => {
+        if (who.refused || who.hello) return reject(403, 'Forbidden');
+        if (who.remote) {
+          if (!remoteOriginAllowed(req, who.entry)) return reject(403, 'Forbidden');
+          const a = remoteAuth(req, who);
+          if (!a.device) return reject(a.status, a.status === 429 ? 'Too Many Requests' : 'Unauthorized');
+          who.device = a.device;
+        } else {
+          if (!originAllowed(req)) return reject(403, 'Forbidden');
+          if (!tokenEquals(extractToken(req, url, { allowQuery: true }), token)) return reject(401, 'Unauthorized');
+        }
+        const m = url.pathname.match(/^\/ws\/term\/([^/]+)$/);
+        if (!m || !isUuid(m[1]) || !sessions.get(m[1])) return reject(404, 'Not Found');
+        const size = { cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
+        wss.handleUpgrade(req, sock, head, (ws) => {
+          if (who.remote) trackRemote(who, () => ws.terminate(), ws);
+          sessions.attachViewer(m[1], ws, size);
+        });
+      }).catch((err) => {
+        logger.error(`upgrade ${url.pathname}: ${err.stack || err.message}`);
+        reject(500, 'Internal Server Error');
+      });
     };
 
     const extra = String(env.CLAWDLING_ALLOWED_HOSTS || '').split(',').filter(Boolean);
     allowed = allowedHosts({ host, port, extra });
     if (!isLoopback(host)) logger.warn(`listening on ${host}: anyone who can reach this address and has the token can drive your sessions`);
+
+    // Use from anywhere: a change to remote.json made outside this process (a hand edit, or
+    // `clawdling remote remove` while this server was briefly unreachable) still closes remote
+    // connections within two seconds.
+    let remoteStamp = remote.read() && remote.stamp;
+    const remoteWatch = setInterval(() => {
+      remote.read();
+      if (remote.stamp !== remoteStamp) {
+        remoteStamp = remote.stamp;
+        sweepRemote();
+      }
+    }, 2000);
+    remoteWatch.unref?.();
 
     onRequest = handleRequest;
     onUpgrade = handleUpgrade;
@@ -849,6 +1263,7 @@ export async function startServer(opts = {}) {
     async function stop() {
       if (stopped) return;
       stopped = true;
+      clearInterval(remoteWatch);
       telegram.stop();
       imessage.stop();
       donna.stop();
