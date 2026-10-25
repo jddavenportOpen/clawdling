@@ -56,7 +56,7 @@ export function sessionName(s, agentsById = {}) {
 export function statusText(s) {
   if (!s) return '';
   if (s.status === 'needs_you') return s.notification ? String(s.notification) : 'Needs you';
-  if (s.status === 'ready' && s.last_message) return `Your turn · ${String(s.last_message)}`;
+  if (s.status === 'ready' && s.last_message) return `Your turn · ${String(s.last_message).replace(/`|\*\*/g, '')}`;
   if (s.status === 'ready') return 'Ready for your first message';
   if (s.status === 'starting' && s.notification) return String(s.notification);
   return STATUS_LABEL[s.status] || s.status || '';

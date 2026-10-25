@@ -36,11 +36,25 @@ export function toolDetail(input) {
 
 export function toolSummary(input) {
   if (!input || typeof input !== 'object') return '';
+  // A question Claude asked (AskUserQuestion): the question itself, in plain words.
+  if (Array.isArray(input.questions) && input.questions.length) {
+    const qs = input.questions.map((q) => (q && typeof q.question === 'string' ? q.question : '')).filter(Boolean);
+    if (qs.length) return cut(qs.join(' / '), 80);
+  }
   for (const k of SUMMARY_KEYS) {
-    if (typeof input[k] === 'string' && input[k].trim()) return oneLine(input[k], 80);
+    if (typeof input[k] === 'string' && input[k].trim()) return cut(input[k], 80);
   }
   return '';
 }
+
+/** One line, at most `max` characters, ending in … when it was cut. */
+function cut(s, max) {
+  const t = oneLine(s, max + 1);
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+// Claude Code's own bookkeeping lines for a step the person said no to, in plain words.
+const INTERRUPTED = /^\[Request interrupted by user(?: for tool use)?\]$/;
 
 /** One transcript line → a chat entry {role, text, tools, ts}, or null when it is not chat. */
 export function transcriptEntry(o) {
@@ -58,6 +72,7 @@ export function transcriptEntry(o) {
     }
     text = text.trim();
     if (!text || PLUMBING.test(text) || CAVEAT.test(text)) return null;
+    if (INTERRUPTED.test(text)) text = 'You stopped that step.';
     return { role: 'user', text, tools: [], ts };
   }
   if (msg.model === '<synthetic>') return null;

@@ -88,3 +88,9 @@ test('the setup chat\'s settings cannot have their hooks switched off', () => {
   assert.equal(buildHooksSettings({ nodePath: 'n', hookScript: 'h', guardScript: 'g', home: '/h' }).disableAllHooks, false);
   assert.equal(buildHooksSettings({ nodePath: 'n', hookScript: 'h', home: '/h' }).disableAllHooks, undefined);
 });
+
+test('no version probing in the setup chat (tailscale-name says if it is installed)', () => {
+  assert.ok(bash('/Applications/Tailscale.app/Contents/MacOS/Tailscale --version'));
+  assert.ok(bash('tailscale version'));
+  assert.equal(bash('cloudflared --version'), null, 'the Cloudflare steps check cloudflared this way');
+});

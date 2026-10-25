@@ -250,7 +250,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .row-meta { display: flex; gap: 5px; min-width: 0; font-size: 12px; line-height: 1.3; color: var(--text-3); white-space: nowrap; overflow: hidden; }
 .row-agent { flex-shrink: 0; }
 .row-dot { flex-shrink: 0; opacity: 0.6; }
-.row-status { overflow: hidden; text-overflow: ellipsis; }
+.row-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .st-text-needs_you .row-status { color: var(--needs-text); }
 .st-text-ready .row-status { color: var(--ready-text); }
 .st-text-working .row-status { color: var(--working-text); }

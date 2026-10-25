@@ -84,3 +84,12 @@ test('tool detail: one string field as is, several as JSON, capped at 2000 chara
   assert.equal(long.length, 2001);
   assert.ok(long.endsWith('…'));
 });
+
+test('chat view: a cut summary ends in …; a question shows as its words; a declined step reads plainly', async () => {
+  const { toolSummary, transcriptEntry } = await import('../../server/transcripts.js');
+  const long = toolSummary({ command: `clawdling remote add https://box.example.ts.net:8743 --kind tailscale ${'x'.repeat(60)}` });
+  assert.ok(long.length <= 80 && long.endsWith('…'), long);
+  assert.equal(toolSummary({ questions: [{ question: 'Which port should the cockpit use?' }] }), 'Which port should the cockpit use?');
+  const e = transcriptEntry({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user for tool use]' }] } });
+  assert.equal(e.text, 'You stopped that step.');
+});
