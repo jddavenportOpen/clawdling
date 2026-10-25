@@ -774,10 +774,11 @@ async function cmdDonna(args) {
   }
   if (sub === 'status') {
     const c = await api(ctx, 'GET', '/api/channels');
-    if (args.flags.json) return console.log(JSON.stringify(c, null, 2));
+    // Never the pairing code: whoever sends it first is paired (the owner reads it in the cockpit).
+    if (args.flags.json) return console.log(JSON.stringify({ ...c, telegram: { ...c.telegram, pairing_code: c.telegram?.pairing_code ? '(shown on the Donna page)' : null } }, null, 2));
     const t = c.telegram;
     const bot = t.bot_username ? `@${t.bot_username}` : 'your bot';
-    console.log(`Telegram: ${!t.configured ? `not set up (${cliCmd(ctx.home, 'donna telegram --token ...')})` : t.paired ? `${bot} paired with ${t.chat_id_masked}${t.enabled ? '' : ' (off)'}` : `send /pair ${t.pairing_code || '<code>'} to ${bot}${t.pairing_code ? '' : ` (run ${cliCmd(ctx.home, 'donna telegram --pair')} for a code)`}`}${t.error ? ` [${t.error}]` : ''}`);
+    console.log(`Telegram: ${!t.configured ? `not set up (${cliCmd(ctx.home, 'donna telegram --token ...')})` : t.paired ? `${bot} paired with ${t.chat_id_masked}${t.enabled ? '' : ' (off)'}` : `send the pairing code to ${bot}${t.pairing_code ? ' (shown on the cockpit\'s Donna page)' : ` (run ${cliCmd(ctx.home, 'donna telegram --pair')} for a code)`}`}${t.error ? ` [${t.error}]` : ''}`);
     const i = c.imessage;
     console.log(`iMessage: ${!i.supported ? 'macOS only' : i.enabled ? `on for ${i.handle}` : 'off'}${i.error ? ` [${i.error}]` : ''}`);
     console.log(`Donna's text-message session: ${c.donna.session || 'not started yet'}${c.donna.busy ? ' (working)' : ''}`);

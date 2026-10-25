@@ -231,14 +231,16 @@ function NotifyCard() {
       <label class="switch"><input type="checkbox" checked=${browser} disabled=${!notifySupported()} onChange=${(e) => pickBrowser(e.currentTarget.checked)}
         aria-labelledby="set-notify-browser" data-testid="notify-browser" /><span class="switch-ui" aria-hidden="true"></span></label></div>
     <div class="set-row"><span class="set-label" id="set-notify-msg">Message me${channel ? ` on ${channel}` : ''}<span class="set-sub">${!srv ? 'Checking…'
+      : srv.unprotected ? "Off here: this org folder's path has characters (like ( ) ' or accents) that keep Clawdling from locking agents out of its own settings."
       : channel ? `One line to the ${channel} chat Donna is paired with: which agent needs you, never what it asked. At most one per session every 10 minutes.`
       : srv.unprotected ? "Off here: this org folder's path has characters (like ( ) ' or accents) that keep Clawdling from locking agents out of its own settings."
       : srv.telegram_repair ? html`Pair your Telegram chat once more: Clawdling only messages the chat that sent it a pairing code, and this pairing is older than that record.
           ${code ? html` Send <strong class="mono" data-testid="notify-pair-code">/pair ${code}</strong> to your bot.` : html` <button type="button" class="link-btn" onClick=${getCode} data-testid="notify-pair">Get a pairing code</button>`}`
       : srv.imessage_unverified ? html`Save your handle on the <a href="#/donna">Donna page</a>, then text Donna once from it, so Clawdling knows that number or address is yours (a phone number needs its country code).`
       : html`Pair Donna with Telegram or iMessage first (<a href="#/donna">Donna</a>).`}</span></span>
-      <label class="switch"><input type="checkbox" checked=${!!(srv && srv.needs_you)} disabled=${!srv || busy || (!channel && !(srv && srv.needs_you))} onChange=${(e) => pickServer(e.currentTarget.checked)}
+      <label class="switch"><input type="checkbox" checked=${!!(srv && srv.needs_you)} disabled=${!srv || busy || (!(srv && srv.needs_you) && (!channel || srv.unprotected))} onChange=${(e) => pickServer(e.currentTarget.checked)}
         aria-labelledby="set-notify-msg" data-testid="notify-message" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    ${srv && !srv.needs_you && channel && !srv.unprotected && srv.preview_labels ? html`<p class="set-note" data-testid="notify-preview">Turning this on approves these agent names for messages: ${Object.values(srv.preview_labels).join(', ') || 'none'}.</p>` : null}
     ${srv && srv.needs_you ? html`<p class="set-note" data-testid="notify-labels">Messages and notifications name these agents, as they were named when you turned this on: ${Object.values(srv.labels || {}).join(', ') || 'none'}. Others say "An agent". Turn it off and on to update the list.</p>` : null}
   </section>`;
 }

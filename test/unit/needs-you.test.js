@@ -40,6 +40,7 @@ test('safeName: plain words only, 40 characters', () => {
   assert.equal(safeName('My-Project'), 'My-Project');
   assert.equal(safeName('Zoë & Ana'), 'Zoë Ana');
   assert.equal(safeName('x'.repeat(90)).length, 40);
+  assert.equal(Array.from(safeName('𝒜'.repeat(50))).length, 40, 'never splits a character');
   assert.equal(safeName('\u202e\n'), 'An agent');
 });
 
@@ -55,7 +56,7 @@ test('sameSender: the whole number with its country code (or the address), not j
 
 function harness({ now = { t: 1000000 } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-ping-'));
-  const paths = { notify: path.join(dir, 'notify.json') };
+  const paths = { home: path.join(dir, 'org'), notify: path.join(dir, 'notify.json') };
   const org = { channels: { telegram: { enabled: true, chat_id: 9 }, imessage: { enabled: false } } };
   const recs = new Map();
   const sent = [];
@@ -113,6 +114,7 @@ test('fails closed where agents cannot be kept out of .clawdling (a folder path 
   assert.throws(() => p.setEnabled(true), (e) => e.status === 400);
   assert.equal(p.status().unprotected, true);
   assert.equal(new NeedsYouPinger({ paths: { home: '/Users/ada/org' }, org: { read: () => ({}) }, platform: 'darwin' }).guarded(), true);
+  assert.equal(new NeedsYouPinger({ paths: {}, org: { read: () => ({}) } }).guarded(), false, 'no org folder: off');
 });
 
 test('browser notification: only when the tab is hidden, the setting is on, and the session just started needing you', async () => {

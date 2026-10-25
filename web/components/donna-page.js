@@ -174,7 +174,8 @@ function TelegramCard({ t }) {
 
 function IMessageCard({ m }) {
   const health = useStore((s) => s.health);
-  const [handle, setHandle] = useState((m && m.handle) || '');
+  // Only a handle saved here fills the box: org.json can be edited by agents (it shows below instead).
+  const [handle, setHandle] = useState((m && m.saved !== false && m.handle) || '');
   const [busy, setBusy] = useState(false);
   const supported = !m || m.supported !== false;
   const enabled = !!(m && m.enabled);
@@ -212,7 +213,7 @@ function IMessageCard({ m }) {
           <input id="im-handle" value=${handle} onInput=${(e) => setHandle(e.currentTarget.value)} placeholder="+1 555 010 0199 or you@icloud.com" data-testid="im-handle" />
           <button class="btn btn-primary" type="submit" disabled=${!handle.trim() || busy}>${enabled ? 'Update' : 'Turn on'}</button>
         </form>
-        ${m && m.handle && m.saved === false ? html`<span class="step-note" data-testid="im-unsaved">This handle was not saved here (it was set elsewhere, or before Clawdling 1.4). Check it is yours, then press ${enabled ? 'Update' : 'Turn on'}.</span>` : null}
+        ${m && m.handle && m.saved === false ? html`<span class="step-note" data-testid="im-unsaved">The handle in org.json, <strong class="mono">${m.handle}</strong>, was not saved here (it was set elsewhere, or before Clawdling 1.4). If it is yours, type it above and press ${enabled ? 'Update' : 'Turn on'}.</span>` : null}
       </li>
     </ol>
     ${enabled ? html`<footer class="card-foot"><button class="btn btn-quiet btn-sm" onClick=${() => save(false)} disabled=${busy}>Turn off iMessage</button></footer>` : null}`

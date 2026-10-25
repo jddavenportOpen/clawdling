@@ -31,7 +31,8 @@ const HOUR = 3600000;
 /** An agent's name as it may appear in a message: letters, digits, spaces and hyphens, 40 at most. */
 export function safeName(name) {
   const s = oneLine(String(name || ''), 200).replace(/[^\p{L}\p{N} -]+/gu, ' ').replace(/\s+/g, ' ').trim();
-  return (s.length > 40 ? s.slice(0, 40).trim() : s) || 'An agent';
+  const chars = Array.from(s); // never split a character made of two code units
+  return (chars.length > 40 ? chars.slice(0, 40).join('').trim() : s) || 'An agent';
 }
 
 /**
@@ -86,7 +87,7 @@ export class NeedsYouPinger {
    * cannot be written for every folder name (runtimeDeny). Without them this stays off.
    */
   guarded() {
-    return !this.paths.home || runtimeDeny(this.paths.home, this.platform).length > 0;
+    return !!this.paths.home && runtimeDeny(this.paths.home, this.platform).length > 0;
   }
 
   enabled() {
@@ -107,7 +108,10 @@ export class NeedsYouPinger {
     // Set up, but not proven yet: say what to do.
     const repair = !ch && tg.enabled && tg.chat_id !== null && tg.chat_id !== undefined && String(tg.chat_id) !== String(paired);
     const unverified = !ch && !!(im.enabled && im.handle) && !this.imessage?.verifiedHandle?.(org);
-    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, labels: this.enabled() ? this.state().labels : {}, ...(this.guarded() ? {} : { unprotected: true }), ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
+    const on = this.enabled();
+    // While off: the names turning it on would approve, so the owner sees them first.
+    const preview = on ? null : Object.fromEntries((this.org.agents?.() || []).filter((a) => a && typeof a.id === 'string').map((a) => [a.id, safeName(a.name || a.id)]));
+    return { needs_you: on, channel: ch ? ch.channel : null, labels: on ? this.state().labels : {}, ...(preview ? { preview_labels: preview } : {}), ...(this.guarded() ? {} : { unprotected: true }), ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
   }
 
   setEnabled(on) {

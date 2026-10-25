@@ -26,7 +26,8 @@ const kindOf = (k) => (typeof k === 'string' && Object.hasOwn(WHAT, k) ? WHAT[k]
 /** The agent's name in plain words (agents can name themselves): letters, digits, spaces, hyphens. */
 export function safeName(name) {
   const s = String(name || '').replace(/[^\p{L}\p{N} -]+/gu, ' ').replace(/\s+/g, ' ').trim();
-  return (s.length > 40 ? s.slice(0, 40).trim() : s) || 'An agent';
+  const chars = Array.from(s);
+  return (chars.length > 40 ? chars.slice(0, 40).join('').trim() : s) || 'An agent';
 }
 
 export function notifyBody(s) {

@@ -47,7 +47,9 @@ const send = (sid, text) => request(srv, 'POST', `/api/sessions/${sid}/send`, { 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('off by default: a session waiting on you sends nothing', async () => {
-  assert.deepEqual((await request(srv, 'GET', '/api/notify')).body, { needs_you: false, channel: 'telegram', labels: {} });
+  const off = (await request(srv, 'GET', '/api/notify')).body;
+  assert.deepEqual([off.needs_you, off.channel, off.labels], [false, 'telegram', {}]);
+  assert.equal(off.preview_labels.health, 'Health', 'the names turning it on would approve');
   const s = await ready('work', 'quiet');
   await send(s.sid, 'permission? now');
   await waitFor(async () => (await view(s.sid)).status === 'needs_you', { label: 'needs you' });
