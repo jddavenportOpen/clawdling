@@ -61,7 +61,7 @@ const variants = process.platform === 'win32' ? ['unguarded', 'in-process', 'hos
 let failed = false;
 for (const mode of variants) {
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [self, '--inner', '--mode', mode, '--rounds', opt('rounds', '30'), '--size', opt('size', '6')], { encoding: 'utf8', timeout: 15 * 60 * 1000 });
+  const r = spawnSync(process.execPath, [self, '--inner', '--mode', mode, '--rounds', opt('rounds', '30'), '--size', opt('size', '6')], { encoding: 'utf8', timeout: 6 * 60 * 1000 });
   const attach = ((r.stderr || '') + (r.stdout || '')).split('AttachConsole failed').length - 1;
   const last = (r.stdout || '').trim().split('\n').pop() || '';
   let res = {};

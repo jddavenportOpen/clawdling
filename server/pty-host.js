@@ -37,6 +37,7 @@ export function guardPty(child, { platform = process.platform } = {}) {
   if (platform !== 'win32') return child;
   let exited = false;
   let done = false; // killed or released: never touch the pseudoconsole again
+  let pendingKill = false; // asked to kill before node-pty was ready (it would defer the kill)
   const exitedNatively = () => {
     try {
       return exited || child._agent?.exitCode !== undefined; // node-pty 1.1.0 (pinned) internals
@@ -51,10 +52,19 @@ export function guardPty(child, { platform = process.platform } = {}) {
       // already gone
     }
   };
+  // node-pty defers kill() until the terminal's first output. Defer it here instead, so the exit
+  // check runs again at that moment rather than against a shell that may have exited meanwhile.
+  child.onData(() => {
+    if (!pendingKill) return;
+    pendingKill = false;
+    if (exitedNatively()) release();
+    else child.kill();
+  });
   child.onExit(() => {
     exited = true;
-    if (!done) {
+    if (!done || pendingKill) {
       done = true;
+      pendingKill = false;
       release(); // a process that exited on its own leaves node-pty's output worker behind
     }
   });
@@ -76,6 +86,10 @@ export function guardPty(child, { platform = process.platform } = {}) {
         release();
         return;
       }
+      if (child._isReady === false) {
+        pendingKill = true;
+        return;
+      }
       child.kill(); // ConPTY: closes the console and kills every process attached to it
     },
   };
@@ -83,6 +97,16 @@ export function guardPty(child, { platform = process.platform } = {}) {
 
 /** The pty host process itself (run by pty-host-main.js). */
 export function runHost({ proc = process, loadPty } = {}) {
+  // Ctrl+C in the terminal that runs `clawdling start`, or that terminal closing, reaches this
+  // process too (same process group or console). The server decides when sessions end: it
+  // disconnects, and this process follows (below).
+  for (const sig of ['SIGINT', 'SIGHUP', 'SIGTERM', 'SIGBREAK']) {
+    try {
+      proc.on(sig, () => {});
+    } catch {
+      // not a signal on this OS
+    }
+  }
   const mods = loadPty();
   const sessions = new Map();
   const send = (msg) => {
@@ -162,15 +186,23 @@ class RemotePty {
     this.pid = null;
     this.dataCbs = [];
     this.exitCbs = [];
+    this.held = [];
+    this.exitInfo = null;
     this.exited = false;
   }
 
+  // Output and an exit can arrive in the same IPC batch as `spawned`, before the caller of spawn()
+  // has subscribed: keep them until it does.
   onData(cb) {
     this.dataCbs.push(cb);
+    const held = this.held;
+    this.held = [];
+    for (const d of held) cb(d);
   }
 
   onExit(cb) {
     this.exitCbs.push(cb);
+    if (this.exitInfo) queueMicrotask(() => cb(this.exitInfo));
   }
 
   write(data) {
@@ -188,12 +220,14 @@ class RemotePty {
   }
 
   _data(data) {
+    if (!this.dataCbs.length) this.held.push(data);
     for (const cb of this.dataCbs) cb(data);
   }
 
   _exit(info) {
     if (this.exited) return;
     this.exited = true;
+    this.exitInfo = info;
     for (const cb of this.exitCbs) cb(info);
   }
 }
@@ -206,8 +240,8 @@ export const HOST_LOST = 'pty host stopped';
  * the host on demand and again after it dies.
  */
 export class PtyHostClient {
-  constructor({ logger = null, hostMain = HOST_MAIN, env = process.env, forkFn = fork, spawnOpts = {} } = {}) {
-    Object.assign(this, { logger, hostMain, env, forkFn, spawnOpts });
+  constructor({ logger = null, hostMain = HOST_MAIN, env = process.env, forkFn = fork, spawnOpts = {}, spawnTimeoutMs = 30000, execPath = process.execPath } = {}) {
+    Object.assign(this, { logger, hostMain, env, forkFn, spawnOpts, spawnTimeoutMs, execPath });
     this.proc = null;
     this.nextId = 1;
     this.ptys = new Map();
@@ -223,11 +257,15 @@ export class PtyHostClient {
 
   ensure() {
     if (this.proc) return this.proc;
-    const proc = this.forkFn(this.hostMain, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: this.env, execArgv: [], windowsHide: true });
+    const proc = this.forkFn(this.hostMain, [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'], env: this.env, execArgv: [], execPath: this.execPath, windowsHide: true });
     this.proc = proc;
     this.starts++;
     proc.on('message', (msg) => this.onMessage(msg));
-    proc.on('error', (err) => this.logger?.warn?.(`pty host: ${err.message}`));
+    proc.on('error', (err) => {
+      this.logger?.warn?.(`pty host: ${err.message}`);
+      // It never started (node moved, no memory for a process): no 'exit' follows.
+      if (proc.pid === undefined) this.onLost(proc, null, err.code || 'could not start');
+    });
     proc.once('exit', (code, signal) => this.onLost(proc, code, signal));
     let buf = '';
     proc.stderr?.setEncoding?.('utf8');
@@ -251,12 +289,38 @@ export class PtyHostClient {
   }
 
   /** node-pty's spawn(), resolved once the host started the process. */
-  spawn(file, args, opts) {
+  async spawn(file, args, opts) {
+    try {
+      return await this.spawnOnce(file, args, opts);
+    } catch (err) {
+      // The host died under this spawn (not because of it, as far as we know): once more on a new one.
+      if (!err.hostLost || this.stopping) throw err;
+      return this.spawnOnce(file, args, opts);
+    }
+  }
+
+  spawnOnce(file, args, opts) {
     const proc = this.ensure();
     const id = this.nextId++;
     const pty = new RemotePty(this, id);
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { pty, resolve, reject, proc });
+      // A host that never answers is as good as dead: stop it (its sessions end) and fail this spawn.
+      const timer = setTimeout(() => {
+        if (!this.pending.has(id)) return;
+        this.logger?.warn?.(`pty host did not start a session within ${Math.round(this.spawnTimeoutMs / 1000)} s; restarting it`);
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          // gone
+        }
+      }, this.spawnTimeoutMs);
+      timer.unref?.();
+      const done = (fn) => (v) => {
+        clearTimeout(timer);
+        fn(v);
+      };
+      this.pending.set(id, { pty, resolve: done(resolve), reject: done(reject), proc });
+      if (!proc.connected && proc.pid === undefined) return; // 'error' rejects it
       this.send({ t: 'spawn', id, file, args, opts: { ...opts, ...this.spawnOpts } });
     });
   }
@@ -295,7 +359,7 @@ export class PtyHostClient {
     for (const [id, p] of this.pending) {
       if (p.proc === proc) {
         this.pending.delete(id);
-        p.reject(new Error(reason));
+        p.reject(Object.assign(new Error(reason), { hostLost: true }));
       }
     }
     const ptys = [...this.ptys.values()];
@@ -316,7 +380,7 @@ export class PtyHostClient {
     }
     const t = setTimeout(() => {
       try {
-        proc.kill();
+        proc.kill('SIGKILL'); // it ignores the polite signals (runHost)
       } catch {
         // gone
       }

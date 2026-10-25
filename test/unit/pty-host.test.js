@@ -17,7 +17,12 @@ class FakeConpty {
     this.exitCbs = [];
     this._agent = { exitCode: undefined, _conoutSocketWorker: { dispose: () => this.disposed++ } };
   }
-  onData() {}
+  onData(cb) {
+    (this.dataCbs ||= []).push(cb);
+  }
+  data(d) {
+    for (const cb of this.dataCbs || []) cb(d);
+  }
   onExit(cb) {
     this.exitCbs.push(cb);
   }
@@ -64,6 +69,24 @@ test('guard: a ConPTY that already exited is never killed (the AttachConsole / 0
   assert.equal(c.kills, 1);
   c.exit(1);
   assert.equal(c.disposed, 0, 'kill() already closed it: nothing is released twice');
+
+  // node-pty not ready yet (it would defer the kill to its first output): the guard defers it and
+  // checks for an exit again then.
+  const e = new FakeConpty();
+  e._isReady = false;
+  const ge = guardPty(e, { platform: 'win32' });
+  ge.kill();
+  assert.equal(e.kills, 0);
+  e.nativeExit(0);
+  e.data('first output');
+  assert.equal(e.kills, 0, 'it exited before it was ready: never killed');
+  assert.equal(e.disposed, 1);
+  const f = new FakeConpty();
+  f._isReady = false;
+  const gf = guardPty(f, { platform: 'win32' });
+  gf.kill();
+  f.data('first output');
+  assert.equal(f.kills, 1, 'alive when ready: killed then');
 
   // other platforms: the child itself, unchanged
   const d = new FakeConpty();
@@ -200,4 +223,67 @@ test('real host: killing shells that already exited, many times over, never lose
   } finally {
     await be.shutdown({ timeoutMs: 3000 });
   }
+});
+
+test('client: output and an exit that arrive with "spawned" (one IPC batch) still reach the session', async () => {
+  // A fake host process whose messages all land before the spawn() caller resumes.
+  const proc = new EventEmitter();
+  proc.connected = true;
+  proc.pid = 4321;
+  proc.send = (m) => {
+    if (m.t === 'spawn') {
+      process.nextTick(() => {
+        proc.emit('message', { t: 'spawned', id: m.id, pid: 99 });
+        proc.emit('message', { t: 'data', id: m.id, data: 'early output' });
+        proc.emit('message', { t: 'exit', id: m.id, exitCode: 3, signal: null });
+      });
+    }
+  };
+  const host = new PtyHostClient({ forkFn: () => proc });
+  const pty = await host.spawn('/bin/app', [], {});
+  const got = [];
+  let exit = null;
+  pty.onData((d) => got.push(d));
+  pty.onExit((e) => (exit = e));
+  await new Promise((r) => setImmediate(r));
+  assert.deepEqual(got, ['early output']);
+  assert.equal(exit?.exitCode, 3);
+  // And through a PtyBackend: the session ends instead of staying live forever.
+  const be = new PtyBackend({ pty: host, Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, platform: 'linux' });
+  if (mods.ok) {
+    await be.newSession({ name: 'quick', cols: 40, rows: 8, launch: { cwd: process.cwd(), env: {}, argv: ['/bin/app'] } });
+    await waitFor(async () => !(await be.hasSession('quick')), { label: 'the quick session ended', timeout: 3000 });
+  }
+});
+
+test('client: a host that cannot start fails the spawn (no hang), and the next spawn starts one', { skip: realPty }, async () => {
+  const host = new PtyHostClient({ execPath: '/nonexistent/node-for-clawdling-test' });
+  const t0 = Date.now();
+  await assert.rejects(host.spawn(process.execPath, ['-e', ''], { cols: 40, rows: 8, cwd: process.cwd(), env: process.env }), /pty host stopped/);
+  assert.ok(Date.now() - t0 < 5000, 'fails at once');
+  assert.equal(host.proc, null);
+  host.execPath = process.execPath;
+  const be = new PtyBackend({ pty: host, Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version });
+  try {
+    await be.newSession({ name: 'ok', cols: 60, rows: 10, launch: launchNode(LIVE) });
+    await waitFor(async () => /up/.test(await be.screenText('ok')), { label: 'a session on a working host', timeout: 15000 });
+  } finally {
+    await be.shutdown({ timeoutMs: 3000 });
+  }
+});
+
+test('real host: Ctrl+C in the terminal (SIGINT to the host) does not end its sessions', { skip: realPty || (process.platform === 'win32' && 'no POSIX signals on Windows') }, async () => {
+  const { host, be } = hostBackend();
+  try {
+    await be.newSession({ name: 's', cols: 60, rows: 10, launch: launchNode(LIVE) });
+    await waitFor(async () => /up/.test(await be.screenText('s')), { label: 'started', timeout: 15000 });
+    process.kill(host.pid, 'SIGINT');
+    process.kill(host.pid, 'SIGHUP');
+    await new Promise((r) => setTimeout(r, 500));
+    assert.equal(host.losses, 0);
+    assert.equal(await be.hasSession('s'), true);
+  } finally {
+    await be.shutdown({ timeoutMs: 3000 });
+  }
+  assert.equal(host.pid, null, 'stop() still ends it');
 });
