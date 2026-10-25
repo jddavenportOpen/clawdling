@@ -12,9 +12,12 @@ import { HOOK_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { cliPermissionMode } from './permissions.js';
 import { prependPath } from './platform.js';
+import { BackgroundReader } from './background.js';
 import { HOST_LOST } from './pty-host.js';
+import { answerLabels, checkAnswers, driveAnswers } from './questions.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
 import { cleanTitle, deriveTitle } from './titles.js';
+import { TranscriptReader, claudeConfigDir, findTranscript } from './transcripts.js';
 import {
   HttpError,
   badRequest,
@@ -76,6 +79,11 @@ const KEY = { up: Buffer.from('\x1b[A'), down: Buffer.from('\x1b[B'), enter: Buf
 const DIALOG_ARM_MS = 1500; // Claude Code ignores keys for a moment after a dialog opens
 // When to look for a question's choices after its Notification (ms): the list may draw late.
 const CHOICE_RETRY_MS = [300, 1000, 2500, 5000, 9000];
+// How often live sessions are checked for background work (Watching), and how long a missing
+// transcript is remembered as missing.
+const BACKGROUND_POLL_MS = 3000;
+const TRANSCRIPT_MISS_MS = 15000;
+const PLAN_FEEDBACK = /^tell claude what to change\b/i;
 
 /**
  * The choices of a Claude Code select list on screen, in screen order, and which one has the
@@ -276,6 +284,11 @@ export class SessionManager {
     // Has Claude Code trusted the org folder? The first-run card stays until it has (markOrgTrusted).
     this.orgTrusted = false;
     this.onOrgTrust = null;
+    // The chat view's transcript reader (also the API's) and the Watching reader.
+    this.configDir = claudeConfigDir(env || {});
+    this.transcripts = new TranscriptReader();
+    this.background = new BackgroundReader();
+    this.backgroundTimer = null;
   }
 
   // ---------------------------------------------------------------- persistence
@@ -353,6 +366,10 @@ export class SessionManager {
       waiting_on: rec.status === 'needs_you' ? rec.waiting_on || null : null,
       signed_in: rec.status === 'needs_you' && rec.waiting_on === 'login' && !!rec.signed_in,
       choices: rec.status === 'needs_you' && ANSWERABLE.has(rec.waiting_on) && Array.isArray(rec.choices) ? rec.choices : null,
+      // Claude asked a question (AskUserQuestion) or wants a plan approved: the chat shows a card.
+      asking: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && rec.asking ? rec.asking : null,
+      // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
+      background: isLive(rec.status) ? this.runtime.get(rec.sid)?.background ?? null : null,
       resumable: rec.status === 'ended',
       last_message: rec.last_message,
       transcript_path: rec.transcript_path,
@@ -402,6 +419,88 @@ export class SessionManager {
     this.load();
     await this.reconcile();
     this.replaySpool();
+    this.backgroundTimer = setInterval(() => this.pollBackground(), BACKGROUND_POLL_MS);
+    this.backgroundTimer.unref?.();
+  }
+
+  // ---------------------------------------------------------------- transcripts: Watching, questions
+
+  /** The session's transcript file, or null (a miss is remembered for a few seconds). */
+  transcriptFile(rec) {
+    const rt = this.rt(rec.sid);
+    const ids = [rec.claude_session_id, rec.sid].filter(Boolean);
+    const key = `${ids.join(',')}|${rec.transcript_path || ''}`;
+    if (rt.transcript && rt.transcript.key === key && (rt.transcript.file || Date.now() - rt.transcript.at < TRANSCRIPT_MISS_MS)) {
+      if (!rt.transcript.file || fs.existsSync(rt.transcript.file)) return rt.transcript.file;
+    }
+    const file = findTranscript({ ids, hint: rec.transcript_path, configDir: this.configDirFor(rec, this.configDir) });
+    rt.transcript = { key, file, at: Date.now() };
+    return file;
+  }
+
+  /** Recompute one session's background work; publish when it changed. */
+  refreshBackground(rec) {
+    const rt = this.rt(rec.sid);
+    let next = null;
+    if (isLive(rec.status)) {
+      try {
+        next = this.background.summarize({
+          file: this.transcriptFile(rec),
+          configDir: this.configDirFor(rec, this.configDir),
+          sessionIds: [rec.claude_session_id, rec.sid].filter(Boolean),
+          launchedAtMs: rt.launchedAt || null,
+        });
+      } catch (err) {
+        this.logger?.warn?.(`background tasks of ${rec.sid}: ${err.message}`);
+        next = null;
+      }
+    }
+    const sig = (b) => (b ? `${b.count}:${b.tasks.map((t) => t.id).join(',')}` : 'null');
+    if (sig(next) === sig(rt.background ?? null)) {
+      rt.background = next;
+      return false;
+    }
+    rt.background = next;
+    this.publish(rec);
+    return true;
+  }
+
+  pollBackground() {
+    if (this.closing) return;
+    for (const rec of this.records.values()) {
+      if (isLive(rec.status) || this.runtime.get(rec.sid)?.background) this.refreshBackground(rec);
+    }
+  }
+
+  /**
+   * Is the permission prompt on screen Claude asking a question (AskUserQuestion) or for a plan
+   * approval (ExitPlanMode)? The transcript says: its newest tool call still waiting for a result.
+   */
+  captureAsk(rec, delays = [150, 600, 1500, 3500]) {
+    const asking = () => rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt';
+    const attempt = (i) => {
+      if (i >= delays.length) return;
+      setTimeout(() => {
+        if (!asking() || rec.asking) return;
+        let ask = null;
+        try {
+          const file = this.transcriptFile(rec);
+          ask = file ? this.transcripts.pendingAsk(file) : null;
+        } catch {
+          ask = null;
+        }
+        if (ask && asking() && !rec.asking) {
+          const q = ask.kind === 'question' ? ask.questions[0]?.question : null;
+          rec.asking = { kind: ask.kind, tool_id: ask.tool_id, questions: ask.kind === 'question' ? ask.questions.length : 0 };
+          rec.notification = ask.kind === 'plan' ? 'Claude has a plan ready and asks you to approve it.' : `Claude asks: ${oneLine(q || 'a question', 240)}`;
+          this.scheduleSave();
+          this.publish(rec);
+          return;
+        }
+        attempt(i + 1);
+      }, delays[i] - (i ? delays[i - 1] : 0)).unref?.();
+    };
+    attempt(0);
   }
 
   async reconcile() {
@@ -924,9 +1023,14 @@ export class SessionManager {
     if (event === 'SessionStart' && rec.cwd === this.home && !rec.account) this.markOrgTrusted(`session ${sid} started in the org folder`);
     if (event === 'Notification' && rec.waiting_on === 'permission_prompt') {
       rec.choices = null;
+      rec.asking = null;
       if (rt) rt.dialogSeenAt = Date.now();
       this.captureChoices(rec); // the numbered choices, for clients that answer with buttons
+      this.captureAsk(rec); // a question or a plan: the chat shows it as a card
+    } else if (rec.status !== 'needs_you' || rec.waiting_on !== 'permission_prompt') {
+      rec.asking = null;
     }
+    if (event === 'Stop' || event === 'UserPromptSubmit') setTimeout(() => this.refreshBackground(rec), 300).unref?.();
     if (titleChanged) this.events.record({ type: 'rename', sid, title: rec.title, auto: true });
     if (statusChanged) this.onStatusChange(rec);
     else {
@@ -1119,19 +1223,29 @@ export class SessionManager {
 
   /**
    * Answer the question Claude Code is showing (folder trust, external imports, a permission
-   * prompt) with choice `option` (1-based, in the order shown on screen; see `choices`).
+   * prompt, a plan approval) with choice `option` (1-based, in the order shown on screen; see
+   * `choices`). With `text`, the choice must be a plan's "Tell Claude what to change": the text is
+   * typed into it before Enter. With `answers` (and `toolId`), the prompt is a question Claude
+   * asked (AskUserQuestion), answered from the chat's question card (see questions.js).
    *
    * Claude Code 2.1.283's folder-trust dialog hides its numbers and ignores digit keys (verified),
    * so the answer is given the way a person would: read the screen, move the pointer with the arrow
    * keys onto the chosen line, check it is there, then press Enter.
    */
-  async answer(sid, option) {
+  async answer(sid, option, { text = null, answers = null, toolId = null } = {}) {
     const rec = this.require(sid);
     if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) {
       throw conflict('this session is not waiting on a question that can be answered here');
     }
+    if (answers !== null) return this.answerQuestion(rec, answers, toolId);
     const n = Number(option);
     if (!Number.isInteger(n) || n < 1 || n > 9) throw badRequest('option must be the number of a choice (1 or 2)');
+    let typed = null;
+    if (text !== null) {
+      typed = String(text).replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 1000);
+      if (!typed) throw badRequest('text is empty');
+      if (rec.asking?.kind !== 'plan') throw badRequest('text answers only a plan ("Tell Claude what to change")');
+    }
     const rt = this.rt(sid);
     const target = rec.pane_id || `=${rec.tmux_name}:`;
     const wait = (rt.dialogSeenAt || 0) + DIALOG_ARM_MS - Date.now();
@@ -1148,10 +1262,15 @@ export class SessionManager {
         throw conflict('the question is no longer on screen');
       }
       if (n > c.labels.length) throw badRequest(`there are only ${c.labels.length} choices`);
+      if (typed !== null && !PLAN_FEEDBACK.test(c.labels[n - 1].replace(/^\s*\d+[.)]\s*/, ''))) throw badRequest('that choice does not take text');
       const moves = n - 1 - c.selected;
       if (moves === 0) {
+        if (typed !== null) {
+          await this.backend.sendKeysHex(target, Buffer.from(typed, 'utf8'));
+          await sleep(250);
+        }
         await this.backend.sendKeysHex(target, KEY.enter);
-        chosen = c.labels[n - 1];
+        chosen = typed !== null ? `Tell Claude what to change: ${typed}` : c.labels[n - 1];
         break;
       }
       const key = moves > 0 ? KEY.down : KEY.up;
@@ -1159,8 +1278,20 @@ export class SessionManager {
       await sleep(200);
     }
     if (!chosen) throw new HttpError(500, 'could not move the selection onto that choice');
-    this.events.record({ type: 'answer', sid, agent: rec.agent, question: kind, option: n, label: chosen });
+    this.events.record({ type: 'answer', sid, agent: rec.agent, question: rec.asking?.kind === 'plan' ? 'plan' : kind, option: n, label: oneLine(chosen, 200) });
+    return this.answered(rec, rt, kind, { option: n, label: chosen });
+  }
+
+  /** The bookkeeping after an answer: the prompt is gone and the session moves on. */
+  answered(rec, rt, kind, answered) {
     rec.choices = null;
+    rec.asking = null;
+    // A fast answer can be overtaken by the session's own next hook (Stop): it already moved on.
+    if (rec.status !== 'needs_you' || rec.waiting_on !== kind) {
+      this.scheduleSave();
+      this.publish(rec);
+      return { ...this.view(rec), answered };
+    }
     rec.notification = null;
     rec.waiting_on = null;
     // A permission answer lets the turn continue. After a startup dialog Claude Code starts up (the
@@ -1168,7 +1299,30 @@ export class SessionManager {
     rec.status = kind === 'permission_prompt' ? 'working' : 'starting';
     if (kind !== 'permission_prompt') this.detectDialogs(rec, rt);
     this.onStatusChange(rec);
-    return { ...this.view(rec), answered: { option: n, label: chosen } };
+    return { ...this.view(rec), answered };
+  }
+
+  /** Answer an AskUserQuestion from the question card: `answers` per question, see checkAnswers. */
+  async answerQuestion(rec, answers, toolId) {
+    if (rec.waiting_on !== 'permission_prompt' || rec.asking?.kind !== 'question') throw conflict('Claude is not asking a question right now');
+    if (typeof toolId !== 'string' || toolId !== rec.asking.tool_id) throw conflict('that question has already been answered or replaced');
+    const file = this.transcriptFile(rec);
+    const ask = file ? this.transcripts.pendingAsk(file) : null;
+    if (!ask || ask.kind !== 'question' || ask.tool_id !== toolId) throw conflict('that question has already been answered or replaced');
+    const clean = checkAnswers(ask.questions, answers);
+    const rt = this.rt(rec.sid);
+    const target = rec.pane_id || `=${rec.tmux_name}:`;
+    const wait = (rt.dialogSeenAt || 0) + DIALOG_ARM_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    await driveAnswers({
+      questions: ask.questions,
+      answers: clean,
+      screen: () => this.backend.screenText(target),
+      keys: (buf) => this.backend.sendKeysHex(target, buf),
+    });
+    const labels = answerLabels(ask.questions, clean);
+    this.events.record({ type: 'answer', sid: rec.sid, agent: rec.agent, question: 'question', label: oneLine(labels.join(' / '), 200) });
+    return this.answered(rec, rt, 'permission_prompt', { tool_id: toolId, answers: labels });
   }
 
   // ---------------------------------------------------------------- terminal viewers
@@ -1283,6 +1437,7 @@ export class SessionManager {
 
   async shutdown() {
     this.closing = true;
+    clearInterval(this.backgroundTimer);
     const persistent = this.backend.persistent !== false;
     const wasLive = [...this.records.values()].filter((r) => isLive(r.status));
     for (const [sid, rt] of this.runtime) {

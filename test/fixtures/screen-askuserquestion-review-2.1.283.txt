@@ -1,0 +1,14 @@
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☒ Pets  ✔ Submit  →
+
+Review your answers
+
+ ● Favorite color?
+   → Blue
+ ● Which pets do you like?
+   → Cat, Fish
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

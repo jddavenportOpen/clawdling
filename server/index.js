@@ -75,7 +75,7 @@ import { commandFor, envGet, portablePath, spawnOptions } from './platform.js';
 import { discover, findSubagent, scanSetup } from './discover.js';
 import { importGroup, importProject, promoteSubagent } from './importer.js';
 import { SessionManager } from './sessions.js';
-import { TranscriptReader, claudeConfigDir, findTranscript } from './transcripts.js';
+import { claudeConfigDir, findTranscript } from './transcripts.js';
 import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
@@ -427,7 +427,7 @@ export async function startServer(opts = {}) {
       blocked: testMode && apiBase === TELEGRAM_OFFICIAL_BASE ? 'test mode: TELEGRAM_API_BASE must point at a local stub' : null,
     });
     const imessage = new IMessageGateway({ paths, org, donna, events, logger, env: testMode ? { ...env, CLAWDLING_TEST: '1' } : env });
-    const transcripts = new TranscriptReader();
+    const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
     // Orgs from before 1.2 get the /onboard-project skill (repo-rooted sessions find skills at the org root).
     try {
@@ -1251,8 +1251,9 @@ export async function startServer(opts = {}) {
       ['POST', /^\/api\/sessions\/([^/]+)\/answer$/, async (req, m) => {
         const sid = sidParam(m);
         const b = await jsonBody(req);
+        if (Array.isArray(b.answers)) return [200, await sessions.answer(sid, null, { answers: b.answers, toolId: b.tool_id })];
         if (!('option' in b)) throw badRequest('send {option: 1|2}');
-        return [200, await sessions.answer(sid, b.option)];
+        return [200, await sessions.answer(sid, b.option, { text: typeof b.text === 'string' ? b.text : null })];
       }],
       ['POST', /^\/api\/hooks$/, async (req) => {
         const b = await jsonBody(req);

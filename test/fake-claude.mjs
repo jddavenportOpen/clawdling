@@ -245,6 +245,152 @@ function select({ header, choices, focus = 0, numbered = false }) {
   });
 }
 
+// ------------------------------------------------ AskUserQuestion and plan approval, as 2.1.283 draws them
+const RULE = '─'.repeat(72);
+const DOTS = '╌'.repeat(70);
+
+/** A full-screen list the way Claude Code's question and plan prompts behave: arrows move, Enter
+ * acts, printable keys type into a free-text line. `view(state)` returns the lines; `key(state, k)`
+ * returns a result to finish, or undefined to keep going. */
+function screenUi(state, view, key) {
+  return new Promise((resolve) => {
+    let drawn = 0;
+    const draw = () => {
+      if (drawn) process.stdout.write(`\x1b[${drawn}A\r\x1b[J`);
+      const lines = view(state);
+      process.stdout.write(lines.join('\r\n') + '\r\n');
+      drawn = lines.length;
+    };
+    draw();
+    const raw = process.stdin.isTTY && !process.stdin.isRaw;
+    if (raw) process.stdin.setRawMode(true);
+    const onData = (d) => {
+      const s = d.toString('utf8');
+      let out;
+      for (const k of s.match(/\x1b\[[A-D]|\x1b\[20[01]~|\x1b|\r|\x7f|\x08|[^\x1b\r\x7f\x08]/gu) || []) {
+        if (/^\x1b\[20[01]~$/.test(k)) continue;
+        out = key(state, k);
+        if (out !== undefined) break;
+      }
+      draw();
+      if (out === undefined) return;
+      process.stdin.off('data', onData);
+      if (raw) process.stdin.setRawMode(false);
+      resolve(out);
+    };
+    process.stdin.on('data', onData);
+  });
+}
+
+function questionView(questions, qi) {
+  const q = questions[qi];
+  const multi = questions.length > 1;
+  return (st) => {
+    const n = q.options.length;
+    const lines = [RULE];
+    lines.push(multi ? `←  ${questions.map((x, i) => `${i < qi ? '☒' : '☐'} ${x.header}`).join('  ')}  ✔ Submit  →` : ` ☐ ${q.header}`);
+    lines.push('', q.question, '');
+    const box = (i) => (q.multiSelect ? `[${st.checked.has(i) ? '✔' : ' '}] ` : '');
+    q.options.forEach((o, i) => {
+      lines.push(`${st.sel === i ? '❯' : ' '} ${i + 1}. ${box(i)}${o.label}`);
+      if (o.description) lines.push(`${q.multiSelect ? '         ' : '     '}${o.description}`);
+    });
+    lines.push(`${st.sel === n ? '❯' : ' '} ${n + 1}. ${q.multiSelect ? '[ ] ' : ''}${st.typed || (q.multiSelect ? 'Type something' : 'Type something.')}`);
+    if (q.multiSelect) lines.push(`${st.sel === n + 1 ? '❯' : ' '}    Submit`);
+    lines.push(RULE, `  ${n + 2}. Chat about this`, '', 'Enter to select · ↑/↓ to navigate · Esc to cancel');
+    return lines;
+  };
+}
+
+function questionKey(q) {
+  const n = q.options.length;
+  const last = q.multiSelect ? n + 1 : n;
+  return (st, k) => {
+    if (k === '\x1b[A') st.sel = Math.max(0, st.sel - 1);
+    else if (k === '\x1b[B') st.sel = Math.min(last, st.sel + 1);
+    else if (k === '\x1b') return { cancel: true };
+    else if (k === '\r') {
+      if (q.multiSelect) {
+        if (st.sel < n) {
+          if (st.checked.has(st.sel)) st.checked.delete(st.sel);
+          else st.checked.add(st.sel);
+        } else if (st.sel === last) return { answer: [...st.checked].sort().map((i) => q.options[i].label).join(', ') };
+        return undefined;
+      }
+      if (st.sel < n) return { answer: q.options[st.sel].label };
+      if (st.typed) return { answer: st.typed };
+    } else if (k === '\x7f' || k === '\x08') {
+      if (st.sel === n) st.typed = st.typed.slice(0, -1);
+    } else if (st.sel === n && k >= ' ') st.typed += k;
+    return undefined;
+  };
+}
+
+async function askUserQuestion(questions) {
+  const id = `toolu_ask${crypto.randomBytes(5).toString('hex')}`;
+  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'AskUserQuestion', input: { questions } }] });
+  process.stdout.write('\x1b[2J\x1b[H');
+  const notified = runHook('Notification', { message: 'Claude needs your permission', notification_type: 'permission_prompt' });
+  const answers = {};
+  let cancelled = false;
+  for (let qi = 0; qi < questions.length && !cancelled; qi++) {
+    const q = questions[qi];
+    const r = await screenUi({ sel: 0, typed: '', checked: new Set() }, questionView(questions, qi), questionKey(q));
+    if (r.cancel) cancelled = true;
+    else answers[q.question] = r.answer;
+  }
+  if (!cancelled && questions.length > 1) {
+    const review = (st) => [RULE, `←  ${questions.map((x) => `☒ ${x.header}`).join('  ')}  ✔ Submit  →`, '', 'Review your answers', '',
+      ...questions.flatMap((q) => [` ● ${q.question}`, `   → ${answers[q.question]}`]), '', 'Ready to submit your answers?', '',
+      `${st.sel === 0 ? '❯' : ' '} 1. Submit answers`, `${st.sel === 1 ? '❯' : ' '} 2. Cancel`];
+    const r = await screenUi({ sel: 0 }, review, (st, k) => {
+      if (k === '\x1b[A') st.sel = 0;
+      else if (k === '\x1b[B') st.sel = 1;
+      else if (k === '\r') return st.sel === 0 ? {} : { cancel: true };
+      return undefined;
+    });
+    if (r.cancel) cancelled = true;
+  }
+  await notified;
+  if (cancelled) {
+    transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: "The user doesn't want to proceed with this tool use." }] }, { toolUseResult: 'User rejected tool use' });
+    return null;
+  }
+  const said = Object.entries(answers).map(([k, v]) => `"${k}"="${v}"`).join(', ');
+  transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `Your questions have been answered: ${said}. You can now continue with these answers in mind.` }] }, { toolUseResult: { questions, answers, annotations: {} } });
+  return answers;
+}
+
+const PLAN_CHOICES = ['Yes, auto-accept edits', 'Yes, manually approve edits', 'Tell Claude what to change'];
+
+async function planApproval(plan) {
+  const id = `toolu_plan${crypto.randomBytes(5).toString('hex')}`;
+  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input: { plan } }] });
+  process.stdout.write('\x1b[2J\x1b[H');
+  const notified = runHook('Notification', { message: 'Claude Code needs your approval for the plan', notification_type: 'permission_prompt' });
+  const view = (st) => [`  ${RULE}`, '   Ready to code?', "   Here is Claude's plan:", `  ${DOTS}`, ...plan.split('\n').filter(Boolean).map((l) => `   ${l.replace(/^#+\s*/, '')}`), `  ${DOTS}`,
+    `  ${RULE}`, '   Claude has written up a plan and is ready to execute. Would you like to proceed?', '',
+    ...PLAN_CHOICES.map((c, i) => `   ${st.sel === i ? '❯' : ' '} ${i + 1}. ${i === 2 && st.typed ? st.typed : c}`), '      shift+tab to approve with this feedback', '', '   ctrl+g to edit in Vim'];
+  const r = await screenUi({ sel: 0, typed: '' }, view, (st, k) => {
+    if (k === '\x1b[A') st.sel = Math.max(0, st.sel - 1);
+    else if (k === '\x1b[B') st.sel = Math.min(2, st.sel + 1);
+    else if (k === '\r') {
+      if (st.sel < 2) return { approve: st.sel };
+      if (st.typed) return { feedback: st.typed };
+    } else if (k === '\x7f' || k === '\x08') {
+      if (st.sel === 2) st.typed = st.typed.slice(0, -1);
+    } else if (st.sel === 2 && k >= ' ') st.typed += k;
+    return undefined;
+  });
+  await notified;
+  if (r.feedback !== undefined) {
+    transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: `The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). To tell you how to proceed, the user said:\n${r.feedback}` }] }, { toolUseResult: `Error: The user doesn't want to proceed with this tool use. To tell you how to proceed, the user said:\n${r.feedback}` });
+    return { feedback: r.feedback };
+  }
+  transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: `User has approved your plan. You can now start coding.\n\n## Approved Plan:\n${plan}` }] }, { toolUseResult: { plan, isAgent: false } });
+  return { approved: PLAN_CHOICES[r.approve] };
+}
+
 async function trustDialog() {
   if (!fs.existsSync(path.join(process.cwd(), '.fake-claude-trust'))) return true;
   process.stdout.write('\x1b[2J\x1b[H');
@@ -307,6 +453,35 @@ async function interactive() {
       process.stdout.write(`assistant: permission answered (${answer}), done\n> `);
       await runHook('Stop', { stop_hook_active: false, last_assistant_message: `permission answered (${answer}), done` });
       return;
+    }
+    // "ask?" / "ask2?": AskUserQuestion (one question; or two, the second multiSelect). "plan?": ExitPlanMode.
+    if (text.includes('ask?') || text.includes('ask2?') || text.includes('plan?')) {
+      inSelect = true;
+      let said;
+      if (text.includes('plan?')) {
+        const r = await planApproval('# Make hello.txt\n\n## Plan\n1. Create hello.txt.\n2. Write hi into it.');
+        said = r.feedback !== undefined ? `plan feedback: ${r.feedback}` : `plan approved (${r.approved})`;
+      } else {
+        const questions = [{ question: 'Which color do you like best?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'A warm, bold color.' }, { label: 'Green', description: 'A calm, natural color.' }, { label: 'Blue', description: 'A cool, steady color.' }] }];
+        if (text.includes('ask2?')) questions.push({ question: 'Which pets do you like?', header: 'Pets', multiSelect: true, options: [{ label: 'Cat', description: 'Independent.' }, { label: 'Dog', description: 'Loyal.' }, { label: 'Fish', description: 'Quiet.' }] });
+        const answers = await askUserQuestion(questions);
+        said = answers ? `you chose ${Object.values(answers).join(' / ')}` : 'you declined to answer';
+      }
+      inSelect = false;
+      transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'text', text: `assistant: ${said}` }] });
+      process.stdout.write(`assistant: ${said}\n> `);
+      await runHook('Stop', { stop_hook_active: false, last_assistant_message: said });
+      return;
+    }
+    // "watch?": start a background shell and a 10-minute Monitor; "unwatch?": both end.
+    if (text.includes('unwatch?')) {
+      for (const [tid, tu] of [['bfakesh01', 'toolu_bgsh'], ['bfakemo01', 'toolu_bgmo']]) {
+        transcript('queue-operation', undefined, { operation: 'enqueue', content: `<task-notification>\n<task-id>${tid}</task-id>\n<tool-use-id>${tu}</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>` });
+      }
+    } else if (text.includes('watch?')) {
+      transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id: 'toolu_bgsh', name: 'Bash', input: { command: 'sleep 600', description: 'Wait for the build', run_in_background: true } }, { type: 'tool_use', id: 'toolu_bgmo', name: 'Monitor', input: { description: 'Watch the deploy log' } }] });
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bgsh', content: 'Command running in background with ID: bfakesh01.' }] }, { toolUseResult: { backgroundTaskId: 'bfakesh01' } });
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bgmo', content: 'Monitor started (task bfakemo01, expires in 10m).' }] }, { toolUseResult: { taskId: 'bfakemo01', timeoutMs: 600000, persistent: false } });
     }
     // "fail: <error>" ends the turn the way an API error does in Claude Code 2.1.229+: StopFailure, no Stop.
     const failed = /^fail: (\w+)/.exec(text);

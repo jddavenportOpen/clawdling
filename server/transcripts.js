@@ -53,6 +53,48 @@ function cut(s, max) {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+// Claude asking the person something in the chat (answered with a question card, see askOf).
+export const ASK_TOOLS = { AskUserQuestion: 'question', ExitPlanMode: 'plan' };
+const ASK_LIMITS = { questions: 4, options: 12, question: 600, header: 80, label: 200, description: 600, plan: 20000 };
+
+const clipText = (v, max) => (typeof v === 'string' ? (v.length > max ? `${v.slice(0, max - 1)}…` : v) : '');
+
+/** What a question card needs from an AskUserQuestion / ExitPlanMode input, bounded; null if unusable. */
+export function askOf(name, input) {
+  const kind = ASK_TOOLS[name];
+  if (!kind || !input || typeof input !== 'object') return null;
+  if (kind === 'plan') return { kind, plan: clipText(input.plan, ASK_LIMITS.plan) };
+  if (!Array.isArray(input.questions)) return null;
+  const questions = input.questions.slice(0, ASK_LIMITS.questions).map((q) => ({
+    question: clipText(q?.question, ASK_LIMITS.question),
+    header: clipText(q?.header, ASK_LIMITS.header),
+    multiSelect: q?.multiSelect === true,
+    options: (Array.isArray(q?.options) ? q.options : []).slice(0, ASK_LIMITS.options).map((o) => ({ label: clipText(o?.label, ASK_LIMITS.label), description: clipText(o?.description, ASK_LIMITS.description) })),
+  }));
+  if (!questions.length || questions.some((q) => !q.question || !q.options.length)) return null;
+  return { kind, questions };
+}
+
+/**
+ * The answer a person gave a question or plan, from the tool_result line: {answers} for a
+ * question ({question text: answer}), {approved: true} or {feedback} for a plan, {declined: true}.
+ */
+export function askAnswerOf(kind, block, toolUseResult) {
+  const text = typeof block?.content === 'string' ? block.content : Array.isArray(block?.content) ? block.content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : '';
+  if (kind === 'question') {
+    const a = toolUseResult && typeof toolUseResult === 'object' && toolUseResult.answers && typeof toolUseResult.answers === 'object' ? toolUseResult.answers : null;
+    if (a && block?.is_error !== true) {
+      const answers = {};
+      for (const [k, v] of Object.entries(a).slice(0, ASK_LIMITS.questions)) answers[clipText(k, ASK_LIMITS.question)] = clipText(String(v), ASK_LIMITS.label * 4);
+      return { answers };
+    }
+    return { declined: true };
+  }
+  if (block?.is_error !== true) return { approved: true };
+  const said = /the user said:\n([\s\S]*)$/.exec(text);
+  return said ? { feedback: clipText(said[1].trim(), 2000) } : { declined: true };
+}
+
 // Claude Code's own bookkeeping lines for a step the person said no to, in plain words.
 const INTERRUPTED = /^\[Request interrupted by user(?: for tool use)?\]$/;
 
@@ -82,7 +124,12 @@ export function transcriptEntry(o) {
     .map((b) => b.text)
     .join('\n')
     .trim();
-  const tools = blocks.filter((b) => b?.type === 'tool_use').map((b) => ({ name: String(b.name || 'tool'), summary: toolSummary(b.input), detail: toolDetail(b.input) }));
+  const tools = blocks.filter((b) => b?.type === 'tool_use').map((b) => {
+    const t = { name: String(b.name || 'tool'), summary: toolSummary(b.input), detail: toolDetail(b.input) };
+    const ask = askOf(t.name, b.input);
+    if (ask && typeof b.id === 'string') Object.assign(t, { id: b.id.slice(0, 100), ask });
+    return t;
+  });
   if (!text && !tools.length) return null;
   const model = typeof msg.model === 'string' && msg.model ? msg.model : null;
   return { role: 'assistant', text, tools, ts, model };
@@ -125,7 +172,7 @@ export class TranscriptReader {
       return [];
     }
     let c = this.cache.get(file);
-    if (!c || st.size < c.offset || st.ino !== c.ino) c = { offset: 0, ino: st.ino, rest: Buffer.alloc(0), entries: [] };
+    if (!c || st.size < c.offset || st.ino !== c.ino) c = { offset: 0, ino: st.ino, rest: Buffer.alloc(0), entries: [], asks: new Map() };
     if (st.size > c.offset) {
       const fd = fs.openSync(file, 'r');
       try {
@@ -145,7 +192,13 @@ export class TranscriptReader {
             continue;
           }
           const e = transcriptEntry(o);
-          if (e) c.entries.push({ n: c.entries.length, ...e });
+          if (e) {
+            c.entries.push({ n: c.entries.length, ...e });
+            for (const t of e.tools || []) if (t.ask) c.asks.set(t.id, { kind: t.ask.kind, answered: false });
+          } else {
+            const a = this.answerEntry(o, c.asks);
+            if (a) c.entries.push({ n: c.entries.length, ...a });
+          }
         }
       } finally {
         fs.closeSync(fd);
@@ -155,5 +208,33 @@ export class TranscriptReader {
     this.cache.set(file, c);
     while (this.cache.size > this.maxFiles) this.cache.delete(this.cache.keys().next().value);
     return c.entries;
+  }
+
+  /** A tool_result answering a question or plan seen earlier in the file: an `answer` chat entry. */
+  answerEntry(o, asks) {
+    if (!o || o.type !== 'user' || o.isSidechain || !Array.isArray(o.message?.content)) return null;
+    for (const b of o.message.content) {
+      if (b?.type !== 'tool_result' || typeof b.tool_use_id !== 'string') continue;
+      const ask = asks.get(b.tool_use_id);
+      if (!ask || ask.answered) continue;
+      ask.answered = true;
+      return { role: 'answer', tool_id: b.tool_use_id, kind: ask.kind, ...askAnswerOf(ask.kind, b, o.toolUseResult), text: '', tools: [], ts: typeof o.timestamp === 'string' ? o.timestamp : null };
+    }
+    return null;
+  }
+
+  /** The question or plan in `file` still waiting for its answer (the newest one), or null. */
+  pendingAsk(file) {
+    const entries = this.read(file);
+    const c = this.cache.get(file);
+    if (!c) return null;
+    for (let i = entries.length - 1; i >= 0; i--) {
+      const e = entries[i];
+      if (e.role === 'answer') return null; // the newest ask was answered
+      const t = (e.tools || []).findLast((x) => x.ask);
+      if (t) return c.asks.get(t.id)?.answered ? null : { tool_id: t.id, ...t.ask };
+      if (e.role === 'user') return null; // a newer prompt: nothing is pending
+    }
+    return null;
   }
 }

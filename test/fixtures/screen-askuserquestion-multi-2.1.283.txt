@@ -1,0 +1,19 @@
+❯ Use AskUserQuestion once with two questions: first 'Favorite color?' with options Red and Blue; second 'Which pets do you like?' with
+  multiSelect true and options Cat, Dog, Fish. Then say my answers back.
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+←  ☒ Color  ☐ Pets  ✔ Submit  →
+
+Which pets do you like?
+
+  1. [✔] Cat
+         Independent and affectionate.
+  2. [ ] Dog
+         Loyal and energetic.
+❯ 3. [✔] Fish
+         Peaceful and low-maintenance.
+  4. [ ] Type something
+     Submit
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · Tab/Arrow keys to navigate · Esc to cancel
