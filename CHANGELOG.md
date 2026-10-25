@@ -49,6 +49,14 @@ until you turn it on, in Settings.
   `/pair`, `DELETE /api/remote/devices[/<id>]`. The iPhone app is unchanged in this release; the
   server already accepts an app's device sign-in (`{client: "app"}`), and pairing the app through
   a remote address is the follow-up.
+- Tests: 51 new (address rules, remote.json integrity, devices, pairing, throttle, the Tailscale
+  and Cloudflare checks, Access tokens, the setup chat's guard, end to end against a real server
+  behind a fake tunnel and Cloudflare edge) and 17 new browser tests. The suite is 363 tests under
+  each session backend, plus 137 browser tests. Also run for real on a Mac with Tailscale: a
+  Claude Code setup agent driven through Settings set up, checked and removed the serve entry
+  (serve status identical before and after), and a desktop browser and a phone-sized one
+  (Chromium and WebKit) paired and used the cockpit over the tailnet. Two independent security
+  reviews (Claude and GPT) pass, and every 1.3 user story passed a third-party visual review.
 
 ## 1.2.0 (2026-10-24)
 
