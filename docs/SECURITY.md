@@ -201,8 +201,8 @@ remote tailscale-name` prints only this computer's address), `clawdling spawn/se
 serve` and `remote serve-status` instead), and any access to `cert.pem`, `~/.cloudflared/` (but
 its `config.yml`) or `.clawdling/`. In this one session it allows one command at a time (no chains or pipes), written plainly (no
 quotes, escapes, variables, wildcards or redirects), only the setup steps' `cloudflared` commands
-(never `tunnel token`, `tunnel run --token` or `access token/login`), and refuses scripts,
-interpreters and command runners, and handing work to another session; its
+(never `tunnel token`, `tunnel run --token` or `access token/login`), and refuses the
+scripts, interpreters and command runners it recognises, and handing work to another session; its
 settings file sets `disableAllHooks: false`. It is a pattern guard, defence in depth for the case
 where the session was fed other instructions (an edited `CLAUDE.md` or rule file), not a
 sandbox: the session's own permission prompt, which the owner answers for every command, stays
