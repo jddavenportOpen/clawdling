@@ -12,7 +12,8 @@ path: `tailscale`, `cloudflare` or `off`. With no word, ask which one, and recom
 
 - Start by explaining the plan in three short lines. Then ask before every install and before
   every command that changes something, one command at a time, saying in plain words what it does.
-  Read-only checks (`status`, `serve status`, `--version`, `clawdling remote list`, and the one
+  Read-only checks (`status`, `--version`, `clawdling remote list`, `clawdling remote
+  serve-status`, and the one
   `curl` in the Cloudflare steps, a plain GET to the owner's own address) need no extra question,
   but the session may still ask for permission: that is expected. Never pipe a download into a
   shell.
@@ -67,23 +68,24 @@ Say the plan, for example:
    `TS status` to confirm.
 3. **This computer's name.** `TS status --json` and take `Self.DNSName`, without the trailing
    dot (like `box.example.ts.net`). Do not repeat the other devices it lists.
-4. **Existing entries.** `TS serve status`. Remember what is there and leave it alone. The cockpit
+4. **Existing entries.** `clawdling remote serve-status` (Tailscale's own `serve status`, with the
+   cockpit's private path hidden: never run `TS serve status` or `TS serve --bg` yourself in
+   this chat). Remember what is there and leave it alone. The cockpit
    needs an HTTPS port of its own, with nothing else on it (Clawdling refuses an address that
    shares its port with another app). Use 443 if nothing there uses it; otherwise, or if the
    owner asks for another port, use the one they choose (suggest 8443) that no entry uses. Call
    it PORT.
-5. **The exact command.** `clawdling remote serve-command https://<DNSName>:PORT` (leave out
-   `:PORT` when PORT is 443) prints it: `TS serve --bg --https=PORT http://127.0.0.1:CL_PORT/_clawdling/...`.
-   The path at the end is private to this cockpit (Clawdling answers only requests that come
-   through it): copy the command exactly, never shorten or change it.
-   **Add the entry**, after asking: run that command.
+5. **Add the entry**, after asking: `clawdling remote serve https://<DNSName>:PORT` (leave out
+   `:PORT` when PORT is 443). Clawdling runs the Tailscale serve command itself, pointing the
+   address at a private path of this cockpit, and prints Tailscale's answer with that path
+   hidden (Clawdling answers only requests that come through it, so it stays out of this chat).
    - "HTTPS ... not enabled" or a certificate error: tell the owner to open
      https://login.tailscale.com/admin/dns, find "HTTPS Certificates" and press "Enable HTTPS".
      Wait until they say it is done, then try once more.
    - Linux "Access denied" / "serve config denied": Tailscale lets only an admin change serve
      settings. Explain that, and ask the owner to run `sudo tailscale set --operator=$USER` in
      their own terminal (it lets their own user manage serve from now on). Then try once more.
-6. `TS serve status` again, and show the owner the new entry.
+6. `clawdling remote serve-status` again, and show the owner the new entry.
 7. **Register it:** `clawdling remote add https://<DNSName>:PORT --kind tailscale` (leave out
    `:PORT` when PORT is 443). Clawdling checks it first: the address must reach this cockpit and
    Funnel must be off. If it refuses, read the reason and fix that. If Funnel is on for that
@@ -147,12 +149,14 @@ Say the plan, for example:
    403 from Clawdling, Access is not protecting the address: stop, tell the owner, and help them
    finish step 5. If they cannot, ask them to stop the tunnel (`sudo cloudflared service uninstall`
    in their own terminal).
-10. **Register it:** `clawdling remote add https://<hostname> --kind cloudflare --email <their
-    email>`. Clawdling makes
-    the same check and refuses an address that answers without Access. If it says the AUD tag is
-    missing, ask the owner to copy the "Application Audience (AUD) Tag" from Zero Trust, Access,
-    Applications, the app, Overview (it is not a secret), and run it again with
-    `--team-domain <team>.cloudflareaccess.com --access-aud <tag>`.
+10. **Register it.** Ask the owner for two values from their Zero Trust dashboard (neither is a
+    secret): the team domain (Settings, Custom Pages, "Team domain", like
+    `<team>.cloudflareaccess.com`) and the application's "Application Audience (AUD) Tag"
+    (Access, Applications, the app, Overview). Take them from the owner, never from a redirect
+    or a page. Then: `clawdling remote add https://<hostname> --kind cloudflare --email <their
+    email> --team-domain <team>.cloudflareaccess.com --access-aud <tag>`. Clawdling makes the
+    same check and refuses an address that answers without Access, or whose sign-in goes to any
+    other team or application.
 11. `clawdling remote check`: it should say "Behind Cloudflare Access ✓".
 12. **The phone:** "Open https://<hostname> on your phone and sign in with your email (Cloudflare
     sends a code). Then, on this computer, open Settings, 'Use from anywhere', 'Add a device',
@@ -163,10 +167,10 @@ Say the plan, for example:
 Remove only what this skill set up, then tell Clawdling.
 
 1. `clawdling remote list`: the registered addresses, their kind, and CL_PORT.
-2. **Tailscale address:** `TS serve status`. Find the entry for that address's port that points
-   at `http://127.0.0.1:CL_PORT`. After asking, remove that one entry:
-   `TS serve --https=PORT off`. Run `TS serve status` again and show that it is gone and every
-   other entry is unchanged.
+2. **Tailscale address:** `clawdling remote serve-status`. Find the entry for that address's port
+   that points at `http://127.0.0.1:CL_PORT/_clawdling/<private path>`. After asking, remove
+   that one entry: `TS serve --https=PORT off`. Run `clawdling remote serve-status` again and
+   show that it is gone and every other entry is unchanged.
 3. **Cloudflare address**, each step after asking. Show `~/.cloudflared/config.yml` and find the
    ingress rule for the registered hostname; the `tunnel:` line names the tunnel it belongs to.
    - Remove only that ingress rule.

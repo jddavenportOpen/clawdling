@@ -12,7 +12,7 @@ import { selectBackend } from '../server/backend.js';
 import { cliInvocation, stopMessage } from '../server/hints.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
-import { DeviceStore, RemoteStore, parseRemoteUrl, statusText } from '../server/remote.js';
+import { DeviceStore, RemoteStore, parseRemoteUrl, redactServePaths, serveArgs, statusText, tailscaleBin } from '../server/remote.js';
 import { oneLine, readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
@@ -58,7 +58,9 @@ Usage:
   clawdling donna imessage --handle <you>   let Donna answer your iMessages (macOS, experimental)
   clawdling donna status
   clawdling remote list|check [--json]       Use from anywhere: is it on, and is each address private
-  clawdling remote serve-command <https-url> the exact tailscale serve command for an address
+  clawdling remote serve <https-url>        point a Tailscale Serve entry at the cockpit (its private
+                                            path is set and never printed)
+  clawdling remote serve-status             tailscale serve status, with private paths hidden
   clawdling remote add <https-url> --kind tailscale|cloudflare [--email E] [--team-domain T --access-aud A]
                                             register a Tailscale Serve or Cloudflare Tunnel address
                                             (checked first: never a public one, never one without Access)
@@ -80,7 +82,8 @@ const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-e
 const REMOTE_HELP = `usage:
   clawdling remote list [--json]
   clawdling remote check [--json]
-  clawdling remote serve-command <https-url>
+  clawdling remote serve <https-url>
+  clawdling remote serve-status
   clawdling remote add <https-url> --kind tailscale|cloudflare [--email <you>] [--team-domain <team>.cloudflareaccess.com --access-aud <AUD tag>]
   clawdling remote remove <https-url> | --all
   clawdling remote off`;
@@ -1036,22 +1039,39 @@ async function cmdRemote(args) {
     try {
       v = await api(ctx, 'POST', '/api/remote/hosts', body);
     } catch (err) {
-      if (err.data && err.data.serve_command) err.message += `\nPoint Tailscale at this cockpit first (its private path is part of the command):\n  ${err.data.serve_command}`;
+      if (err.data && err.data.next) err.message += `\nPoint Tailscale at this cockpit first:\n  ${err.data.next}`;
       throw err;
     }
     return out(v, `Added ${v.added}. Use from anywhere is on.\nNext: on your computer, open Settings, "Use from anywhere", and press "Add a device" to pair your phone.`);
   }
-  if (sub === 'serve-command') {
-    const url = args._[2];
-    if (!url) throw new CliError('usage: clawdling remote serve-command <https-url>');
-    try {
-      parseRemoteUrl(url, 'tailscale');
-    } catch (err) {
-      throw new CliError(err.message);
+  // The Tailscale serve step, run here so the private path (an HMAC under the org's token) never
+  // shows up in a terminal or an agent's transcript: all output is printed with it hidden.
+  if (sub === 'serve' || sub === 'serve-status') {
+    const bin = tailscaleBin({ env: process.env, which: (c) => which(c, process.env.PATH || '') });
+    if (!bin) throw new CliError('Tailscale is not installed here (or its command was not found). Install it from https://tailscale.com/download and sign in, then try again.');
+    let tsArgs = ['serve', 'status'];
+    let entry = null;
+    if (sub === 'serve') {
+      if (!args._[2]) throw new CliError('usage: clawdling remote serve <https-url>');
+      try {
+        entry = parseRemoteUrl(args._[2], 'tailscale');
+      } catch (err) {
+        throw new CliError(err.message);
+      }
+      if (!ctx.info || !ctx.token) throw new CliError(`Clawdling isn't running for ${ctx.home}. Start it first: ${cliCmd(ctx.home, 'start')}`);
+      tsArgs = serveArgs({ entry, port: ctx.info.port, token: ctx.token });
     }
-    needServer();
-    const r = await api(ctx, 'GET', `/api/remote/serve-command?url=${encodeURIComponent(url)}`);
-    return console.log(args.flags.json ? JSON.stringify(r, null, 2) : r.command);
+    const cmd = commandFor(bin, tsArgs, { env: process.env });
+    const r = spawnSync(cmd.file, cmd.args, spawnOptions(cmd, { encoding: 'utf8', timeout: 30000 }));
+    const text = redactServePaths(`${r.stdout || ''}${r.stderr || ''}`).trim();
+    if (text) console.log(text);
+    if (r.error || r.status !== 0) {
+      if (r.error) console.error(`clawdling: could not run Tailscale (${redactServePaths(r.error.message)})`);
+      process.exitCode = r.status || 1;
+      return;
+    }
+    if (entry) console.log(`\nTailscale now sends ${entry.url} to this cockpit, on a private path that is not shown. Next: ${cliCmd(ctx.home, `remote add ${entry.url} --kind tailscale`)}`);
+    return;
   }
   if (sub === 'remove' || sub === 'off') {
     const all = sub === 'remove' && args.flags.all === true;

@@ -148,12 +148,17 @@ before(async () => {
   cli(['init', '--defaults'], { env, home });
   srv = await startServerProc({ home, env });
   fs.writeFileSync(path.join(tunnelDir, 'target'), String(srv.port));
-  // What the setup agent does: ask Clawdling for the exact serve command, then "run" it.
-  const cmd = cli(['remote', 'serve-command', TS_URL], { env, home }).trim();
-  const m = /^\S+ serve --bg --https=8743 http:\/\/127\.0\.0\.1:(\d+)(\/_clawdling\/[A-Za-z0-9_-]{32})$/.exec(cmd);
-  assert.ok(m, cmd);
-  assert.equal(Number(m[1]), srv.port);
-  PREFIX = m[2];
+  // What the setup agent does: `clawdling remote serve`, which runs Tailscale itself and never
+  // prints the private path.
+  PREFIX = servePath(srv.token, TS_URL);
+  const out = cli(['remote', 'serve', TS_URL], { env, home });
+  assert.ok(!out.includes(PREFIX.split('/').pop()), 'the private path is never printed');
+  assert.match(out, /\/_clawdling\/<private path>/);
+  assert.match(out, /Tailscale now sends https:\/\/box\.example\.ts\.net:8743 to this cockpit/);
+  assert.equal(readJsonFile(serveFile).Web[TS_HOST].Handlers['/'].Proxy, `http://127.0.0.1:${srv.port}${PREFIX}`);
+  const st = cli(['remote', 'serve-status'], { env, home });
+  assert.ok(!st.includes(PREFIX.split('/').pop()));
+  assert.match(st, /\|-- \/ proxy http:\/\/127\.0\.0\.1:\d+\/_clawdling\/<private path>/);
   fs.writeFileSync(path.join(tunnelDir, 'prefix'), PREFIX);
 });
 
@@ -190,7 +195,8 @@ test('remote add refuses http, a non-Tailscale name, an unreachable address and 
   const down = cliResult(['remote', 'add', TS_URL, '--kind', 'tailscale'], { env, home });
   assert.equal(down.code, 1);
   assert.match(down.stderr, /Not added: Could not reach this Clawdling/);
-  assert.match(down.stderr, /Point Tailscale at this cockpit first[^\n]*\n\s+\S+ serve --bg --https=8743 http:\/\/127\.0\.0\.1:\d+\/_clawdling\/[A-Za-z0-9_-]{32}/);
+  assert.match(down.stderr, /Point Tailscale at this cockpit first:\n\s+clawdling remote serve https:\/\/box\.example\.ts\.net:8743/);
+  assert.ok(!down.stderr.includes('/_clawdling/'), 'never the private path');
   setMode('forward');
   // Funnel cannot be confirmed off (the Tailscale command fails): refused, it fails closed.
   fs.writeFileSync(serveFile, 'not json');
@@ -203,7 +209,7 @@ test('remote add refuses http, a non-Tailscale name, an unreachable address and 
   const none = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
   assert.equal(none.status, 422);
   assert.match(none.body.error, /no serve entry/);
-  assert.match(none.body.serve_command, /serve --bg --https=8743 http:\/\/127\.0\.0\.1:\d+\/_clawdling\//);
+  assert.equal(none.body.next, `clawdling remote serve ${TS_URL}`);
   // Requests from this computer carry no Tailscale login (a tagged device): refused too.
   fs.writeFileSync(path.join(tunnelDir, 'login'), '');
   writeServe(serveOk());
@@ -243,7 +249,9 @@ test('remote add (Tailscale): checked, private, on; Clawdling only ever ran `ser
   assert.equal(readJsonFile(path.join(home, '.clawdling', 'remote.json')).hosts[0].login, OWNER, 'the owner\'s Tailscale login, from the check\'s own request');
   const calls = fs.readFileSync(tsLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l).args.join(' '));
   assert.ok(calls.length >= 2);
-  assert.ok(calls.every((c) => c === 'serve status --json'), calls.join(' | '));
+  // The server only ever reads serve status; the CLI's `remote serve` (approved by the owner) and
+  // `serve-status` made the other calls.
+  assert.ok(calls.every((c) => c === 'serve status --json' || c === 'serve status' || c === `serve --bg --https=8743 http://127.0.0.1:${srv.port}${PREFIX}`), calls.join(' | '));
   if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(home, '.clawdling', 'remote.json')).mode & 0o777, 0o600);
 });
 
@@ -528,7 +536,7 @@ test('throttle: too many bad credentials lock new attempts on that address; sign
 
 test('Turn off while an address is being checked wins: the add is dropped and nothing turns on', async () => {
   const other = 'https://other.example.ts.net:8743';
-  const otherPath = cli(['remote', 'serve-command', other], { env, home }).trim().split(`:${srv.port}`)[1];
+  const otherPath = servePath(srv.token, other);
   fs.writeFileSync(path.join(tunnelDir, 'prefixes.json'), JSON.stringify({ 'other.example.ts.net:8743': otherPath }));
   writeServe(serveOk({ [TS_HOST]: PREFIX, 'other.example.ts.net:8743': otherPath }));
   setMode('slow');
@@ -564,18 +572,29 @@ test('removing an address while it is being re-added sticks', async () => {
 });
 
 test('Cloudflare: refused when it answers without Access; registered behind Access; every request needs a valid Access token', async () => {
+  // The owner's own Access team and application are pinned at add, from the owner, never from a redirect.
+  const PINS = ['--team-domain', 'team.cloudflareaccess.com', '--access-aud', access.aud];
+  const PIN_BODY = { team_domain: 'team.cloudflareaccess.com', access_aud: access.aud };
+  setMode('access');
+  const unpinned = await request(srv, 'POST', '/api/remote/hosts', { url: CF_URL, kind: 'cloudflare' });
+  assert.equal(unpinned.status, 400);
+  assert.match(unpinned.body.error, /needs --team-domain .* and --access-aud/);
   setMode('plain200');
-  const plain = await request(srv, 'POST', '/api/remote/hosts', { url: CF_URL, kind: 'cloudflare' });
+  const plain = await request(srv, 'POST', '/api/remote/hosts', { url: CF_URL, kind: 'cloudflare', ...PIN_BODY });
   assert.equal(plain.status, 422);
   assert.equal(plain.body.status, 'unprotected');
   setMode('forward'); // a tunnel straight to Clawdling, no Access in front
-  const open = cliResult(['remote', 'add', CF_URL, '--kind', 'cloudflare'], { env, home });
+  const open = cliResult(['remote', 'add', CF_URL, '--kind', 'cloudflare', ...PINS], { env, home });
   assert.equal(open.code, 1);
   assert.match(open.stderr, /answers without a Cloudflare Access sign-in/);
+  setMode('access-evil'); // someone else's Access team in front
+  const evil = await request(srv, 'POST', '/api/remote/hosts', { url: CF_URL, kind: 'cloudflare', ...PIN_BODY });
+  assert.equal(evil.status, 422);
+  assert.match(evil.body.error, /different Cloudflare Access team/);
   assert.ok(!(await request(srv, 'GET', '/api/remote')).body.hosts.some((h) => h.url === CF_URL));
 
   setMode('access');
-  const out = cli(['remote', 'add', CF_URL, '--kind', 'cloudflare'], { env, home });
+  const out = cli(['remote', 'add', CF_URL, '--kind', 'cloudflare', ...PINS], { env, home });
   assert.match(out, /Behind Cloudflare Access ✓/);
   const stored = readJsonFile(path.join(home, '.clawdling', 'remote.json')).hosts.find((h) => h.url === CF_URL);
   assert.deepEqual(stored.access, { team_domain: 'https://team.cloudflareaccess.com', aud: access.aud });
@@ -608,6 +627,23 @@ test('Cloudflare: refused when it answers without Access; registered behind Acce
   assert.equal(readJsonFile(path.join(home, '.clawdling', 'remote-devices.json')).devices.filter((d) => d.host === CF_URL).length, 0, 'an address found unprotected signs its devices out');
   assert.match(check.stdout, /Every device paired through it was signed out/);
   assert.equal((await raw('GET', '/api/org', { host: CF_HOST, headers: { cookie, 'cf-access-jwt-assertion': jwt } })).status, 403);
+
+  // Access back: it passes again. Then whoever controls the hostname points its sign-in at their
+  // own Access team (or another app): the check never adopts it, stops the address, signs out.
+  setMode('access');
+  assert.equal(cliResult(['remote', 'check'], { env, home }).code, 0);
+  const again = await pairDevice({ host: CF_HOST, url: CF_URL, extra: { 'cf-access-jwt-assertion': jwt } });
+  for (const mode of ['access-evil', 'access-otherapp']) {
+    setMode(mode);
+    const c = cliResult(['remote', 'check'], { env, home });
+    assert.equal(c.code, 1, mode);
+    assert.match(c.stdout, /Not behind Cloudflare Access ✗/);
+    assert.match(c.stdout, new RegExp(`different Cloudflare Access ${mode === 'access-evil' ? 'team' : 'application'}`));
+    const h = readJsonFile(path.join(home, '.clawdling', 'remote.json')).hosts.find((x) => x.url === CF_URL);
+    assert.deepEqual(h.access, { team_domain: 'https://team.cloudflareaccess.com', aud: access.aud }, 'the pins never change');
+    assert.equal(readJsonFile(path.join(home, '.clawdling', 'remote-devices.json')).devices.filter((d) => d.host === CF_URL).length, 0, 'its devices are signed out');
+    assert.equal((await raw('GET', '/api/org', { host: CF_HOST, headers: { cookie: again.cookie, 'cf-access-jwt-assertion': jwt } })).status, 403, 'and it is not answered');
+  }
   setMode('forward');
 });
 

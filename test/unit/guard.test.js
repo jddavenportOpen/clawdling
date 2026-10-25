@@ -13,10 +13,9 @@ const bash = (command) => verdict({ tool_name: 'Bash', tool_input: { command } }
 
 test('the setup steps the skill takes are let through to the normal permission prompt', () => {
   for (const c of [
-    `${TS} status`, `${TS} status --json`, `${TS} serve status`, `${TS} serve status --json`,
-    `${TS} serve --bg --https=8743 http://127.0.0.1:4791/_clawdling/${'a'.repeat(32)}`, `${TS} serve --https=8743 off`,
+    `${TS} status`, `${TS} status --json`, `${TS} serve --https=8743 off`,
     `${TS} funnel --https=8743 off`, 'tailscale funnel 443 off',
-    'clawdling remote serve-command https://box.example.ts.net:8743', 'clawdling remote add https://box.example.ts.net:8743 --kind tailscale',
+    'clawdling remote serve https://box.example.ts.net:8743', 'clawdling remote serve-status', 'clawdling remote add https://box.example.ts.net:8743 --kind tailscale',
     'cloudflared --version', 'cloudflared tunnel create clawdling', 'cloudflared tunnel route dns clawdling cockpit.example.com',
     "curl -sS -o /dev/null -w '%{http_code} %{redirect_url}\\n' https://cockpit.example.com/", 'brew install --cask tailscale',
   ]) assert.equal(bash(c), null, c);
@@ -32,6 +31,9 @@ test('the never list is refused, whatever the session was told', () => {
     'sudo cloudflared service install', 'sudo tailscale set --operator=$USER', 'cloudflared tunnel login', 'cloudflared login',
     'cat ~/.cloudflared/cert.pem', 'cat ~/.cloudflared/6ff42ae2-765d-4adf-8112-31c55c1551ef.json', 'cat /home/u/org/.clawdling/token',
     `echo ok && ${TS} funnel --bg 443`,
+    // The serve entry holds the private path: only `clawdling remote serve` / `serve-status` touch it.
+    `${TS} serve status`, `${TS} serve status --json`, `${TS} serve --bg --https=8743 http://127.0.0.1:4791/_clawdling/${'a'.repeat(32)}`,
+    `${TS} serve --https=8743 off && ${TS} serve status`,
   ]) assert.ok(bash(c), c);
   for (const [tool, file_path] of [['Read', '/home/u/.cloudflared/cert.pem'], ['Read', '/home/u/.cloudflared/abc.json'], ['Read', '/home/u/org/.clawdling/token'], ['Edit', '/home/u/org/.clawdling/remote.json'], ['Write', '/home/u/org/.clawdling/remote.json']]) {
     assert.ok(verdict({ tool_name: tool, tool_input: { file_path } }), `${tool} ${file_path}`);
@@ -44,7 +46,7 @@ test('as a hook: exit 2 with the reason refuses, exit 0 lets it through, bad inp
   const no = run(JSON.stringify({ tool_name: 'Bash', tool_input: { command: `${TS} serve reset` } }));
   assert.equal(no.status, 2);
   assert.match(no.stderr, /Clawdling refused this in a Use from anywhere setup chat: never `tailscale serve reset`/);
-  const yes = run(JSON.stringify({ tool_name: 'Bash', tool_input: { command: `${TS} serve status` } }));
+  const yes = run(JSON.stringify({ tool_name: "Bash", tool_input: { command: `${TS} status` } }));
   assert.equal(yes.status, 0);
   assert.equal(yes.stdout + yes.stderr, '');
   assert.equal(run('not json').status, 0);

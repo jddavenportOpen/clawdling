@@ -67,8 +67,11 @@ the same power as sitting at the computer, so it is guarded as such.
   Those headers can be written by anything that can open a connection to `127.0.0.1` (a
   container, another account on the computer), so the serve entry also forwards to a private
   path: `http://127.0.0.1:<port>/_clawdling/<32 characters>`, an HMAC of the address under the
-  org's token, which only the serve config and this org know (`clawdling remote serve-command`
-  prints the exact command). A request through a Tailscale address without that path is refused
+  org's token, which only the serve config and this org know. `clawdling remote serve <url>` (run
+  only when the owner approves it) points the serve entry at it itself, and it and `clawdling
+  remote serve-status` print Tailscale's output with the path hidden, so it never appears in a
+  terminal or an agent's transcript (a setup chat's guard refuses raw `tailscale serve` adds and
+  status). A request through a Tailscale address without that path is refused
   before anything else, and the server strips it so the cockpit sees its normal paths. What lock
   1 admits, then, is the owner's own devices, including this computer: a process on any of them
   (another account on this Mac, a container) can open the address like the owner's browser does.
@@ -123,12 +126,18 @@ the same power as sitting at the computer, so it is guarded as such.
   `Strict-Transport-Security`.
 - **Never public.** `clawdling remote add` checks an address before it is registered and leaves
   `remote.json` unchanged when the check fails. Tailscale: Funnel (Tailscale's public mode) must be
-  off for that address (read with `tailscale serve status --json`, the only Tailscale command
-  Clawdling runs; if Clawdling cannot read it, the address is not answered), no Tailscale TCP
+  off for that address (read with `tailscale serve status --json`, the only Tailscale command the
+  server runs; the CLI's `remote serve` and `remote serve-status` run `serve --bg` and `serve
+  status` on the owner's say-so; if Clawdling cannot read it, the address is not answered), no Tailscale TCP
   forward may land on the cockpit's port (a raw TCP connection carries whatever headers its
   sender writes, including a Tailscale login), and the address must reach this Clawdling (a
-  one-time nonce through the address) with a Tailscale login on it. Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
-  (which also gives the AUD tag); a page that answers (any 2xx, or Clawdling's own refusal,
+  one-time nonce through the address) with a Tailscale login on it. Cloudflare: the owner gives their Access team domain and
+  application AUD tag at `remote add` (`--team-domain`, `--access-aud`), and a signed-out request
+  must be redirected to exactly that team (and, when the link names one, that application). The
+  pins come only from the owner and no check ever changes them: whoever controls the hostname
+  could point its sign-in at their own Access team, whose identity provider could claim the
+  owner's email, so a redirect to any other team or application stops the address and signs its
+  devices out. A page that answers (any 2xx, or Clawdling's own refusal,
   marked with `X-Clawdling-Refused`) means the address is public, and it is refused. A first add
   needs that redirect: a bare 401/403 could be a firewall rule in front of a public page, so it
   only keeps an address that passed before. The cockpit must be the only thing on its address:
@@ -166,7 +175,7 @@ the same power as sitting at the computer, so it is guarded as such.
   well-formed Access settings. Anything malformed turns remote off and says why in Settings; a
   change made outside the server closes remote connections within two seconds. Agents' file tools
   are denied in `.clawdling/`, so `clawdling remote ...` is the way to change it, and that command
-  asks for permission inside a session (only `clawdling remote list` is pre-approved). Donna's
+  asks for permission inside a session (only the read-only `clawdling remote list` and `clawdling remote serve-status` are pre-approved). Donna's
   text-message turns cannot run `clawdling remote` at all.
 
 **The setup agent.** "Set it up with an agent" starts an ordinary Claude Code session on the

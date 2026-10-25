@@ -42,7 +42,6 @@ import {
   loopbackPeer,
   parseRemoteUrl,
   remoteOriginAllowed,
-  serveCommand,
   servePath,
   statusText,
   stripServePath,
@@ -631,7 +630,7 @@ export async function startServer(opts = {}) {
           // Tailscale Serve forwards to this address's private path; anything else that connects to
           // 127.0.0.1 does not know it. Strip it: handlers see the real path.
           const rest = stripServePath(url.pathname, entry.path);
-          if (rest === null) return { refused: 'unexpected path: point the Tailscale serve entry at `clawdling remote serve-command`' };
+          if (rest === null) return { refused: 'unexpected path: set the Tailscale serve entry up with `clawdling remote serve`' };
           url.pathname = rest;
           req.url = rest + url.search;
         }
@@ -814,7 +813,8 @@ export async function startServer(opts = {}) {
             Object.assign(h, { checked_at: r.checked_at, detail: `${r.detail} It passed its last check, and Clawdling still requires a Cloudflare Access sign-in on every request.` });
             continue;
           }
-          Object.assign(h, { status: r.status, detail: r.detail, checked_at: r.checked_at, ...(r.access ? { access: r.access } : {}), ...(r.login ? { login: r.login } : {}) });
+          // Never the Access pins: those come only from the owner, at add.
+          Object.assign(h, { status: r.status, detail: r.detail, checked_at: r.checked_at, ...(r.login ? { login: r.login } : {}) });
         }
       });
       for (const [url, r] of results) unsafeSignOut(url, r);
@@ -868,6 +868,11 @@ export async function startServer(opts = {}) {
       if (!b.kind) throw new RemoteError('send --kind tailscale or --kind cloudflare');
       const p = parseRemoteUrl(b.url, b.kind);
       let access = null;
+      // Cloudflare: the owner's own Access team and application, pinned here and only here. A
+      // check compares the sign-in redirect against them and never changes them.
+      if (b.kind === 'cloudflare' && (!b.team_domain || !b.access_aud)) {
+        throw new RemoteError('a Cloudflare address needs --team-domain <team>.cloudflareaccess.com and --access-aud <AUD tag> (Zero Trust, Access, Applications, your app, Overview)');
+      }
       if (b.team_domain !== undefined || b.access_aud !== undefined) {
         if (b.kind !== 'cloudflare') throw new RemoteError('--team-domain and --access-aud are for Cloudflare addresses');
         const team = String(b.team_domain || '').trim().toLowerCase().replace(/\/+$/, '');
@@ -887,7 +892,9 @@ export async function startServer(opts = {}) {
         if (!/^[^\s@]{1,200}@[^\s@]{1,200}$/.test(email)) throw new RemoteError('--email is the address you sign in to Cloudflare Access with');
       }
       const draftPath = b.kind === 'tailscale' ? servePath(token, p.url) : null;
-      const draft = { path: draftPath, email: email || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.email : null), url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null), login: null };
+      const draft = { path: draftPath, email: email || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.email : null), url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access, login: null };
+      // New pins for an address that had others: nothing paired under the old ones carries over.
+      if (prev && (prev.kind !== b.kind || JSON.stringify(prev.access || null) !== JSON.stringify(access))) devices.revokeHost(p.url);
       remote.update((s) => {
         s.hosts = s.hosts.filter((h) => h.url !== p.url);
         s.hosts.push(draft);
@@ -899,7 +906,7 @@ export async function startServer(opts = {}) {
       } catch (err) {
         r = { status: 'unreachable', detail: `The check failed: ${err.message}` };
       }
-      const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: r.access || draft.access, login: r.login || null };
+      const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: draft.access, login: r.login || null };
       // Added only once it is reachable and safe (a later "Not reachable" keeps it: that may pass).
       if (!answerable(done) || done.status === 'unreachable') {
         // Not safe or not reachable: leave remote.json the way it was (unless it was removed
@@ -914,7 +921,7 @@ export async function startServer(opts = {}) {
         if (prev && unsafe) unsafeSignOut(p.url, r);
         const e = new HttpError(422, `Not added: ${r.detail}`);
         e.body = { status: r.status, status_text: statusText(done) };
-        if (b.kind === 'tailscale' && r.status !== 'public') e.body.serve_command = serveCommand({ entry: draft, port, token, bin: tsBin() || 'tailscale' });
+        if (b.kind === 'tailscale' && r.status !== 'public') e.body.next = `clawdling remote serve ${p.url}`;
         throw e;
       }
       // Turned off (or an address removed) while this check ran: that wins.
@@ -998,11 +1005,6 @@ export async function startServer(opts = {}) {
           const b = await jsonBody(req);
           const h = await addHost(b);
           return [201, { ...remoteView(req.who), added: h.url }];
-        }, { local: true }],
-        // The exact `tailscale serve` command for an address: the private path is part of it.
-        ['GET', /^\/api\/remote\/serve-command$/, (req, m, res, url) => {
-          const p = parseRemoteUrl(url.searchParams.get('url'), 'tailscale');
-          return [200, { url: p.url, command: serveCommand({ entry: p, port, token, bin: tsBin() || 'tailscale' }) }];
         }, { local: true }],
         ['POST', /^\/api\/remote\/remove$/, async (req) => {
           const b = await jsonBody(req);

@@ -275,10 +275,11 @@ newcomers, Rin the skeptic, Maya the phone-only check.
   exactly where to enable HTTPS certificates if they are off, never touches other serve entries,
   and registers the address only once it is private; Settings then shows it as "Private to your
   devices ✓".
-  - Accept: on a real Mac with Tailscale, the agent's commands are only the app binary's `status`,
-    `serve status`, `serve --bg --https=<port> http://127.0.0.1:<port>`, and `clawdling remote ...`;
-    `clawdling remote add` refuses an address with Funnel on or one that does not reach this
-    Clawdling and leaves `remote.json` unchanged; Clawdling itself only ever runs
+  - Accept: on a real Mac with Tailscale, the agent's commands are only the app binary's `status`
+    (and `serve --https=<port> off` to remove), and `clawdling remote ...` (`serve`, `serve-status`,
+    `add`, `check`); the private serve path never appears in the chat; `clawdling remote add`
+    refuses an address with Funnel on, another app on it, or one that does not reach this
+    Clawdling, and leaves `remote.json` unchanged; the server itself only ever runs
     `tailscale serve status --json`.
 - **US-55 (P0, Maya; 1.3)** As a founder, "Add a device" shows a QR code I scan with my phone's
   camera; my phone opens the cockpit, I press "Sign in this device", and from then on I use the
@@ -307,9 +308,11 @@ newcomers, Rin the skeptic, Maya the phone-only check.
   walks me through `cloudflared tunnel login`, the tunnel, the Access application with my email,
   and the service, and registers the address only after a signed-out visitor is sent to the
   Access sign-in; Settings shows "Behind Cloudflare Access ✓". (Beta.)
-  - Accept: against a fake edge, a redirect to `<team>.cloudflareaccess.com` passes (and stores
-    the team and AUD tag), a plain 200 or Clawdling's own page is refused as "Not behind
-    Cloudflare Access ✗", and a later check that finds Access gone stops the address.
+  - Accept: against a fake edge, `remote add` needs the owner's `--team-domain` and
+    `--access-aud`; a redirect to exactly that team and app passes, a redirect to another team or
+    app, a plain 200 or Clawdling's own page is refused as "Not behind Cloudflare Access ✗", and
+    a later check that finds Access gone or pointed elsewhere stops the address, signs its devices
+    out, and never changes the pins.
 - **US-59 (P1, Maya; 1.3)** As a founder checking from my phone alone, Settings on the phone says
   which address I came through, shows each address's last check, lists my devices with this one
   marked, and lets me turn it off, but not turn it on or add devices (those need the computer).

@@ -9,6 +9,7 @@
 //             forwards to the path in FAKE_TUNNEL_DIR/prefix + the request path, like a serve
 //             entry whose target is http://127.0.0.1:<port>/_clawdling/<private path>
 //   access    a Cloudflare Access redirect to <team>.cloudflareaccess.com with the AUD as kid
+//             (access-evil: another team; access-otherapp: the same team, another AUD)
 //   plain200  a page that answers without any sign-in
 //   down      drop the connection
 //   slow      like forward, 1.5 s later
@@ -56,9 +57,13 @@ function handle(req, res) {
     res.writeHead(200, { 'content-type': 'text/html' });
     return res.end('<h1>hello</h1>');
   }
-  if (mode === 'access') {
+  // access: the owner's Access app. access-evil: someone else's team. access-otherapp: the owner's
+  // team, another application.
+  if (mode === 'access' || mode === 'access-evil' || mode === 'access-otherapp') {
     const host = String(req.headers.host || '').split(':')[0];
-    res.writeHead(302, { location: `https://team.cloudflareaccess.com/cdn-cgi/access/login/${host}?kid=${read('aud')}&redirect_url=%2F` });
+    const team = mode === 'access-evil' ? 'evil' : 'team';
+    const kid = mode === 'access' ? read('aud') : '0'.repeat(64);
+    res.writeHead(302, { location: `https://${team}.cloudflareaccess.com/cdn-cgi/access/login/${host}?kid=${kid}&redirect_url=%2F` });
     return res.end();
   }
   const headers = { ...req.headers, 'x-forwarded-for': '100.64.0.9', 'x-forwarded-proto': 'https' };

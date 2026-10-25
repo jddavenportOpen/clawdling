@@ -42,10 +42,14 @@ export function servePath(token, url) {
   return `/_clawdling/${crypto.createHmac('sha256', String(token)).update(`remote-path:${url}`).digest('base64url').slice(0, 32)}`;
 }
 
-/** The exact Tailscale command that points an address at this cockpit's private path. */
-export function serveCommand({ entry, port, token, bin = 'tailscale' }) {
-  const b = /\s/.test(bin) ? `"${bin}"` : bin;
-  return `${b} serve --bg --https=${entry.port} http://127.0.0.1:${port}${servePath(token, entry.url)}`;
+/** The args of the Tailscale command that points an address at this cockpit's private path. */
+export function serveArgs({ entry, port, token }) {
+  return ['serve', '--bg', `--https=${entry.port}`, `http://127.0.0.1:${port}${servePath(token, entry.url)}`];
+}
+
+/** Any private serve path in text (Tailscale's own output), hidden. */
+export function redactServePaths(text) {
+  return String(text ?? '').replace(/\/_clawdling\/[A-Za-z0-9_-]{32}/g, '/_clawdling/<private path>');
 }
 
 /**
@@ -577,7 +581,7 @@ export async function checkTailscale(entry, { nonce, bin, run, env, testMode, po
     return { status: 'unconfirmed', detail: `A Tailscale TCP forward on port ${f.tcp.join(', ')} sends raw connections straight to the cockpit, so whoever uses it could pretend to be you. Remove it (tailscale serve --tcp=${f.tcp[0]} off), then check again.` };
   }
   if (port && entry.path && f.handlers && !f.handlers.length) {
-    return { status: 'unconfirmed', detail: `Tailscale has no serve entry for ${entry.url}. Run the command from \`clawdling remote serve-command\`, then check again.` };
+    return { status: 'unconfirmed', detail: `Tailscale has no serve entry for ${entry.url}. Run: clawdling remote serve ${entry.url}, then check again.` };
   }
   if (port && entry.path && f.handlers && f.handlers.length && !onlyCockpit(f.handlers, { port, path: entry.path })) {
     const others = f.handlers.filter((h) => !(h.mount === '/' && h.proxy && h.proxy.includes('/_clawdling/'))).map((h) => h.mount);
@@ -615,11 +619,17 @@ export async function checkTailscale(entry, { nonce, bin, run, env, testMode, po
 }
 
 /**
- * Cloudflare: an unauthenticated request must be stopped by Cloudflare Access (a redirect to
- * <team>.cloudflareaccess.com, whose `kid` is the application's AUD tag). A page that answers
- * (any 2xx, or Clawdling's own refusal) means the address is public: never registered.
+ * Cloudflare: an unauthenticated request must be stopped by THE OWNER'S Cloudflare Access
+ * application: a redirect to the team domain and AUD tag the owner gave at `remote add`
+ * (entry.access). Those pins come only from the owner and are never replaced by a check: a
+ * redirect to any other Access team or application (whoever controls the hostname could point it
+ * at their own) fails, and so does a page that answers (any 2xx, or Clawdling's own refusal).
  */
 export async function checkCloudflare(entry, { env, testMode, probeImpl = probe } = {}) {
+  const pin = entry.access;
+  if (!pin || !TEAM_RE.test(pin.team_domain || '') || !AUD_RE.test(pin.aud || '')) {
+    return { status: 'unverified', detail: 'Clawdling needs your Cloudflare Access team domain and application AUD tag (--team-domain and --access-aud) to know the sign-in is yours.' };
+  }
   let r;
   try {
     r = await probeImpl(entry.url, '/', { env, testMode });
@@ -638,17 +648,20 @@ export async function checkCloudflare(entry, { env, testMode, probeImpl = probe 
       // not a URL
     }
     if (u && u.protocol === 'https:' && TEAM_RE.test(`https://${u.hostname}`)) {
-      const aud = u.searchParams.get('kid') || entry.access?.aud || '';
-      if (!AUD_RE.test(aud)) return { status: 'unverified', detail: 'Cloudflare Access is on, but its application AUD tag was not in the sign-in link. Add it with --access-aud (Zero Trust, Access, Applications, your app, Overview).' };
-      return { status: 'access', detail: 'A Cloudflare Access sign-in is required before anyone reaches it.', access: { team_domain: `https://${u.hostname}`, aud } };
+      const team = `https://${u.hostname}`;
+      const kid = u.searchParams.get('kid');
+      if (team !== pin.team_domain || (kid !== null && kid !== pin.aud)) {
+        return { status: 'unprotected', detail: `${entry.url} now sends visitors to a different Cloudflare Access ${team !== pin.team_domain ? 'team' : 'application'} than the one you registered. Clawdling stopped answering it.` };
+      }
+      return { status: 'access', detail: 'A Cloudflare Access sign-in is required before anyone reaches it.' };
     }
   }
   // A block with no redirect only keeps an address that passed with the redirect before: on a first
   // add it could just as well be a WAF or bot rule in front of a public page.
-  if ((r.status === 401 || r.status === 403) && h['cf-ray'] && entry.access && entry.status === 'access') {
-    return { status: 'access', detail: 'Cloudflare Access blocks requests that are not signed in.', access: entry.access };
+  if ((r.status === 401 || r.status === 403) && h['cf-ray'] && entry.status === 'access') {
+    return { status: 'access', detail: 'Cloudflare Access blocks requests that are not signed in.' };
   }
-  return { status: 'unverified', detail: `${entry.url} answered ${r.status}, which is not a Cloudflare Access sign-in. Clawdling will not answer it.` };
+  return { status: 'unverified', detail: `${entry.url} answered ${r.status}, which is not a sign-in at your Cloudflare Access team. Clawdling will not answer it.` };
 }
 
 // ----------------------------------------------------------------------- Cloudflare Access JWT

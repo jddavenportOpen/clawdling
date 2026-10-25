@@ -34,8 +34,9 @@ no servers of its own. The author never receives any of your data.
   credential files. Clawdling keeps, on your computer only, the addresses you registered
   (`.clawdling/remote.json`, with the Tailscale account name Tailscale reports for your own
   devices, so it can refuse everyone else's) and, for each paired device, a short label taken from its browser
-  (like "iPhone · Safari"), when it was paired and last used, and a hash of its sign-in. To check
-  an address it runs `tailscale serve status --json` and makes signed-out requests to your own
+  (like "iPhone · Safari"), when it was paired and last used, and a hash of its sign-in. When you
+  approve `clawdling remote serve`, it runs `tailscale serve` to point your address at the cockpit.
+  To check an address it runs `tailscale serve status --json` and makes signed-out requests to your own
   address; for Cloudflare it fetches your Access team's public signing keys. Nothing goes to the
   author.
 - **Telegram or iMessage** (optional, only if you turn on Donna's text channel): messages pass

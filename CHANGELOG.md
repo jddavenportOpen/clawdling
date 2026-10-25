@@ -17,9 +17,11 @@ until you turn it on, in Settings.
   and handles the macOS Homebrew symlink crash, the tailnet's HTTPS certificate switch and the
   Linux operator setting. `/remote-access off` removes only what it set up.
 - **Only your own devices.** Tailscale requests must carry your own Tailscale login and arrive
-  through the serve entry's private path (`clawdling remote serve-command` prints the exact
-  command), so another person on a shared tailnet, or a program connecting to the cockpit's port
+  through the serve entry's private path (`clawdling remote serve` sets it up without ever
+  printing it), so another person on a shared tailnet, or a program connecting to the cockpit's port
   directly, gets nothing; the cockpit must also be the only thing served on its address.
+  Cloudflare is pinned to the Access team and application you give at `remote add`; a sign-in
+  redirect anywhere else stops the address and signs its devices out.
   Cloudflare pins your Access email the same way.
 - **Never public.** `clawdling remote add` registers an address only after a check passes:
   Tailscale Funnel off and the address reaching this cockpit, or, for Cloudflare, a signed-out
@@ -35,8 +37,9 @@ until you turn it on, in Settings.
   devices ✓", "Behind Cloudflare Access ✓" or "Not reachable". Turn off stops answering at once
   (open terminals and live updates through it close), signs out every device, and offers "Remove
   the tunnel too".
-- **CLI:** `clawdling remote list|check`, `clawdling remote serve-command <https-url>`,
-  `clawdling remote add <https-url> --kind tailscale|cloudflare [--email you@example.com]`,
+- **CLI:** `clawdling remote list|check`, `clawdling remote serve <https-url>`, `clawdling remote
+  serve-status`, `clawdling remote add <https-url> --kind tailscale|cloudflare [--email
+  you@example.com --team-domain <team>.cloudflareaccess.com --access-aud <tag>]`,
   `clawdling remote remove <url>|--all`, `clawdling remote off`. Donna's
   text-message turns cannot run them.
 - **Safer by default, for everyone:** a request with a localhost `Host` that came through a proxy

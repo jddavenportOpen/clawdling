@@ -223,8 +223,9 @@ sign-in, which you can sign out from Settings. **Turn off** stops answering ever
 at once, signs out every device, and can open a chat that removes the serve entry or tunnel too
 (`/remote-access off`).
 
-From a terminal: `clawdling remote list`, `clawdling remote check`, `clawdling remote
-serve-command <https-url>`, `clawdling remote add <https-url> --kind tailscale|cloudflare`,
+From a terminal: `clawdling remote list`, `clawdling remote check`, `clawdling remote serve
+<https-url>`, `clawdling remote serve-status`, `clawdling remote add <https-url> --kind
+tailscale|cloudflare`,
 `clawdling remote remove <url>|--all`, `clawdling remote off`. How it is protected: [SECURITY.md](docs/SECURITY.md#use-from-anywhere).
 
 ## How it works

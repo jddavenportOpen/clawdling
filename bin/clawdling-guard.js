@@ -19,6 +19,9 @@ export function verdict(input) {
       [/\bsudo\b/i, 'the owner runs every sudo command in their own terminal'],
       [/(^|[\s;&|(])(--funnel|funnel)\b/i, null], // checked below: only turning Funnel off is allowed
       [/\bserve\b[^;&|]*\breset\b/i, 'never `tailscale serve reset`: it would wipe the owner\'s other serve entries'],
+      // The serve entry carries the cockpit's private path: only Clawdling's CLI sets it up and
+      // shows its status, with the path hidden. Turning one entry off is the one raw serve command.
+      [/tailscale\s+serve\b/i, null],
       [/\bserve\b[^;&|]*--(tcp|tls-terminated-tcp)\b/i, 'never a TCP forward: whoever uses one can write their own headers'],
       [/--auth-?key\b/i, 'never an auth key: the owner signs in to Tailscale themselves'],
       [/tailscale\s+(up|down|logout|login|set|switch)\b/i, 'never `tailscale up/down/logout/login/set/switch`: the owner does that in the Tailscale app or their own terminal'],
@@ -28,6 +31,12 @@ export function verdict(input) {
     for (const [re, why] of rules) {
       if (!re.test(cmd)) continue;
       if (why) return why;
+      if (/serve\\b/.test(re.source)) {
+        const segs = cmd.split(/;|&&|\|\||\|/).filter((x) => /tailscale\s+serve\b/i.test(x));
+        const offOnly = segs.every((x) => /tailscale\s+serve\s+--https[= ]\d+\s+off\s*$/i.test(x.trim()));
+        if (!offOnly) return 'use `clawdling remote serve <url>` and `clawdling remote serve-status` instead of `tailscale serve`: they keep the cockpit\'s private path out of this chat (turning an entry off with `tailscale serve --https=PORT off` is fine)';
+        continue;
+      }
       // Funnel: allowed only as `... funnel --https=PORT off` (or `funnel reset` is still refused).
       const off = /\bfunnel\b(\s+--https[= ]\d+|\s+--bg|\s+\d+)*\s+off\b/i.test(cmd) && !/--funnel\b/i.test(cmd) && !/\bfunnel\b[^;&|]*\b(on|reset)\b/i.test(cmd);
       if (!off) return 'never turn on Tailscale Funnel (it makes the address public); the only allowed Funnel command turns it off';

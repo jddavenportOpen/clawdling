@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { deviceCookieHeader, originAllowed } from '../../server/auth.js';
 import {
   AccessVerifier, DeviceStore, PAIRING_TTL_MS, Pairings, RemoteStore, Throttle, answerable, checkCloudflare, checkTailscale, deviceLabel,
-  funnelOn, funnelState, hostKeys, loopbackPeer, onlyCockpit, parseRemoteUrl, webHandlers, serveCommand, servePath, stripServePath, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
+  funnelOn, funnelState, hostKeys, loopbackPeer, onlyCockpit, parseRemoteUrl, webHandlers, redactServePaths, serveArgs, servePath, stripServePath, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
 } from '../../server/remote.js';
 import { rmrf, tempHome } from '../helpers.mjs';
 import { fakeAccess } from '../fixtures/fake-access.mjs';
@@ -193,9 +193,6 @@ test('the private serve path: an HMAC of the address, stripped from every reques
   assert.equal(stripServePath('/api/org', a), null);
   assert.equal(stripServePath(`${a}x/api`, a), null, 'a longer path is not the prefix');
   assert.equal(stripServePath('/api/org', null), null);
-  const entry = parseRemoteUrl('https://box.example.ts.net:8743', 'tailscale');
-  assert.equal(serveCommand({ entry, port: 4791, token: 't'.repeat(64), bin: '/Applications/Tailscale.app/Contents/MacOS/Tailscale' }),
-    `/Applications/Tailscale.app/Contents/MacOS/Tailscale serve --bg --https=8743 http://127.0.0.1:4791${a}`);
 });
 
 test('remote names are answered only from this computer (the tunnel), never from the Wi-Fi', () => {
@@ -329,24 +326,38 @@ test('Tailscale check: public is refused; it must reach THIS Clawdling', async (
   assert.match(r.detail, /ECONNREFUSED/);
 });
 
-test('Cloudflare check: only a redirect to Cloudflare Access passes; a page that answers is refused', async () => {
-  const entry = parseRemoteUrl('https://cockpit.example.com', 'cloudflare');
+test('Cloudflare check: only a redirect to the owner\'s own Access team and app passes; pins never change', async () => {
   const aud = 'f'.repeat(64);
+  const pins = { team_domain: 'https://team.cloudflareaccess.com', aud };
+  const entry = { ...parseRemoteUrl('https://cockpit.example.com', 'cloudflare'), access: pins, status: 'pending' };
   const answer = (status, headers = {}) => async () => ({ status, headers, body: '' });
-  const ok = await checkCloudflare(entry, { probeImpl: answer(302, { location: `https://team.cloudflareaccess.com/cdn-cgi/access/login/cockpit.example.com?kid=${aud}&redirect_url=%2F` }) });
+  const to = (team, kid) => answer(302, { location: `https://${team}.cloudflareaccess.com/cdn-cgi/access/login/cockpit.example.com${kid === undefined ? '' : `?kid=${kid}`}` });
+  const ok = await checkCloudflare(entry, { probeImpl: to('team', aud) });
   assert.equal(ok.status, 'access');
-  assert.deepEqual(ok.access, { team_domain: 'https://team.cloudflareaccess.com', aud });
+  assert.equal(ok.access, undefined, 'a check never returns new pins');
+  assert.equal((await checkCloudflare(entry, { probeImpl: to('team') })).status, 'access', 'no kid: the team still matches');
+  const evil = await checkCloudflare(entry, { probeImpl: to('evil', aud) });
+  assert.equal(evil.status, 'unprotected', 'another team, even with the right AUD');
+  assert.match(evil.detail, /different Cloudflare Access team/);
+  assert.equal((await checkCloudflare(entry, { probeImpl: to('team', '0'.repeat(64)) })).status, 'unprotected', 'the right team, another application');
+  assert.equal((await checkCloudflare({ ...entry, access: null }, { probeImpl: to('team', aud) })).status, 'unverified', 'no pins from the owner: nothing to trust');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(200) })).status, 'unprotected', 'a plain 200');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(403, { 'x-clawdling-refused': '1' }) })).status, 'unprotected', 'reached Clawdling itself');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'https://evil.example/cdn-cgi/access/login?kid=' + aud }) })).status, 'unverified', 'a redirect somewhere else');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'http://team.cloudflareaccess.com/x?kid=' + aud }) })).status, 'unverified', 'http');
   assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'https://team.cloudflareaccess.com.evil.example/x?kid=' + aud }) })).status, 'unverified');
-  assert.equal((await checkCloudflare(entry, { probeImpl: answer(302, { location: 'https://team.cloudflareaccess.com/x' }) })).status, 'unverified', 'no AUD tag');
-  const acc = { team_domain: 'https://team.cloudflareaccess.com', aud };
-  assert.equal((await checkCloudflare({ ...entry, access: acc, status: 'access' }, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'access', 'a block keeps an address that passed before');
-  assert.equal((await checkCloudflare({ ...entry, access: acc, status: 'pending' }, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'unverified', 'a first add needs the Access redirect (a WAF rule blocks too)');
-  assert.equal((await checkCloudflare(entry, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'unverified', 'blocked, but whose block?');
+  assert.equal((await checkCloudflare({ ...entry, status: 'access' }, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'access', 'a block keeps an address that passed before');
+  assert.equal((await checkCloudflare(entry, { probeImpl: answer(403, { 'cf-ray': 'x' }) })).status, 'unverified', 'a first add needs the Access redirect (a WAF rule blocks too)');
   assert.equal((await checkCloudflare(entry, { probeImpl: async () => { throw new Error('ENOTFOUND'); } })).status, 'unreachable');
+});
+
+test('private serve paths are hidden in any text', () => {
+  const p = servePath('t'.repeat(64), 'https://box.example.ts.net:8743');
+  const text = `https://box.example.ts.net:8743\n|-- / proxy http://127.0.0.1:4791${p}\n`;
+  const red = redactServePaths(text);
+  assert.ok(!red.includes(p.split('/').pop()));
+  assert.match(red, /proxy http:\/\/127\.0\.0\.1:4791\/_clawdling\/<private path>/);
+  assert.deepEqual(serveArgs({ entry: parseRemoteUrl('https://box.example.ts.net:8743', 'tailscale'), port: 4791, token: 't'.repeat(64) }), ['serve', '--bg', '--https=8743', `http://127.0.0.1:4791${p}`]);
 });
 
 test('Cloudflare Access tokens: signature, AUD, issuer and expiry are all checked; fails closed', async () => {
