@@ -166,7 +166,7 @@ export function RemoteCard() {
                 <span class="set-sub">Paired ${ago(d.created_at)}${d.last_seen_at ? ` · last used ${ago(d.last_seen_at)}` : ''}</span></span>
               <button class="btn btn-quiet btn-sm" onClick=${() => signOut(d)} disabled=${!!busy} data-testid="remote-signout">Sign out</button>
             </li>`)}
-          </ul>` : html`<p class="set-note remote-none">No device is paired yet.</p>`}
+          </ul>` : html`<p class="set-note remote-none">No device is signed in.</p>`}
           ${remoteHere ? html`<p class="set-note">To add a device, open Settings on the computer Clawdling runs on.</p>`
             : pairing ? html`<${PairingBlock} pairing=${pairing} fresh=${fresh} onDone=${() => setPairing(null)} />`
             : !hosts.some((h) => h.answering) ? html`<p class="phone-warn" role="note" data-testid="remote-none-answering"><${Icon} name="alert" size=${14} />

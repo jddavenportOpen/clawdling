@@ -138,7 +138,7 @@ test('Add a device shows a one-time QR link (no token), then says when the phone
   await mock('remote', { hosts: [{ url: `${TS}:8743`, kind: 'tailscale', status: 'private' }] });
   await login(page, '#/settings');
   const c = card(page);
-  await expect(c).toContainText('No device is paired yet.');
+  await expect(c).toContainText('No device is signed in.');
   await c.getByTestId('remote-add-device').click();
   const block = c.getByTestId('remote-pairing');
   await expect(block).toBeVisible();
