@@ -967,7 +967,8 @@ function printRemote(v, { stale = false } = {}) {
   for (const h of hosts) {
     const when = h.checked_at ? `, checked ${rel(h.checked_at)}` : '';
     const answering = v.enabled && h.answering === false ? ' [not answering]' : '';
-    console.log(`  ${pad(h.url, 46)}${pad(h.kind, 12)}${h.status_text || statusText(h)}${answering}${when}`);
+    const text = v.enabled ? h.status_text || statusText(h) : 'Turned off';
+    console.log(`  ${pad(h.url, 46)}${pad(h.kind, 12)}${text}${answering}${when}`);
     if (h.detail && h.status !== 'private' && h.status !== 'access') console.log(`    ${h.detail}`);
   }
   const devices = v.devices || [];

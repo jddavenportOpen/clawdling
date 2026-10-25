@@ -203,7 +203,7 @@ test('Turn off without removing the tunnel starts nothing', async ({ page }) => 
 test('a Cloudflare address whose sign-in moved is shown as refused, with why', async ({ page }) => {
   await reset('default');
   await mock('remote', {
-    hosts: [{ url: CF, kind: 'cloudflare', status: 'unprotected', detail: 'https://cockpit.example.com now sends visitors to a different Cloudflare Access team than the one you registered, so Clawdling does not answer it. Every device paired through it was signed out: pair them again once it is fixed.' }],
+    hosts: [{ url: CF, kind: 'cloudflare', status: 'unprotected', detail: 'https://cockpit.example.com now sends visitors to a different Cloudflare Access team than yours (the one given with --team-domain and --access-aud), so Clawdling does not answer it. Every device paired through it was signed out: pair them again once it is fixed.' }],
   });
   await login(page, '#/settings');
   const row = card(page).getByTestId('remote-host');
