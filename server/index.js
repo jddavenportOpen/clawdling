@@ -553,11 +553,12 @@ export async function startServer(opts = {}) {
      * A personal skill or command that would answer /remote-access instead of the org's: a skill
      * folder or a SKILL.md whose name is remote-access, or a remote-access.md command at any depth.
      */
-    function personalRemoteAccess(dir) {
+    function personalRemoteAccess(dir, { vetted = null } = {}) {
       const skills = path.join(dir, 'skills');
       try {
         for (const e of fs.readdirSync(skills, { withFileTypes: true }).slice(0, 500)) {
           if (!e.isDirectory() && !e.isSymbolicLink()) continue;
+          if (vetted && path.join(skills, e.name) === vetted) continue;
           const f = path.join(skills, e.name, 'SKILL.md');
           if (e.name === 'remote-access') return path.join(skills, e.name);
           try {
@@ -612,6 +613,7 @@ export async function startServer(opts = {}) {
     const throttle = new Throttle(testMode && Number(env.CLAWDLING_REMOTE_THROTTLE_MAX) > 0 ? { max: Number(env.CLAWDLING_REMOTE_THROTTLE_MAX) } : {});
     const access = new AccessVerifier(testMode && env.CLAWDLING_CF_CERTS_URL ? { certsUrl: () => env.CLAWDLING_CF_CERTS_URL } : {});
     const checkNonces = new Set();
+    const helloSeen = new Map(); // nonce -> {login}: what our own hello handler saw
     let remoteGen = 0; // bumped by Turn off and remove: an add whose check spans one does not turn it back on
     const remoteConns = new Set(); // live SSE and terminal connections through a remote address
     // Headers only a proxy adds. On a loopback Host they mean a tunnel rewrote the Host header,
@@ -777,15 +779,27 @@ export async function startServer(opts = {}) {
       checkNonces.add(nonce);
       try {
         const r = entry.kind === 'tailscale'
-          ? await checkTailscale(entry, { nonce, bin: tsBin(), run: runReadOnly, env, testMode, port })
+          ? await checkTailscale(entry, { nonce, bin: tsBin(), run: runReadOnly, env, testMode, port, seen: () => helloSeen.get(nonce) || null })
           : await checkCloudflare(entry, { env, testMode });
         return { ...r, checked_at: new Date().toISOString() };
       } finally {
         checkNonces.delete(nonce);
+        helloSeen.delete(nonce);
       }
     }
 
-    async function checkAll() {
+    // Every check (Check again, Turn on, an add, the timers) runs one at a time, so an older
+    // result can never overwrite a newer verdict.
+    let checkChain = Promise.resolve();
+    function exclusive(fn) {
+      const run = checkChain.then(fn, fn);
+      checkChain = run.catch(() => {});
+      return run;
+    }
+
+    const checkAll = () => exclusive(checkAllNow);
+
+    async function checkAllNow() {
       const st = remote.read();
       const results = new Map();
       for (const h of st.hosts) results.set(h.url, await runCheck(h));
@@ -825,7 +839,9 @@ export async function startServer(opts = {}) {
     }
 
     /** The cheap half of a Tailscale check (serve status only, no request), run every minute. */
-    async function quickServeCheck() {
+    const quickServeCheck = () => exclusive(quickServeCheckNow);
+
+    async function quickServeCheckNow() {
       const st = remote.read();
       if (!st.enabled) return;
       for (const h of st.hosts) {
@@ -845,7 +861,9 @@ export async function startServer(opts = {}) {
       }
     }
 
-    async function addHost(b) {
+    const addHost = (b) => exclusive(() => addHostNow(b));
+
+    async function addHostNow(b) {
       if (!b.kind) throw new RemoteError('send --kind tailscale or --kind cloudflare');
       const p = parseRemoteUrl(b.url, b.kind);
       let access = null;
@@ -883,15 +901,19 @@ export async function startServer(opts = {}) {
       const done = { ...draft, status: r.status, detail: r.detail, checked_at: r.checked_at || new Date().toISOString(), access: r.access || draft.access, login: r.login || null };
       // Added only once it is reachable and safe (a later "Not reachable" keeps it: that may pass).
       if (!answerable(done) || done.status === 'unreachable') {
-        // Not safe or not reachable: leave remote.json the way it was (unless it was removed meanwhile).
+        // Not safe or not reachable: leave remote.json the way it was (unless it was removed
+        // meanwhile), except that an address already registered and now found unsafe keeps that
+        // verdict, and its devices sign out.
+        const unsafe = ['public', 'unconfirmed', 'unprotected', 'unverified'].includes(r.status);
         remote.update((s) => {
           const ours = s.hosts.some((h) => h.url === p.url && h.status === 'pending');
           s.hosts = s.hosts.filter((h) => h.url !== p.url);
-          if (prev && ours) s.hosts.push(prev);
+          if (prev && ours) s.hosts.push(unsafe ? { ...prev, status: r.status, detail: r.detail, checked_at: done.checked_at } : prev);
         });
+        if (prev && unsafe) unsafeSignOut(p.url, r);
         const e = new HttpError(422, `Not added: ${r.detail}`);
         e.body = { status: r.status, status_text: statusText(done) };
-        if (b.kind === 'tailscale' && r.status === 'unreachable') e.body.serve_command = serveCommand({ entry: draft, port, token, bin: tsBin() || 'tailscale' });
+        if (b.kind === 'tailscale' && r.status !== 'public') e.body.serve_command = serveCommand({ entry: draft, port, token, bin: tsBin() || 'tailscale' });
         throw e;
       }
       // Turned off (or an address removed) while this check ran: that wins.
@@ -940,10 +962,8 @@ export async function startServer(opts = {}) {
         if (!s.hosts.length) s.enabled = false;
       });
       devices.revokeHost(p.url);
-      if (!remote.read().hosts.length) {
-        devices.revokeAll();
-        pairings.clear();
-      }
+      pairings.clear(); // a code works on every address: a leaked link must stop everywhere
+      if (!remote.read().hosts.length) devices.revokeAll();
       logger.info(`remote: removed ${p.url}`);
       remoteChanged('removed');
       return 1;
@@ -969,7 +989,9 @@ export async function startServer(opts = {}) {
           const nonce = url.searchParams.get('nonce');
           if (!req.who.hello || !checkNonces.has(nonce)) throw notFound('no such API route');
           const login = req.headers['tailscale-user-login'];
-          return [200, { clawdling: true, nonce, ...(typeof login === 'string' && login ? { login } : {}) }];
+          // What the check trusts is this record, made here, not the reply it reads back.
+          helloSeen.set(nonce, { login: typeof login === 'string' && login ? login : null });
+          return [200, { clawdling: true, nonce }];
         }, { public: true, hello: true }],
         ['POST', /^\/api\/remote\/hosts$/, async (req) => {
           const b = await jsonBody(req);
@@ -1163,6 +1185,9 @@ export async function startServer(opts = {}) {
           org.ensureSkills();
           // Claude Code prefers a personal skill or command of the same name over the org's.
           const dirs = [configDir, ...(b.account && b.account !== 'default' ? [sessions.configDirFor({ account: b.account }, configDir)] : [])];
+          // The org's own .claude too: another skill or command there named remote-access.
+          const orgHit = personalRemoteAccess(path.join(home, '.claude'), { vetted: path.join(home, '.claude', 'skills', 'remote-access') });
+          if (orgHit) throw new HttpError(409, `The org folder has a second "remote-access" skill or command (${orgHit}). Remove it, then start the setup again.`);
           for (const d of dirs) {
             const f = personalRemoteAccess(d);
             if (f) throw new HttpError(409, `Your own Claude Code setup has a "remote-access" skill or command (${f}), which Claude Code would run instead of Clawdling's. Rename it, then start the setup again.`);
@@ -1302,6 +1327,21 @@ export async function startServer(opts = {}) {
 
     let allowed = null;
     const webDir = path.resolve(opts.webDir || env.CLAWDLING_WEB_DIR || path.join(PKG_ROOT, 'web'));
+    // CSP hashes of index.html's inline scripts (the import map), read once.
+    let scriptHashes = null;
+    function inlineScriptHashes() {
+      if (scriptHashes !== null) return scriptHashes;
+      let html = '';
+      try {
+        html = fs.readFileSync(path.join(webDir, 'index.html'), 'utf8');
+      } catch {
+        // fallback page: no inline scripts
+      }
+      const out = [];
+      for (const m of html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/gi)) out.push(`'sha256-${crypto.createHash('sha256').update(m[1]).digest('base64')}'`);
+      scriptHashes = out.join(' ');
+      return scriptHashes;
+    }
 
     async function handleApi(req, res, url) {
       const who = req.who;
@@ -1401,7 +1441,12 @@ export async function startServer(opts = {}) {
       const work = classify(req, url).then((who) => {
         if (who.refused) return refuse(res, who.refused);
         req.who = who;
-        if (who.remote) res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+        if (who.remote) {
+          res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+          // Through a remote address, only this cockpit's own scripts run (an edge that injects a
+          // script into pages could otherwise read the device key) and it talks only to itself.
+          res.setHeader('Content-Security-Policy', `frame-ancestors 'none'; object-src 'none'; base-uri 'self'; script-src 'self' ${inlineScriptHashes()}; connect-src 'self' wss://${who.entry.port === 443 ? who.entry.host : `${who.entry.host}:${who.entry.port}`}`);
+        }
         return url.pathname.startsWith('/api/') ? handleApi(req, res, url) : handleStatic(req, res, url);
       });
       work.catch((err) => {

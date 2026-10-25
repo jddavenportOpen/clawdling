@@ -567,7 +567,7 @@ export async function probe(url, pathname, { env = process.env, testMode = false
  * says who sent it (Tailscale-User-Login): that login is the owner's, and later requests must
  * carry the same one.
  */
-export async function checkTailscale(entry, { nonce, bin, run, env, testMode, port = null, probeImpl = probe } = {}) {
+export async function checkTailscale(entry, { nonce, bin, run, env, testMode, port = null, probeImpl = probe, seen = null } = {}) {
   const f = await funnelState(entry, { bin, run, port });
   if (f.known && f.funnel) {
     return { status: 'public', detail: 'Tailscale Funnel is on for this address, so anyone on the internet can reach it. Clawdling will not answer it until Funnel is off.' };
@@ -575,6 +575,9 @@ export async function checkTailscale(entry, { nonce, bin, run, env, testMode, po
   if (!f.known) return { status: 'unconfirmed', detail: `Clawdling could not confirm Tailscale Funnel is off (${f.detail}), so it does not answer this address.` };
   if (f.tcp && f.tcp.length) {
     return { status: 'unconfirmed', detail: `A Tailscale TCP forward on port ${f.tcp.join(', ')} sends raw connections straight to the cockpit, so whoever uses it could pretend to be you. Remove it (tailscale serve --tcp=${f.tcp[0]} off), then check again.` };
+  }
+  if (port && entry.path && f.handlers && !f.handlers.length) {
+    return { status: 'unconfirmed', detail: `Tailscale has no serve entry for ${entry.url}. Run the command from \`clawdling remote serve-command\`, then check again.` };
   }
   if (port && entry.path && f.handlers && f.handlers.length && !onlyCockpit(f.handlers, { port, path: entry.path })) {
     const others = f.handlers.filter((h) => !(h.mount === '/' && h.proxy && h.proxy.includes('/_clawdling/'))).map((h) => h.mount);
@@ -591,9 +594,12 @@ export async function checkTailscale(entry, { nonce, bin, run, env, testMode, po
     } catch {
       // not ours
     }
-    if (r.status === 200 && j && j.clawdling === true && j.nonce === nonce) {
+    // The proof is what this server's own hello handler recorded (seen), not the reply body:
+    // whatever answered the probe could write any body it liked.
+    const rec = typeof seen === 'function' ? seen() : null;
+    if (r.status === 200 && j && j.clawdling === true && j.nonce === nonce && (typeof seen !== 'function' || rec)) {
       reached = true;
-      login = typeof j.login === 'string' && j.login ? j.login : null;
+      login = typeof seen === 'function' ? rec.login : typeof j.login === 'string' && j.login ? j.login : null;
     } else why = r.status === 200 ? 'something else answers there' : `it answered ${r.status}`;
   } catch (err) {
     why = err.message;

@@ -312,6 +312,11 @@ test('Tailscale check: public is refused; it must reach THIS Clawdling', async (
   const ok = await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1') });
   assert.equal(ok.status, 'private');
   assert.equal(ok.login, 'owner@example.com');
+  // With the server's own record: only what our hello handler saw counts, never the reply body.
+  const forged = await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1', 'attacker@example.com'), seen: () => null });
+  assert.equal(forged.status, 'unreachable', 'a reply our hello handler never produced');
+  const recorded = await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('n1', 'attacker@example.com'), seen: () => ({ login: 'owner@example.com' }) });
+  assert.equal(recorded.login, 'owner@example.com');
   assert.equal((await checkTailscale(entry, { nonce: 'n1', bin: 'ts', run: off, probeImpl: hello('other') })).status, 'unreachable', 'another Clawdling answered');
   const unknown = await checkTailscale(entry, { nonce: 'n1', bin: null, probeImpl: hello('n1') });
   assert.equal(unknown.status, 'unconfirmed', 'Funnel not confirmed off: fails closed');

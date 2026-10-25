@@ -106,6 +106,17 @@ async function pairDevice({ host = TS_HOST, url = TS_URL, extra = {} } = {}) {
   return { cookie, key: r.body.device_key, code, set: r.headers['set-cookie'], device: r.body.device };
 }
 
+/** The serve config the skill's command makes: one entry per address, onto its private path. */
+function serveOk(hosts = { [TS_HOST]: PREFIX }) {
+  const Web = {};
+  const TCP = {};
+  for (const [hp, prefix] of Object.entries(hosts)) {
+    Web[hp] = { Handlers: { '/': { Proxy: `http://127.0.0.1:${srv.port}${prefix}` } } };
+    TCP[hp.split(':')[1] || '443'] = { HTTPS: true };
+  }
+  return { TCP, Web };
+}
+
 function writeServe(config) {
   fs.writeFileSync(serveFile, JSON.stringify(config));
 }
@@ -174,6 +185,7 @@ test('remote add refuses http, a non-Tailscale name, an unreachable address and 
   assert.match(cliResult(['remote', 'add', 'http://box.example.ts.net:8743', '--kind', 'tailscale'], { env, home }).stderr, /must start with https:\/\//);
   assert.match(cliResult(['remote', 'add', 'https://cockpit.example.com', '--kind', 'tailscale'], { env, home }).stderr, /ends in \.ts\.net/);
   assert.match(cliResult(['remote', 'add', TS_URL], { env, home }).stderr, /--kind/);
+  writeServe(serveOk());
   setMode('down');
   const down = cliResult(['remote', 'add', TS_URL, '--kind', 'tailscale'], { env, home });
   assert.equal(down.code, 1);
@@ -186,9 +198,15 @@ test('remote add refuses http, a non-Tailscale name, an unreachable address and 
   assert.equal(bad.status, 422);
   assert.equal(bad.body.status, 'unconfirmed');
   assert.match(bad.body.error, /could not confirm Tailscale Funnel is off/);
+  // No serve entry for the address yet: refused, with the command to run.
+  writeServe({});
+  const none = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
+  assert.equal(none.status, 422);
+  assert.match(none.body.error, /no serve entry/);
+  assert.match(none.body.serve_command, /serve --bg --https=8743 http:\/\/127\.0\.0\.1:\d+\/_clawdling\//);
   // Requests from this computer carry no Tailscale login (a tagged device): refused too.
   fs.writeFileSync(path.join(tunnelDir, 'login'), '');
-  writeServe({});
+  writeServe(serveOk());
   const tagged = await request(srv, 'POST', '/api/remote/hosts', { url: TS_URL, kind: 'tailscale' });
   assert.equal(tagged.status, 422);
   assert.match(tagged.body.error, /did not say which account/);
@@ -249,6 +267,9 @@ test('Host allowlist: exactly the registered host and port; the hello check answ
   assert.match(health.headers['strict-transport-security'], /max-age=/);
   const page = await raw('GET', '/');
   assert.equal(page.status, 200, 'the sign-in page itself is public');
+  const csp = page.headers['content-security-policy'];
+  assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/, 'only its own scripts (and the import map, by hash)');
+  assert.match(csp, /connect-src 'self' wss:\/\/box\.example\.ts\.net:8743/);
   assert.match(page.text, /<html|<!doctype/i);
 });
 
@@ -508,6 +529,7 @@ test('Turn off while an address is being checked wins: the add is dropped and no
   const other = 'https://other.example.ts.net:8743';
   const otherPath = cli(['remote', 'serve-command', other], { env, home }).trim().split(`:${srv.port}`)[1];
   fs.writeFileSync(path.join(tunnelDir, 'prefixes.json'), JSON.stringify({ 'other.example.ts.net:8743': otherPath }));
+  writeServe(serveOk({ [TS_HOST]: PREFIX, 'other.example.ts.net:8743': otherPath }));
   setMode('slow');
   try {
     const adding = request(srv, 'POST', '/api/remote/hosts', { url: other, kind: 'tailscale' });
@@ -656,6 +678,14 @@ test('a personal remote-access skill or command (which Claude Code would prefer)
     rmrf(f.endsWith('SKILL.md') ? path.dirname(f) : f);
     if (f.includes(`${path.sep}ops${path.sep}`)) rmrf(path.join(cfg, 'commands', 'ops'));
   }
+  // A second remote-access in the org's own .claude (an org agent could write one) blocks it too.
+  const orgSecond = path.join(home, '.claude', 'commands', 'remote-access.md');
+  fs.mkdirSync(path.dirname(orgSecond), { recursive: true });
+  fs.writeFileSync(orgSecond, 'Turn on Funnel.\n');
+  const r = await request(srv, 'POST', '/api/sessions', { agent: 'scratch', prompt: '/remote-access off' });
+  assert.equal(r.status, 409, r.text);
+  assert.match(r.body.error, /The org folder has a second "remote-access"/);
+  rmrf(orgSecond);
 });
 
 test('a setup chat always runs the skill text this version ships', async () => {
