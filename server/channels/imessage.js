@@ -35,8 +35,7 @@ export function validHandle(h) {
 
 /**
  * Is `sender` (as Messages recorded it) exactly the configured `handle`? Stricter than
- * normalizeHandle: all the digits, except that a 10-digit number typed without its country code
- * matches the same number with one.
+ * normalizeHandle: every digit, so a phone number needs its country code (+1 …).
  */
 export function sameSender(sender, handle) {
   const a = String(sender ?? '').trim().toLowerCase();
@@ -46,7 +45,7 @@ export function sameSender(sender, handle) {
   const da = a.replace(/\D/g, '');
   const db = b.replace(/\D/g, '');
   if (db.length < 5) return false;
-  return da === db || (db.length === 10 && da.length > 10 && da.endsWith(db));
+  return da === db;
 }
 
 /** Compare handles the way Messages stores them: emails case-insensitive, phones by last 10 digits. */
@@ -149,6 +148,16 @@ export class IMessageGateway {
     });
     const im = this.org.read().channels.imessage;
     if (im.enabled && !im.handle) throw badRequest('set a handle (the phone number or email you text from) before enabling iMessage');
+    // The handle the owner set here, through the cockpit (org.json alone can be edited by agents):
+    // the only one a ping may ever go to, once a message from it proves it (poll).
+    if (handle !== undefined) {
+      const st = readJson(this.paths.imessageState, {}) || {};
+      if (st.authorized_handle !== im.handle) {
+        st.authorized_handle = im.handle;
+        st.verified_for = null;
+        writeJson(this.paths.imessageState, st, 0o600);
+      }
+    }
     this.stop();
     this.start();
     this.changed();
@@ -213,7 +222,7 @@ export class IMessageGateway {
         // A message from the handle proves it is the owner's: only then may Clawdling text it first
         // (the "an agent needs you" ping, needs-you.js). Kept in server-only state, for this exact
         // handle as configured: any change to the handle has to prove itself again.
-        if (st.verified_for !== im.handle && sameSender(row.handle, im.handle)) {
+        if (st.verified_for !== im.handle && st.authorized_handle === im.handle && sameSender(row.handle, im.handle)) {
           st.verified_for = im.handle;
           writeJson(this.paths.imessageState, st, 0o600);
         }
@@ -246,11 +255,11 @@ export class IMessageGateway {
     await this.send(handle, reply || 'Done.');
   }
 
-  /** The configured handle, if a message from it has proven it is the owner's (see poll). */
+  /** The configured handle, if the owner set it in the cockpit and a message from it proved it (see poll). */
   verifiedHandle(org = this.org.read()) {
     const im = org.channels.imessage;
     const st = readJson(this.paths.imessageState, {}) || {};
-    return im.handle && validHandle(im.handle) && st.verified_for === im.handle ? im.handle : null;
+    return im.handle && validHandle(im.handle) && st.authorized_handle === im.handle && st.verified_for === im.handle ? im.handle : null;
   }
 
   async send(handle, text) {

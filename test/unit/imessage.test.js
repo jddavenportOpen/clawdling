@@ -105,6 +105,15 @@ test('poller: starts from now, routes only the owner, replies via osascript argv
     }
   }
   assert.equal(gw.verifiedHandle(), '+1 (555) 010-0001', 'a message from the handle proves it (kept in server-only state)');
+  // An agent edits org.json to its own address: never a ping target, even after it texts in.
+  const orgFile = path.join(home, 'org.json');
+  const o = JSON.parse(fs.readFileSync(orgFile, 'utf8'));
+  o.channels.imessage.handle = 'intruder@example.test';
+  fs.writeFileSync(orgFile, JSON.stringify(o));
+  assert.equal(gw.verifiedHandle(), null);
+  o.channels.imessage.handle = '+1 (555) 010-0001';
+  fs.writeFileSync(orgFile, JSON.stringify(o));
+  assert.equal(gw.verifiedHandle(), '+1 (555) 010-0001');
   assert.equal(await gw.poll(), 0, 'nothing new');
   const st = JSON.parse(fs.readFileSync(runtimePaths(home).imessageState, 'utf8'));
   assert.equal(st.last_rowid, 5);

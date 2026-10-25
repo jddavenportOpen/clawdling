@@ -8,9 +8,10 @@
 //
 // Who it may go to, and whether it is on at all, is decided only from server-only state under
 // .clawdling/ (agents' file tools are denied there), never from org.json alone, which agents can
-// edit: the Telegram chat must be the one that sent the pairing code (telegram.json), and an
-// iMessage handle must have texted Donna first (imessage.json). The on/off switch and the send
-// history live in .clawdling/notify.json.
+// edit: the Telegram chat must be the one that sent the pairing code (telegram.json; a pairing from
+// before 1.4 has no record and must pair again), and an iMessage handle must be the one the owner
+// set in the cockpit and must have texted Donna since (imessage.json). The on/off switch and the
+// send history live in .clawdling/notify.json.
 import { readJson, writeJson, oneLine } from './util.js';
 
 const WHAT = {
@@ -58,22 +59,6 @@ export class NeedsYouPinger {
   constructor({ paths, org, sessions, telegram, imessage, events, logger, now = Date.now, delayMs = 4000, perSessionMs = 10 * 60000, perHour = 6 }) {
     Object.assign(this, { paths, org, sessions, telegram, imessage, events, logger, now, delayMs, perSessionMs, perHour });
     this.timers = new Map();
-    this.migrateTelegram();
-  }
-
-  /** Telegram pairings from before 1.4 have no server-only record: take today's chat as paired, once. */
-  migrateTelegram() {
-    try {
-      const st = this.telegram?.state?.();
-      const tg = this.org.read().channels.telegram;
-      if (st && (st.paired_chat_id === undefined || st.paired_chat_id === null) && tg.chat_id !== null && tg.chat_id !== undefined && !st.migrated_1_4) {
-        this.telegram.saveState({ ...st, paired_chat_id: tg.chat_id, migrated_1_4: true });
-      } else if (st && !st.migrated_1_4) {
-        this.telegram.saveState({ ...st, migrated_1_4: true });
-      }
-    } catch {
-      // no org yet, or no telegram gateway (unit tests)
-    }
   }
 
   state() {
@@ -97,9 +82,17 @@ export class NeedsYouPinger {
     const org = this.org.read();
     const ch = this.channelFor(org);
     const im = org.channels?.imessage || {};
-    // iMessage is set up but has not texted Donna yet: say so, so the owner knows what to do.
+    const tg = org.channels?.telegram || {};
+    let paired = null;
+    try {
+      paired = this.telegram?.state?.()?.paired_chat_id ?? null;
+    } catch {
+      paired = null;
+    }
+    // Set up, but not proven yet: say what to do.
+    const repair = !ch && tg.enabled && tg.chat_id !== null && tg.chat_id !== undefined && String(tg.chat_id) !== String(paired);
     const unverified = !ch && !!(im.enabled && im.handle) && !this.imessage?.verifiedHandle?.(org);
-    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, ...(unverified ? { imessage_unverified: true } : {}) };
+    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
   }
 
   setEnabled(on) {

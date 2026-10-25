@@ -41,8 +41,9 @@ test('safeName: plain words only, 40 characters', () => {
   assert.equal(safeName('\u202e\n'), 'An agent');
 });
 
-test('sameSender: the whole number (or address), not just its last 10 digits', () => {
-  assert.equal(sameSender('+12025550123', '202 555 0123'), true);
+test('sameSender: the whole number with its country code (or the address), not just its last 10 digits', () => {
+  assert.equal(sameSender('+12025550123', '202 555 0123'), false, 'a phone number needs its country code');
+  assert.equal(sameSender('+442025550123', '2025550123'), false);
   assert.equal(sameSender('+12025550123', '+1 (202) 555-0123'), true);
   assert.equal(sameSender('+442025550123', '+1 202 555 0123'), false);
   assert.equal(sameSender('+12025550123', '+44 20 2555 0123'), false);
@@ -101,19 +102,6 @@ test('NeedsYouPinger: off by default, still waiting after the delay, once per se
   assert.equal(h.p.timers.size, 1);
   h.p.stop();
   fs.rmSync(h.dir, { recursive: true, force: true });
-});
-
-test('a Telegram pairing from before 1.4 is taken as paired once; a later org.json edit is not', () => {
-  let tgState = {};
-  const org = { channels: { telegram: { enabled: true, chat_id: 5 }, imessage: {} } };
-  const tg = { state: () => tgState, saveState: (s) => { tgState = s; } };
-  // eslint-disable-next-line no-new
-  new NeedsYouPinger({ paths: {}, org: { read: () => org }, telegram: tg });
-  assert.deepEqual(tgState, { paired_chat_id: 5, migrated_1_4: true });
-  org.channels.telegram.chat_id = 6;
-  // eslint-disable-next-line no-new
-  new NeedsYouPinger({ paths: {}, org: { read: () => org }, telegram: tg });
-  assert.equal(tgState.paired_chat_id, 5);
 });
 
 test('browser notification: only when the tab is hidden, the setting is on, and the session just started needing you', async () => {
