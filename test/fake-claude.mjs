@@ -24,7 +24,7 @@ const argv = process.argv.slice(2);
 const log = (entry) => {
   if (!process.env.FAKE_CLAUDE_LOG) return;
   try {
-    fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ pid: process.pid, cwd: process.cwd(), ...entry }) + '\n');
+    fs.appendFileSync(process.env.FAKE_CLAUDE_LOG, JSON.stringify({ pid: process.pid, ppid: process.ppid, cwd: process.cwd(), ...entry }) + '\n');
   } catch {
     // ignore
   }

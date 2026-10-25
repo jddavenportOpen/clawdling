@@ -59,6 +59,26 @@ jobs:
         if: ${{ !cancelled() }}
         run: npm run test:pty
 
+  # Issue #4: end pty sessions whose process just exited, many at once. Prints, per variant, whether
+  # the process holding node-pty survived; fails only if the pty host (what ships) did not.
+  stress-conpty:
+    name: stress · windows · kill exited ConPTY sessions
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Reproducer (unguarded, guarded in-process, host, bundled conpty.dll)
+        run: node test/stress/conpty-kill-exited.mjs --rounds 30 --size 6
+
   e2e:
     name: e2e · cockpit (Playwright, mock server)
     runs-on: ubuntu-latest
