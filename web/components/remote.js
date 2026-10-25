@@ -8,6 +8,7 @@
 import { html } from '../lib/html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { api } from '../lib/api.js';
+import { useStore } from '../lib/store.js';
 import { startSession, toast, errorToast } from '../lib/actions.js';
 import { copyText, relTime } from '../lib/util.js';
 import { Icon } from './icons.js';
@@ -51,6 +52,8 @@ export function RemoteCard() {
   const [sheet, setSheet] = useState(null); // {type: 'setup', path} | {type: 'off'}
   const [pairing, setPairing] = useState(null);
   const [busy, setBusy] = useState('');
+  // A removal chat (/remote-access off) is open: no second one from here.
+  const removing = useStore((s) => Object.values(s.sessions || {}).some((x) => x && x.title === 'Remove remote access' && x.status !== 'ended'));
 
   const reload = () => api.remote().then((v) => { setView(v); setErr(''); return v; })
     .catch((e) => { setErr(e.status === 404 ? 'unsupported' : e.message); return null; });
@@ -144,7 +147,7 @@ export function RemoteCard() {
               <span class="set-sub">${KIND_LABEL[h.kind] || h.kind}${h.checked_at ? ` · checked ${ago(h.checked_at)}` : ''}</span>
             </span>
             <span class=${`remote-status ${!on ? 'is-off' : GOOD.has(h.status) ? 'is-good' : h.answering ? 'is-warn' : 'is-bad'}`} data-testid="remote-status">
-              ${!on || GOOD.has(h.status) ? null : html`<${Icon} name="alert" size=${13} />`}
+              ${!on || GOOD.has(h.status) || /✗$/.test(h.status_text || '') ? null : html`<${Icon} name="alert" size=${13} />`}
               ${on ? h.status_text : 'Turned off'}</span>
             ${on && !GOOD.has(h.status) && h.detail ? html`<span class="set-sub remote-detail">${h.detail}</span>` : null}
           </li>`)}
@@ -156,14 +159,15 @@ export function RemoteCard() {
             <button class="btn btn-quiet btn-sm" onClick=${() => setSheet({ type: 'off' })} disabled=${!!busy} data-testid="remote-off">Turn off</button>`
           : remoteHere ? null : html`
             <button class="btn btn-primary btn-sm" onClick=${() => run('on', () => api.remoteEnabled(true), 'Use from anywhere is on. Pair your devices again.')} disabled=${!!busy} data-testid="remote-on">${busy === 'on' ? 'Turning on…' : 'Turn on'}</button>
-            <button class="btn btn-quiet btn-sm" onClick=${() => startAgent('off')} disabled=${!!busy} data-testid="remote-remove">Remove the tunnel too</button>`}
+            ${removing ? html`<span class="set-note remote-removing" data-testid="remote-removing">A chat that removes the tunnel is open.</span>`
+              : html`<button class="btn btn-quiet btn-sm" onClick=${() => startAgent('off')} disabled=${!!busy} data-testid="remote-remove">Remove the tunnel too</button>`}`}
         </div>
         ${on ? html`<div class="remote-devices" data-testid="remote-devices">
           <h3 class="card-h">Your devices</h3>
           ${devices.length ? html`<ul class="acct-list">
             ${devices.map((d) => html`<li class="set-row" data-testid="remote-device" key=${d.id}>
               <span class="set-label"><span class="remote-dev-name">${d.label}${d.id === here.device ? html`<span class="card-tag">This device</span>` : null}</span>
-                <span class="set-sub">Paired ${ago(d.created_at)}${d.last_seen_at ? ` · last used ${ago(d.last_seen_at)}` : ''}</span></span>
+                <span class="set-sub">Signed in ${ago(d.created_at)}${d.last_seen_at ? ` · last used ${ago(d.last_seen_at)}` : ''}</span></span>
               <button class="btn btn-quiet btn-sm" onClick=${() => signOut(d)} disabled=${!!busy} data-testid="remote-signout">Sign out</button>
             </li>`)}
           </ul>` : html`<p class="set-note remote-none">No device is signed in.</p>`}

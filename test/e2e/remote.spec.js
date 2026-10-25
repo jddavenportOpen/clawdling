@@ -185,8 +185,11 @@ test('Turn off: one confirm, stops answering at once, and can start the removal 
   await expect(card(page).getByTestId('remote-state')).toHaveText('Off');
   await expect(card(page).getByTestId('remote-status')).toHaveText('Turned off');
   await expect(card(page).getByTestId('remote-on')).toBeVisible();
-  await expect(card(page).getByTestId('remote-remove')).toHaveText('Remove the tunnel too');
+
   await expect(card(page).getByTestId('remote-device')).toHaveCount(0);
+  // The removal chat opened by the sheet is still open: no second "Remove the tunnel too".
+  await expect(card(page).getByTestId('remote-removing')).toHaveText('A chat that removes the tunnel is open.');
+  await expect(card(page).getByTestId('remote-remove')).toHaveCount(0);
   await shot(page, 'us56-turned-off', card(page));
 });
 
@@ -198,6 +201,7 @@ test('Turn off without removing the tunnel starts nothing', async ({ page }) => 
   await page.getByTestId('remote-off-confirm').click();
   await expect(card(page).getByTestId('remote-state')).toHaveText('Off');
   expect(await spawns()).toEqual([]);
+  await expect(card(page).getByTestId('remote-remove')).toHaveText('Remove the tunnel too');
 });
 
 test('a Cloudflare address whose sign-in moved is shown as refused, with why', async ({ page }) => {
