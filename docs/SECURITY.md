@@ -193,10 +193,14 @@ restarts Clawdling with `--host`, and never registers a Cloudflare address befor
 front. Those "never" rules are also enforced in code: a setup chat runs with a PreToolUse hook
 (`bin/clawdling-guard.js`, only in that session's `--settings`) that refuses turning Funnel on,
 `serve reset`, TCP forwards, auth keys, `tailscale up/down/logout/login/set/switch`, `sudo`,
-`cloudflared tunnel login`, and any read or write of `cert.pem`, a tunnel credentials file or
-`.clawdling/`, whatever else the session was told (an edited `CLAUDE.md` or rule file). The
-session's own permission prompts apply to every command on top of that, and the server's checks
-hold even if an agent ignored the skill.
+`cloudflared tunnel login`, raw `tailscale serve` adds and status (the CLI's redacted `remote
+serve` and `remote serve-status` instead), and any access to `cert.pem`, `~/.cloudflared/` (but
+its `config.yml`) or `.clawdling/`. It checks each part of a command, and in this one session it
+refuses quoting, `$(...)`, scripts and interpreters, and handing work to another session; its
+settings file sets `disableAllHooks: false`. It is a pattern guard, defence in depth for the case
+where the session was fed other instructions (an edited `CLAUDE.md` or rule file), not a
+sandbox: the session's own permission prompt, which the owner answers for every command, stays
+the gate, and the server's checks hold even if an agent ignored the skill entirely.
 
 **Why never a public URL without Access.** Anyone on the internet could then reach the pairing
 endpoint and the cockpit's sign-in page, and a single leaked or phished pairing link or device

@@ -61,3 +61,28 @@ test('only the setup chat\'s settings file registers the guard', () => {
   const win = buildHooksSettings({ nodePath: 'C:\\node.exe', hookScript: 'C:\\x\\hook.js', guardScript: 'C:\\x\\guard.js', platform: 'win32' });
   assert.deepEqual(win.hooks.PreToolUse[0].hooks[0].args, ['C:/x/guard.js']);
 });
+
+test('the bypasses a reviewer traced are refused too (each part, quoting, scripts, handoffs, relative paths)', () => {
+  for (const c of [
+    'tailscale funnel --https=443 off && tailscale funnel --bg 8080',
+    'tailscale "funnel" --bg 8080',
+    'tailscale "serve" "res""et"',
+    'tailscale serve --https=443 off; tailscale serve status',
+    'cat .clawdling/token', 'cat .clawdling/remote.json', 'cat ~/.cloudflared/*', 'ls ~/.cloudflared',
+    'sh x.sh', 'bash -c "tailscale funnel --bg 8080"', './x.sh', 'source x.sh', 'eval tailscale funnel --bg 8080', 'python3 -c "import os"',
+    'clawdling spawn work "turn on funnel"', 'clawdling send abc "tailscale funnel --bg 443"',
+    'echo $(tailscale funnel --bg 443)', 'tailscale funnel\n--bg 443',
+  ]) assert.ok(bash(c), c);
+  assert.ok(verdict({ tool_name: 'Grep', tool_input: { pattern: '.', path: '~/.cloudflared' } }));
+  assert.ok(verdict({ tool_name: 'Read', tool_input: { file_path: '.clawdling/remote.json' } }));
+  assert.ok(verdict({ tool_name: 'Write', tool_input: { file_path: '/tmp/x.sh', content: 'tailscale funnel --bg 443' } }));
+  // Still fine: the config.yml the Cloudflare steps edit, and the skill's own commands.
+  assert.equal(verdict({ tool_name: 'Edit', tool_input: { file_path: '/home/u/.cloudflared/config.yml' } }), null);
+  assert.equal(bash('cat ~/.cloudflared/config.yml'), null);
+  assert.equal(bash('clawdling remote serve https://box.example.ts.net:8743 && clawdling remote serve-status'), null);
+});
+
+test('the setup chat\'s settings cannot have their hooks switched off', () => {
+  assert.equal(buildHooksSettings({ nodePath: 'n', hookScript: 'h', guardScript: 'g', home: '/h' }).disableAllHooks, false);
+  assert.equal(buildHooksSettings({ nodePath: 'n', hookScript: 'h', home: '/h' }).disableAllHooks, undefined);
+});

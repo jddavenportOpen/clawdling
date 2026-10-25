@@ -156,6 +156,15 @@ before(async () => {
   assert.match(out, /\/_clawdling\/<private path>/);
   assert.match(out, /Tailscale now sends https:\/\/box\.example\.ts\.net:8743 to this cockpit/);
   assert.equal(readJsonFile(serveFile).Web[TS_HOST].Handlers['/'].Proxy, `http://127.0.0.1:${srv.port}${PREFIX}`);
+  // Run again: it points at exactly this cockpit already, fine. Another app on the port: refused.
+  assert.equal(cliResult(['remote', 'serve', TS_URL], { env, home }).code, 0);
+  const keep = fs.readFileSync(serveFile, 'utf8');
+  writeServe({ TCP: { 8743: { HTTPS: true } }, Web: { [TS_HOST]: { Handlers: { '/': { Proxy: 'http://127.0.0.1:3000' } } } } });
+  const taken = cliResult(['remote', 'serve', TS_URL], { env, home });
+  assert.equal(taken.code, 1);
+  assert.match(taken.stderr, /already serves something else\. Clawdling will not change it/);
+  assert.equal(readJsonFile(serveFile).Web[TS_HOST].Handlers['/'].Proxy, 'http://127.0.0.1:3000', 'the other app is untouched');
+  fs.writeFileSync(serveFile, keep);
   const st = cli(['remote', 'serve-status'], { env, home });
   assert.ok(!st.includes(PREFIX.split('/').pop()));
   assert.match(st, /\|-- \/ proxy http:\/\/127\.0\.0\.1:\d+\/_clawdling\/<private path>/);
@@ -659,6 +668,18 @@ test('remote remove and remote off; Donna cannot run `clawdling remote`', async 
   assert.match(cliResult(['remote', 'remove', CF_URL], { env, home }).stderr, /not a remote address/);
   assert.match(cli(['remote', 'off'], { env, home }), /Use from anywhere is off/);
   assert.equal((await raw('GET', '/api/org')).status, 403);
+  // With no server answering, list reads the file but shows only what the API would.
+  const h3 = tempHome();
+  try {
+    fs.mkdirSync(path.join(h3, '.clawdling'));
+    const secret = servePath('t'.repeat(64), TS_URL);
+    fs.writeFileSync(path.join(h3, '.clawdling', 'remote.json'), JSON.stringify({ version: 1, enabled: true, hosts: [{ url: TS_URL, kind: 'tailscale', status: 'private', added_at: null, checked_at: null, detail: null, login: OWNER, path: secret }] }));
+    const offline = cli(['remote', 'list', '--json'], { env, home: h3 });
+    assert.ok(!offline.includes(secret.split('/').pop()) && !offline.includes(OWNER), offline);
+    assert.equal(JSON.parse(offline).hosts[0].url, TS_URL);
+  } finally {
+    rmrf(h3);
+  }
   const all = cli(['remote', 'remove', '--all'], { env, home });
   assert.match(all, /Removed every remote address\. Use from anywhere is off\./);
   assert.deepEqual(readJsonFile(path.join(home, '.clawdling', 'remote.json')), { version: 1, enabled: false, hosts: [] });

@@ -109,7 +109,8 @@ export function buildHooksSettings({ nodePath, hookScript, platform = process.pl
     hooks.PreToolUse = [{ matcher: GUARDED_TOOLS, hooks: [guard] }];
   }
   const deny = runtimeDeny(home, platform);
-  return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) } };
+  // A setup chat's hooks cannot be switched off by a settings file in the org folder.
+  return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) }, ...(guardScript ? { disableAllHooks: false } : {}) };
 }
 
 export const STATUSES = ['starting', 'working', 'ready', 'needs_you', 'ended'];

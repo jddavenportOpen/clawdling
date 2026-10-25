@@ -12,7 +12,7 @@ import { selectBackend } from '../server/backend.js';
 import { cliInvocation, stopMessage } from '../server/hints.js';
 import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, stableNodePath, tmuxSocketName, which } from '../server/paths.js';
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
-import { DeviceStore, RemoteStore, parseRemoteUrl, redactServePaths, serveArgs, statusText, tailscaleBin } from '../server/remote.js';
+import { DeviceStore, RemoteStore, onlyCockpit, parseRemoteUrl, redactServePaths, serveArgs, statusText, tailscaleBin, webHandlers } from '../server/remote.js';
 import { oneLine, readJson, shq } from '../server/util.js';
 
 class CliError extends Error {}
@@ -972,9 +972,17 @@ function printRemote(v, { stale = false } = {}) {
   console.log(`Paired devices: ${devices.length}${devices.length ? ` (${devices.map((d) => d.label).join(', ')})` : ''}`);
 }
 
+/** What `remote list` shows when the server does not answer: the same fields as its API (never a
+ * private path, a login, an email or Access pins). */
 function offlineRemote(ctx) {
   const st = new RemoteStore(ctx.paths.remote).read();
-  return { ...st, hosts: st.hosts.map((h) => ({ ...h, status_text: statusText(h) })), devices: new DeviceStore(ctx.paths.remoteDevices).list(), port: null };
+  return {
+    enabled: st.enabled,
+    invalid: st.invalid,
+    port: null,
+    hosts: st.hosts.map((h) => ({ url: h.url, kind: h.kind, status: h.status, status_text: statusText(h), detail: h.detail, checked_at: h.checked_at, answering: null })),
+    devices: new DeviceStore(ctx.paths.remoteDevices).list().map(({ id, label, kind, created_at, expires_at, last_seen_at }) => ({ id, label, kind, created_at, expires_at, last_seen_at })),
+  };
 }
 
 /** Change remote.json and the devices file directly (no server answering). Both are re-read by a running server. */
@@ -1060,6 +1068,25 @@ async function cmdRemote(args) {
       }
       if (!ctx.info || !ctx.token) throw new CliError(`Clawdling isn't running for ${ctx.home}. Start it first: ${cliCmd(ctx.home, 'start')}`);
       tsArgs = serveArgs({ entry, port: ctx.info.port, token: ctx.token });
+      // Never change an entry this cockpit did not make: the address's port must be free, or
+      // already pointing at exactly this cockpit.
+      const st = spawnSync(...(() => {
+        const c = commandFor(bin, ['serve', 'status', '--json'], { env: process.env });
+        return [c.file, c.args, spawnOptions(c, { encoding: 'utf8', timeout: 15000 })];
+      })());
+      let config = null;
+      try {
+        config = JSON.parse(String(st.stdout || '').trim() || '{}');
+      } catch {
+        // unreadable: refuse below
+      }
+      if (st.status !== 0 || !config) throw new CliError(`could not read Tailscale's serve status (${redactServePaths(String(st.stderr || st.error?.message || '').trim()).slice(0, 200) || 'no answer'}). Is Tailscale running and signed in?`);
+      const handlers = webHandlers(config, `${entry.host}:${entry.port}`);
+      const tcp = config.TCP && config.TCP[String(entry.port)];
+      const mine = onlyCockpit(handlers, { port: ctx.info.port, path: tsArgs[3].slice(`http://127.0.0.1:${ctx.info.port}`.length) });
+      if ((handlers.length && !mine) || (tcp && (tcp.TCPForward || tcp.TerminateTLS))) {
+        throw new CliError(`port ${entry.port} on ${entry.host} already serves something else. Clawdling will not change it: pick a port no serve entry uses.`);
+      }
     }
     const cmd = commandFor(bin, tsArgs, { env: process.env });
     const r = spawnSync(cmd.file, cmd.args, spawnOptions(cmd, { encoding: 'utf8', timeout: 30000 }));
