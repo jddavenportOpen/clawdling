@@ -10,7 +10,22 @@ export const STATUS_LABEL = {
   ready: 'Your turn',
   needs_you: 'Needs you',
   ended: 'Ended',
+  watching: 'Watching',
 };
+
+// Claude finished its turn, but background work it started is still running (Monitor watchers,
+// background shells, agents, workflows): it will come back on its own. Watching replaces Ready and
+// nothing else; a session that needs you still says so.
+export function isWatching(s) {
+  return !!s && s.status === 'ready' && !!s.background && s.background.count > 0;
+}
+
+/** The status to show: `watching` for a ready session with background work, else its status. */
+export function displayStatus(s) {
+  return isWatching(s) ? 'watching' : s ? s.status : 'ended';
+}
+
+export const TASK_KIND_LABEL = { watcher: 'Watcher', shell: 'Background command', agent: 'Background agent', workflow: 'Workflow' };
 
 export function isEnded(s) {
   return !s || s.status === 'ended';
@@ -28,7 +43,7 @@ export function isBlocked(s) {
 // Claude finished a turn and is waiting for your reply. A session you just opened is "ready" too,
 // but it has no last message yet: it is waiting for your FIRST message, not waiting on you.
 export function isYourTurn(s) {
-  return !!s && s.status === 'ready' && !!s.last_message;
+  return !!s && s.status === 'ready' && !!s.last_message && !isWatching(s);
 }
 
 // "Needs you" everywhere (rail section, counts, badges, the map): blocked or your turn.
@@ -56,6 +71,10 @@ export function sessionName(s, agentsById = {}) {
 export function statusText(s) {
   if (!s) return '';
   if (s.status === 'needs_you') return s.notification ? String(s.notification) : 'Needs you';
+  if (isWatching(s)) {
+    const first = s.background.tasks && s.background.tasks[0];
+    return `Watching · ${s.background.count}${first && first.description ? ` · ${first.description}` : ''}`;
+  }
   if (s.status === 'ready' && s.last_message) return `Your turn · ${String(s.last_message).replace(/`|\*\*/g, '')}`;
   if (s.status === 'ready') return 'Ready for your first message';
   if (s.status === 'starting' && s.notification) return String(s.notification);

@@ -36,6 +36,9 @@
   --working-text: #6fb3f5;
   --needs-text: #f2bd55;
   --ready-text: #5fcd97;
+  --watching: #ad97f5;
+  --watching-text: #bba9f8;
+  --watching-soft: rgba(173, 151, 245, 0.12);
   --needs-soft: rgba(240, 179, 60, 0.11);
   /* text on a filled status badge, and the ready badge's own fill */
   --needs-ink: #1d1504;
@@ -55,7 +58,7 @@
     --text: #15181c; --text-2: #4b535e; --text-3: #616975;
     --accent: #5b45e0; --accent-strong: #4a35cf; --accent-ink: #ffffff; --accent-soft: rgba(91, 69, 224, 0.1); --accent-line: rgba(91, 69, 224, 0.5);
     --working: #1f6fc0; --needs: #c98400; --ready: #1f8a53; --ended: #8a919b; --danger: #cf3540; --danger-ink: #ffffff;
-    --working-text: #1d66b1; --needs-text: #8a5a00; --ready-text: #19764a; --needs-soft: rgba(201, 132, 0, 0.1);
+    --working-text: #1d66b1; --needs-text: #8a5a00; --ready-text: #19764a; --needs-soft: rgba(201, 132, 0, 0.1); --watching: #6e45c9; --watching-text: #5f37b8; --watching-soft: rgba(110, 69, 201, 0.1);
     --working-ink: #ffffff; --ready-ink: #ffffff; --ready-solid: #19764a;
     --scrim: rgba(18, 22, 30, 0.32); --shadow: 0 16px 48px rgba(16, 24, 40, 0.16), 0 2px 8px rgba(16, 24, 40, 0.08); --shadow-sm: 0 4px 16px rgba(16, 24, 40, 0.1);
     color-scheme: light;
@@ -67,7 +70,7 @@
   --text: #15181c; --text-2: #4b535e; --text-3: #616975;
   --accent: #5b45e0; --accent-strong: #4a35cf; --accent-ink: #ffffff; --accent-soft: rgba(91, 69, 224, 0.1); --accent-line: rgba(91, 69, 224, 0.5);
   --working: #1f6fc0; --needs: #c98400; --ready: #1f8a53; --ended: #8a919b; --danger: #cf3540; --danger-ink: #ffffff;
-  --working-text: #1d66b1; --needs-text: #8a5a00; --ready-text: #19764a; --needs-soft: rgba(201, 132, 0, 0.1);
+  --working-text: #1d66b1; --needs-text: #8a5a00; --ready-text: #19764a; --needs-soft: rgba(201, 132, 0, 0.1); --watching: #6e45c9; --watching-text: #5f37b8; --watching-soft: rgba(110, 69, 201, 0.1);
     --working-ink: #ffffff; --ready-ink: #ffffff; --ready-solid: #19764a;
   --scrim: rgba(18, 22, 30, 0.32); --shadow: 0 16px 48px rgba(16, 24, 40, 0.16), 0 2px 8px rgba(16, 24, 40, 0.08); --shadow-sm: 0 4px 16px rgba(16, 24, 40, 0.1);
   color-scheme: light;
@@ -253,6 +256,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .row-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .st-text-needs_you .row-status { color: var(--needs-text); }
 .st-text-ready .row-status { color: var(--ready-text); }
+.st-text-watching .row-status { color: var(--watching-text); }
 .st-text-working .row-status { color: var(--working-text); }
 .row-side { display: flex; flex-direction: column; align-items: flex-end; justify-content: center; gap: 4px; flex-shrink: 0; min-width: 28px; }
 .row-time { font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
@@ -315,6 +319,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .glyph.st-starting { color: var(--working); opacity: 0.85; }
 .glyph.st-working { color: var(--working); }
 .glyph.st-ready { color: var(--ready); }
+.glyph.st-watching { color: var(--watching); }
 .glyph.st-needs_you { color: var(--needs); }
 .glyph.st-ended { color: var(--ended); }
 .glyph .spin { transform-box: view-box; transform-origin: 6px 6px; animation: spin 1.1s linear infinite; }
@@ -1286,3 +1291,57 @@ h3.chat-h { font-size: 16.5px; }
 }
 
 /* ── end 1.2 ── */
+
+/* ---------- Watching · N (background work still running after the turn) ---------- */
+.watch-wrap { position: relative; display: inline-flex; flex-shrink: 0; }
+.watch-pill { display: inline-flex; align-items: center; gap: 5px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 11.5px; font-weight: 500;
+  color: var(--watching-text); background: var(--watching-soft); border: 1px solid color-mix(in srgb, var(--watching) 35%, transparent); white-space: nowrap; }
+.watch-pill:hover { border-color: color-mix(in srgb, var(--watching) 60%, transparent); }
+.watch-pill:focus-visible { outline: 2px solid var(--watching); outline-offset: 2px; }
+.watch-pop { position: absolute; z-index: 40; top: calc(100% + 6px); left: 0; width: min(340px, 86vw); padding: 10px 12px; border-radius: var(--r-md);
+  background: var(--surface); border: 1px solid var(--line-2); box-shadow: var(--shadow-sm); }
+.watch-head { margin: 0 0 8px; font-size: 12px; color: var(--text-2); }
+.watch-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.watch-item { display: grid; gap: 1px; font-size: 12.5px; }
+.watch-kind { font-size: 11px; font-weight: 600; letter-spacing: 0.02em; text-transform: uppercase; color: var(--watching-text); }
+.watch-desc { color: var(--text); overflow-wrap: anywhere; }
+.watch-age { font-size: 11.5px; color: var(--text-3); }
+.watch-more { color: var(--text-3); }
+
+/* ---------- Question and plan cards in the chat view ---------- */
+.ask-card { margin: 8px 0 2px; padding: 12px 14px; border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--line-2); max-width: 640px; }
+.ask-card.is-pending { border-color: color-mix(in srgb, var(--needs) 55%, transparent); box-shadow: 0 0 0 3px var(--needs-soft); }
+.ask-kicker { margin: 0 0 6px; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-3); }
+.ask-card.is-pending .ask-kicker { color: var(--needs-text); }
+.ask-q { border: 0; margin: 0 0 10px; padding: 0; min-width: 0; }
+.ask-q:last-of-type { margin-bottom: 4px; }
+.ask-legend { padding: 0; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: 14px; color: var(--text); }
+.ask-header { font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2); }
+.ask-text { font-weight: 500; }
+.ask-hint { margin: -4px 0 6px; font-size: 12px; color: var(--text-3); }
+.ask-options { display: grid; gap: 6px; }
+.ask-opt { display: flex; align-items: flex-start; gap: 9px; width: 100%; min-height: 40px; padding: 8px 10px; text-align: left; border-radius: var(--r-md);
+  background: var(--surface-2); border: 1px solid var(--line); color: var(--text); }
+.ask-opt:hover:not(:disabled) { border-color: var(--line-3); }
+.ask-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ask-opt.is-on { border-color: var(--accent-line); background: var(--accent-soft); }
+.ask-q:disabled .ask-opt { cursor: default; }
+.ask-q:disabled .ask-opt:not(.is-on) { opacity: 0.62; }
+.ask-mark { flex-shrink: 0; width: 16px; line-height: 20px; color: var(--text-3); }
+.ask-opt.is-on .ask-mark { color: var(--accent); }
+.ask-opt-main { display: grid; gap: 2px; min-width: 0; }
+.ask-opt-label { font-size: 13.5px; line-height: 20px; font-weight: 500; overflow-wrap: anywhere; }
+.ask-opt-desc { font-size: 12.5px; color: var(--text-2); overflow-wrap: anywhere; }
+.ask-other-input { width: 100%; min-height: 40px; padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--accent-line); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
+.ask-typed { margin: 4px 0 0; font-size: 13px; color: var(--text); padding: 6px 10px; border-left: 3px solid var(--accent-line); background: var(--surface-2); border-radius: 0 var(--r-sm) var(--r-sm) 0; overflow-wrap: anywhere; }
+.ask-foot { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 8px; }
+.ask-note { margin: 6px 0 0; font-size: 12.5px; color: var(--text-3); }
+.plan-body { max-height: 320px; overflow: auto; padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); border: 1px solid var(--line); font-size: 13.5px; }
+.plan-actions { justify-content: flex-start; }
+.plan-feedback { margin-top: 8px; }
+.plan-feedback-input { width: 100%; padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--accent-line); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; resize: vertical; }
+@media (max-width: 640px) {
+  .ask-card { padding: 12px; }
+  .ask-opt, .ask-other-input { min-height: 44px; }
+  .ask-foot .btn, .plan-actions .btn { height: 40px; flex: 1 1 auto; }
+}

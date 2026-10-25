@@ -6,6 +6,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/ho
 import { Composer } from './composer.js';
 import { api } from '../lib/api.js';
 import { parseMarkdown } from '../lib/markdown.js';
+import { answerCard } from '../lib/actions.js';
 
 const POLL_MS = 1500;
 const MAX_PAGES = 50;
@@ -87,10 +88,16 @@ export function ChatView({ s, agent, messages }) {
   }, []);
 
   const ended = s.status === 'ended';
+  // A question's or a plan's answer is its own transcript entry; the card shows it.
+  const answers = useMemo(() => {
+    const m = {};
+    for (const x of messages) if (x.role === 'answer' && x.tool_id) m[x.tool_id] = x;
+    return m;
+  }, [messages.length]);
   return html`<div class="chat-view" data-testid="chat-view">
     <div class="chat-list" ref=${list} onScroll=${onScroll} role="log" aria-label="Conversation" aria-live="polite">
       <div class="chat-inner">
-        ${messages.map((m) => html`<${Message} key=${m.n} m=${m} />`)}
+        ${messages.map((m) => (m.role === 'answer' ? null : html`<${Message} key=${m.n} m=${m} s=${s} answers=${answers} />`))}
         ${s.status === 'working' ? html`<p class="chat-working" aria-hidden="true">Working…</p>` : null}
       </div>
     </div>
@@ -98,14 +105,128 @@ export function ChatView({ s, agent, messages }) {
   </div>`;
 }
 
-function Message({ m }) {
+function Message({ m, s, answers }) {
   const blocks = useMemo(() => parseMarkdown(m.text || ''), [m.text]);
-  const tools = Array.isArray(m.tools) ? m.tools : [];
+  const all = Array.isArray(m.tools) ? m.tools : [];
+  const tools = all.filter((t) => !(t && t.ask));
+  const asks = all.filter((t) => t && t.ask && t.id);
   const role = m.role === 'user' ? 'user' : 'assistant';
   return html`<div class=${`chat-msg chat-${role}`} data-testid="chat-msg" data-role=${role}>
     ${blocks.length ? html`<div class="chat-body">${blocks.map(renderBlock)}</div>` : null}
     ${tools.length ? html`<div class="chat-tools">${tools.map((t, i) => html`<${Tool} key=${i} t=${t} />`)}</div>` : null}
+    ${asks.map((t) => (t.ask.kind === 'plan'
+      ? html`<${PlanCard} key=${t.id} t=${t} s=${s} answer=${answers[t.id]} />`
+      : html`<${QuestionCard} key=${t.id} t=${t} s=${s} answer=${answers[t.id]} />`))}
   </div>`;
+}
+
+// Is this card's question the one the session is waiting on right now?
+const isPending = (t, s, answer) => !answer && !!s && s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && !!s.asking && s.asking.tool_id === t.id;
+
+/**
+ * A question Claude asked (AskUserQuestion): its options as buttons (checkboxes for a multiSelect
+ * one), a free-text "Other" for a one-pick question, then Send. Afterwards: what was answered.
+ */
+function QuestionCard({ t, s, answer }) {
+  const qs = t.ask.questions || [];
+  const pending = isPending(t, s, answer);
+  const [picks, setPicks] = useState(() => qs.map(() => []));
+  const [texts, setTexts] = useState(() => qs.map(() => null)); // null = Other not chosen
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const pick = (qi, oi) => {
+    setTexts((x) => x.map((v, i) => (i === qi && !qs[qi].multiSelect ? null : v)));
+    setPicks((x) => x.map((p, i) => (i !== qi ? p : qs[qi].multiSelect ? (p.includes(oi) ? p.filter((o) => o !== oi) : [...p, oi]) : [oi])));
+  };
+  const other = (qi) => {
+    setPicks((x) => x.map((p, i) => (i === qi ? [] : p)));
+    setTexts((x) => x.map((v, i) => (i === qi ? v ?? '' : v)));
+  };
+  const ready = qs.every((q, i) => (texts[i] !== null ? texts[i].trim().length > 0 : picks[i].length > 0));
+  const send = async () => {
+    setBusy(true);
+    const body = { tool_id: t.id, answers: qs.map((q, i) => (texts[i] !== null ? { text: texts[i].trim() } : { choices: [...picks[i]].sort((a, b) => a - b) })) };
+    const ok = await answerCard(s.sid, body);
+    setBusy(false);
+    if (ok) setSent(true);
+  };
+  const given = answer && answer.answers ? answer.answers : null;
+  const state = given ? 'answered' : answer ? 'declined' : sent ? 'sent' : pending ? 'pending' : 'waiting';
+  const live = pending && !sent;
+  return html`<section class=${`ask-card is-${state}`} data-testid="question-card" data-state=${state} data-tool=${t.id} aria-label="Claude's question">
+    <p class="ask-kicker">${state === 'answered' ? 'You answered' : state === 'declined' ? 'Not answered' : 'Claude asks'}</p>
+    ${qs.map((q, qi) => {
+      const chosen = given ? String(given[q.question] ?? '') : '';
+      const chosenSet = new Set(chosen.split(', ').filter(Boolean));
+      const known = q.options.some((o) => chosenSet.has(o.label));
+      return html`<fieldset key=${qi} class="ask-q" disabled=${!live || busy}>
+        <legend class="ask-legend">${q.header ? html`<span class="ask-header">${q.header}</span>` : null}<span class="ask-text">${q.question}</span></legend>
+        ${q.multiSelect && live ? html`<p class="ask-hint">Pick any that apply.</p>` : null}
+        <div class="ask-options" role=${q.multiSelect ? 'group' : 'radiogroup'}>
+          ${q.options.map((o, oi) => {
+            const on = live ? picks[qi].includes(oi) : chosenSet.has(o.label);
+            return html`<button type="button" key=${oi} class=${`ask-opt ${on ? 'is-on' : ''}`} data-testid="ask-option" data-option=${oi}
+              role=${q.multiSelect ? 'checkbox' : 'radio'} aria-checked=${on ? 'true' : 'false'} onClick=${() => pick(qi, oi)}>
+              <span class="ask-mark" aria-hidden="true">${q.multiSelect ? (on ? '☑' : '☐') : on ? '◉' : '○'}</span>
+              <span class="ask-opt-main"><span class="ask-opt-label">${o.label}</span>${o.description ? html`<span class="ask-opt-desc">${o.description}</span>` : null}</span>
+            </button>`;
+          })}
+          ${!q.multiSelect && live ? html`<div class=${`ask-other ${texts[qi] !== null ? 'is-on' : ''}`}>
+            ${texts[qi] === null
+              ? html`<button type="button" class="ask-opt ask-opt-other" role="radio" aria-checked="false" onClick=${() => other(qi)} data-testid="ask-other"><span class="ask-mark" aria-hidden="true">○</span><span class="ask-opt-label">Something else…</span></button>`
+              : html`<input class="ask-other-input" type="text" maxLength="1000" value=${texts[qi]} placeholder="Type your answer" aria-label=${`Your answer to: ${q.question}`}
+                  onInput=${(e) => { const v = e.currentTarget.value; setTexts((x) => x.map((w, i) => (i === qi ? v : w))); }}
+                  onKeyDown=${(e) => { if (e.key === 'Enter' && ready && !busy) { e.preventDefault(); send(); } }} data-testid="ask-other-input" ref=${(el) => el && !el.dataset.seen && (el.dataset.seen = '1', el.focus())} />`}
+          </div>` : null}
+          ${given && chosen && !known ? html`<p class="ask-typed" data-testid="ask-typed">“${chosen}”</p>` : null}
+        </div>
+      </fieldset>`;
+    })}
+    ${live ? html`<div class="ask-foot">
+      <button type="button" class="btn btn-primary btn-sm" onClick=${send} disabled=${!ready || busy} data-testid="ask-send">${busy ? 'Sending…' : qs.length > 1 ? 'Send answers' : 'Send answer'}</button>
+    </div>` : state === 'sent' ? html`<p class="ask-note" role="status">Sent. Claude is carrying on.</p>`
+      : state === 'waiting' && s && s.status === 'needs_you' && s.waiting_on === 'permission_prompt' ? html`<p class="ask-note">Getting the question ready…</p>` : null}
+  </section>`;
+}
+
+const planChoice = (c) => String((c && c.label) || '').replace(/^\s*\d+[.)]\s*/, '').replace(/\s+shift\+tab.*$/i, '');
+const FEEDBACK = /^tell claude what to change\b/i;
+
+/** Claude's plan (ExitPlanMode): the plan itself, and Claude Code's own choices to approve it or send it back. */
+function PlanCard({ t, s, answer }) {
+  const pending = isPending(t, s, answer);
+  const blocks = useMemo(() => parseMarkdown(t.ask.plan || ''), [t.ask.plan]);
+  const [busy, setBusy] = useState(0);
+  const [feedback, setFeedback] = useState(null);
+  const [sent, setSent] = useState(false);
+  const choices = pending && Array.isArray(s.choices) ? s.choices : [];
+  const send = async (option, text) => {
+    setBusy(option);
+    const ok = await answerCard(s.sid, text ? { option, text } : { option });
+    setBusy(0);
+    if (ok) setSent(true);
+  };
+  const state = answer ? (answer.approved ? 'approved' : answer.feedback ? 'feedback' : 'declined') : sent ? 'sent' : pending ? 'pending' : 'waiting';
+  const live = pending && !sent;
+  const fb = choices.find((c) => FEEDBACK.test(planChoice(c)));
+  return html`<section class=${`ask-card plan-card is-${state}`} data-testid="plan-card" data-state=${state} data-tool=${t.id} aria-label="Claude's plan">
+    <p class="ask-kicker">${state === 'approved' ? 'Plan approved' : state === 'feedback' ? 'Plan sent back' : state === 'declined' ? 'Plan not approved' : 'Claude has a plan'}</p>
+    <div class="plan-body chat-body">${blocks.map(renderBlock)}</div>
+    ${state === 'feedback' ? html`<p class="ask-typed" data-testid="plan-feedback">“${answer.feedback}”</p>` : null}
+    ${live && choices.length ? html`<div class="ask-foot plan-actions">
+      ${choices.filter((c) => c !== fb).map((c, i) => html`<button type="button" key=${c.option} class=${`btn ${i === 0 ? 'btn-primary' : 'btn-quiet'} btn-sm`}
+        onClick=${() => send(c.option)} disabled=${!!busy} data-testid="plan-choice" data-option=${c.option}>${busy === c.option ? 'Sending…' : planChoice(c)}</button>`)}
+      ${fb && feedback === null ? html`<button type="button" class="btn btn-quiet btn-sm" onClick=${() => setFeedback('')} disabled=${!!busy} data-testid="plan-change">Tell Claude what to change…</button>` : null}
+    </div>` : null}
+    ${live && fb && feedback !== null ? html`<div class="plan-feedback">
+      <textarea class="plan-feedback-input" rows="3" maxLength="1000" value=${feedback} placeholder="What should Claude change?" aria-label="What Claude should change in the plan"
+        onInput=${(e) => setFeedback(e.currentTarget.value)} data-testid="plan-feedback-input" ref=${(el) => el && !el.dataset.seen && (el.dataset.seen = '1', el.focus())}></textarea>
+      <div class="ask-foot"><button type="button" class="btn btn-quiet btn-sm" onClick=${() => setFeedback(null)} disabled=${!!busy}>Cancel</button>
+        <button type="button" class="btn btn-primary btn-sm" onClick=${() => send(fb.option, feedback.trim())} disabled=${!feedback.trim() || !!busy} data-testid="plan-feedback-send">${busy ? 'Sending…' : 'Send back'}</button></div>
+    </div>` : null}
+    ${live && !choices.length ? html`<p class="ask-note">Getting the choices ready…</p>` : null}
+    ${state === 'sent' ? html`<p class="ask-note" role="status">Sent. Claude is carrying on.</p>` : null}
+  </section>`;
 }
 
 function Tool({ t }) {

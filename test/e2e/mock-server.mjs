@@ -478,7 +478,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function setStatus(s, status, extra = {}) {
     Object.assign(s, extra, { status });
-    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; }
+    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; }
     if (status === 'ended') { s.ended_at = new Date().toISOString(); }
     else s.ended_at = null;
     s.last_activity_at = new Date().toISOString();
@@ -549,6 +549,18 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       later(300, () => chat.push({ n: chat.length, role: 'assistant', text: `You said: **${text}**`, tools: [], ts: new Date().toISOString(), model: 'claude-sonnet-5' }));
     }
     later(500, () => out(s, `${DIM}  ⎿  (mock) echoing your message back${RESET}\r\n`));
+    if (/\b(un)?watch\?/i.test(text)) {
+      // Like core's Watching: background work the turn started, read from the transcript.
+      s.background = /unwatch\?/i.test(text) ? { count: 0, tasks: [] } : { count: 2, tasks: [
+        { id: 'bmock01', kind: 'shell', description: 'Wait for the build', started_at: new Date().toISOString(), expires_at: null },
+        { id: 'bmock02', kind: 'watcher', description: 'Watch the deploy log', started_at: new Date().toISOString(), expires_at: new Date(Date.now() + 600000).toISOString() },
+      ] };
+    }
+    const ask = /plan\?/i.test(text) ? 'plan' : /ask2\?/i.test(text) ? 'question2' : /ask\?/i.test(text) ? 'question' : null;
+    if (ask) {
+      later(800, () => askQuestion(s, ask));
+      return;
+    }
     later(800, () => {
       if (/permission\?/i.test(text)) {
         out(s, `\r\n${BOLD}Bash command${RESET}\r\n   ${CYAN}rm -rf build/${RESET}\r\n\r\n Do you want to proceed?\r\n ${CLAUDE}❯${RESET} 1. Yes\r\n   2. Yes, and don't ask again for rm commands in this project\r\n   3. No, and tell Claude what to do differently (esc)\r\n`);
@@ -557,6 +569,41 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         applyHook(s, 'Stop', { last_assistant_message: `You said: ${text}` });
         out(s, `${DIM}›${RESET} `);
       }
+    });
+  }
+
+  // Claude asks (AskUserQuestion) or wants a plan approved (ExitPlanMode), the way core reports it:
+  // a transcript entry with the tool's input, then needs_you / permission_prompt with `asking`.
+  const MOCK_QUESTIONS = {
+    question: [{ question: 'Which color do you like best?', header: 'Color', multiSelect: false, options: [{ label: 'Red', description: 'A warm, bold color.' }, { label: 'Green', description: 'A calm, natural color.' }, { label: 'Blue', description: 'A cool, steady color.' }] }],
+  };
+  MOCK_QUESTIONS.question2 = [...MOCK_QUESTIONS.question, { question: 'Which pets do you like?', header: 'Pets', multiSelect: true, options: [{ label: 'Cat', description: 'Independent.' }, { label: 'Dog', description: 'Loyal.' }, { label: 'Fish', description: 'Quiet.' }] }];
+  const MOCK_PLAN = '# Make hello.txt\n\n## Plan\n1. Create `hello.txt`.\n2. Write **hi** into it.';
+  function askQuestion(s, kind) {
+    const id = `toolu_mock${Math.random().toString(36).slice(2, 10)}`;
+    const chat = st.transcripts.get(s.sid) || [];
+    st.transcripts.set(s.sid, chat);
+    const plan = kind === 'plan';
+    const tool = plan
+      ? { name: 'ExitPlanMode', summary: '', detail: MOCK_PLAN, id, ask: { kind: 'plan', plan: MOCK_PLAN } }
+      : { name: 'AskUserQuestion', summary: MOCK_QUESTIONS[kind][0].question, detail: '', id, ask: { kind: 'question', questions: MOCK_QUESTIONS[kind] } };
+    chat.push({ n: chat.length, role: 'assistant', text: '', tools: [tool], ts: new Date().toISOString(), model: 'claude-sonnet-5' });
+    out(s, `\r\n${BOLD}${plan ? 'Ready to code?' : MOCK_QUESTIONS[kind][0].question}${RESET}\r\n`);
+    const choices = plan ? ['1. Yes, auto-accept edits', '2. Yes, manually approve edits', '3. Tell Claude what to change shift+tab to approve with this feedback'].map((label, i) => ({ option: i + 1, label })) : null;
+    setStatus(s, 'needs_you', {
+      waiting_on: 'permission_prompt', choices,
+      notification: plan ? 'Claude has a plan ready and asks you to approve it.' : `Claude asks: ${MOCK_QUESTIONS[kind][0].question}`,
+      asking: { kind: plan ? 'plan' : 'question', tool_id: id, questions: plan ? 0 : MOCK_QUESTIONS[kind].length },
+    });
+  }
+  function answerAsk(s, entry, said) {
+    const chat = st.transcripts.get(s.sid) || [];
+    chat.push({ n: chat.length, role: 'answer', text: '', tools: [], ts: new Date().toISOString(), ...entry });
+    s.asking = null;
+    setStatus(s, 'working');
+    later(400, () => {
+      chat.push({ n: chat.length, role: 'assistant', text: said, tools: [], ts: new Date().toISOString(), model: 'claude-sonnet-5' });
+      if (s.status === 'working') applyHook(s, 'Stop', { last_assistant_message: said });
     });
   }
 
@@ -1015,6 +1062,29 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
         out(s, `\r\n${DIM}── started again ──${RESET}\r\n${DIM}›${RESET} `);
         later(400, () => { if (s.status === 'starting') applyHook(s, 'SessionStart', { source: 'startup' }); });
         send(res, 200, s);
+        return;
+      }
+      if (mm[2] === '/answer' && m === 'POST' && Array.isArray(body.answers)) {
+        // A question card: {tool_id, answers: [{choices} | {text}]} (core: sessions.answerQuestion).
+        if (s.status !== 'needs_you' || s.asking?.kind !== 'question' || body.tool_id !== s.asking.tool_id) { send(res, 409, { error: 'that question has already been answered or replaced' }); return; }
+        const tool = (st.transcripts.get(s.sid) || []).flatMap((e) => e.tools || []).find((t) => t.id === body.tool_id);
+        const qs = tool.ask.questions;
+        if (body.answers.length !== qs.length) { send(res, 400, { error: `send one answer per question (${qs.length})` }); return; }
+        const labels = body.answers.map((a, i) => (a.text ? String(a.text) : (a.choices || []).map((c) => qs[i].options[c]?.label).join(', ')));
+        const answers = Object.fromEntries(qs.map((q, i) => [q.question, labels[i]]));
+        answerAsk(s, { tool_id: body.tool_id, kind: 'question', answers }, `You chose ${labels.join(' / ')}.`);
+        send(res, 200, { ...s, answered: { tool_id: body.tool_id, answers: labels } });
+        return;
+      }
+      if (mm[2] === '/answer' && m === 'POST' && s.asking?.kind === 'plan') {
+        const option = body.option;
+        const choice = (s.choices || []).find((c) => c.option === option);
+        if (!choice) { send(res, 400, { error: 'option must be the number of a choice' }); return; }
+        if (typeof body.text === 'string' && !/Tell Claude/.test(choice.label)) { send(res, 400, { error: 'that choice does not take text' }); return; }
+        const id = s.asking.tool_id;
+        if (typeof body.text === 'string') answerAsk(s, { tool_id: id, kind: 'plan', feedback: body.text }, `Changing the plan: ${body.text}`);
+        else answerAsk(s, { tool_id: id, kind: 'plan', approved: true }, 'Plan approved. Starting.');
+        send(res, 200, { ...s, answered: { option, label: choice.label } });
         return;
       }
       if (mm[2] === '/answer' && m === 'POST') {

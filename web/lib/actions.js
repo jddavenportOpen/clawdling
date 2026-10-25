@@ -376,6 +376,19 @@ export async function answerDialog(sid, option, { focus = false } = {}) {
   }
 }
 
+// Answer a question card or a plan card (same route as the dialogs; see sessions.answer).
+export async function answerCard(sid, body) {
+  try {
+    const s = await api.answerWith(sid, body);
+    if (s && s.sid) mergeSession(s);
+    return true;
+  } catch (e) {
+    if (e && e.status === 409) toast(e.message && !/^\d{3} /.test(e.message) ? `Not sent: ${e.message}.` : 'Claude is no longer asking this. The session has moved on.', { ms: 4200 });
+    else errorToast('Could not send your answer', e);
+    return false;
+  }
+}
+
 export async function renameSession(sid, title) {
   const t = (title || '').trim();
   const prev = getState().sessions[sid];

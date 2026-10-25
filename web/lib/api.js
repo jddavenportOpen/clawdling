@@ -84,6 +84,8 @@ export const api = {
   // "Start again": a new claude for a session stuck on "not signed in" (or a stalled start).
   restart: async (sid, size) => one(await request('POST', `/api/sessions/${enc(sid)}/restart`, size || {}), 'session'),
   answer: async (sid, option) => one(await request('POST', `/api/sessions/${enc(sid)}/answer`, { option }), 'session'),
+  // A question card ({tool_id, answers}) or a plan with what to change ({option, text}).
+  answerWith: async (sid, body) => one(await request('POST', `/api/sessions/${enc(sid)}/answer`, body), 'session'),
   send: (sid, text, enter = true) => request('POST', `/api/sessions/${enc(sid)}/send`, { text, enter }),
   // The session's chat, read from Claude Code's own transcript: {messages:[{n, role, text, tools, ts, model}], next, more, status}.
   messages: (sid, after = -1) => request('GET', `/api/sessions/${enc(sid)}/messages?after=${enc(String(after))}`),

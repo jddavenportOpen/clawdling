@@ -12,6 +12,7 @@ import {
 } from '../lib/actions.js';
 import {
   groupSessions, sessionName, agentLabel, statusText, sessionTime, agentStats, sortAgents, KIND_LABEL,
+  displayStatus,
 } from '../lib/model.js';
 import { relTime, matches, MOD, longTime } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
@@ -154,6 +155,7 @@ function SessionRow({ s, section, agentsById, onScreen, focused, now }) {
   const ended = s.status === 'ended';
   const canResume = ended && s.resumable !== false;
   const meta = ended ? (canResume ? 'Ended · resume' : 'Ended') : statusText(s);
+  const ds = displayStatus(s);
   const when = relTime(sessionTime(s), now);
   const click = () => (canResume ? resumeSession(s.sid) : focusSession(s.sid));
   const more = (e) => {
@@ -161,14 +163,14 @@ function SessionRow({ s, section, agentsById, onScreen, focused, now }) {
     openMenu({ type: 'session', sid: s.sid, x: r.right, y: r.bottom });
   };
   return html`<li class=${`row-wrap ${onScreen ? 'on-screen' : ''} ${focused ? 'is-focused' : ''}`} data-sid=${s.sid} data-section=${section}
-      data-status=${s.status} data-onscreen=${onScreen ? 'true' : 'false'} data-focused=${focused ? 'true' : 'false'}>
+      data-status=${ds} data-onscreen=${onScreen ? 'true' : 'false'} data-focused=${focused ? 'true' : 'false'}>
     <button class="row" onClick=${click} aria-current=${focused ? 'true' : undefined}
       title=${`${name}\n${agent} · ${ended ? 'Ended' : statusText(s)} · ${longTime(sessionTime(s))}`}
       aria-label=${`${name}, ${agent}, ${ended ? (canResume ? 'ended, resume' : 'ended') : statusText(s)}${onScreen ? ', on screen' : ''}`}>
-      <span class="row-glyph"><${StatusGlyph} status=${s.status} label=${false} /></span>
+      <span class="row-glyph"><${StatusGlyph} status=${ds} label=${false} /></span>
       <span class="row-main">
         <span class="row-title" data-testid="row-title">${name}</span>
-        <span class=${`row-meta st-text-${s.status}`}><span class="row-agent">${agent}</span><span class="row-dot" aria-hidden="true">·</span><span class="row-status">${meta}</span></span>
+        <span class=${`row-meta st-text-${ds}`}><span class="row-agent">${agent}</span><span class="row-dot" aria-hidden="true">·</span><span class="row-status">${meta}</span></span>
       </span>
       <span class="row-side">
         <time class="row-time">${when}</time>
@@ -236,12 +238,13 @@ function Strip() {
         const agent = agentLabel(s, agentsById);
         const isOpen = open.includes(s.sid);
         const isFocused = isOpen && focused === s.sid;
+        const ds = displayStatus(s);
         return html`<li key=${s.sid}>
-          <button class=${`strip-dot st-${s.status} ${isOpen ? 'on-screen' : ''} ${isFocused ? 'is-focused' : ''}`} data-sid=${s.sid}
-            data-status=${s.status} aria-current=${isFocused ? 'true' : undefined}
+          <button class=${`strip-dot st-${ds} ${isOpen ? 'on-screen' : ''} ${isFocused ? 'is-focused' : ''}`} data-sid=${s.sid}
+            data-status=${ds} aria-current=${isFocused ? 'true' : undefined}
             aria-label=${`${name} (${agent}, ${statusText(s)})`} onClick=${() => focusSession(s.sid)} ...${tipProps(`${name} · ${statusText(s)}`)}>
             <span class="dot-initial" aria-hidden="true">${agent.charAt(0).toUpperCase()}</span>
-            <span class="dot-status" aria-hidden="true"><${StatusGlyph} status=${s.status} size=${10} label=${false} /></span>
+            <span class="dot-status" aria-hidden="true"><${StatusGlyph} status=${ds} size=${10} label=${false} /></span>
           </button>
         </li>`;
       })}

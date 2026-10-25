@@ -16,7 +16,8 @@ import {
   closePane, setRenaming, answerDialog, toast, errorToast, signInFor, restartSession,
 } from '../lib/actions.js';
 import { api } from '../lib/api.js';
-import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand } from '../lib/model.js';
+import { sessionName, agentLabel, statusText, STATUS_LABEL, sessionTime, attachCommand, displayStatus } from '../lib/model.js';
+import { WatchingPill } from './watching.js';
 import { relTime, prefersReducedMotion, paneKey, tildify, coarsePointer } from '../lib/util.js';
 import { getState, setState } from '../lib/store.js';
 import { load, save } from '../lib/prefs.js';
@@ -119,16 +120,17 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
 
   return html`<section ref=${el}
       class=${`pane st-${s.status} ${chat ? 'is-chat' : ''} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
-      data-pane=${sid} data-status=${s.status} data-view=${chat ? 'chat' : 'raw'} data-focused=${focused ? 'true' : 'false'} style=${style}
+      data-pane=${sid} data-status=${s.status} data-display=${displayStatus(s)} data-view=${chat ? 'chat' : 'raw'} data-focused=${focused ? 'true' : 'false'} style=${style}
       role="region" aria-label=${`${name} (${agentLabel(s, agentsById)})`}
       onMouseDown=${() => touchFocus(sid)} onFocusIn=${() => touchFocus(sid)}>
     <header class="pane-head">
-      <span class="pane-glyph" title=${STATUS_LABEL[s.status] || s.status}><${StatusGlyph} status=${s.status} /></span>
+      <span class="pane-glyph" title=${STATUS_LABEL[displayStatus(s)] || s.status}><${StatusGlyph} status=${displayStatus(s)} /></span>
       <${PaneTitle} sid=${sid} name=${name} title=${s.title} editing=${renaming} />
       <span class="pane-chip" title=${agent && agent.mission ? agent.mission : agentLabel(s, agentsById)}>
         <span class="chip-icon" aria-hidden="true"><${AgentIcon} agent=${agent || { name: agentLabel(s, agentsById) }} size=${12} /></span>${agentLabel(s, agentsById)}
       </span>
       <${PaneChips} s=${s} />
+      <${WatchingPill} s=${s} now=${now} />
       <${Trace} sid=${sid} status=${s.status} />
       <span class="pane-spacer"></span>
       <div class="seg pane-view" role="group" aria-label="View">
@@ -150,6 +152,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     </header>
     ${needsSignIn(s) ? html`<${LoginBanner} s=${s} accent=${focused || solo} />`
       : s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
+      : chat && s.asking ? null
       : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => {
         const focusTerm = () => { const v = terms.get(sid); if (v) v.focus(); };
