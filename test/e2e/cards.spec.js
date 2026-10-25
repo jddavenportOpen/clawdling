@@ -197,6 +197,6 @@ test.describe('an agent needs you', () => {
     await expect(card.getByTestId('notify-browser')).toBeChecked();
     await page.evaluate(() => Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }));
     await fetch(new URL(`/api/sessions/${sid}/send`, process.env.CLAWDLING_E2E_URL), { method: 'POST', headers: { 'content-type': 'application/json', 'x-clawdling-token': process.env.CLAWDLING_E2E_TOKEN }, body: JSON.stringify({ text: 'permission? now' }) });
-    await expect.poll(() => page.evaluate(() => window.__shown)).toEqual([{ title: 'Work needs you', body: 'Claude needs your permission to use Bash' }]);
+    await expect.poll(() => page.evaluate(() => window.__shown)).toEqual([{ title: 'Work needs you', body: 'Waiting on you: a permission. Open the cockpit to answer.' }]);
   });
 });

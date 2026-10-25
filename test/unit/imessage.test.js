@@ -29,7 +29,10 @@ test('helpers: handles, AppleScript argv, attributedBody, SQL', () => {
   assert.ok(validHandle('me@example.com'));
   assert.ok(!validHandle('"; drop table'));
   const args = osascriptArgs('+15550100001', NASTY_REPLY);
-  assert.deepEqual(args.slice(-2), ['+15550100001', NASTY_REPLY], 'text is an argv item, after the script');
+  assert.deepEqual(args.slice(-3), ['--', '+15550100001', NASTY_REPLY], 'text is an argv item, after the script and "--"');
+  assert.ok(!validHandle('-e'), 'a handle never starts with "-" (osascript would read it as an option)');
+  assert.ok(!validHandle('-12345'));
+  assert.ok(validHandle('(555) 010-0001'));
   assert.equal(args.filter((a) => a === '-e').length, SEND_SCRIPT.length);
   assert.ok(SEND_SCRIPT.every((l) => !l.includes('rm -rf')));
   assert.equal(decodeAttributedBody(attributedBody('hello from the blob').toString('hex')), 'hello from the blob');
@@ -95,11 +98,13 @@ test('poller: starts from now, routes only the owner, replies via osascript argv
   for (const argv of calls) {
     assert.equal(argv.at(-1), NASTY_REPLY, 'reply passed verbatim as the last argument');
     assert.equal(argv.at(-2), '+1 (555) 010-0001');
-    for (let i = 0; i < argv.length - 2; i += 2) {
+    assert.equal(argv.at(-3), '--');
+    for (let i = 0; i < argv.length - 3; i += 2) {
       assert.equal(argv[i], '-e');
       assert.ok(!argv[i + 1].includes('rm -rf'), 'reply text never spliced into script source');
     }
   }
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'org.json'), 'utf8')).channels.imessage.verified, '5550100001', 'a message from the handle proves it');
   assert.equal(await gw.poll(), 0, 'nothing new');
   const st = JSON.parse(fs.readFileSync(runtimePaths(home).imessageState, 'utf8'));
   assert.equal(st.last_rowid, 5);

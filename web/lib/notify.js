@@ -2,11 +2,19 @@
 // a session starts waiting on you. Off until turned on in Settings (the browser asks permission
 // then). One per session a minute; a click brings the tab back on that session.
 import { load, save } from './prefs.js';
-import { agentLabel, statusText } from './model.js';
+import { agentLabel } from './model.js';
 
 const PREF = 'notifyNeedsYou';
 const PER_SESSION_MS = 60000;
 const last = new Map();
+// What kind of wait, in fixed words: the notification can show on a lock screen, so it never
+// carries the question itself or anything else from the conversation.
+const WHAT = { question: 'a question', plan: 'a plan to approve', permission_prompt: 'a permission', elicitation_dialog: 'a question', login: 'a sign-in', error: 'an error', trust: 'a question before it starts', imports: 'a question before it starts', startup: 'a question before it starts' };
+const kindOf = (k) => (typeof k === 'string' && Object.hasOwn(WHAT, k) ? WHAT[k] : null);
+export function notifyBody(s) {
+  const what = kindOf(s && s.asking && s.asking.kind) || kindOf(s && s.waiting_on);
+  return `Waiting on you${what ? `: ${what}` : ''}. Open the cockpit to answer.`;
+}
 
 export const notifySupported = () => typeof window !== 'undefined' && 'Notification' in window;
 export const notifyOn = () => notifySupported() && !!load(PREF, false) && window.Notification.permission === 'granted';
@@ -31,7 +39,7 @@ export function maybeNotify(prev, next, { agentsById = {}, onOpen = () => {} } =
   if (t - (last.get(next.sid) || 0) < PER_SESSION_MS) return false;
   last.set(next.sid, t);
   try {
-    const n = new window.Notification(`${agentLabel(next, agentsById)} needs you`, { body: statusText(next), tag: `clawdling-${next.sid}` });
+    const n = new window.Notification(`${agentLabel(next, agentsById)} needs you`, { body: notifyBody(next), tag: `clawdling-${next.sid}` });
     n.onclick = () => {
       window.focus();
       onOpen(next.sid);

@@ -21,12 +21,12 @@ export const SEND_SCRIPT = [
 export function osascriptArgs(handle, text) {
   const a = [];
   for (const line of SEND_SCRIPT) a.push('-e', line);
-  a.push(String(handle), String(text));
+  a.push('--', String(handle), String(text)); // '--': a handle or text starting with "-" is never an option
   return a;
 }
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_RE = /^\+?[0-9 ().-]{5,24}$/;
+const PHONE_RE = /^\+?[0-9(][0-9 ().-]{4,23}$/;
 
 export function validHandle(h) {
   const s = String(h ?? '').trim();
@@ -125,10 +125,13 @@ export class IMessageGateway {
     if (handle !== undefined && handle !== null && handle !== '' && !validHandle(handle)) throw badRequest('handle must be an email address or phone number');
     this.org.update((o) => {
       const cur = o.channels.imessage;
+      const next = handle !== undefined ? (handle ? String(handle).trim() : null) : cur.handle;
       o.channels.imessage = {
         ...cur,
-        handle: handle !== undefined ? (handle ? String(handle).trim() : null) : cur.handle,
+        handle: next,
         enabled: enabled !== undefined ? !!enabled : cur.enabled,
+        // Proven by a message from it (see poll); a new handle has to prove itself again.
+        verified: normalizeHandle(next) && normalizeHandle(next) === cur.verified ? cur.verified : null,
       };
     });
     const im = this.org.read().channels.imessage;
@@ -194,6 +197,15 @@ export class IMessageGateway {
         const text = (row.text && String(row.text)) || decodeAttributedBody(row.body_hex);
         if (!text || !text.trim()) continue;
         n++;
+        // A message from the handle proves it is the owner's: only then may Clawdling text it first
+        // (the "an agent needs you" ping, needs-you.js).
+        if (im.verified !== want) {
+          this.org.update((o) => {
+            if (normalizeHandle(o.channels.imessage.handle) === want) o.channels.imessage.verified = want;
+            return o;
+          });
+          im.verified = want;
+        }
         this.events.record({ type: 'channel', channel: 'imessage', direction: 'in', text: clampText(text, 500) });
         this.events.publish('channel', { channel: 'imessage', direction: 'in', text: clampText(text, 500), ts: new Date().toISOString() });
         await this.dispatch(im.handle, text);

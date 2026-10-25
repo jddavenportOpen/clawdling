@@ -10,16 +10,21 @@ test('pingText: the agent and the kind of wait, nothing from the conversation', 
   assert.equal(pingText({ agentName: 'Work', waitingOn: 'permission_prompt' }), 'Clawdling: Work needs you (a permission). Open the cockpit to answer.');
   assert.equal(pingText({ agentName: 'Work', waitingOn: 'error' }), 'Clawdling: Work needs you (an error). Open the cockpit to answer.');
   assert.equal(pingText({ agentName: 'Work\nInjected', waitingOn: 'something-new' }), 'Clawdling: Work Injected needs you. Open the cockpit to answer.');
+  assert.equal(pingText({ agentName: 'Work', waitingOn: 'constructor', asking: { kind: '__proto__' } }), 'Clawdling: Work needs you. Open the cockpit to answer.');
 });
 
 test('pingChannel: only a paired, enabled channel; Telegram first', () => {
   const tg = { enabled: true, chat_id: 7 };
-  const im = { enabled: true, handle: 'owner@example.test' };
+  const im = { enabled: true, handle: 'owner@example.test', verified: 'owner@example.test' };
   assert.deepEqual(pingChannel({ channels: { telegram: tg, imessage: im } }), { channel: 'telegram', to: 7 });
   assert.deepEqual(pingChannel({ channels: { telegram: { enabled: true, chat_id: null }, imessage: im } }), { channel: 'imessage', to: 'owner@example.test' });
   assert.deepEqual(pingChannel({ channels: { telegram: tg, imessage: im } }, { telegramReady: false }), { channel: 'imessage', to: 'owner@example.test' });
   assert.equal(pingChannel({ channels: { telegram: { enabled: false, chat_id: 7 }, imessage: { enabled: true, handle: null } } }), null);
   assert.equal(pingChannel({}), null);
+  // An iMessage handle that never texted Donna (a typo, or someone else's number) gets nothing.
+  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: 'owner@example.test' } } }), null);
+  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: 'other@example.test', verified: 'owner@example.test' } } }), null);
+  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: '-e', verified: '-e' } } }), null);
 });
 
 function harness({ enabled = true, now = { t: 1000000 } } = {}) {
@@ -82,7 +87,7 @@ test('browser notification: only when the tab is hidden, the setting is on, and 
   prefs.save('notifyNeedsYou', true);
   const next = { sid: 'n1', agent: 'health', agent_name: 'Health', status: 'needs_you', notification: 'Claude asks: Which color?' };
   assert.equal(maybeNotify({ ...next, status: 'working' }, next), true);
-  assert.deepEqual(shown[0], ['Health needs you', { body: 'Claude asks: Which color?', tag: 'clawdling-n1' }]);
+  assert.deepEqual(shown[0], ['Health needs you', { body: 'Waiting on you. Open the cockpit to answer.', tag: 'clawdling-n1' }], 'never the question itself');
   assert.equal(maybeNotify({ ...next, status: 'working' }, next), false, 'once a minute per session');
   assert.equal(maybeNotify(next, { ...next, sid: 'n2' }), false, 'already needing you: no new notification');
   globalThis.document.hidden = false;

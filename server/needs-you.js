@@ -6,6 +6,7 @@
 // first (an answer given in the cockpit meanwhile sends nothing), and it is rate-limited: one per
 // session per 10 minutes, six an hour in all. It only ever goes to the chat or handle Donna is
 // already paired with.
+import { normalizeHandle, validHandle } from './channels/imessage.js';
 import { oneLine } from './util.js';
 
 const WHAT = {
@@ -22,17 +23,21 @@ const WHAT = {
 
 /** The message: "Clawdling: Health needs you (a question). Open the cockpit to answer." */
 export function pingText({ agentName, waitingOn, asking }) {
-  const what = WHAT[asking?.kind] || WHAT[waitingOn] || null;
+  const kind = (k) => (typeof k === 'string' && Object.hasOwn(WHAT, k) ? WHAT[k] : null);
+  const what = kind(asking?.kind) || kind(waitingOn);
   const who = oneLine(agentName || 'An agent', 60);
   return `Clawdling: ${who} needs you${what ? ` (${what})` : ''}. Open the cockpit to answer.`;
 }
 
-/** Which paired channel a ping can go to, or null: Telegram first, then iMessage. */
+/**
+ * Which paired channel a ping can go to, or null: Telegram first (paired by a code sent from the
+ * chat), then iMessage, only once the handle has proven itself by texting Donna (`verified`).
+ */
 export function pingChannel(org, { telegramReady = true, imessageReady = true } = {}) {
   const tg = org?.channels?.telegram || {};
   if (telegramReady && tg.enabled && tg.chat_id !== null && tg.chat_id !== undefined) return { channel: 'telegram', to: tg.chat_id };
   const im = org?.channels?.imessage || {};
-  if (imessageReady && im.enabled && im.handle) return { channel: 'imessage', to: im.handle };
+  if (imessageReady && im.enabled && im.handle && validHandle(im.handle) && im.verified && im.verified === normalizeHandle(im.handle)) return { channel: 'imessage', to: im.handle };
   return null;
 }
 
@@ -51,7 +56,10 @@ export class NeedsYouPinger {
   status() {
     const org = this.org.read();
     const ch = this.channelFor(org);
-    return { needs_you: this.enabled(org), channel: ch ? ch.channel : null };
+    const im = org.channels?.imessage || {};
+    // iMessage is set up but has not texted Donna yet: say so, so the owner knows what to do.
+    const unverified = !ch && !!(im.enabled && im.handle) && im.verified !== normalizeHandle(im.handle);
+    return { needs_you: this.enabled(org), channel: ch ? ch.channel : null, ...(unverified ? { imessage_unverified: true } : {}) };
   }
 
   setEnabled(on) {
@@ -94,7 +102,8 @@ export class NeedsYouPinger {
     const org = this.org.read();
     if (!this.enabled(org)) return { sent: false, why: 'off' };
     const t = this.now();
-    if (t - (this.lastBySid.get(sid) || -Infinity) < this.perSessionMs) return { sent: false, why: 'rate (session)' };
+    for (const [k, at] of this.lastBySid) if (t - at >= this.perSessionMs) this.lastBySid.delete(k);
+    if (this.lastBySid.has(sid)) return { sent: false, why: 'rate (session)' };
     this.sent = this.sent.filter((x) => t - x < 3600000);
     if (this.sent.length >= this.perHour) return { sent: false, why: 'rate (hour)' };
     const ch = this.channelFor(org);
