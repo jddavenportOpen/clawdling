@@ -651,7 +651,7 @@ export async function checkCloudflare(entry, { env, testMode, probeImpl = probe 
       const team = `https://${u.hostname}`;
       const kid = u.searchParams.get('kid');
       if (team !== pin.team_domain || (kid !== null && kid !== pin.aud)) {
-        return { status: 'unprotected', detail: `${entry.url} sends visitors to a different Cloudflare Access ${team !== pin.team_domain ? 'team' : 'application'} than yours (the one given with --team-domain and --access-aud), so Clawdling does not answer it.` };
+        return { status: 'unprotected', detail: `${entry.url} sends visitors to a different Cloudflare Access ${team !== pin.team_domain ? 'team' : 'application'} than the one you registered during setup, so Clawdling does not answer it.` };
       }
       return { status: 'access', detail: 'A Cloudflare Access sign-in is required before anyone reaches it.' };
     }

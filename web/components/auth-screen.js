@@ -70,7 +70,7 @@ function RemoteAuth({ onRetry }) {
         <p class="auth-text">${authError || 'The page loaded, but the cockpit did not answer.'}</p>
         <p class="auth-text" data-testid="auth-down">Use from anywhere may be turned off, or the computer it runs on may be asleep or offline.</p>`
       : html`
-        <h1 class="auth-title">Pair this device</h1>
+        <h1 class="auth-title">Sign in this device</h1>
         <p class="auth-text auth-lead" data-testid="auth-message">On the computer Clawdling runs on, open Settings, “Use from anywhere”, press “Add a device”, and scan the code with this device.</p>
         <p class="auth-text auth-small">Each code works once, for 10 minutes, and signs in only the device that uses it.</p>`}
       ${err ? html`<p class="form-error" role="alert" data-testid="auth-pair-error"><${Icon} name="alert" size=${14} /> ${err}</p>` : null}
