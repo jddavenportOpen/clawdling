@@ -119,7 +119,7 @@ function backupThenWrite(file, content, backupDir, home) {
 // Skills each folder gets. onboard-project is for project agents; the org root carries it too so a
 // project agent that runs in its repo (with the org added as a directory) finds it.
 const BASE_SKILLS = ['handoff', 'new-agent'];
-const SKILLS_FOR = { root: [...BASE_SKILLS, 'onboard-project'], project: [...BASE_SKILLS, 'onboard-project'], domain: BASE_SKILLS, chief: BASE_SKILLS };
+const SKILLS_FOR = { root: [...BASE_SKILLS, 'onboard-project', 'remote-access'], project: [...BASE_SKILLS, 'onboard-project'], domain: BASE_SKILLS, chief: BASE_SKILLS };
 
 function skillFile(dir, skill) {
   return path.join(dir, '.claude', 'skills', skill, 'SKILL.md');
