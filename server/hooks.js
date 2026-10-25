@@ -11,6 +11,7 @@ import { isUuid, nowIso, oneLine, shq } from './util.js';
 // ended the turn. It is registered only for a Claude Code known to have it (2.1.229+, checked
 // against 2.1.229-2.1.308), so an older one never sees a hook event it does not know.
 export const HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop', 'StopFailure', 'Notification', 'SessionEnd'];
+export const GUARDED_TOOLS = 'Bash|PowerShell|Read|Edit|Write|MultiEdit|NotebookEdit|Grep|Glob';
 const STOP_FAILURE_SINCE = [2, 1, 229];
 
 /** True when a `claude --version` line ("2.1.283 (Claude Code)") is a version with StopFailure. */
@@ -90,7 +91,7 @@ export function runtimeDeny(home, platform = process.platform) {
  * Windows: exec form (`command` + `args`, Claude Code 2.1.139+), so no shell parses the paths,
  * whether Claude Code runs hooks in Git Bash or in PowerShell; paths use forward slashes.
  */
-export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false, home = null }) {
+export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false, home = null, guardScript = null }) {
   const hooks = {};
   for (const ev of HOOK_EVENTS) {
     if (ev === 'StopFailure' && !stopFailure) continue;
@@ -98,6 +99,14 @@ export function buildHooksSettings({ nodePath, hookScript, platform = process.pl
       ? { type: 'command', command: portablePath(nodePath, 'win32'), args: [portablePath(hookScript, 'win32'), ev], timeout: 5 }
       : { type: 'command', command: `${shq(nodePath)} ${shq(hookScript)} ${ev}`, timeout: 5 };
     hooks[ev] = [{ hooks: [hook] }];
+  }
+  // A Use from anywhere setup chat also gets the guard, which refuses the remote-access skill's
+  // "never" list before a tool call runs (bin/clawdling-guard.js).
+  if (guardScript) {
+    const guard = platform === 'win32'
+      ? { type: 'command', command: portablePath(nodePath, 'win32'), args: [portablePath(guardScript, 'win32')], timeout: 5 }
+      : { type: 'command', command: `${shq(nodePath)} ${shq(guardScript)}`, timeout: 5 };
+    hooks.PreToolUse = [{ matcher: GUARDED_TOOLS, hooks: [guard] }];
   }
   const deny = runtimeDeny(home, platform);
   return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) } };

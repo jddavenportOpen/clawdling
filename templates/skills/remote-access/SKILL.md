@@ -121,6 +121,9 @@ Say the plan, for example:
    - Access, Applications, "Add an application", "Self-hosted".
    - Application domain: the hostname from step 2.
    - A policy: action "Allow", include "Emails", the owner's email address. Save.
+   - Nothing may add scripts to this hostname's pages: in the zone's dashboard, add a
+     Configuration Rule for the hostname that turns off Zaraz, Rocket Loader and Email Address
+     Obfuscation (and leave Web Analytics' automatic setup off for it).
 6. **The DNS name.** `cloudflared tunnel route dns <name> <hostname>`.
 7. **The config**, after asking. `~/.cloudflared/config.yml`; if it exists, show it first and
    only add to it, never remove someone else's rules. The cockpit's hostname gets exactly one

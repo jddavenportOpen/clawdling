@@ -46,6 +46,7 @@ export function runtimePaths(home) {
     sessions: path.join(rt, 'sessions.json'),
     events: path.join(rt, 'events.jsonl'),
     hooksSettings: path.join(rt, 'hooks-settings.json'),
+    hooksSettingsRemote: path.join(rt, 'hooks-settings-remote.json'),
     logs: path.join(rt, 'logs'),
     run: path.join(rt, 'run'),
     ctx: path.join(rt, 'ctx'),

@@ -268,7 +268,8 @@ test('Host allowlist: exactly the registered host and port; the hello check answ
   const page = await raw('GET', '/');
   assert.equal(page.status, 200, 'the sign-in page itself is public');
   const csp = page.headers['content-security-policy'];
-  assert.match(csp, /script-src 'self' 'sha256-[A-Za-z0-9+/=]+'/, 'only its own scripts (and the import map, by hash)');
+  assert.match(csp, /script-src https:\/\/box\.example\.ts\.net:8743\/app\.js https:\/\/box\.example\.ts\.net:8743\/components\/ https:\/\/box\.example\.ts\.net:8743\/lib\/ https:\/\/box\.example\.ts\.net:8743\/vendor\/ 'sha256-[A-Za-z0-9+/=]+';/, 'only its own script paths (and the import map, by hash): not /cdn-cgi/');
+  assert.ok(!/script-src[^;]*'self'/.test(csp), 'not every path on the origin');
   assert.match(csp, /connect-src 'self' wss:\/\/box\.example\.ts\.net:8743/);
   assert.match(page.text, /<html|<!doctype/i);
 });
@@ -686,6 +687,25 @@ test('a personal remote-access skill or command (which Claude Code would prefer)
   assert.equal(r.status, 409, r.text);
   assert.match(r.body.error, /The org folder has a second "remote-access"/);
   rmrf(orgSecond);
+});
+
+test('a setup chat runs with the guard hook; other sessions do not', async () => {
+  const fakeLog = env.FAKE_CLAUDE_LOG;
+  const setup = (await request(srv, 'POST', '/api/sessions', { agent: 'scratch', prompt: '/remote-access tailscale', title: 'Use from anywhere' })).body;
+  const plain = (await request(srv, 'POST', '/api/sessions', { agent: 'scratch', title: 'Plain' })).body;
+  const settingsOf = (sid) => waitFor(() => {
+    const lines = fs.existsSync(fakeLog) ? fs.readFileSync(fakeLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+    const e = lines.find((x) => x.mode === 'interactive' && (x.opts?.sessionId === sid || x.opts?.resume === sid));
+    return e && e.opts.settings;
+  }, { label: `settings for ${sid}` });
+  const guarded = await settingsOf(setup.sid);
+  assert.match(guarded, /hooks-settings-remote\.json$/);
+  const g = JSON.parse(fs.readFileSync(guarded, 'utf8'));
+  assert.match(g.hooks.PreToolUse[0].matcher, /Bash/);
+  assert.match(JSON.stringify(g.hooks.PreToolUse[0].hooks), /clawdling-guard\.js/);
+  assert.match(await settingsOf(plain.sid), /hooks-settings\.json$/);
+  await request(srv, 'DELETE', `/api/sessions/${setup.sid}`);
+  await request(srv, 'DELETE', `/api/sessions/${plain.sid}`);
 });
 
 test('a setup chat always runs the skill text this version ships', async () => {

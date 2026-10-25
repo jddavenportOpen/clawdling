@@ -109,6 +109,11 @@ the same power as sitting at the computer, so it is guarded as such.
 - **Only through the door.** A remote name is answered only on a connection from this computer
   itself (the serve or tunnel process connects from `127.0.0.1`). With `--host 0.0.0.0`, a
   computer on the Wi-Fi sending a remote `Host` is refused.
+- **Only its own scripts.** Remote pages are sent with a Content-Security-Policy whose
+  `script-src` lists only the cockpit's own script paths (`/app.js`, `/components/`, `/lib/`,
+  `/vendor/`) and the import map's hash, and whose `connect-src` is the address itself, so a
+  script an edge adds to the page (for example Cloudflare's `/cdn-cgi/` features) does not run.
+  The skill also has the owner turn those features off for the hostname.
 - **Exact Host, https origin.** A remote request is matched on its exact `Host`, port included
   (`box.example.ts.net:8743` is not `box.example.ts.net`), against the registered addresses. A
   mutating request or WebSocket upgrade with an `Origin` must be exactly `https://<that address>`
@@ -176,8 +181,13 @@ sign-in to the owner in their browser. It never asks for, reads, prints or store
 (no auth keys, no `cert.pem` or tunnel credentials file, nothing in `.clawdling/`), never turns on
 Funnel, never runs `tailscale serve reset` or touches serve entries it did not create, never
 restarts Clawdling with `--host`, and never registers a Cloudflare address before Access is in
-front. The session's own permission prompts apply to every command on top of that, and the
-server's checks hold even if an agent ignored the skill.
+front. Those "never" rules are also enforced in code: a setup chat runs with a PreToolUse hook
+(`bin/clawdling-guard.js`, only in that session's `--settings`) that refuses turning Funnel on,
+`serve reset`, TCP forwards, auth keys, `tailscale up/down/logout/login/set/switch`, `sudo`,
+`cloudflared tunnel login`, and any read or write of `cert.pem`, a tunnel credentials file or
+`.clawdling/`, whatever else the session was told (an edited `CLAUDE.md` or rule file). The
+session's own permission prompts apply to every command on top of that, and the server's checks
+hold even if an agent ignored the skill.
 
 **Why never a public URL without Access.** Anyone on the internet could then reach the pairing
 endpoint and the cockpit's sign-in page, and a single leaked or phished pairing link or device

@@ -406,6 +406,7 @@ export async function startServer(opts = {}) {
     const [versionLine, helpText] = await Promise.all([claudeVersionLine(), claudeOutput(['--help'])]);
     const modeChoices = parseModeChoices(helpText);
     writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home }), 0o600);
+    writeJson(paths.hooksSettingsRemote, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, guardScript: path.join(PKG_ROOT, 'bin', 'clawdling-guard.js') }), 0o600);
     // `clawdling` on PATH inside every session and Donna turn.
     for (const [name, text] of Object.entries(cliShims({ nodePath, cliPath: path.join(PKG_ROOT, 'bin', 'clawdling.js') }))) {
       writeFileAtomic(path.join(paths.bin, name), text, 0o700);
@@ -1445,7 +1446,11 @@ export async function startServer(opts = {}) {
           res.setHeader('Strict-Transport-Security', 'max-age=31536000');
           // Through a remote address, only this cockpit's own scripts run (an edge that injects a
           // script into pages could otherwise read the device key) and it talks only to itself.
-          res.setHeader('Content-Security-Policy', `frame-ancestors 'none'; object-src 'none'; base-uri 'self'; script-src 'self' ${inlineScriptHashes()}; connect-src 'self' wss://${who.entry.port === 443 ? who.entry.host : `${who.entry.host}:${who.entry.port}`}`);
+          // Only the cockpit's own script paths, so even a script an edge serves from this origin
+          // (Cloudflare's /cdn-cgi/...) does not run.
+          const origin = `${who.entry.port === 443 ? who.entry.host : `${who.entry.host}:${who.entry.port}`}`;
+          const own = ['/app.js', '/components/', '/lib/', '/vendor/'].map((p) => `https://${origin}${p}`).join(' ');
+          res.setHeader('Content-Security-Policy', `frame-ancestors 'none'; object-src 'none'; base-uri 'self'; script-src ${own} ${inlineScriptHashes()}; worker-src 'none'; connect-src 'self' wss://${origin}`);
         }
         return url.pathname.startsWith('/api/') ? handleApi(req, res, url) : handleStatic(req, res, url);
       });
