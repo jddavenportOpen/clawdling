@@ -34,6 +34,7 @@ test('off by default: two plain choices, the reason there is no cloud copy, and 
   await expect(ts).toContainText('Recommended');
   await expect(ts).toContainText('Tailscale, free for personal use');
   await expect(ts).toContainText('Nothing goes on the public internet.');
+  await expect(ts).toContainText('Needs the free Tailscale app on this computer and on your phone');
   await expect(ts).toHaveAttribute('aria-checked', 'true');
   await expect(cf).toContainText('A web address with a sign-in');
   await expect(cf).toContainText('Beta');
@@ -93,6 +94,8 @@ test('the Cloudflare choice asks for Cloudflare and sends /remote-access cloudfl
   await card(page).getByTestId('remote-setup').click();
   await expect(page.getByTestId('remote-sheet')).toContainText('You sign in to Cloudflare yourself');
   await expect(page.getByTestId('remote-prompt')).toHaveText('/remote-access cloudflare');
+  await expect(page.getByTestId('remote-sheet')).toContainText('choose “Yes, I trust this folder”');
+  await shot(page, 'us58-cloudflare-sheet', page.locator('.modal'));
   await page.getByTestId('remote-sheet-start').click();
   await expect(focusedPane(page)).toBeVisible();
   expect((await spawns())[0].body.prompt).toBe('/remote-access cloudflare');
@@ -196,3 +199,29 @@ test('Turn off without removing the tunnel starts nothing', async ({ page }) => 
   await expect(card(page).getByTestId('remote-state')).toHaveText('Off');
   expect(await spawns()).toEqual([]);
 });
+
+test('a Cloudflare address whose sign-in moved is shown as refused, with why', async ({ page }) => {
+  await reset('default');
+  await mock('remote', {
+    hosts: [{ url: CF, kind: 'cloudflare', status: 'unprotected', detail: 'https://cockpit.example.com now sends visitors to a different Cloudflare Access team than the one you registered, so Clawdling does not answer it. Every device paired through it was signed out: pair them again once it is fixed.' }],
+  });
+  await login(page, '#/settings');
+  const row = card(page).getByTestId('remote-host');
+  await expect(row.getByTestId('remote-status')).toHaveText('Not behind Cloudflare Access ✗');
+  await expect(row).toContainText('different Cloudflare Access team');
+  await expect(card(page).getByTestId('remote-add-device')).toHaveCount(0);
+  await expect(card(page).getByTestId('remote-none-answering')).toContainText('No address is answering right now');
+  await shot(page, 'us58-refused-row', card(page));
+});
+
+test('on a paired phone, the cockpit leaves out what only the computer can do', async ({ page }) => {
+  await reset('empty');
+  await mock('health', { remote: true });
+  await mock('remote', { hosts: [{ url: `${TS}:8743`, kind: 'tailscale', status: 'private' }], devices: [{ label: 'iPhone · Safari' }] });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await login(page);
+  await expect(page.getByTestId('first-import')).toHaveCount(0);
+  await expect(page.getByTestId('first-trust')).toHaveCount(0);
+  await shot(page, 'us59-phone-cockpit');
+});
+

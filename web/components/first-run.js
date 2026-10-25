@@ -19,9 +19,11 @@ export function useTrustStep() {
   const orgError = useStore((s) => s.orgError);
   const orgTrusted = useStore((s) => s.orgTrusted);
   const home = useStore((s) => s.health && s.health.home);
+  const remote = useStore((s) => !!(s.health && s.health.remote));
   const sessions = useStore((s) => s.sessions);
   const list = Object.values(sessions);
-  const show = !!sessionsLoaded && !orgError && (orgTrusted === null || orgTrusted === undefined ? list.length === 0 : !orgTrusted);
+  // Not through a remote address: trusting the org folder is done on the computer itself.
+  const show = !remote && !!sessionsLoaded && !orgError && (orgTrusted === null || orgTrusted === undefined ? list.length === 0 : !orgTrusted);
   const pending = show && home ? list.find((s) => s.cwd === home && !s.account && s.status === 'needs_you' && s.waiting_on === 'trust') || null : null;
   return { show, pending };
 }
@@ -81,7 +83,8 @@ function TrustWaiting({ s, home }) {
  * person has not hidden it. Never on a failed org read (that is not an empty org).
  */
 export function useImportStep() {
-  return useStore((s) => !!s.org && !s.orgError && !s.importDismissed && !s.agents.some((a) => a.kind === 'project'));
+  // Not through a remote address: finding projects is about the computer's own folders.
+  return useStore((s) => !!s.org && !s.orgError && !s.importDismissed && !(s.health && s.health.remote) && !s.agents.some((a) => a.kind === 'project'));
 }
 
 // 1.2: one agent per project, found instead of typed. Beside "Trust my org folder" it is the

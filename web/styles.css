@@ -728,6 +728,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .remote-check-row { display: flex; gap: 10px; align-items: flex-start; margin-top: 14px; font-size: 13px; cursor: pointer; }
 .remote-check-row input { margin-top: 3px; }
 .remote-check-row .set-sub { display: block; margin-top: 2px; }
+.remote-check-row code, .remote-prompt code { white-space: nowrap; }
 .auth-actions-lead { margin-top: 16px; }
 @media (max-width: 720px) {
   .remote-paths { grid-template-columns: 1fr; }

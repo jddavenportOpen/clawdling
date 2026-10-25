@@ -17,7 +17,7 @@ export const REMOTE_PATHS = {
   tailscale: {
     title: 'Just my devices',
     tag: 'Recommended',
-    text: 'Uses Tailscale, free for personal use: a private network between your own devices. Nothing goes on the public internet.',
+    text: 'Uses Tailscale, free for personal use: a private network between your own devices. Nothing goes on the public internet. Needs the free Tailscale app on this computer and on your phone, signed in to the same account.',
     service: 'Tailscale',
   },
   cloudflare: {
@@ -169,6 +169,8 @@ export function RemoteCard() {
           </ul>` : html`<p class="set-note remote-none">No device is paired yet.</p>`}
           ${remoteHere ? html`<p class="set-note">To add a device, open Settings on the computer Clawdling runs on.</p>`
             : pairing ? html`<${PairingBlock} pairing=${pairing} fresh=${fresh} onDone=${() => setPairing(null)} />`
+            : !hosts.some((h) => h.answering) ? html`<p class="phone-warn" role="note" data-testid="remote-none-answering"><${Icon} name="alert" size=${14} />
+                <span>No address is answering right now, so a new device could not reach the cockpit. Fix what the address above says, then press Check again.</span></p>`
             : html`<button class="btn btn-primary btn-sm remote-add" onClick=${addDevice} disabled=${!!busy} data-testid="remote-add-device">
                 <${Icon} name="phone" size=${13} /> ${busy === 'pair' ? 'Making a link…' : 'Add a device'}</button>`}
         </div>` : null}`
@@ -196,6 +198,7 @@ function SetupSheet({ path, busy, onStart, onClose }) {
       <h2 id="remote-setup-title" class="modal-title">Set up “${p.title}”?</h2>
       <ul class="remote-promises">
         <li>This opens a setup chat with a Claude Code agent.</li>
+        <li>If Claude Code first asks whether you trust your org folder, choose “Yes, I trust this folder”. The commands it lists are Clawdling's own, for working with your agents and reading this setup's status. None of them installs anything.</li>
         <li>The agent asks before it installs or changes anything.</li>
         <li>It uses your Claude plan.</li>
         <li>You sign in to ${p.service} yourself, in your browser. Clawdling never sees those logins.</li>

@@ -72,7 +72,7 @@ function RemoteAuth({ onRetry }) {
       : html`
         <h1 class="auth-title">Pair this device</h1>
         <p class="auth-text auth-lead" data-testid="auth-message">On the computer Clawdling runs on, open Settings, “Use from anywhere”, press “Add a device”, and scan the code with this device.</p>
-        <p class="auth-text auth-small">Each code works once, for a few minutes, and signs in only the device that uses it.</p>`}
+        <p class="auth-text auth-small">Each code works once, for 10 minutes, and signs in only the device that uses it.</p>`}
       ${err ? html`<p class="form-error" role="alert" data-testid="auth-pair-error"><${Icon} name="alert" size=${14} /> ${err}</p>` : null}
       ${code ? null : html`<div class="auth-actions">
         <button class="btn btn-quiet" onClick=${onRetry} disabled=${auth === 'checking'}><${Icon} name="refresh" size=${14} /> ${auth === 'checking' ? 'Checking…' : 'Check again'}</button>
