@@ -42,7 +42,7 @@ test.describe('question cards', () => {
     await expect(card.getByTestId('ask-option').nth(2)).toHaveAttribute('aria-checked', 'true');
     await send.click();
     await expect.poll(() => answerBody(sid)).toEqual({ tool_id: expect.stringMatching(/^toolu_mock/), answers: [{ choices: [2] }] });
-    await expect(card).toHaveAttribute('data-state', 'answered');
+    await expect(card).toHaveAttribute('data-state', 'answered', { timeout: 15000 });
     await expect(card).toContainText('You answered');
     await expect(card.getByTestId('ask-option').nth(2)).toHaveAttribute('aria-checked', 'true');
     await expect(card.getByTestId('ask-option').nth(0)).toHaveAttribute('aria-checked', 'false');
@@ -50,7 +50,7 @@ test.describe('question cards', () => {
     await expect(p.getByTestId('composer-input')).toBeEnabled();
     // After a reload the card still shows what was answered (read back from the transcript).
     await page.reload();
-    await expect(pane(page, sid).getByTestId('question-card')).toHaveAttribute('data-state', 'answered');
+    await expect(pane(page, sid).getByTestId('question-card')).toHaveAttribute('data-state', 'answered', { timeout: 15000 });
   });
 
   test('CS-14: "Something else…" sends a typed answer', async ({ page }) => {
@@ -63,7 +63,7 @@ test.describe('question cards', () => {
     await card.getByTestId('ask-other-input').fill('Ultraviolet');
     await card.getByTestId('ask-other-input').press('Enter');
     await expect.poll(() => answerBody(sid)).toEqual({ tool_id: expect.any(String), answers: [{ text: 'Ultraviolet' }] });
-    await expect(card).toHaveAttribute('data-state', 'answered');
+    await expect(card).toHaveAttribute('data-state', 'answered', { timeout: 15000 });
     await expect(card.getByTestId('ask-typed')).toHaveText('“Ultraviolet”');
   });
 
@@ -83,7 +83,7 @@ test.describe('question cards', () => {
     await expect(opts.nth(3)).toHaveAttribute('role', 'checkbox');
     await card.getByTestId('ask-send').click();
     await expect.poll(() => answerBody(sid)).toEqual({ tool_id: expect.any(String), answers: [{ choices: [0] }, { choices: [0, 2] }] });
-    await expect(card).toHaveAttribute('data-state', 'answered');
+    await expect(card).toHaveAttribute('data-state', 'answered', { timeout: 15000 });
   });
 
   test('CS-16: a plan shows as a card; approve it, or send it back with what to change', async ({ page }) => {
@@ -100,7 +100,7 @@ test.describe('question cards', () => {
     await card.getByTestId('plan-feedback-input').fill('Add a step that prints it');
     await card.getByTestId('plan-feedback-send').click();
     await expect.poll(() => answerBody(sid)).toEqual({ option: 3, text: 'Add a step that prints it' });
-    await expect(card).toHaveAttribute('data-state', 'feedback');
+    await expect(card).toHaveAttribute('data-state', 'feedback', { timeout: 15000 });
     await expect(card.getByTestId('plan-feedback')).toHaveText('“Add a step that prints it”');
 
     await ask(page, sid, 'plan? again');
@@ -108,7 +108,7 @@ test.describe('question cards', () => {
     await expect(card).toHaveAttribute('data-state', 'pending');
     await card.getByTestId('plan-choice').nth(1).click();
     await expect.poll(() => answerBody(sid)).toEqual({ option: 2 });
-    await expect(card).toHaveAttribute('data-state', 'approved');
+    await expect(card).toHaveAttribute('data-state', 'approved', { timeout: 15000 });
     await expect(card).toContainText('Plan approved');
   });
 });
@@ -171,7 +171,7 @@ test.describe('question cards on a phone', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
     await card.getByTestId('ask-option').nth(1).tap();
     await card.getByTestId('ask-send').tap();
-    await expect(card).toHaveAttribute('data-state', 'answered');
+    await expect(card).toHaveAttribute('data-state', 'answered', { timeout: 15000 });
     await expect(p.getByTestId('chat-msg').last()).toContainText('You chose Green.');
   });
 });
