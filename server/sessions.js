@@ -12,6 +12,7 @@ import { HOOK_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { cliPermissionMode } from './permissions.js';
 import { prependPath } from './platform.js';
+import { HOST_LOST } from './pty-host.js';
 import { CLEAR, ModeTracker, OutputFilter, buildSnapshot } from './termfilter.js';
 import { cleanTitle, deriveTitle } from './titles.js';
 import {
@@ -63,6 +64,7 @@ export const SIGNED_IN_NOTICE = 'Claude Code is signed in now. Start this sessio
 export const SIGNIN_NOTICE = "Sign in to Claude in this session: follow Claude Code's own steps (or type /login).";
 export const STALL_NOTICE = 'Claude Code has not started after 20 seconds. Check the terminal: it may be asking you to sign in or to answer a question.';
 export const STOPPED_NOTICE = 'Clawdling stopped, so this session ended (without tmux, sessions run inside Clawdling). Resume it to pick up where it left off.';
+export const HOST_LOST_NOTICE = "Clawdling's terminal process stopped unexpectedly, so this session ended. Clawdling kept running; resume the session to pick up where it left off.";
 // What tells a program which terminal it is in. A pty session's terminal is Clawdling's, not the
 // one `clawdling start` ran in, so these are not passed on (tmux sets its own).
 const TERMINAL_IDENTITY = /^(TERM_PROGRAM|TERM_PROGRAM_VERSION|TERM_SESSION_ID|TERMINAL_EMULATOR|COLORFGBG|ITERM_[A-Z_]+|LC_TERMINAL(_VERSION)?|WT_SESSION|WT_PROFILE_ID|KITTY_[A-Z_]+|ALACRITTY_[A-Z_]+|WEZTERM_[A-Z_]+|GHOSTTY_[A-Z_]+|KONSOLE_[A-Z_]+|VTE_VERSION|VSCODE_[A-Z_]+|TMUX|TMUX_PANE|STY|WINDOWID)$/;
@@ -851,7 +853,7 @@ export class SessionManager {
       }
       return;
     }
-    this.markEnded(rec);
+    this.markEnded(rec, String(info?.reason || '').startsWith(HOST_LOST) ? { notice: HOST_LOST_NOTICE } : {});
   }
 
   markEnded(rec, { notice } = {}) {

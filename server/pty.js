@@ -9,14 +9,16 @@
 // - output reaches viewers only after the model has parsed it, so a snapshot is an exact cut of
 //   the stream: everything before it is in the snapshot, everything after it is sent live.
 //
-// Sessions live inside the Clawdling server process. They end when it stops and show as ended
-// (resumable with `claude --resume`) when it starts again. tmux is the backend for sessions that
-// outlive the server.
+// node-pty itself runs in a child process, the pty host (pty-host.js), so a crash in its native
+// code ends the host's sessions, not the server. Sessions end when the server stops and show as
+// ended (resumable with `claude --resume`) when it starts again. tmux is the backend for sessions
+// that outlive the server.
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { commandFor, quoteWinArg } from './platform.js';
+import { PtyHostClient, guardPty } from './pty-host.js';
 import { CLEAR } from './termfilter.js';
 import { oneLine, sleep } from './util.js';
 
@@ -114,9 +116,9 @@ class PtySession {
       this.events.once('close', resolve);
     });
     child.onData((data) => this.feed(data));
-    child.onExit(({ exitCode, signal }) => {
+    child.onExit(({ exitCode, signal, reason }) => {
       this.exited = true;
-      this.barrier(() => this.finish({ code: exitCode, signal }));
+      this.barrier(() => this.finish({ code: exitCode, signal, reason }));
     });
     // The model answers the app's terminal queries (DA1/DA2, cursor position, DECRQM, DECRQSS),
     // the way tmux does for a tmux pane. sessions.js keeps the queries away from browsers.
@@ -157,9 +159,8 @@ class PtySession {
   finish(info) {
     if (this.closed) return;
     this.closed = true;
-    this.events.emit('close', { code: info.code ?? null, signal: info.signal ?? null, reason: '', stderr: '' });
+    this.events.emit('close', { code: info.code ?? null, signal: info.signal ?? null, reason: info.reason || '', stderr: '' });
     this.events.removeAllListeners('output');
-    this.release();
     setTimeout(() => {
       try {
         this.term.dispose();
@@ -167,32 +168,6 @@ class PtySession {
         // already disposed
       }
     }, 0).unref?.();
-  }
-
-  /**
-   * Windows: a process that exits on its own leaves its pseudoconsole (a conhost.exe) and node-pty's
-   * output worker thread behind until the pty is killed (VS Code kills every pty after its exit).
-   * Close both directly: node-pty's kill() would also fork a helper that lists the processes on a
-   * console that no longer exists and prints "AttachConsole failed".
-   */
-  release() {
-    if (this.platform !== 'win32' || this.released || this.killedByUs) return;
-    this.released = true;
-    const agent = this.child._agent; // node-pty 1.1.0 (pinned) internals, with a public fallback
-    try {
-      if (agent?._ptyNative?.kill && agent._conoutSocketWorker?.dispose) {
-        agent._ptyNative.kill(agent._pty, agent._useConptyDll);
-        agent._conoutSocketWorker.dispose();
-        return;
-      }
-    } catch {
-      // fall back to the public API
-    }
-    try {
-      this.child.kill();
-    } catch {
-      // gone
-    }
   }
 
   write(data) {
@@ -232,9 +207,8 @@ class PtySession {
     if (this.exited) return;
     this.exited = true;
     if (this.platform === 'win32') {
-      this.killedByUs = true;
       try {
-        this.child.kill(); // ConPTY: closes the console and kills every process attached to it
+        this.child.kill(); // ConPTY (guarded: never after the process exited, see guardPty)
       } catch {
         // gone
       }
@@ -353,6 +327,7 @@ export class PtyBackend {
     this.socket = null;
     Object.assign(this, { pty, Terminal, SerializeAddon, ptyVersion: version, platform, logger, attachPrefix, attachSuffix, scrollback, killGroup });
     this.sessions = new Map();
+    this.starting = new Set(); // names whose spawn is in flight (the host answers asynchronously)
   }
 
   async init() {}
@@ -366,7 +341,7 @@ export class PtyBackend {
   }
 
   describe() {
-    return { kind: 'pty', persistent: false, version: this.ptyVersion ? `node-pty ${this.ptyVersion}` : 'node-pty' };
+    return { kind: 'pty', persistent: false, version: this.ptyVersion ? `node-pty ${this.ptyVersion}` : 'node-pty', isolated: this.pty instanceof PtyHostClient };
   }
 
   async version() {
@@ -392,7 +367,7 @@ export class PtyBackend {
    */
   async newSession({ name, cols, rows, launch }) {
     if (!launch || !Array.isArray(launch.argv) || !launch.argv.length) throw new Error('the pty backend needs launch {cwd, env, argv}');
-    if (this.live(name)) throw new Error(`duplicate session: ${name}`);
+    if (this.live(name) || this.starting.has(name)) throw new Error(`duplicate session: ${name}`);
     const [file, ...args] = launch.argv;
     const spec = commandFor(file, args, { platform: this.platform, env: launch.env });
     const term = new this.Terminal({ cols, rows, scrollback: this.scrollback, allowProposedApi: true });
@@ -400,15 +375,18 @@ export class PtyBackend {
     term.loadAddon(serializer);
     const opts = { name: 'xterm-256color', cols, rows, cwd: launch.cwd, env: launch.env };
     let child;
+    this.starting.add(name);
     try {
       // Windows: node-pty takes the command line pre-quoted (its own quoting splits an argument that
       // starts and ends with a quote); a .cmd that is not an npm shim runs through cmd.exe /d /s /c.
       child = this.platform === 'win32'
-        ? this.pty.spawn(spec.file, spec.commandLine ?? spec.args.map((a) => quoteWinArg(a)).join(' '), opts)
-        : this.pty.spawn(spec.file, spec.args, opts);
+        ? await this.pty.spawn(spec.file, spec.commandLine ?? spec.args.map((a) => quoteWinArg(a)).join(' '), opts)
+        : await this.pty.spawn(spec.file, spec.args, opts);
     } catch (err) {
       term.dispose();
       throw new Error(`could not start ${path.basename(file)}: ${oneLine(err.message, 200)}`);
+    } finally {
+      this.starting.delete(name);
     }
     const s = new PtySession({ name, child, term, serializer, platform: this.platform, logger: this.logger, killGroup: this.killGroup });
     this.sessions.set(name, s);
@@ -492,12 +470,24 @@ export class PtyBackend {
     const live = [...this.sessions.values()].filter((s) => !s.closed);
     for (const s of live) s.terminate();
     if (live.length) await Promise.race([Promise.all(live.map((s) => s.exitPromise)), sleep(timeoutMs)]);
+    await this.pty.stop?.();
   }
 }
 
+/**
+ * node-pty's spawn() for a backend: in the pty host (the default), or, with CLAWDLING_PTY_HOST=0,
+ * in this process (guarded the same way; for debugging only).
+ */
+export function ptySpawner({ mods, env = process.env, platform = process.platform, logger = null } = {}) {
+  const spawnOpts = env.CLAWDLING_PTY_CONPTY_DLL === '1' ? { useConptyDll: true } : {};
+  if (env.CLAWDLING_PTY_HOST === '0') return { spawn: (file, args, opts) => guardPty(mods.pty.spawn(file, args, { ...opts, ...spawnOpts }), { platform }) };
+  return new PtyHostClient({ logger, env, spawnOpts });
+}
+
 /** A PtyBackend, or {error} when node-pty or the headless terminal cannot be loaded. */
-export function createPtyBackend(opts = {}) {
+export function createPtyBackend({ env = process.env, ...opts } = {}) {
   const mods = loadPtyModules();
   if (!mods.ok) return { error: mods.error };
-  return { backend: new PtyBackend({ ...opts, pty: mods.pty, Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version }) };
+  const pty = ptySpawner({ mods, env, platform: opts.platform, logger: opts.logger });
+  return { backend: new PtyBackend({ ...opts, pty, Terminal: mods.Terminal, SerializeAddon: mods.SerializeAddon, version: mods.version }) };
 }
