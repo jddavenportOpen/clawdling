@@ -144,7 +144,7 @@ export function RemoteCard() {
               <span class="set-sub">${KIND_LABEL[h.kind] || h.kind}${h.checked_at ? ` · checked ${ago(h.checked_at)}` : ''}</span>
             </span>
             <span class=${`remote-status ${!on ? 'is-off' : GOOD.has(h.status) ? 'is-good' : h.answering ? 'is-warn' : 'is-bad'}`} data-testid="remote-status">
-              <${Icon} name=${on && GOOD.has(h.status) ? 'check' : 'alert'} size=${13} />
+              ${on && GOOD.has(h.status) ? null : html`<${Icon} name="alert" size=${13} />`}
               ${on ? h.status_text : 'Turned off'}</span>
             ${on && !GOOD.has(h.status) && h.detail ? html`<span class="set-sub remote-detail">${h.detail}</span>` : null}
           </li>`)}
@@ -162,7 +162,7 @@ export function RemoteCard() {
           <h3 class="card-h">Your devices</h3>
           ${devices.length ? html`<ul class="acct-list">
             ${devices.map((d) => html`<li class="set-row" data-testid="remote-device" key=${d.id}>
-              <span class="set-label">${d.label}${d.id === here.device ? html` <span class="card-tag">This device</span>` : null}
+              <span class="set-label"><span class="remote-dev-name">${d.label}${d.id === here.device ? html`<span class="card-tag">This device</span>` : null}</span>
                 <span class="set-sub">Paired ${ago(d.created_at)}${d.last_seen_at ? ` · last used ${ago(d.last_seen_at)}` : ''}</span></span>
               <button class="btn btn-quiet btn-sm" onClick=${() => signOut(d)} disabled=${!!busy} data-testid="remote-signout">Sign out</button>
             </li>`)}

@@ -181,3 +181,15 @@ test.describe('chat view on a phone', () => {
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   });
 });
+
+test('numbered lists count from the number written: 1. starts at 1, 3. at 3', async ({ page }) => {
+  await reset('empty');
+  const sid = await spawn({ agent: 'work', title: 'Lists', status: 'ready' });
+  await mock('transcript', { sid, messages: [{ role: 'user', text: 'steps?' }, { role: 'assistant', text: 'First:\n\n1. Install it\n2. Sign in\n\nLater:\n\n3. Pair\n4. Use it' }] });
+  await login(page);
+  await openPanes(page, [sid]);
+  const lists = pane(page, sid).locator('ol');
+  await expect(lists).toHaveCount(2);
+  expect(await lists.nth(0).evaluate((el) => [el.start, el.hasAttribute('start')])).toEqual([1, false]);
+  expect(await lists.nth(1).evaluate((el) => el.start)).toBe(3);
+});

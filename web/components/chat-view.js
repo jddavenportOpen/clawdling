@@ -149,7 +149,7 @@ function renderBlock(b, i) {
       <tbody>${b.rows.map((r, ri) => html`<tr key=${ri}>${r.map((c, k) => html`<td key=${k} style=${b.align[k] ? { textAlign: b.align[k] } : null}>${inl(c)}</td>`)}</tr>`)}</tbody>
     </table></div>`;
     case 'list': return b.ordered
-      ? html`<ol key=${i} start=${b.start !== 1 ? b.start : null}>${b.items.map((it, k) => html`<li key=${k}>${inl(it)}</li>`)}</ol>`
+      ? html`<ol key=${i} ...${b.start !== 1 ? { start: b.start } : {}}>${b.items.map((it, k) => html`<li key=${k}>${inl(it)}</li>`)}</ol>`
       : html`<ul key=${i}>${b.items.map((it, k) => html`<li key=${k}>${inl(it)}</li>`)}</ul>`;
     case 'quote': return html`<blockquote key=${i}>${b.blocks.map(renderBlock)}</blockquote>`;
     case 'hr': return html`<hr key=${i} />`;

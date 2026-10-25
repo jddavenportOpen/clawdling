@@ -141,7 +141,9 @@ test('default off: no remote.json, no remote host answered, the CLI says off', a
   const r = await raw('GET', '/api/health');
   assert.equal(r.status, 403);
   assert.equal(r.body.error, 'unexpected Host header');
-  assert.match(cli(['remote', 'list'], { env, home }), /Use from anywhere: off\. Nothing outside this computer can reach the cockpit\./);
+  const list = cli(['remote', 'list'], { env, home });
+  assert.match(list, /Use from anywhere: off\. Nothing outside this computer can reach the cockpit\./);
+  assert.ok(list.includes(`Clawdling itself listens on http://127.0.0.1:${srv.port} only.`), 'the setup agent reads the port here');
   // The skill the setup agent runs is installed at the org root.
   assert.match(fs.readFileSync(path.join(home, '.claude', 'skills', 'remote-access', 'SKILL.md'), 'utf8'), /^---\nname: remote-access\n/);
 });

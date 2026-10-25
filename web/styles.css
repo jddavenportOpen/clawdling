@@ -713,6 +713,7 @@ input.mono:placeholder-shown { font-family: var(--font-ui); }
 .remote-devices { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
 .remote-devices .card-h { margin: 0 0 4px; }
 .remote-none { margin: 4px 0 12px; }
+.remote-dev-name { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .remote-add { margin-top: 8px; }
 .remote-pairing { margin-top: 12px; display: flex; flex-direction: column; gap: 16px; }
 .remote-link { font-size: 11.5px; overflow-wrap: anywhere; }

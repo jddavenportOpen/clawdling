@@ -947,6 +947,7 @@ function printRemote(v, { stale = false } = {}) {
   if (!hosts.length) {
     console.log('Use from anywhere: off. Nothing outside this computer can reach the cockpit.');
     if (v.invalid) console.log(v.invalid);
+    if (v.port) console.log(`Clawdling itself listens on http://127.0.0.1:${v.port} only.`);
     console.log('To turn it on, open Settings in the cockpit, "Use from anywhere".');
     return;
   }
