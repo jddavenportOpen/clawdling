@@ -8,7 +8,7 @@ import { test } from 'node:test';
 import { deviceCookieHeader, originAllowed } from '../../server/auth.js';
 import {
   AccessVerifier, DeviceStore, PAIRING_TTL_MS, Pairings, RemoteStore, Throttle, answerable, checkCloudflare, checkTailscale, deviceLabel,
-  funnelOn, funnelState, hostKeys, loopbackPeer, parseRemoteUrl, remoteOriginAllowed, statusText, tailscaleBin, validateState,
+  funnelOn, funnelState, hostKeys, loopbackPeer, parseRemoteUrl, tcpForwardsTo, remoteOriginAllowed, statusText, tailscaleBin, validateState,
 } from '../../server/remote.js';
 import { rmrf, tempHome } from '../helpers.mjs';
 import { fakeAccess } from '../fixtures/fake-access.mjs';
@@ -90,6 +90,9 @@ test('remote.json: default off, strict on every field, and a bad file turns ever
     assert.deepEqual(st.hosts, [], why);
     assert.match(st.invalid, /remote\.json is not valid/, why);
   }
+  const cfOwner = validateState({ version: 1, enabled: true, hosts: [{ url: 'https://c.example.com', kind: 'cloudflare', status: 'access', access: { team_domain: 'https://t.cloudflareaccess.com', aud: 'a'.repeat(64) }, email: 'me@example.com' }] });
+  assert.equal(cfOwner.hosts[0].email, 'me@example.com');
+  assert.match(validateState({ ...good, hosts: [{ ...good.hosts[0], email: 'me@example.com' }] }).invalid, /owner email/, 'an email on a Tailscale address');
   const cfBad = validateState({ version: 1, enabled: true, hosts: [{ url: 'https://c.example.com', kind: 'cloudflare', status: 'access', access: { team_domain: 'https://evil.example.com', aud: 'a'.repeat(64) } }] });
   assert.match(cfBad.invalid, /bad Access settings/);
   assert.equal(validateState({ version: 1, enabled: true, hosts: [] }).enabled, false, 'on with no address is off');
@@ -120,42 +123,57 @@ test('RemoteStore re-reads on change, writes 0600, and matches Host headers', ()
   }
 });
 
-test('devices: a token works until revoked or expired; the file holds only a hash', () => {
+test('devices: a browser needs its cookie AND its key, an app its token, each on its own address', () => {
   const home = tempHome();
   try {
     let now = Date.parse('2026-10-25T10:00:00Z');
     const file = path.join(home, 'remote-devices.json');
     const store = new DeviceStore(file, { now: () => now });
-    const { token, device } = store.add({ label: 'iPhone · Safari', host: 'https://box.example.ts.net' });
+    const TS = 'https://box.example.ts.net';
+    const { token, key, device } = store.add({ label: 'iPhone · Safari', host: TS });
     assert.match(token, /^cld_[0-9a-f]{12}_[A-Za-z0-9_-]{43}$/);
+    assert.match(key, /^[A-Za-z0-9_-]{43}$/);
+    const ok = { host: TS, via: 'cookie', key };
     const disk = fs.readFileSync(file, 'utf8');
-    assert.ok(!disk.includes(token.split('_')[2]), 'the secret is never written');
-    assert.equal(store.verify(token).id, device.id);
-    assert.equal(new DeviceStore(file, { now: () => now }).verify(token).id, device.id, 'survives a restart');
-    const secretAt = token.lastIndexOf('_') + 1; // change the first secret character (the last one holds padding bits)
-    assert.equal(store.verify(token.slice(0, secretAt) + (token[secretAt] === 'A' ? 'B' : 'A') + token.slice(secretAt + 1)), null);
-    assert.equal(store.verify('cld_000000000000_' + 'A'.repeat(43)), null);
-    assert.equal(store.verify(''), null);
-    assert.equal(store.verify('a'.repeat(64)), null, 'the long-lived token is not a device token');
+    const SECRET_AT = 'cld_'.length + 13; // cld_<12 hex id>_<secret>; the secret itself may contain _
+    assert.ok(!disk.includes(token.slice(SECRET_AT)) && !disk.includes(key), 'neither secret is written');
+    assert.equal(store.verify(token, ok).id, device.id);
+    assert.equal(new DeviceStore(file, { now: () => now }).verify(token, ok).id, device.id, 'survives a restart');
+    assert.equal(store.verify(token, { ...ok, key: undefined }), null, 'the cookie alone (another service on the same name saw it)');
+    assert.equal(store.verify(token, { ...ok, key: 'B'.repeat(43) }), null, 'a wrong key');
+    assert.equal(store.verify(token, { ...ok, via: 'header' }), null, 'a browser token replayed as the app header');
+    assert.equal(store.verify(token, { ...ok, host: 'https://cockpit.example.com' }), null, 'another address');
+    // Change the first secret character (the last one holds padding bits).
+    assert.equal(store.verify(token.slice(0, SECRET_AT) + (token[SECRET_AT] === 'A' ? 'B' : 'A') + token.slice(SECRET_AT + 1), ok), null);
+    assert.equal(store.verify('cld_000000000000_' + 'A'.repeat(43), ok), null);
+    assert.equal(store.verify('', ok), null);
+    assert.equal(store.verify('a'.repeat(64), ok), null, 'the long-lived token is not a device token');
+    const app = store.add({ label: 'Clawdling app', host: TS, kind: 'app' });
+    assert.equal(app.key, null);
+    assert.equal(store.verify(app.token, { host: TS, via: 'header' }).id, app.device.id);
+    assert.equal(store.verify(app.token, { host: TS, via: 'cookie', key: 'x' }), null, 'an app token is never a cookie');
     now += 31 * 24 * 3600 * 1000;
-    assert.equal(store.verify(token), null, 'expired after 30 days');
+    assert.equal(store.verify(token, ok), null, 'expired after 30 days');
     now -= 31 * 24 * 3600 * 1000;
     assert.equal(store.revoke(device.id), true);
-    assert.equal(store.verify(token), null);
-    const b = store.add({ label: 'Mac', host: 'x' });
+    assert.equal(store.verify(token, ok), null);
+    assert.equal(store.revokeHost(TS), 1, 'removing an address signs out its devices');
+    assert.equal(store.verify(app.token, { host: TS, via: 'header' }), null);
+    const b = store.add({ label: 'Mac', host: TS });
     assert.equal(store.revokeAll(), 1);
-    assert.equal(store.verify(b.token), null);
+    assert.equal(store.verify(b.token, { host: TS, via: 'cookie', key: b.key }), null);
     // Two processes, one file: a device signed out by one is signed out for the other, and a
     // later "last used" write by the other never brings it back.
-    const c = store.add({ label: 'Phone', host: 'x' });
+    const c = store.add({ label: 'Phone', host: TS });
+    const cOk = { host: TS, via: 'cookie', key: c.key };
     const other = new DeviceStore(file, { now: () => now });
-    const seen = other.verify(c.token);
+    const seen = other.verify(c.token, cOk);
     assert.equal(seen.id, c.device.id);
     assert.equal(store.revoke(c.device.id), true);
     now += 120000;
     other.touch(seen);
-    assert.equal(other.verify(c.token), null);
-    assert.equal(new DeviceStore(file, { now: () => now }).verify(c.token), null);
+    assert.equal(other.verify(c.token, cOk), null);
+    assert.equal(new DeviceStore(file, { now: () => now }).verify(c.token, cOk), null);
   } finally {
     rmrf(home);
   }
@@ -234,10 +252,23 @@ test('Funnel detection reads serve status, foreground configs included', async (
     assert.deepEqual(args, ['serve', 'status', '--json'], 'only ever serve status');
     return { stdout: JSON.stringify({ AllowFunnel: { 'box.example.ts.net:8743': true } }) };
   };
-  assert.deepEqual(await funnelState(entry, { bin: 'ts', run }), { known: true, funnel: true });
-  assert.deepEqual(await funnelState(entry, { bin: 'ts', run: async () => ({ stdout: '' }) }), { known: true, funnel: false }, 'no serve config');
+  assert.deepEqual(await funnelState(entry, { bin: 'ts', run }), { known: true, funnel: true, tcp: [] });
+  assert.deepEqual(await funnelState(entry, { bin: 'ts', run: async () => ({ stdout: '' }) }), { known: true, funnel: false, tcp: [] }, 'no serve config');
   assert.equal((await funnelState(entry, { bin: null })).known, false);
   assert.equal((await funnelState(entry, { bin: 'ts', run: async () => { throw new Error('boom'); } })).known, false);
+});
+
+test('a Tailscale TCP forward onto the cockpit port is caught (headers through it are forgeable)', async () => {
+  const cfg = { TCP: { 443: { HTTPS: true }, 10000: { TCPForward: '127.0.0.1:4791' } }, Foreground: { s: { TCP: { 9: { TCPForward: 'localhost:4791' } } } } };
+  assert.deepEqual(tcpForwardsTo(cfg, 4791).sort(), ['10000', '9']);
+  assert.deepEqual(tcpForwardsTo({ TCP: { 1: { TCPForward: '127.0.0.1:47910' } } }, 4791), []);
+  assert.deepEqual(tcpForwardsTo({ TCP: { 1: { TCPForward: '192.168.1.5:4791' } } }, 4791), []);
+  const entry = parseRemoteUrl('https://box.example.ts.net:8743', 'tailscale');
+  const run = async () => ({ stdout: JSON.stringify(cfg) });
+  const hello = async () => ({ status: 200, headers: {}, body: JSON.stringify({ clawdling: true, nonce: 'n', login: 'o@example.com' }) });
+  const r = await checkTailscale(entry, { nonce: 'n', bin: 'ts', run, port: 4791, probeImpl: hello });
+  assert.equal(r.status, 'unconfirmed');
+  assert.match(r.detail, /TCP forward on port/);
 });
 
 test('Tailscale check: public is refused; it must reach THIS Clawdling', async () => {

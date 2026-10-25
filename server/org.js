@@ -119,6 +119,8 @@ function backupThenWrite(file, content, backupDir, home) {
 // Skills each folder gets. onboard-project is for project agents; the org root carries it too so a
 // project agent that runs in its repo (with the org added as a directory) finds it.
 const BASE_SKILLS = ['handoff', 'new-agent'];
+// Skills whose text the cockpit vouches for: kept exactly as this version ships them.
+const FRESH_SKILLS = new Set(['remote-access']);
 const SKILLS_FOR = { root: [...BASE_SKILLS, 'onboard-project', 'remote-access'], project: [...BASE_SKILLS, 'onboard-project'], domain: BASE_SKILLS, chief: BASE_SKILLS };
 
 function skillFile(dir, skill) {
@@ -506,6 +508,21 @@ export class OrgStore {
     const write = (dir, kind) => {
       for (const skill of SKILLS_FOR[kind] || BASE_SKILLS) {
         const file = skillFile(dir, skill);
+        if (FRESH_SKILLS.has(skill)) {
+          // The setup sheet promises what this skill does: an edited or older copy is replaced
+          // with this version's text (the old one is kept beside it as SKILL.md.old).
+          try {
+            const want = readTemplate(`skills/${skill}/SKILL.md`);
+            const have = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null;
+            if (have === want) continue;
+            ensureDir(path.dirname(file));
+            if (have !== null) fs.writeFileSync(`${file}.old`, have);
+            fs.writeFileSync(file, want);
+          } catch {
+            // best effort
+          }
+          continue;
+        }
         if (fs.existsSync(file)) continue;
         try {
           ensureDir(path.dirname(file));

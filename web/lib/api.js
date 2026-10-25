@@ -17,8 +17,25 @@ export function setUnauthorizedHandler(fn) {
 
 const enc = encodeURIComponent;
 
+// Use from anywhere: a paired browser's second key, kept in this origin's own storage (another
+// service on the same host name, on another port, never sees it; it does see cookies).
+const KEY_STORE = 'clawdling.deviceKey';
+export function deviceKey() {
+  try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; }
+}
+function setDeviceKey(k) {
+  try { if (k) localStorage.setItem(KEY_STORE, k); else localStorage.removeItem(KEY_STORE); } catch { /* storage off: pair again next time */ }
+}
+/** `?k=` / `&k=` for the event stream and terminal sockets, which cannot send headers. */
+export function keyQuery(sep = '?') {
+  const k = deviceKey();
+  return k ? `${sep}k=${encodeURIComponent(k)}` : '';
+}
+
 async function request(method, path, body, { quiet401 = false } = {}) {
   const opts = { method, credentials: 'same-origin', headers: { accept: 'application/json' } };
+  const key = deviceKey();
+  if (key) opts.headers['x-clawdling-device-key'] = key;
   if (body !== undefined) {
     opts.headers['content-type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -104,7 +121,11 @@ export const api = {
   // {expires_at, minutes, links: [{url, kind, link, qr_svg}]}: one code, once, for a few minutes.
   remotePairing: () => request('POST', '/api/remote/pairing', {}),
   // The phone's side of a pairing link (through the remote address): sets this device's cookie.
-  remotePair: (code) => request('POST', '/api/remote/pair', { code }, { quiet401: true }),
+  remotePair: async (code) => {
+    const r = await request('POST', '/api/remote/pair', { code }, { quiet401: true });
+    if (r && r.device_key) setDeviceKey(r.device_key);
+    return r;
+  },
   remoteSignOut: (id) => request('DELETE', `/api/remote/devices/${enc(id)}`),
   channels: () => request('GET', '/api/channels'),
   telegram: (body) => request('POST', '/api/channels/telegram', body),

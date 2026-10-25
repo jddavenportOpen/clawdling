@@ -1,6 +1,6 @@
 // Boot + live data: auth probe, initial loads, SSE /api/events with reconnect,
 // and a 10 s safety poll of /api/sessions (SSE can drop silently behind proxies).
-import { api, ApiError, setUnauthorizedHandler } from './api.js';
+import { api, ApiError, keyQuery, setUnauthorizedHandler } from './api.js';
 import { getState, setState } from './store.js';
 import { applySessionList, mergeSession } from './actions.js';
 import { save } from './prefs.js';
@@ -119,7 +119,7 @@ function connectEvents() {
   if (es) { try { es.close(); } catch { /* ignore */ } }
   let src;
   try {
-    src = new EventSource('/api/events', { withCredentials: true });
+    src = new EventSource(`/api/events${keyQuery()}`, { withCredentials: true });
   } catch {
     esTimer = setTimeout(connectEvents, esRetry);
     return;

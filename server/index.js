@@ -24,6 +24,7 @@ import {
 import {
   AccessVerifier,
   DEVICE_COOKIE,
+  DEVICE_KEY_HEADER,
   DeviceStore,
   MAX_HOSTS,
   PAIRING_TTL_MS,
@@ -549,9 +550,10 @@ export async function startServer(opts = {}) {
     const remote = new RemoteStore(paths.remote);
     const devices = new DeviceStore(paths.remoteDevices);
     const pairings = new Pairings({ ttlMs: testMode && Number(env.CLAWDLING_PAIRING_TTL_MS) > 0 ? Number(env.CLAWDLING_PAIRING_TTL_MS) : PAIRING_TTL_MS });
-    const throttle = new Throttle();
+    const throttle = new Throttle(testMode && Number(env.CLAWDLING_REMOTE_THROTTLE_MAX) > 0 ? { max: Number(env.CLAWDLING_REMOTE_THROTTLE_MAX) } : {});
     const access = new AccessVerifier(testMode && env.CLAWDLING_CF_CERTS_URL ? { certsUrl: () => env.CLAWDLING_CF_CERTS_URL } : {});
     const checkNonces = new Set();
+    let remoteGen = 0; // bumped by Turn off and remove: an add whose check spans one does not turn it back on
     const remoteConns = new Set(); // live SSE and terminal connections through a remote address
     // Headers only a proxy adds. On a loopback Host they mean a tunnel rewrote the Host header,
     // which would make a remote request look local: refused.
@@ -578,7 +580,10 @@ export async function startServer(opts = {}) {
         }
         const v = await access.verify(req.headers['cf-access-jwt-assertion'], entry.access);
         if (!v.ok) return { refused: `Cloudflare Access did not sign this request in (${v.reason}).` };
-        return { remote: true, entry, ident: v.email || 'access' };
+        // The owner's email, pinned by the first pairing (or --email): an Access policy that lets
+        // others sign in still does not let them reach the cockpit.
+        if (entry.email && v.email !== entry.email) return { refused: 'Clawdling answers this address only for your own email address.' };
+        return { remote: true, entry, ident: v.email || null };
       }
       if (!hostAllowed(req, allowed)) return { refused: 'unexpected Host header' };
       if (isLoopback(host) && PROXY_HEADERS.some((h) => req.headers[h] !== undefined)) {
@@ -592,19 +597,28 @@ export async function startServer(opts = {}) {
       sendJson(res, 403, { error: msg });
     }
 
-    /** The credential a remote request presents: a device token in the header (the app) or cookie. */
-    function remoteCredential(req) {
+    /**
+     * The credential a remote request presents: the app's device token in the header, or a
+     * browser's cookie plus its key (a header; `k=` on the event stream and terminal sockets,
+     * which cannot set headers). Never the long-lived token.
+     */
+    function remoteCredential(req, url) {
       const h = req.headers[TOKEN_HEADER];
-      if (typeof h === 'string' && h) return h;
-      return parseCookies(req.headers.cookie)[DEVICE_COOKIE] || null;
+      if (typeof h === 'string' && h) return { token: h, via: 'header' };
+      const c = parseCookies(req.headers.cookie)[DEVICE_COOKIE];
+      if (!c) return null;
+      let key = req.headers[DEVICE_KEY_HEADER];
+      if (typeof key !== 'string' && url && (url.pathname === '/api/events' || url.pathname.startsWith('/ws/'))) key = url.searchParams.get('k');
+      return { token: c, via: 'cookie', key: typeof key === 'string' ? key : null };
     }
 
-    const deviceFor = (req) => devices.verify(remoteCredential(req));
+    const verifyCred = (cred, who) => (cred ? devices.verify(cred.token, { host: who.entry.url, via: cred.via, key: cred.key }) : null);
+    const deviceFor = (req, url) => verifyCred(remoteCredential(req, url), req.who);
 
-    function remoteAuth(req, who) {
-      const cred = remoteCredential(req);
+    function remoteAuth(req, who, url) {
+      const cred = remoteCredential(req, url);
       if (!cred) return { status: 401, error: 'This device is not signed in. On your computer, open Settings, Use from anywhere, and add this device.' };
-      const d = devices.verify(cred);
+      const d = verifyCred(cred, who);
       if (d) {
         devices.touch(d);
         return { device: d };
@@ -673,7 +687,7 @@ export async function startServer(opts = {}) {
       checkNonces.add(nonce);
       try {
         const r = entry.kind === 'tailscale'
-          ? await checkTailscale(entry, { nonce, bin: tsBin(), run: runReadOnly, env, testMode })
+          ? await checkTailscale(entry, { nonce, bin: tsBin(), run: runReadOnly, env, testMode, port })
           : await checkCloudflare(entry, { env, testMode });
         return { ...r, checked_at: new Date().toISOString() };
       } finally {
@@ -717,11 +731,18 @@ export async function startServer(opts = {}) {
       const cur = remote.read();
       const prev = cur.hosts.find((h) => h.url === p.url) || null;
       if (!prev && cur.hosts.length >= MAX_HOSTS) throw new RemoteError(`Clawdling keeps at most ${MAX_HOSTS} remote addresses: remove one first`);
-      const draft = { url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null), login: null };
+      let email = null;
+      if (b.email !== undefined) {
+        if (b.kind !== 'cloudflare') throw new RemoteError('--email is for Cloudflare addresses (Tailscale knows your account)');
+        email = String(b.email).trim();
+        if (!/^[^\s@]{1,200}@[^\s@]{1,200}$/.test(email)) throw new RemoteError('--email is the address you sign in to Cloudflare Access with');
+      }
+      const draft = { email: email || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.email : null), url: p.url, host: p.host, port: p.port, kind: b.kind, status: 'pending', added_at: prev?.added_at || new Date().toISOString(), checked_at: null, detail: null, access: access || (prev?.kind === 'cloudflare' && b.kind === 'cloudflare' ? prev.access : null), login: null };
       remote.update((s) => {
         s.hosts = s.hosts.filter((h) => h.url !== p.url);
         s.hosts.push(draft);
       });
+      const gen = remoteGen;
       let r;
       try {
         r = await runCheck(draft);
@@ -740,6 +761,14 @@ export async function startServer(opts = {}) {
         e.body = { status: r.status, status_text: statusText(done) };
         throw e;
       }
+      // Turned off (or an address removed) while this check ran: that wins.
+      if (gen !== remoteGen) {
+        remote.update((s) => {
+          s.hosts = s.hosts.filter((h) => h.url !== p.url);
+          if (prev) s.hosts.push(prev);
+        });
+        throw new HttpError(409, 'Use from anywhere was turned off while this address was being checked. Nothing was added.');
+      }
       // Off to on: nothing paired before comes back.
       if (!remote.read().enabled) {
         devices.revokeAll();
@@ -755,6 +784,7 @@ export async function startServer(opts = {}) {
     }
 
     function removeHosts({ url, all }) {
+      remoteGen++;
       if (all === true) {
         const n = remote.read().hosts.length;
         remote.update((s) => {
@@ -774,7 +804,7 @@ export async function startServer(opts = {}) {
         s.hosts = s.hosts.filter((h) => h.url !== p.url);
         if (!s.hosts.length) s.enabled = false;
       });
-      for (const d of devices.list()) if (d.host === p.url) devices.revoke(d.id);
+      devices.revokeHost(p.url);
       if (!remote.read().hosts.length) {
         devices.revokeAll();
         pairings.clear();
@@ -785,6 +815,7 @@ export async function startServer(opts = {}) {
     }
 
     function turnOff() {
+      remoteGen++;
       remote.update((s) => {
         s.enabled = false;
       });
@@ -875,14 +906,24 @@ export async function startServer(opts = {}) {
             throttle.fail(key);
             throw new HttpError(401, 'This link has expired or was already used. On your computer, open Settings, Use from anywhere, and make a new one.');
           }
-          const { token: deviceToken, device } = devices.add({ label: deviceLabel(req.headers['user-agent']), host: key });
-          logger.info(`remote: paired ${device.label} through ${key}`);
+          if (who.entry.kind === 'cloudflare' && !who.entry.email) {
+            // The first pairing through a Cloudflare address pins the owner's Access email.
+            if (!who.ident) throw new HttpError(403, 'Cloudflare Access did not say who signed in, so this device cannot be paired.');
+            remote.update((s) => {
+              const h = s.hosts.find((x) => x.url === who.entry.url);
+              if (h && !h.email) h.email = who.ident;
+            });
+          }
+          const app = b.client === 'app';
+          const { token: deviceToken, key: deviceKey, device } = devices.add({ label: deviceLabel(req.headers['user-agent']), host: who.entry.url, kind: app ? 'app' : 'browser' });
+          logger.info(`remote: paired ${device.label} through ${who.entry.url}`);
           remoteChanged('paired');
           const out = { ok: true, device: { id: device.id, label: device.label, expires_at: device.expires_at } };
-          // The app keeps its credential itself (a header); a browser gets the cookie.
-          if (b.client === 'app') return [201, { ...out, device_token: deviceToken }];
+          // The app keeps its credential itself (a header). A browser gets the cookie, and a key
+          // for its own localStorage that the cookie is useless without.
+          if (app) return [201, { ...out, device_token: deviceToken }];
           res.setHeader('Set-Cookie', deviceCookieHeader(deviceToken));
-          return [201, out];
+          return [201, { ...out, device_key: deviceKey }];
         }, { public: true }],
         ['DELETE', /^\/api\/remote\/devices$/, () => {
           const n = devices.revokeAll();
@@ -899,9 +940,9 @@ export async function startServer(opts = {}) {
     }
 
     const routes = [
-      ['GET', /^\/api\/health$/, async (req) => {
+      ['GET', /^\/api\/health$/, async (req, m, res, url) => {
         // Through a remote address, a device that has not signed in learns nothing about this computer.
-        if (req.who.remote && !deviceFor(req)) return [200, { ok: true, remote: true, signed_in: false }];
+        if (req.who.remote && !deviceFor(req, url)) return [200, { ok: true, remote: true, signed_in: false }];
         const v = await toolVersions();
         return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, permission_modes: modeChoices, home, cli, platform: process.platform, remote: !!req.who.remote }];
       }, { public: true }],
@@ -975,6 +1016,8 @@ export async function startServer(opts = {}) {
       ['GET', /^\/api\/sessions$/, () => [200, sessions.list()]],
       ['POST', /^\/api\/sessions$/, async (req) => {
         const b = await jsonBody(req);
+        // A remote-access setup chat runs exactly the skill text this version ships.
+        if (typeof b.prompt === 'string' && /^\s*\/remote-access\b/.test(b.prompt)) org.ensureSkills();
         return [201, await sessions.spawn({ agent: b.agent, prompt: b.prompt, model: b.model, effort: b.effort, account: b.account, title: b.title, cols: b.cols, rows: b.rows })];
       }],
       // Model / effort chips: the session restarts on the same conversation (--resume) with the new --model / --effort, only between turns.
@@ -1121,7 +1164,7 @@ export async function startServer(opts = {}) {
       if (who.remote) {
         // A remote address takes only a paired device's credential, never the long-lived token.
         if (!meta?.public) {
-          const a = remoteAuth(req, who);
+          const a = remoteAuth(req, who, url);
           if (!a.device) {
             if (a.retryAfter) res.setHeader('Retry-After', String(a.retryAfter));
             return sendJson(res, a.status, { error: a.error });
@@ -1236,7 +1279,7 @@ export async function startServer(opts = {}) {
         if (who.refused || who.hello) return reject(403, 'Forbidden');
         if (who.remote) {
           if (!remoteOriginAllowed(req, who.entry)) return reject(403, 'Forbidden');
-          const a = remoteAuth(req, who);
+          const a = remoteAuth(req, who, url);
           if (!a.device) return reject(a.status, a.status === 429 ? 'Too Many Requests' : 'Unauthorized');
           who.device = a.device;
         } else {
@@ -1272,6 +1315,17 @@ export async function startServer(opts = {}) {
       }
     }, 2000);
     remoteWatch.unref?.();
+    // While it is on, every address is checked again every 10 minutes, so a Funnel or a TCP
+    // forward turned on later (by anyone) stops the address without waiting for Check again.
+    let rechecking = false;
+    const remoteRecheck = setInterval(() => {
+      if (rechecking || !remote.read().enabled) return;
+      rechecking = true;
+      checkAll().catch((err) => logger.warn(`remote: periodic check failed: ${err.message}`)).finally(() => {
+        rechecking = false;
+      });
+    }, Number(env.CLAWDLING_REMOTE_RECHECK_MS) > 0 && testMode ? Number(env.CLAWDLING_REMOTE_RECHECK_MS) : 10 * 60 * 1000);
+    remoteRecheck.unref?.();
 
     onRequest = handleRequest;
     onUpgrade = handleUpgrade;
@@ -1288,6 +1342,7 @@ export async function startServer(opts = {}) {
       if (stopped) return;
       stopped = true;
       clearInterval(remoteWatch);
+      clearInterval(remoteRecheck);
       telegram.stop();
       imessage.stop();
       donna.stop();

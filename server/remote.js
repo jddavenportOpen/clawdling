@@ -11,6 +11,7 @@ import { execFileP, sha256, writeFileAtomic } from './util.js';
 
 export const REMOTE_KINDS = ['tailscale', 'cloudflare'];
 export const DEVICE_COOKIE = 'cl_device';
+export const DEVICE_KEY_HEADER = 'x-clawdling-device-key';
 export const DEVICE_PREFIX = 'cld_';
 export const PAIRING_TTL_MS = 10 * 60 * 1000;
 export const DEVICE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -92,12 +93,17 @@ function validHost(h) {
     access = { team_domain: h.access.team_domain, aud: h.access.aud };
   }
   if (h.kind === 'cloudflare' && h.status === 'access' && !access) throw new Error(`host ${h.url} is marked as behind Access with no Access settings`);
+  let email = null;
+  if (h.email != null) {
+    if (h.kind !== 'cloudflare' || typeof h.email !== 'string' || !/^[^\s@]{1,200}@[^\s@]{1,200}$/.test(h.email)) throw new Error(`host ${h.url} has a bad owner email`);
+    email = h.email;
+  }
   let login = null;
   if (h.login != null) {
     if (h.kind !== 'tailscale' || typeof h.login !== 'string' || !h.login || h.login.length > 320 || /[\u0000-\u001f\u007f]/.test(h.login)) throw new Error(`host ${h.url} has a bad Tailscale login`);
     login = h.login;
   }
-  return { url: p.url, host: p.host, port: p.port, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: cleanText(h.detail), access, login };
+  return { url: p.url, host: p.host, port: p.port, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: cleanText(h.detail), access, login, email };
 }
 
 /**
@@ -127,6 +133,7 @@ function persistable(state) {
       url: h.url, kind: h.kind, status: h.status, added_at: h.added_at || null, checked_at: h.checked_at || null, detail: h.detail || null,
       ...(h.access ? { access: { team_domain: h.access.team_domain, aud: h.access.aud } } : {}),
       ...(h.login ? { login: h.login } : {}),
+      ...(h.email ? { email: h.email } : {}),
     })),
   };
 }
@@ -197,8 +204,12 @@ const b64url = (buf) => Buffer.from(buf).toString('base64url');
 const hashHex = (s) => sha256(s).toString('hex');
 
 /**
- * Paired devices, in <org>/.clawdling/remote-devices.json (written only by the server). A device
- * holds `cld_<id>_<secret>` in an HttpOnly cookie; the file keeps only sha256(secret).
+ * Paired devices, in <org>/.clawdling/remote-devices.json (written only by the server), each tied
+ * to the address it paired through. A browser holds `cld_<id>_<secret>` in an HttpOnly cookie AND
+ * a second random key in its own localStorage, sent as a header (or `k=` on its event stream and
+ * terminal sockets). Browsers send a cookie to every port of a host name, so another service on
+ * the same Tailscale name would see the cookie; it never sees the key, which is scoped to this
+ * exact origin. The app holds only the token (it sends no cookies). The file keeps only hashes.
  */
 export class DeviceStore {
   constructor(file, { now = () => Date.now() } = {}) {
@@ -229,7 +240,8 @@ export class DeviceStore {
     try {
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
       if (raw && Array.isArray(raw.devices)) {
-        this.devices = raw.devices.filter((d) => d && /^[0-9a-f]{12}$/.test(d.id) && /^[0-9a-f]{64}$/.test(d.hash) && typeof d.expires_at === 'string');
+        this.devices = raw.devices.filter((d) => d && /^[0-9a-f]{12}$/.test(d.id) && /^[0-9a-f]{64}$/.test(d.hash) && typeof d.expires_at === 'string'
+          && (d.kind === 'app' || (d.kind === 'browser' && /^[0-9a-f]{64}$/.test(d.key_hash))));
       }
     } catch {
       // unreadable: every device signs in again
@@ -249,27 +261,41 @@ export class DeviceStore {
   }
 
   list() {
-    return this.live().map(({ id, label, host, created_at, expires_at, last_seen_at }) => ({ id, label, host, created_at, expires_at, last_seen_at: last_seen_at || null }));
+    return this.live().map(({ id, label, host, kind, created_at, expires_at, last_seen_at }) => ({ id, label, host, kind, created_at, expires_at, last_seen_at: last_seen_at || null }));
   }
 
-  add({ label, host }) {
+  /** A new device on `host` (the address URL). kind: 'browser' (cookie + key) or 'app' (token). */
+  add({ label, host, kind = 'browser' }) {
     const id = crypto.randomBytes(6).toString('hex');
     const secret = b64url(crypto.randomBytes(32));
+    const key = kind === 'browser' ? b64url(crypto.randomBytes(32)) : null;
     const t = this.now();
-    const device = { id, hash: hashHex(secret), label: cleanText(label, 60) || 'A device', host: cleanText(host, 260), created_at: new Date(t).toISOString(), expires_at: new Date(t + DEVICE_TTL_MS).toISOString(), last_seen_at: new Date(t).toISOString() };
+    const device = {
+      id, kind: key ? 'browser' : 'app', hash: hashHex(secret), ...(key ? { key_hash: hashHex(key) } : {}),
+      label: cleanText(label, 60) || 'A device', host: cleanText(host, 260),
+      created_at: new Date(t).toISOString(), expires_at: new Date(t + DEVICE_TTL_MS).toISOString(), last_seen_at: new Date(t).toISOString(),
+    };
     this.devices = [...this.live(), device].slice(-MAX_DEVICES);
     this.save();
-    return { token: `${DEVICE_PREFIX}${id}_${secret}`, device };
+    return { token: `${DEVICE_PREFIX}${id}_${secret}`, key, device };
   }
 
-  /** The device this token belongs to, or null. Constant time on the secret. */
-  verify(token) {
+  /**
+   * The device this credential belongs to, or null. `via`: 'cookie' or 'header'; a browser
+   * device counts only from its cookie with its key, an app device only from the header; both
+   * only on the address they paired through. Constant time on the secrets.
+   */
+  verify(token, { host, via, key } = {}) {
     const m = DEVICE_RE.exec(String(token || ''));
     if (!m) return null;
     const d = this.live().find((x) => x.id === m[1]);
     const want = d ? Buffer.from(d.hash, 'hex') : Buffer.alloc(32);
-    const ok = crypto.timingSafeEqual(sha256(m[2]), want);
-    return ok && d ? d : null;
+    let ok = crypto.timingSafeEqual(sha256(m[2]), want);
+    if (!d || !ok) return null;
+    if (d.host !== host) return null;
+    if (d.kind === 'app') return via === 'header' ? d : null;
+    ok = via === 'cookie' && typeof key === 'string' && key.length <= 128 && crypto.timingSafeEqual(sha256(key), Buffer.from(d.key_hash, 'hex'));
+    return ok ? d : null;
   }
 
   /** Remember when a device was last used, written at most once a minute per device. */
@@ -301,6 +327,15 @@ export class DeviceStore {
     this.devices = [];
     this.save();
     return n;
+  }
+
+  /** Sign out every device paired through this address. */
+  revokeHost(host) {
+    this.load();
+    const before = this.devices.length;
+    this.devices = this.devices.filter((d) => d.host !== host);
+    if (this.devices.length !== before) this.save();
+    return before - this.devices.length;
   }
 }
 
@@ -395,13 +430,34 @@ export function funnelOn(config, hostPort) {
   return walk(config, 0);
 }
 
-export async function funnelState(entry, { bin, run = execFileP } = {}) {
+/**
+ * Raw TCP forwards (`tailscale serve --tcp` / `--tls-terminated-tcp`, or a TCP Funnel) that land
+ * on the cockpit's port: whoever connects through one writes their own HTTP headers, Host and
+ * Tailscale-User-Login included. Returns the serve ports that do it.
+ */
+export function tcpForwardsTo(config, port) {
+  const target = new RegExp(`^(127\\.0\\.0\\.1|localhost|\\[::1\\]):${Number(port)}$`, 'i');
+  const hits = new Set();
+  const seen = new Set();
+  const walk = (o, depth) => {
+    if (!o || typeof o !== 'object' || depth > 6 || seen.has(o)) return;
+    seen.add(o);
+    if (o.TCP && typeof o.TCP === 'object') {
+      for (const [p, h] of Object.entries(o.TCP)) if (h && typeof h.TCPForward === 'string' && target.test(h.TCPForward.trim())) hits.add(p);
+    }
+    for (const v of Object.values(o)) walk(v, depth + 1);
+  };
+  walk(config, 0);
+  return [...hits];
+}
+
+export async function funnelState(entry, { bin, run = execFileP, port = null } = {}) {
   if (!bin) return { known: false, detail: 'the Tailscale command was not found' };
   try {
     const { stdout } = await run(bin, ['serve', 'status', '--json'], { timeout: 8000 });
     const text = String(stdout || '').trim();
     const config = text ? JSON.parse(text) : {};
-    return { known: true, funnel: funnelOn(config, `${entry.host}:${entry.port}`) };
+    return { known: true, funnel: funnelOn(config, `${entry.host}:${entry.port}`), tcp: port ? tcpForwardsTo(config, port) : [] };
   } catch (err) {
     return { known: false, detail: `\`tailscale serve status\` failed (${String(err.message || err).split('\n')[0].slice(0, 120)})` };
   }
@@ -447,12 +503,15 @@ export async function probe(url, pathname, { env = process.env, testMode = false
  * says who sent it (Tailscale-User-Login): that login is the owner's, and later requests must
  * carry the same one.
  */
-export async function checkTailscale(entry, { nonce, bin, run, env, testMode, probeImpl = probe } = {}) {
-  const f = await funnelState(entry, { bin, run });
+export async function checkTailscale(entry, { nonce, bin, run, env, testMode, port = null, probeImpl = probe } = {}) {
+  const f = await funnelState(entry, { bin, run, port });
   if (f.known && f.funnel) {
     return { status: 'public', detail: 'Tailscale Funnel is on for this address, so anyone on the internet can reach it. Clawdling will not answer it until Funnel is off.' };
   }
   if (!f.known) return { status: 'unconfirmed', detail: `Clawdling could not confirm Tailscale Funnel is off (${f.detail}), so it does not answer this address.` };
+  if (f.tcp && f.tcp.length) {
+    return { status: 'unconfirmed', detail: `A Tailscale TCP forward on port ${f.tcp.join(', ')} sends raw connections straight to the cockpit, so whoever uses it could pretend to be you. Remove it (tailscale serve --tcp=${f.tcp[0]} off), then check again.` };
+  }
   let reached = false;
   let login = null;
   let why = '';

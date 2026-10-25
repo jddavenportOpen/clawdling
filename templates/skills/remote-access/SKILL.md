@@ -12,15 +12,19 @@ path: `tailscale`, `cloudflare` or `off`. With no word, ask which one, and recom
 
 - Start by explaining the plan in three short lines. Then ask before every install and before
   every command that changes something, one command at a time, saying in plain words what it does.
-  Read-only checks (`status`, `serve status`, `--version`, `clawdling remote list`, `curl`) need
-  no extra question, but the session may still ask for permission: that is expected.
+  Read-only checks (`status`, `serve status`, `--version`, `clawdling remote list`, and the one
+  `curl` in the Cloudflare steps, a plain GET to the owner's own address) need no extra question,
+  but the session may still ask for permission: that is expected. Never pipe a download into a
+  shell.
 - The owner signs in to Tailscale or Cloudflare themselves, in their browser or the Tailscale app.
   Never ask for, read, print, copy or store a password, auth key, API token, certificate or
   credentials file: no `tailscale up --authkey`, no `cat` of `~/.cloudflared/*.json` or
   `cert.pem`, nothing inside `.clawdling/`, nothing from Claude's own settings. If a command would
   print a secret, do not run it.
 - Never make the cockpit public:
-  - never turn on Tailscale Funnel (`tailscale funnel ...`, `--funnel`);
+  - never turn on Tailscale Funnel (`tailscale funnel ...`, `--funnel`). The one Funnel command
+    allowed is `TS funnel --https=PORT off`, which only turns it off, after the owner says yes;
+  - never add a TCP forward (`serve --tcp`, `--tls-terminated-tcp`) to the cockpit's port;
   - never `tailscale serve reset`, and never change or remove a serve entry you did not create;
   - never `tailscale up`, `down`, `logout` or `set` (the one Linux exception is below);
   - never register a Cloudflare address before a signed-out request is stopped by Cloudflare
@@ -91,8 +95,8 @@ Say the plan, for example:
    `brew install cloudflared`; otherwise the official downloads at
    https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
 2. **The address.** Ask which hostname to use, a name under a domain on their Cloudflare account
-   (like `cockpit.example.com`), and the email address that may sign in. The tunnel is named
-   `clawdling` unless that is taken.
+   (like `cockpit.example.com`), and the email address that may sign in. Name the tunnel
+   `clawdling` unless that is taken, and remember the name you used.
 3. **Sign in.** `cloudflared tunnel login`. It opens the browser; the owner signs in and picks
    the domain. It saves a certificate file: do not open it.
 4. **The tunnel.** `cloudflared tunnel create clawdling`. It prints the tunnel ID and the path of
@@ -124,7 +128,8 @@ Say the plan, for example:
    It must be a redirect (302) to `https://<team>.cloudflareaccess.com/...`. If it is 200, or a
    403 from Clawdling, Access is not protecting the address: stop, tell the owner, and help them
    finish step 5. If they cannot, offer to stop the tunnel (`sudo cloudflared service uninstall`).
-10. **Register it:** `clawdling remote add https://<hostname> --kind cloudflare`. Clawdling makes
+10. **Register it:** `clawdling remote add https://<hostname> --kind cloudflare --email <their
+    email>`. Clawdling makes
     the same check and refuses an address that answers without Access. If it says the AUD tag is
     missing, ask the owner to copy the "Application Audience (AUD) Tag" from Zero Trust, Access,
     Applications, the app, Overview (it is not a secret), and run it again with
@@ -143,11 +148,15 @@ Remove only what this skill set up, then tell Clawdling.
    at `http://127.0.0.1:CL_PORT`. After asking, remove that one entry:
    `TS serve --https=PORT off`. Run `TS serve status` again and show that it is gone and every
    other entry is unchanged.
-3. **Cloudflare address**, each after asking: stop the service
-   (`sudo cloudflared service uninstall`), remove the ingress rule you added from
-   `~/.cloudflared/config.yml`, then `cloudflared tunnel delete clawdling` (if it says the tunnel
-   has connections, `cloudflared tunnel cleanup clawdling` first). cloudflared cannot delete the
-   DNS record: ask the owner to delete it, and the Access application if they like, in the
-   dashboard.
+3. **Cloudflare address**, each step after asking. Show `~/.cloudflared/config.yml` and find the
+   ingress rule for the registered hostname; the `tunnel:` line names the tunnel it belongs to.
+   - Remove only that ingress rule.
+   - If other hostname rules remain, the tunnel and the service also serve those: keep both, and
+     restart the cloudflared service so it drops the rule.
+   - If it was the only hostname, the tunnel was this setup's: uninstall the service
+     (`sudo cloudflared service uninstall`), then `cloudflared tunnel delete <that tunnel>` (if it
+     says the tunnel has connections, `cloudflared tunnel cleanup <that tunnel>` first).
+   - cloudflared cannot delete the DNS record: ask the owner to delete it, and the Access
+     application if they like, in the dashboard.
 4. `clawdling remote remove --all` (or `clawdling remote remove <url>` for just one address).
 5. `clawdling remote list` should say Use from anywhere is off. Tell the owner it is done.

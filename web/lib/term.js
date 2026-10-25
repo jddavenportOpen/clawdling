@@ -8,6 +8,7 @@ import { getTheme, onThemeChange } from './theme.js';
 import { isAppShortcut } from './keys.js';
 import { copyText, isMac } from './util.js';
 import { load } from './prefs.js';
+import { keyQuery } from './api.js';
 
 export const PALETTES = {
   dark: {
@@ -201,7 +202,8 @@ export class TermView {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     // Our size on the URL: the server cuts the first snapshot at it (no blank rows from a
     // taller window pushing the real screen off the top).
-    const q = this.opened && this.term.cols && this.term.rows ? `?cols=${this.term.cols}&rows=${this.term.rows}` : '';
+    const size = this.opened && this.term.cols && this.term.rows ? `?cols=${this.term.cols}&rows=${this.term.rows}` : '';
+    const q = size + keyQuery(size ? '&' : '?');
     let ws;
     try {
       ws = new WebSocket(`${proto}//${location.host}/ws/term/${encodeURIComponent(this.sid)}${q}`);

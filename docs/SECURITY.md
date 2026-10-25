@@ -69,17 +69,25 @@ the same power as sitting at the computer, so it is guarded as such.
   every request (RS256, signed by the team's keys at `<team>.cloudflareaccess.com/cdn-cgi/access/certs`,
   the application's AUD tag, the team as issuer, not expired). A request without a valid one is
   refused, even for the sign-in page, so removing Access later cannot quietly expose the cockpit.
-  If the keys cannot be fetched, requests are refused (fail closed).
+  If the keys cannot be fetched, requests are refused (fail closed). The owner's email is pinned
+  (`clawdling remote add --email`, or the first pairing through the address) and every later
+  request must carry exactly that email, so an Access policy that lets others in (one-time PINs
+  for "Everyone", a team-wide app) still does not let them reach the cockpit.
 - **Lock 2, a paired device.** Each device signs in once with a pairing link made in Settings on
   the computer itself: a random one-time code (192 bits), valid for 10 minutes, kept only in the
   server's memory and voided by a restart or by turning remote off. Opening the link shows a
   "Sign in this device" button; only that POST uses the code (so a link preview cannot burn it).
   The device then holds its own random credential (`cld_<id>_<secret>`, 256-bit secret) in a
   cookie that is `Secure` (https only), `HttpOnly` (page scripts cannot read it) and
-  `SameSite=Strict` (another site cannot send it or embed the cockpit; a link from elsewhere opens
-  the page signed out for one load, and the page's own same-origin calls carry it). It lasts 30
-  days. `remote-devices.json` stores only `sha256(secret)`. Each device can be signed out from
-  Settings.
+  `SameSite=Strict` (a link from another site opens the page signed out for one load, and the
+  page's own same-origin calls carry it). Browsers send a cookie to every port of a host name,
+  so another service on the same Tailscale name (say a NAS app on port 443) would receive it; the
+  cookie alone therefore signs nothing in. The browser also holds a second random key in its own
+  `localStorage`, which is scoped to this exact origin, port included, and sends it as a header
+  (and as `k=` on the event stream and terminal sockets, which cannot send headers). The app
+  holds a single device token instead and sends it as a header; it never uses the cookie. Each
+  device works only through the address it paired through. It lasts 30 days.
+  `remote-devices.json` stores only hashes. Each device can be signed out from Settings.
 - **The long-lived token never leaves the computer.** Through a remote address the token is not
   accepted in any form (header, cookie, `/?t=` link, WebSocket `?t=`), the pairing QR codes and
   links never hold it, and `/api/pair` (which returns it) is refused. Things only the computer
@@ -90,18 +98,24 @@ the same power as sitting at the computer, so it is guarded as such.
   computer on the Wi-Fi sending a remote `Host` is refused.
 - **Exact Host, https origin.** A remote request is matched on its exact `Host`, port included
   (`box.example.ts.net:8743` is not `box.example.ts.net`), against the registered addresses. A
-  mutating request or WebSocket upgrade with an `Origin` must be exactly `https://<that address>`.
+  mutating request or WebSocket upgrade with an `Origin` must be exactly `https://<that address>`
+  (every machine on a tailnet counts as the same "site" to a browser, so this check, not
+  SameSite, is what stops cross-site requests between them).
   SSE and WebSockets go through the same checks as every API call. Remote responses carry
   `Strict-Transport-Security`.
 - **Never public.** `clawdling remote add` checks an address before it is registered and leaves
   `remote.json` unchanged when the check fails. Tailscale: Funnel (Tailscale's public mode) must be
   off for that address (read with `tailscale serve status --json`, the only Tailscale command
-  Clawdling runs; if Clawdling cannot read it, the address is not answered) and the address must
-  reach this Clawdling (a one-time nonce through the address) with a Tailscale login on it. Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
+  Clawdling runs; if Clawdling cannot read it, the address is not answered), no Tailscale TCP
+  forward may land on the cockpit's port (a raw TCP connection carries whatever headers its
+  sender writes, including a Tailscale login), and the address must reach this Clawdling (a
+  one-time nonce through the address) with a Tailscale login on it. Cloudflare: a signed-out request must be redirected to `<team>.cloudflareaccess.com`
   (which also gives the AUD tag); a page that answers (any 2xx, or Clawdling's own refusal,
   marked with `X-Clawdling-Refused`) means the address is public, and it is refused. Later checks
-  (Settings' Check again, `clawdling remote check`) apply the same rules: an address found public
-  or unprotected is not answered until a check passes again. A request marked `Tailscale-Funnel-Request` is always refused.
+  (Settings' Check again, `clawdling remote check`, and an automatic check every 10 minutes while
+  it is on) apply the same rules: an address found public or unprotected is not answered until a
+  check passes again. Other local forwarders Clawdling cannot see (ngrok, socat) are out of its
+  reach: do not point one at the cockpit's port. A request marked `Tailscale-Funnel-Request` is always refused.
 - **Throttle.** Per remote address and per signed-in Tailscale login or Access email, 10 failed
   sign-ins (a wrong device credential or pairing code) in 5 minutes make new attempts answer
   `429` for the rest of the window, so nobody else can hold pairing shut for the owner. Paired
@@ -115,6 +129,8 @@ the same power as sitting at the computer, so it is guarded as such.
   `clawdling remote off` and `remove` go through the running server whenever one owns the org;
   if it does not answer, the change is written to disk and the server re-reads both files. The serve entry or tunnel stays until removed (`/remote-access off`, which removes only
   what setup added).
+- **Removing one address** signs out every device paired through it. A Turn off that happens
+  while an address is still being checked wins: the add is dropped, nothing turns back on.
 - **`remote.json` integrity.** `.clawdling/remote.json` (mode 600) is re-read whenever it changes
   and validated strictly: https addresses with a DNS name and no path, a known kind and status,
   well-formed Access settings. Anything malformed turns remote off and says why in Settings; a
@@ -125,6 +141,8 @@ the same power as sitting at the computer, so it is guarded as such.
 
 **The setup agent.** "Set it up with an agent" starts an ordinary Claude Code session on the
 owner's plan, at the org root, whose first message is the visible `/remote-access <path>`. The
+skill's file is rewritten from this version's text when the server starts and before each such
+session (an edited copy is kept as `SKILL.md.old`), so the sheet's promises hold. The
 skill tells it to explain the plan, to ask before every install or change, and to leave every
 sign-in to the owner in their browser. It never asks for, reads, prints or stores a credential
 (no auth keys, no `cert.pem` or tunnel credentials file, nothing in `.clawdling/`), never turns on
@@ -259,7 +277,9 @@ real Messages database. Tests use a fake `claude`, a stub Bot API, a fixture `ch
 Malware running as your user (it can read the token file, as it could read anything else you own);
 anyone you give the token or the pairing QR code to; what your agents do with permissions you grant
 them in Claude Code (an arbitrary shell command you approve can do anything you can, including
-reading the token). To revoke every paired phone and browser, stop Clawdling, delete
-`.clawdling/token` and start it again: a new token is made and each device pairs again.
+reading the token). To sign out every device paired through Use from anywhere, press Turn off
+(or run `clawdling remote off`). To revoke every phone and browser paired on the same Wi-Fi with
+the token link or QR code, stop Clawdling, delete `.clawdling/token` and start it again: a new
+token is made and each one pairs again.
 
 Report vulnerabilities privately via GitHub security advisories on the repository.

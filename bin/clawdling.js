@@ -79,7 +79,7 @@ const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-e
 const REMOTE_HELP = `usage:
   clawdling remote list [--json]
   clawdling remote check [--json]
-  clawdling remote add <https-url> --kind tailscale|cloudflare [--team-domain <team>.cloudflareaccess.com --access-aud <AUD tag>]
+  clawdling remote add <https-url> --kind tailscale|cloudflare [--email <you>] [--team-domain <team>.cloudflareaccess.com --access-aud <AUD tag>]
   clawdling remote remove <https-url> | --all
   clawdling remote off`;
 
@@ -979,7 +979,7 @@ function remoteOffline(ctx, { all = false, target = null, off = false }) {
     if (off || !s.hosts.length) s.enabled = false;
   });
   if (all || off || !store.read().hosts.length) devices.revokeAll();
-  else for (const d of devices.list()) if (d.host === target) devices.revoke(d.id);
+  else devices.revokeHost(target);
 }
 
 async function cmdRemote(args) {
@@ -1025,6 +1025,7 @@ async function cmdRemote(args) {
     const body = { url, kind };
     if (args.flags['team-domain'] !== undefined) body.team_domain = String(args.flags['team-domain']);
     if (args.flags['access-aud'] !== undefined) body.access_aud = String(args.flags['access-aud']);
+    if (args.flags.email !== undefined) body.email = String(args.flags.email);
     const v = await api(ctx, 'POST', '/api/remote/hosts', body);
     return out(v, `Added ${v.added}. Use from anywhere is on.\nNext: on your computer, open Settings, "Use from anywhere", and press "Add a device" to pair your phone.`);
   }

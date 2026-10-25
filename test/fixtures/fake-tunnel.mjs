@@ -9,6 +9,7 @@
 //   access    a Cloudflare Access redirect to <team>.cloudflareaccess.com with the AUD as kid
 //   plain200  a page that answers without any sign-in
 //   down      drop the connection
+//   slow      like forward, 1.5 s later
 // GET /certs serves the fake Access team's keys from FAKE_TUNNEL_DIR/certs.json.
 import fs from 'node:fs';
 import http from 'node:http';
@@ -24,6 +25,14 @@ const read = (f, d = '') => {
 };
 
 const server = http.createServer((req, res) => {
+  if (read('mode', 'forward') === 'slow' && req.url !== '/certs') {
+    setTimeout(() => handle(req, res), 1500);
+    return;
+  }
+  handle(req, res);
+});
+
+function handle(req, res) {
   if (req.url === '/certs') {
     res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(read('certs.json', '{"keys":[]}'));
@@ -49,6 +58,6 @@ const server = http.createServer((req, res) => {
   });
   up.on('error', () => res.destroy());
   req.pipe(up);
-});
+}
 server.listen(0, '127.0.0.1', () => process.stdout.write(`${server.address().port}\n`));
 process.on('SIGTERM', () => process.exit(0));
