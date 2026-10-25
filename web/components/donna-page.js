@@ -181,7 +181,8 @@ function IMessageCard({ m }) {
   const save = async (en) => {
     setBusy(true);
     try {
-      await api.imessage({ handle: handle.trim(), enabled: en });
+      // Turning it off changes nothing else: only a handle typed and saved here counts as yours.
+      await api.imessage(en ? { handle: handle.trim(), enabled: true } : { enabled: false });
       await refreshChannels();
       toast(en ? 'iMessage on. Text the Mac from that number.' : 'iMessage saved', { tone: 'ok' });
     } catch (e) {
@@ -211,6 +212,7 @@ function IMessageCard({ m }) {
           <input id="im-handle" value=${handle} onInput=${(e) => setHandle(e.currentTarget.value)} placeholder="+1 555 010 0199 or you@icloud.com" data-testid="im-handle" />
           <button class="btn btn-primary" type="submit" disabled=${!handle.trim() || busy}>${enabled ? 'Update' : 'Turn on'}</button>
         </form>
+        ${m && m.handle && m.saved === false ? html`<span class="step-note" data-testid="im-unsaved">This handle was not saved here (it was set elsewhere, or before Clawdling 1.4). Check it is yours, then press ${enabled ? 'Update' : 'Turn on'}.</span>` : null}
       </li>
     </ol>
     ${enabled ? html`<footer class="card-foot"><button class="btn btn-quiet btn-sm" onClick=${() => save(false)} disabled=${busy}>Turn off iMessage</button></footer>` : null}`

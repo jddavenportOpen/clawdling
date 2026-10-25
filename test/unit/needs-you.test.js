@@ -36,7 +36,9 @@ test('pingChannel: only the chat that sent the pairing code, or an iMessage hand
 
 test('safeName: plain words only, 40 characters', () => {
   assert.equal(safeName('Health'), 'Health');
-  assert.equal(safeName('Q3 <b>secret</b> plan: http://x.example/?a=1'), 'Q3 b secret b plan http x.example a 1');
+  assert.equal(safeName('Q3 <b>secret</b> plan: http://x.example/?a=1'), 'Q3 b secret b plan http x example a 1', 'no link survives');
+  assert.equal(safeName('My-Project'), 'My-Project');
+  assert.equal(safeName('Zoë & Ana'), 'Zoë Ana');
   assert.equal(safeName('x'.repeat(90)).length, 40);
   assert.equal(safeName('\u202e\n'), 'An agent');
 });
@@ -102,6 +104,14 @@ test('NeedsYouPinger: off by default, still waiting after the delay, once per se
   assert.equal(h.p.timers.size, 1);
   h.p.stop();
   fs.rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('fails closed where agents cannot be kept out of .clawdling (a folder path with ( ) or accents)', () => {
+  const p = new NeedsYouPinger({ paths: { home: "/Users/O'Brien (Work)/org", notify: '/nonexistent/notify.json' }, org: { read: () => ({ channels: {} }) }, platform: 'darwin' });
+  assert.equal(p.guarded(), false);
+  assert.throws(() => p.setEnabled(true), (e) => e.status === 400);
+  assert.equal(p.status().unprotected, true);
+  assert.equal(new NeedsYouPinger({ paths: { home: '/Users/ada/org' }, org: { read: () => ({}) }, platform: 'darwin' }).guarded(), true);
 });
 
 test('browser notification: only when the tab is hidden, the setting is on, and the session just started needing you', async () => {

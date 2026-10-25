@@ -12,7 +12,8 @@
 // before 1.4 has no record and must pair again), and an iMessage handle must be the one the owner
 // set in the cockpit and must have texted Donna since (imessage.json). The on/off switch and the
 // send history live in .clawdling/notify.json.
-import { readJson, writeJson, oneLine } from './util.js';
+import { runtimeDeny } from './hooks.js';
+import { badRequest, readJson, writeJson, oneLine } from './util.js';
 
 const WHAT = {
   question: 'a question',
@@ -27,9 +28,9 @@ const WHAT = {
 };
 const HOUR = 3600000;
 
-/** An agent's name as it may appear in a message: plain words, at most 40 characters. */
+/** An agent's name as it may appear in a message: letters, digits, spaces and hyphens, 40 at most. */
 export function safeName(name) {
-  const s = oneLine(String(name || ''), 200).replace(/[^\p{L}\p{N} .,'&()_-]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  const s = oneLine(String(name || ''), 200).replace(/[^\p{L}\p{N} -]+/gu, ' ').replace(/\s+/g, ' ').trim();
   return (s.length > 40 ? s.slice(0, 40).trim() : s) || 'An agent';
 }
 
@@ -48,7 +49,7 @@ export function pingText({ agentName, waitingOn, asking }) {
 export function pingChannel(org, { pairedChatId = null, verifiedHandle = null, telegramReady = true, imessageReady = true } = {}) {
   const tg = org?.channels?.telegram || {};
   if (telegramReady && tg.enabled && tg.chat_id !== null && tg.chat_id !== undefined && pairedChatId !== null && pairedChatId !== undefined && String(tg.chat_id) === String(pairedChatId)) {
-    return { channel: 'telegram', to: tg.chat_id };
+    return { channel: 'telegram', to: pairedChatId };
   }
   const im = org?.channels?.imessage || {};
   if (imessageReady && im.enabled && im.handle && verifiedHandle && im.handle === verifiedHandle) return { channel: 'imessage', to: im.handle };
@@ -56,8 +57,8 @@ export function pingChannel(org, { pairedChatId = null, verifiedHandle = null, t
 }
 
 export class NeedsYouPinger {
-  constructor({ paths, org, sessions, telegram, imessage, events, logger, now = Date.now, delayMs = 4000, perSessionMs = 10 * 60000, perHour = 6 }) {
-    Object.assign(this, { paths, org, sessions, telegram, imessage, events, logger, now, delayMs, perSessionMs, perHour });
+  constructor({ paths, org, sessions, telegram, imessage, events, logger, now = Date.now, delayMs = 4000, perSessionMs = 10 * 60000, perHour = 6, platform = process.platform }) {
+    Object.assign(this, { paths, org, sessions, telegram, imessage, events, logger, now, delayMs, perSessionMs, perHour, platform });
     this.timers = new Map();
   }
 
@@ -74,8 +75,16 @@ export class NeedsYouPinger {
     writeJson(this.paths.notify, st, 0o600);
   }
 
+  /**
+   * Can agents be kept out of .clawdling here? Their file tools are denied it by path rules, which
+   * cannot be written for every folder name (runtimeDeny). Without them this stays off.
+   */
+  guarded() {
+    return !this.paths.home || runtimeDeny(this.paths.home, this.platform).length > 0;
+  }
+
   enabled() {
-    return this.state().needs_you;
+    return this.guarded() && this.state().needs_you;
   }
 
   status() {
@@ -92,10 +101,11 @@ export class NeedsYouPinger {
     // Set up, but not proven yet: say what to do.
     const repair = !ch && tg.enabled && tg.chat_id !== null && tg.chat_id !== undefined && String(tg.chat_id) !== String(paired);
     const unverified = !ch && !!(im.enabled && im.handle) && !this.imessage?.verifiedHandle?.(org);
-    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
+    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, ...(this.guarded() ? {} : { unprotected: true }), ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
   }
 
   setEnabled(on) {
+    if (on === true && !this.guarded()) throw badRequest("Clawdling cannot keep agents out of its own settings in a folder whose path has characters like ( ) ' or accents, so it will not message you from here");
     const st = this.state();
     st.needs_you = on === true;
     this.save(st);
@@ -140,7 +150,7 @@ export class NeedsYouPinger {
     const rec = this.sessions.get(sid);
     if (!rec || rec.status !== 'needs_you') return { sent: false, why: 'answered' };
     const st = this.state();
-    if (!st.needs_you) return { sent: false, why: 'off' };
+    if (!st.needs_you || !this.guarded()) return { sent: false, why: 'off' };
     const t = this.now();
     st.sent = st.sent.filter((x) => t - x < HOUR && x <= t);
     for (const [k, at] of Object.entries(st.last)) if (!(t - at < this.perSessionMs)) delete st.last[k];

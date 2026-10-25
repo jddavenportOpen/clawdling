@@ -1244,7 +1244,8 @@ async function cmdDoctor(args) {
       const t = c.telegram;
       const bot = t.bot_username ? `@${t.bot_username}` : 'your bot';
       if (t.configured && t.paired) ok(`Telegram: ${bot} is paired with chat ${t.chat_id_masked}${t.enabled ? '' : ' (turned off)'}${t.error ? ` [${t.error}]` : ''}`);
-      else if (t.configured) warn(`Telegram: open ${bot} in Telegram and send ${t.pairing_code ? `/pair ${t.pairing_code}` : `the code from \`${cliCmd(ctx.home, 'donna telegram --pair')}\``}${t.error ? ` [${t.error}]` : ''}`);
+      // Never the code itself: agents may run doctor, and whoever sends the code first is paired.
+      else if (t.configured) warn(`Telegram: open ${bot} in Telegram and send the pairing code ${t.pairing_code ? 'shown on the cockpit\'s Donna page' : `from \`${cliCmd(ctx.home, 'donna telegram --pair')}\``}${t.error ? ` [${t.error}]` : ''}`);
       else warn(`Telegram: not set up (optional): ${cliCmd(ctx.home, 'donna telegram --token <token from @BotFather>')}`);
       if (c.imessage.enabled) (c.imessage.error ? fail : ok)(`iMessage: ${c.imessage.error || `on for ${c.imessage.handle}`}`);
     } catch {

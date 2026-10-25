@@ -125,7 +125,9 @@ export class IMessageGateway {
 
   status(org = this.org.read()) {
     const im = org.channels.imessage;
-    return { supported: this.supported(), enabled: !!im.enabled, handle: im.handle || null, polling: !!this.timer, error: this.blockedReason() || this.lastError };
+    const st = readJson(this.paths.imessageState, {}) || {};
+    // saved: this handle was entered in the cockpit (not only written into org.json).
+    return { supported: this.supported(), enabled: !!im.enabled, handle: im.handle || null, saved: !!im.handle && st.authorized_handle === im.handle, polling: !!this.timer, error: this.blockedReason() || this.lastError };
   }
 
   changed() {
@@ -152,11 +154,7 @@ export class IMessageGateway {
     // the only one a ping may ever go to, once a message from it proves it (poll).
     if (handle !== undefined) {
       const st = readJson(this.paths.imessageState, {}) || {};
-      if (st.authorized_handle !== im.handle) {
-        st.authorized_handle = im.handle;
-        st.verified_for = null;
-        writeJson(this.paths.imessageState, st, 0o600);
-      }
+      if (st.authorized_handle !== im.handle) this.saveState({ authorized_handle: im.handle, verified_for: null });
     }
     this.stop();
     this.start();
@@ -200,7 +198,7 @@ export class IMessageGateway {
         const rows = await this.query('SELECT MAX(ROWID) AS max FROM message;');
         st.last_rowid = Number(rows[0]?.max) || 0;
         st.db = this.chatDb();
-        writeJson(this.paths.imessageState, st, 0o600);
+        this.saveState({ last_rowid: st.last_rowid, db: st.db });
         return 0;
       }
       const rows = await this.query(pollSql(st.last_rowid));
@@ -213,7 +211,7 @@ export class IMessageGateway {
       for (const row of rows) {
         const id = Number(row.rowid);
         if (Number.isSafeInteger(id) && id > st.last_rowid) st.last_rowid = id;
-        writeJson(this.paths.imessageState, st, 0o600);
+        this.saveState({ last_rowid: st.last_rowid });
         if (Number(row.is_from_me) !== 0) continue;
         if (normalizeHandle(row.handle) !== want) continue;
         const text = (row.text && String(row.text)) || decodeAttributedBody(row.body_hex);
@@ -222,10 +220,8 @@ export class IMessageGateway {
         // A message from the handle proves it is the owner's: only then may Clawdling text it first
         // (the "an agent needs you" ping, needs-you.js). Kept in server-only state, for this exact
         // handle as configured: any change to the handle has to prove itself again.
-        if (st.verified_for !== im.handle && st.authorized_handle === im.handle && sameSender(row.handle, im.handle)) {
-          st.verified_for = im.handle;
-          writeJson(this.paths.imessageState, st, 0o600);
-        }
+        const now = readJson(this.paths.imessageState, {}) || {};
+        if (now.verified_for !== im.handle && now.authorized_handle === im.handle && sameSender(row.handle, im.handle)) this.saveState({ verified_for: im.handle });
         this.events.record({ type: 'channel', channel: 'imessage', direction: 'in', text: clampText(text, 500) });
         this.events.publish('channel', { channel: 'imessage', direction: 'in', text: clampText(text, 500), ts: new Date().toISOString() });
         await this.dispatch(im.handle, text);
@@ -253,6 +249,11 @@ export class IMessageGateway {
       reply = `Donna hit an error: ${oneLine(err.message, 200)}`;
     }
     await this.send(handle, reply || 'Done.');
+  }
+
+  /** Merge `patch` into the state file as it is now (a poll waiting on sqlite must not undo a configure). */
+  saveState(patch) {
+    writeJson(this.paths.imessageState, { ...(readJson(this.paths.imessageState, {}) || {}), ...patch }, 0o600);
   }
 
   /** The configured handle, if the owner set it in the cockpit and a message from it proved it (see poll). */

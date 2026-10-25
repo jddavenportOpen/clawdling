@@ -211,6 +211,15 @@ function NotifyCard() {
     }
     setBusy(false);
   };
+  const [code, setCode] = useState(null);
+  const getCode = async () => {
+    try {
+      const r = await api.telegram({ pair: true });
+      setCode(r && r.pairing_code);
+    } catch (e) {
+      errorToast('Could not get a pairing code', e);
+    }
+  };
   const channel = srv && srv.channel === 'telegram' ? 'Telegram' : srv && srv.channel === 'imessage' ? 'iMessage' : null;
   return html`<section class="card" aria-labelledby="set-notify" data-testid="notify-card">
     <h2 id="set-notify" class="card-title">When an agent needs you</h2>
@@ -220,8 +229,10 @@ function NotifyCard() {
         aria-labelledby="set-notify-browser" data-testid="notify-browser" /><span class="switch-ui" aria-hidden="true"></span></label></div>
     <div class="set-row"><span class="set-label" id="set-notify-msg">Message me${channel ? ` on ${channel}` : ''}<span class="set-sub">${!srv ? 'Checking…'
       : channel ? `One line to the ${channel} chat Donna is paired with: which agent needs you, never what it asked. At most one per session every 10 minutes.`
-      : srv.telegram_repair ? html`Pair Telegram with Donna again first (<a href="#/donna">Donna</a>): Clawdling only messages a chat that sent it the pairing code, and this pairing is older than that record.`
-      : srv.imessage_unverified ? 'Text Donna once from your iMessage first, so Clawdling knows that number or address is yours (a phone number needs its country code).'
+      : srv.unprotected ? "Off here: this org folder's path has characters (like ( ) ' or accents) that keep Clawdling from locking agents out of its own settings."
+      : srv.telegram_repair ? html`Pair your Telegram chat once more: Clawdling only messages the chat that sent it a pairing code, and this pairing is older than that record.
+          ${code ? html` Send <strong class="mono" data-testid="notify-pair-code">/pair ${code}</strong> to your bot.` : html` <button type="button" class="link-btn" onClick=${getCode} data-testid="notify-pair">Get a pairing code</button>`}`
+      : srv.imessage_unverified ? html`Save your handle on the <a href="#/donna">Donna page</a>, then text Donna once from it, so Clawdling knows that number or address is yours (a phone number needs its country code).`
       : html`Pair Donna with Telegram or iMessage first (<a href="#/donna">Donna</a>).`}</span></span>
       <label class="switch"><input type="checkbox" checked=${!!(srv && srv.needs_you)} disabled=${!srv || busy || (!channel && !(srv && srv.needs_you))} onChange=${(e) => pickServer(e.currentTarget.checked)}
         aria-labelledby="set-notify-msg" data-testid="notify-message" /><span class="switch-ui" aria-hidden="true"></span></label></div>

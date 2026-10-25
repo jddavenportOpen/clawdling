@@ -13,6 +13,12 @@ let recent = [];
 // carries the question itself or anything else from the conversation.
 const WHAT = { question: 'a question', plan: 'a plan to approve', permission_prompt: 'a permission', elicitation_dialog: 'a question', login: 'a sign-in', error: 'an error', trust: 'a question before it starts', imports: 'a question before it starts', startup: 'a question before it starts' };
 const kindOf = (k) => (typeof k === 'string' && Object.hasOwn(WHAT, k) ? WHAT[k] : null);
+/** The agent's name in plain words (agents can name themselves): letters, digits, spaces, hyphens. */
+export function safeName(name) {
+  const s = String(name || '').replace(/[^\p{L}\p{N} -]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  return (s.length > 40 ? s.slice(0, 40).trim() : s) || 'An agent';
+}
+
 export function notifyBody(s) {
   const what = kindOf(s && s.asking && s.asking.kind) || kindOf(s && s.waiting_on);
   return `Waiting on you${what ? `: ${what}` : ''}. Open the cockpit to answer.`;
@@ -44,7 +50,7 @@ export function maybeNotify(prev, next, { agentsById = {}, onOpen = () => {} } =
   last.set(next.sid, t);
   recent.push(t);
   try {
-    const n = new window.Notification(`${agentLabel(next, agentsById)} needs you`, { body: notifyBody(next), tag: `clawdling-${next.sid}` });
+    const n = new window.Notification(`${safeName(agentLabel(next, agentsById))} needs you`, { body: notifyBody(next), tag: `clawdling-${next.sid}` });
     n.onclick = () => {
       window.focus();
       onOpen(next.sid);

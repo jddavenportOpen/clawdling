@@ -105,6 +105,7 @@ test('poller: starts from now, routes only the owner, replies via osascript argv
     }
   }
   assert.equal(gw.verifiedHandle(), '+1 (555) 010-0001', 'a message from the handle proves it (kept in server-only state)');
+  assert.equal(gw.status().saved, true);
   // An agent edits org.json to its own address: never a ping target, even after it texts in.
   const orgFile = path.join(home, 'org.json');
   const o = JSON.parse(fs.readFileSync(orgFile, 'utf8'));

@@ -105,6 +105,7 @@ export class TelegramGateway {
         }
         writeEnvVar(this.paths.env, 'TELEGRAM_BOT_TOKEN', t);
         st.offset = 0;
+        delete st.paired_chat_id; // a new bot: its chat has to pair again
         this.botUsername = me?.username || null;
         if (this.botUsername) st.bot_username = this.botUsername;
         else delete st.bot_username;
