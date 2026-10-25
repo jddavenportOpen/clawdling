@@ -53,9 +53,9 @@ test('as a hook: exit 2 with the reason refuses, exit 0 lets it through, bad inp
 });
 
 test('only the setup chat\'s settings file registers the guard', () => {
-  const base = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', home: '/h' });
+  const base = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', home: '/h', platform: 'linux' });
   assert.equal(base.hooks.PreToolUse, undefined);
-  const guarded = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', home: '/h', guardScript: '/x/guard.js' });
+  const guarded = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', home: '/h', guardScript: '/x/guard.js', platform: 'linux' });
   assert.equal(guarded.hooks.PreToolUse[0].matcher, GUARDED_TOOLS);
   assert.match(guarded.hooks.PreToolUse[0].hooks[0].command, /'\/x\/guard\.js'$/);
   const win = buildHooksSettings({ nodePath: 'C:\\node.exe', hookScript: 'C:\\x\\hook.js', guardScript: 'C:\\x\\guard.js', platform: 'win32' });
