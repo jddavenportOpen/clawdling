@@ -59,7 +59,8 @@ test('off by default: a session waiting on you sends nothing', async () => {
 test('on: one line naming the agent and the kind of wait, never the question; once per session', async () => {
   assert.equal((await request(srv, 'POST', '/api/notify', { needs_you: 'yes' })).status, 400);
   assert.deepEqual((await request(srv, 'POST', '/api/notify', { needs_you: true })).body, { needs_you: true, channel: 'telegram' });
-  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'org.json'), 'utf8')).notify.needs_you, true);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.clawdling', 'notify.json'), 'utf8')).needs_you, true, 'kept where agents cannot edit it');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'org.json'), 'utf8')).notify, undefined);
   const s = await ready('health', 'colors');
   await send(s.sid, 'ask? colors');
   await waitFor(() => pings().length === 1, { label: 'a ping', timeout: 15000 });

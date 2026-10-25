@@ -428,7 +428,7 @@ export async function startServer(opts = {}) {
       blocked: testMode && apiBase === TELEGRAM_OFFICIAL_BASE ? 'test mode: TELEGRAM_API_BASE must point at a local stub' : null,
     });
     const imessage = new IMessageGateway({ paths, org, donna, events, logger, env: testMode ? { ...env, CLAWDLING_TEST: '1' } : env });
-    const pinger = new NeedsYouPinger({ org, sessions, telegram, imessage, events, logger, delayMs: testMode && Number(env.CLAWDLING_PING_DELAY_MS) >= 0 && env.CLAWDLING_PING_DELAY_MS ? Number(env.CLAWDLING_PING_DELAY_MS) : 4000 });
+    const pinger = new NeedsYouPinger({ paths, org, sessions, telegram, imessage, events, logger, delayMs: testMode && Number(env.CLAWDLING_PING_DELAY_MS) >= 0 && env.CLAWDLING_PING_DELAY_MS ? Number(env.CLAWDLING_PING_DELAY_MS) : 4000 });
     sessions.onNeedsYou = (rec) => pinger.onNeedsYou(rec);
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);

@@ -56,6 +56,7 @@ export function runtimePaths(home) {
     hookSpool: path.join(rt, 'hook-spool.jsonl'),
     telegramState: path.join(rt, 'telegram.json'),
     imessageState: path.join(rt, 'imessage.json'),
+    notify: path.join(rt, 'notify.json'),
     donnaChat: path.join(rt, 'donna-chat.jsonl'),
     trust: path.join(rt, 'trust.json'),
     remote: path.join(rt, 'remote.json'),

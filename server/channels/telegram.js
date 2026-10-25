@@ -279,6 +279,7 @@ export class TelegramGateway {
       return;
     }
     delete st.pairing;
+    st.paired_chat_id = chat.id; // server-only copy (org.json is in agents' reach; see needs-you.js)
     this.saveState(st);
     const org = this.org.update((o) => {
       o.channels.telegram = { ...o.channels.telegram, enabled: true, chat_id: chat.id };

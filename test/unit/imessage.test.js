@@ -104,7 +104,7 @@ test('poller: starts from now, routes only the owner, replies via osascript argv
       assert.ok(!argv[i + 1].includes('rm -rf'), 'reply text never spliced into script source');
     }
   }
-  assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'org.json'), 'utf8')).channels.imessage.verified, '5550100001', 'a message from the handle proves it');
+  assert.equal(gw.verifiedHandle(), '+1 (555) 010-0001', 'a message from the handle proves it (kept in server-only state)');
   assert.equal(await gw.poll(), 0, 'nothing new');
   const st = JSON.parse(fs.readFileSync(runtimePaths(home).imessageState, 'utf8'));
   assert.equal(st.last_rowid, 5);

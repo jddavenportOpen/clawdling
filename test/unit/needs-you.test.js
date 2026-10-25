@@ -2,7 +2,11 @@
 // (needs-you.js), and the browser notification's rules (web/lib/notify.js).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { NeedsYouPinger, pingChannel, pingText } from '../../server/needs-you.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { sameSender } from '../../server/channels/imessage.js';
+import { NeedsYouPinger, pingChannel, pingText, safeName } from '../../server/needs-you.js';
 
 test('pingText: the agent and the kind of wait, nothing from the conversation', () => {
   assert.equal(pingText({ agentName: 'Health', waitingOn: 'permission_prompt', asking: { kind: 'question' } }), 'Clawdling: Health needs you (a question). Open the cockpit to answer.');
@@ -13,56 +17,81 @@ test('pingText: the agent and the kind of wait, nothing from the conversation', 
   assert.equal(pingText({ agentName: 'Work', waitingOn: 'constructor', asking: { kind: '__proto__' } }), 'Clawdling: Work needs you. Open the cockpit to answer.');
 });
 
-test('pingChannel: only a paired, enabled channel; Telegram first', () => {
+test('pingChannel: only the chat that sent the pairing code, or an iMessage handle that texted Donna; Telegram first', () => {
   const tg = { enabled: true, chat_id: 7 };
-  const im = { enabled: true, handle: 'owner@example.test', verified: 'owner@example.test' };
-  assert.deepEqual(pingChannel({ channels: { telegram: tg, imessage: im } }), { channel: 'telegram', to: 7 });
-  assert.deepEqual(pingChannel({ channels: { telegram: { enabled: true, chat_id: null }, imessage: im } }), { channel: 'imessage', to: 'owner@example.test' });
-  assert.deepEqual(pingChannel({ channels: { telegram: tg, imessage: im } }, { telegramReady: false }), { channel: 'imessage', to: 'owner@example.test' });
-  assert.equal(pingChannel({ channels: { telegram: { enabled: false, chat_id: 7 }, imessage: { enabled: true, handle: null } } }), null);
-  assert.equal(pingChannel({}), null);
+  const im = { enabled: true, handle: 'owner@example.test' };
+  const both = { channels: { telegram: tg, imessage: im } };
+  assert.deepEqual(pingChannel(both, { pairedChatId: 7, verifiedHandle: 'owner@example.test' }), { channel: 'telegram', to: 7 });
+  // org.json says chat 8 (an agent could have written that): not the paired chat, so not Telegram.
+  assert.deepEqual(pingChannel({ channels: { telegram: { enabled: true, chat_id: 8 }, imessage: im } }, { pairedChatId: 7, verifiedHandle: 'owner@example.test' }), { channel: 'imessage', to: 'owner@example.test' });
+  assert.equal(pingChannel({ channels: { telegram: { enabled: true, chat_id: 8 } } }, { pairedChatId: 7 }), null);
+  assert.equal(pingChannel({ channels: { telegram: tg } }, { pairedChatId: null }), null);
+  assert.deepEqual(pingChannel(both, { pairedChatId: 7, verifiedHandle: 'owner@example.test', telegramReady: false }), { channel: 'imessage', to: 'owner@example.test' });
   // An iMessage handle that never texted Donna (a typo, or someone else's number) gets nothing.
-  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: 'owner@example.test' } } }), null);
-  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: 'other@example.test', verified: 'owner@example.test' } } }), null);
-  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: '-e', verified: '-e' } } }), null);
+  assert.equal(pingChannel({ channels: { imessage: im } }, { verifiedHandle: null }), null);
+  assert.equal(pingChannel({ channels: { imessage: { enabled: true, handle: 'other@example.test' } } }, { verifiedHandle: 'owner@example.test' }), null);
+  assert.equal(pingChannel({ channels: { telegram: { enabled: false, chat_id: 7 }, imessage: { enabled: true, handle: null } } }, { pairedChatId: 7 }), null);
+  assert.equal(pingChannel({}), null);
 });
 
-function harness({ enabled = true, now = { t: 1000000 } } = {}) {
-  const org = { notify: { needs_you: enabled }, channels: { telegram: { enabled: true, chat_id: 9 }, imessage: { enabled: false } } };
+test('safeName: plain words only, 40 characters', () => {
+  assert.equal(safeName('Health'), 'Health');
+  assert.equal(safeName('Q3 <b>secret</b> plan: http://x.example/?a=1'), 'Q3 b secret b plan http x.example a 1');
+  assert.equal(safeName('x'.repeat(90)).length, 40);
+  assert.equal(safeName('\u202e\n'), 'An agent');
+});
+
+test('sameSender: the whole number (or address), not just its last 10 digits', () => {
+  assert.equal(sameSender('+12025550123', '202 555 0123'), true);
+  assert.equal(sameSender('+12025550123', '+1 (202) 555-0123'), true);
+  assert.equal(sameSender('+442025550123', '+1 202 555 0123'), false);
+  assert.equal(sameSender('+12025550123', '+44 20 2555 0123'), false);
+  assert.equal(sameSender('Owner@Example.test', 'owner@example.test'), true);
+  assert.equal(sameSender('owner@example.test', 'other@example.test'), false);
+});
+
+function harness({ now = { t: 1000000 } } = {}) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-ping-'));
+  const paths = { notify: path.join(dir, 'notify.json') };
+  const org = { channels: { telegram: { enabled: true, chat_id: 9 }, imessage: { enabled: false } } };
   const recs = new Map();
   const sent = [];
-  const p = new NeedsYouPinger({
-    org: { read: () => org, update: (fn) => fn(org) },
+  let tgState = { paired_chat_id: 9 };
+  const make = () => new NeedsYouPinger({
+    paths,
+    org: { read: () => org },
     sessions: { get: (sid) => recs.get(sid) || null },
-    telegram: { token: () => 'x', blocked: null, reply: async (to, text) => sent.push([to, text]) },
-    imessage: { supported: () => false },
+    telegram: { token: () => 'x', blocked: null, state: () => tgState, saveState: (s) => { tgState = s; }, reply: async (to, text) => sent.push([to, text]) },
+    imessage: { supported: () => false, verifiedHandle: () => null },
     now: () => now.t,
     delayMs: 0,
   });
-  return { org, recs, sent, p, now };
+  return { dir, paths, org, recs, sent, p: make(), make, now };
 }
 
-test('NeedsYouPinger: off by default, still waiting after the delay, once per session per 10 minutes, six an hour', async () => {
-  const h = harness({ enabled: false });
+test('NeedsYouPinger: off by default, still waiting after the delay, once per session per 10 minutes, six an hour, across restarts', async () => {
+  const h = harness();
   h.recs.set('a', { sid: 'a', agent: 'work', agent_name: 'Work', status: 'needs_you', waiting_on: 'permission_prompt' });
   assert.deepEqual(await h.p.check('a'), { sent: false, why: 'off' });
   h.p.setEnabled(true);
-  assert.equal(h.org.notify.needs_you, true);
+  assert.equal(JSON.parse(fs.readFileSync(h.paths.notify, 'utf8')).needs_you, true);
   assert.equal((await h.p.check('a')).sent, true);
   assert.deepEqual(h.sent, [[9, 'Clawdling: Work needs you (a permission). Open the cockpit to answer.']]);
   assert.equal((await h.p.check('a')).why, 'rate (session)');
+  assert.equal((await h.make().check('a')).why, 'rate (session)', 'a restart keeps the limit');
   h.now.t += 10 * 60000;
   assert.equal((await h.p.check('a')).sent, true);
-  // Answered before the check: nothing.
   h.recs.set('b', { sid: 'b', agent: 'work', status: 'working' });
   assert.equal((await h.p.check('b')).why, 'answered');
-  // Six an hour in all.
   for (let i = 0; i < 6; i++) h.recs.set(`s${i}`, { sid: `s${i}`, agent: 'work', status: 'needs_you' });
   const results = [];
-  for (let i = 0; i < 6; i++) results.push((await h.p.check(`s${i}`)).sent);
+  for (let i = 0; i < 6; i++) results.push((await h.make().check(`s${i}`)).sent); // a new instance each time: a restart loop
   assert.deepEqual(results, [true, true, true, true, false, false]);
-  assert.equal((await h.p.check('s5')).why, 'rate (hour)');
-  // onNeedsYou does nothing while off, and schedules one check while on.
+  // The pairing record is not the chat in org.json: nothing.
+  h.org.channels.telegram.chat_id = 10;
+  h.now.t += 2 * 3600000;
+  assert.equal((await h.p.check('s5')).why, 'no paired channel');
+  h.org.channels.telegram.chat_id = 9;
   h.p.setEnabled(false);
   h.p.onNeedsYou(h.recs.get('s5'));
   assert.equal(h.p.timers.size, 0);
@@ -71,6 +100,20 @@ test('NeedsYouPinger: off by default, still waiting after the delay, once per se
   h.p.onNeedsYou(h.recs.get('s5'));
   assert.equal(h.p.timers.size, 1);
   h.p.stop();
+  fs.rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('a Telegram pairing from before 1.4 is taken as paired once; a later org.json edit is not', () => {
+  let tgState = {};
+  const org = { channels: { telegram: { enabled: true, chat_id: 5 }, imessage: {} } };
+  const tg = { state: () => tgState, saveState: (s) => { tgState = s; } };
+  // eslint-disable-next-line no-new
+  new NeedsYouPinger({ paths: {}, org: { read: () => org }, telegram: tg });
+  assert.deepEqual(tgState, { paired_chat_id: 5, migrated_1_4: true });
+  org.channels.telegram.chat_id = 6;
+  // eslint-disable-next-line no-new
+  new NeedsYouPinger({ paths: {}, org: { read: () => org }, telegram: tg });
+  assert.equal(tgState.paired_chat_id, 5);
 });
 
 test('browser notification: only when the tab is hidden, the setting is on, and the session just started needing you', async () => {

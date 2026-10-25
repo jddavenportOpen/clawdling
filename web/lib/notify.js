@@ -6,7 +6,9 @@ import { agentLabel } from './model.js';
 
 const PREF = 'notifyNeedsYou';
 const PER_SESSION_MS = 60000;
+const PER_MINUTE = 6; // in all, however many sessions start waiting
 const last = new Map();
+let recent = [];
 // What kind of wait, in fixed words: the notification can show on a lock screen, so it never
 // carries the question itself or anything else from the conversation.
 const WHAT = { question: 'a question', plan: 'a plan to approve', permission_prompt: 'a permission', elicitation_dialog: 'a question', login: 'a sign-in', error: 'an error', trust: 'a question before it starts', imports: 'a question before it starts', startup: 'a question before it starts' };
@@ -36,8 +38,11 @@ export function maybeNotify(prev, next, { agentsById = {}, onOpen = () => {} } =
   if (!next || next.status !== 'needs_you' || (prev && prev.status === 'needs_you')) return false;
   if (typeof document === 'undefined' || !document.hidden || !notifyOn()) return false;
   const t = Date.now();
-  if (t - (last.get(next.sid) || 0) < PER_SESSION_MS) return false;
+  for (const [k, at] of last) if (t - at >= PER_SESSION_MS) last.delete(k);
+  recent = recent.filter((x) => t - x < 60000);
+  if (last.has(next.sid) || recent.length >= PER_MINUTE) return false;
   last.set(next.sid, t);
+  recent.push(t);
   try {
     const n = new window.Notification(`${agentLabel(next, agentsById)} needs you`, { body: notifyBody(next), tag: `clawdling-${next.sid}` });
     n.onclick = () => {

@@ -33,6 +33,22 @@ export function validHandle(h) {
   return EMAIL_RE.test(s) || (PHONE_RE.test(s) && s.replace(/\D/g, '').length >= 5);
 }
 
+/**
+ * Is `sender` (as Messages recorded it) exactly the configured `handle`? Stricter than
+ * normalizeHandle: all the digits, except that a 10-digit number typed without its country code
+ * matches the same number with one.
+ */
+export function sameSender(sender, handle) {
+  const a = String(sender ?? '').trim().toLowerCase();
+  const b = String(handle ?? '').trim().toLowerCase();
+  if (!a || !b) return false;
+  if (a.includes('@') || b.includes('@')) return a === b;
+  const da = a.replace(/\D/g, '');
+  const db = b.replace(/\D/g, '');
+  if (db.length < 5) return false;
+  return da === db || (db.length === 10 && da.length > 10 && da.endsWith(db));
+}
+
 /** Compare handles the way Messages stores them: emails case-insensitive, phones by last 10 digits. */
 export function normalizeHandle(h) {
   const s = String(h ?? '').trim().toLowerCase();
@@ -125,13 +141,10 @@ export class IMessageGateway {
     if (handle !== undefined && handle !== null && handle !== '' && !validHandle(handle)) throw badRequest('handle must be an email address or phone number');
     this.org.update((o) => {
       const cur = o.channels.imessage;
-      const next = handle !== undefined ? (handle ? String(handle).trim() : null) : cur.handle;
       o.channels.imessage = {
         ...cur,
-        handle: next,
+        handle: handle !== undefined ? (handle ? String(handle).trim() : null) : cur.handle,
         enabled: enabled !== undefined ? !!enabled : cur.enabled,
-        // Proven by a message from it (see poll); a new handle has to prove itself again.
-        verified: normalizeHandle(next) && normalizeHandle(next) === cur.verified ? cur.verified : null,
       };
     });
     const im = this.org.read().channels.imessage;
@@ -198,13 +211,11 @@ export class IMessageGateway {
         if (!text || !text.trim()) continue;
         n++;
         // A message from the handle proves it is the owner's: only then may Clawdling text it first
-        // (the "an agent needs you" ping, needs-you.js).
-        if (im.verified !== want) {
-          this.org.update((o) => {
-            if (normalizeHandle(o.channels.imessage.handle) === want) o.channels.imessage.verified = want;
-            return o;
-          });
-          im.verified = want;
+        // (the "an agent needs you" ping, needs-you.js). Kept in server-only state, for this exact
+        // handle as configured: any change to the handle has to prove itself again.
+        if (st.verified_for !== im.handle && sameSender(row.handle, im.handle)) {
+          st.verified_for = im.handle;
+          writeJson(this.paths.imessageState, st, 0o600);
         }
         this.events.record({ type: 'channel', channel: 'imessage', direction: 'in', text: clampText(text, 500) });
         this.events.publish('channel', { channel: 'imessage', direction: 'in', text: clampText(text, 500), ts: new Date().toISOString() });
@@ -233,6 +244,13 @@ export class IMessageGateway {
       reply = `Donna hit an error: ${oneLine(err.message, 200)}`;
     }
     await this.send(handle, reply || 'Done.');
+  }
+
+  /** The configured handle, if a message from it has proven it is the owner's (see poll). */
+  verifiedHandle(org = this.org.read()) {
+    const im = org.channels.imessage;
+    const st = readJson(this.paths.imessageState, {}) || {};
+    return im.handle && validHandle(im.handle) && st.verified_for === im.handle ? im.handle : null;
   }
 
   async send(handle, text) {
