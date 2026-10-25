@@ -32,7 +32,8 @@ no servers of its own. The author never receives any of your data.
   Tailscale's or Cloudflare's own terms. You sign in to those services yourself; Clawdling never
   sees, reads or stores those logins, and the setup agent is told never to read their keys or
   credential files. Clawdling keeps, on your computer only, the addresses you registered
-  (`.clawdling/remote.json`) and, for each paired device, a short label taken from its browser
+  (`.clawdling/remote.json`, with the Tailscale account name Tailscale reports for your own
+  devices, so it can refuse everyone else's) and, for each paired device, a short label taken from its browser
   (like "iPhone · Safari"), when it was paired and last used, and a hash of its sign-in. To check
   an address it runs `tailscale serve status --json` and makes signed-out requests to your own
   address; for Cloudflare it fetches your Access team's public signing keys. Nothing goes to the
