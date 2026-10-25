@@ -37,6 +37,8 @@ import {
   checkCloudflare,
   checkTailscale,
   deviceLabel,
+  funnelState,
+  onlyCockpit,
   loopbackPeer,
   parseRemoteUrl,
   remoteOriginAllowed,
@@ -578,8 +580,19 @@ export async function startServer(opts = {}) {
         }
         for (const e of list) {
           const f = path.join(d, e.name);
-          if (e.isFile() && e.name === 'remote-access.md') return f;
-          if (e.isDirectory()) {
+          let isFile = e.isFile();
+          let isDir = e.isDirectory();
+          if (e.isSymbolicLink()) {
+            try {
+              const st = fs.statSync(f);
+              isFile = st.isFile();
+              isDir = st.isDirectory();
+            } catch {
+              continue;
+            }
+          }
+          if (isFile && e.name === 'remote-access.md') return f;
+          if (isDir) {
             const hit = walk(f, depth + 1);
             if (hit) return hit;
           }
@@ -789,7 +802,47 @@ export async function startServer(opts = {}) {
           Object.assign(h, { status: r.status, detail: r.detail, checked_at: r.checked_at, ...(r.access ? { access: r.access } : {}), ...(r.login ? { login: r.login } : {}) });
         }
       });
+      for (const [url, r] of results) unsafeSignOut(url, r);
       remoteChanged('checked');
+    }
+
+    /**
+     * An address found public, shared with another app, or with a raw forward onto the cockpit:
+     * whatever reached it meanwhile may have seen a device's cookie and key, so every device
+     * paired through it signs out, and its pairing links stop working.
+     */
+    function unsafeSignOut(url, r) {
+      if (!['public', 'unconfirmed', 'unprotected', 'unverified'].includes(r.status)) return;
+      const n = devices.revokeHost(url);
+      pairings.clear();
+      if (n) {
+        logger.warn(`remote: ${url} is no longer private (${r.status}); signed out ${n} device(s)`);
+        remote.update((s) => {
+          const h = s.hosts.find((x) => x.url === url);
+          if (h) h.detail = `${h.detail || ''} Every device paired through it was signed out: pair them again once it is fixed.`.trim();
+        });
+      }
+    }
+
+    /** The cheap half of a Tailscale check (serve status only, no request), run every minute. */
+    async function quickServeCheck() {
+      const st = remote.read();
+      if (!st.enabled) return;
+      for (const h of st.hosts) {
+        if (h.kind !== 'tailscale' || !answerable(h)) continue;
+        const f = await funnelState(h, { bin: tsBin(), run: runReadOnly, port });
+        let bad = null;
+        if (f.known && f.funnel) bad = { status: 'public', detail: 'Tailscale Funnel was turned on for this address. Clawdling stopped answering it.' };
+        else if (f.known && f.tcp.length) bad = { status: 'unconfirmed', detail: `A Tailscale TCP forward on port ${f.tcp.join(', ')} now lands on the cockpit. Clawdling stopped answering this address.` };
+        else if (f.known && f.handlers.length && !onlyCockpit(f.handlers, { port, path: h.path })) bad = { status: 'unconfirmed', detail: `Something else is now served on ${h.url} too. Clawdling stopped answering it: give the cockpit a port of its own, then check again.` };
+        if (!bad) continue;
+        remote.update((s) => {
+          const x = s.hosts.find((y) => y.url === h.url);
+          if (x) Object.assign(x, { ...bad, checked_at: new Date().toISOString() });
+        });
+        unsafeSignOut(h.url, bad);
+        remoteChanged('checked');
+      }
     }
 
     async function addHost(b) {
@@ -983,13 +1036,15 @@ export async function startServer(opts = {}) {
           const who = req.who;
           if (!who.remote) throw new HttpError(403, 'Pairing links work only through your remote address.');
           const key = throttleKey(who);
-          if (throttle.blocked(key)) {
-            const e = new HttpError(429, 'Too many failed sign-ins through this address. Wait a few minutes, then try again.');
-            e.retryAfter = throttle.retryAfter(key);
-            throw e;
-          }
           const b = await jsonBody(req);
+          // A valid code always pairs (it is single use and 192 bits: a lockout guards nothing
+          // for it); only failures count, so nobody can hold the owner's pairing shut.
           if (!pairings.consume(b.code)) {
+            if (throttle.blocked(key)) {
+              const e = new HttpError(429, 'Too many failed sign-ins through this address. Wait a few minutes, then try again.');
+              e.retryAfter = throttle.retryAfter(key);
+              throw e;
+            }
             throttle.fail(key);
             throw new HttpError(401, 'This link has expired or was already used. On your computer, open Settings, Use from anywhere, and make a new one.');
           }
@@ -1421,6 +1476,15 @@ export async function startServer(opts = {}) {
       });
     }, Number(env.CLAWDLING_REMOTE_RECHECK_MS) > 0 && testMode ? Number(env.CLAWDLING_REMOTE_RECHECK_MS) : 10 * 60 * 1000);
     remoteRecheck.unref?.();
+    let quickRunning = false;
+    const remoteQuick = setInterval(() => {
+      if (quickRunning || rechecking) return;
+      quickRunning = true;
+      quickServeCheck().catch((err) => logger.warn(`remote: serve check failed: ${err.message}`)).finally(() => {
+        quickRunning = false;
+      });
+    }, Number(env.CLAWDLING_REMOTE_QUICK_MS) > 0 && testMode ? Number(env.CLAWDLING_REMOTE_QUICK_MS) : 60 * 1000);
+    remoteQuick.unref?.();
 
     onRequest = handleRequest;
     onUpgrade = handleUpgrade;
@@ -1438,6 +1502,7 @@ export async function startServer(opts = {}) {
       stopped = true;
       clearInterval(remoteWatch);
       clearInterval(remoteRecheck);
+      clearInterval(remoteQuick);
       telegram.stop();
       imessage.stop();
       donna.stop();

@@ -88,8 +88,9 @@ the same power as sitting at the computer, so it is guarded as such.
   "Sign in this device" button; only that POST uses the code (so a link preview cannot burn it).
   The device then holds its own random credential (`cld_<id>_<secret>`, 256-bit secret) in a
   cookie named `__Host-cl_device` (host-only: since `ts.net` is a public suffix, every machine on
-  a tailnet is the same site, and without the prefix another one could plant a decoy cookie; a
-  decoy that arrives anyway is skipped, not counted) that is `Secure` (https only), `HttpOnly`
+  a tailnet is the same site, and without the prefix another one could plant a cookie for the
+  whole tailnet; an app on another port of the same host name still can replace it, which signs
+  the phone out but never signs anything in) that is `Secure` (https only), `HttpOnly`
   (page scripts cannot read it) and
   `SameSite=Strict` (a link from another site opens the page signed out for one load, and the
   page's own same-origin calls carry it). Browsers send a cookie to every port of a host name,
@@ -131,14 +132,18 @@ the same power as sitting at the computer, so it is guarded as such.
   gives a Cloudflare hostname exactly one ingress rule with no `path:`; keep it that way. Later checks
   (Settings' Check again, `clawdling remote check`, and an automatic check every 10 minutes while
   it is on) apply the same rules: an address found public or unprotected is not answered until a
-  check passes again. Other local forwarders Clawdling cannot see (ngrok, socat) are out of its
-  reach: do not point one at the cockpit's port. A request marked `Tailscale-Funnel-Request` is always refused.
+  check passes again, and every device paired through it is signed out (whatever reached it in
+  the meantime may have seen a device's cookie and key). The Tailscale serve config itself is
+  read every minute while it is on, so a Funnel, a TCP forward or another app added later is
+  caught within a minute. Other local forwarders Clawdling cannot see (ngrok, socat) are out of
+  its reach: do not point one at the cockpit's port. A request marked `Tailscale-Funnel-Request` is always refused.
 - **Throttle.** Per remote address, signed-in Tailscale login or Access email, and source
   address (the tailnet IP Tailscale Serve reports, or Cloudflare's client IP), 10 failed sign-ins
   (a wrong device credential or pairing code) in 5 minutes make new attempts answer `429` for
   the rest of the window, so another device or process failing on purpose fills only its own
   bucket. A cookie whose key arrives only in a URL (`k=`, which any same-site page could add to
-  an `<img>`) is refused without counting. Paired
+  an `<img>`) is refused without counting. A valid pairing code always pairs, even while its
+  bucket is full: only failures are throttled. Paired
   devices keep working, and the computer itself is never throttled. A request with no credential
   is not counted. (The secrets are 192 and 256 bits, so this is defence in depth, not what
   stops guessing.)

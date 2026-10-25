@@ -66,13 +66,13 @@ const KEYS = new Map();
 let PREFIX = '';
 const viaServe = (host, p, noprefix) => (host === TS_HOST && !noprefix ? PREFIX + p : p);
 
-function raw(method, p0, { host = TS_HOST, headers = {}, body, login = host === TS_HOST ? OWNER : null, nokey = false, noprefix = false, source = host === TS_HOST ? '100.64.0.9' : null } = {}) {
-  const p = viaServe(host, p0, noprefix);
+function raw(method, p0, { host = TS_HOST, headers = {}, body, login = host === TS_HOST ? OWNER : null, nokey = false, noprefix = false, source = host === TS_HOST ? '100.64.0.9' : null, port = srv.port, prefix = null } = {}) {
+  const p = prefix !== null ? prefix + p0 : viaServe(host, p0, noprefix);
   return new Promise((resolve, reject) => {
     const data = body === undefined ? null : JSON.stringify(body);
     const key = !nokey && headers.cookie ? KEYS.get(headers.cookie) : null;
     const h = { host, ...(login ? { 'tailscale-user-login': login } : {}), ...(source ? { 'x-forwarded-for': source } : {}), ...(key ? { 'x-clawdling-device-key': key } : {}), ...headers, ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) } : {}) };
-    const req = http.request({ host: '127.0.0.1', port: srv.port, path: p, method, headers: h, agent: false }, (res) => {
+    const req = http.request({ host: '127.0.0.1', port, path: p, method, headers: h, agent: false }, (res) => {
       let text = '';
       res.setEncoding('utf8');
       res.on('data', (d) => (text += d));
@@ -486,7 +486,8 @@ test('throttle: too many bad credentials lock new attempts on that address; sign
   assert.ok(Number(last.headers['retry-after']) > 0);
   const p = await request(srv, 'POST', '/api/remote/pairing', {});
   const code = new URL(p.body.links[0].link).searchParams.get('pair');
-  assert.equal((await raw('POST', '/api/remote/pair', { headers: { ...phone, ...origin() }, body: { code } })).status, 429, 'pairing waits too');
+  assert.equal((await raw('POST', '/api/remote/pair', { headers: { ...phone, ...origin() }, body: { code: 'B'.repeat(32) } })).status, 429, 'a wrong code waits');
+  assert.equal((await raw('POST', '/api/remote/pair', { headers: { ...phone, ...origin() }, body: { code } })).status, 201, 'a valid code always pairs, even then');
   assert.equal((await raw('GET', '/api/org', { headers: { cookie } })).status, 200, 'a paired device is not locked out');
   // Another device of the owner's (another tailnet IP) can still pair: the bucket is per source.
   const p2 = await request(srv, 'POST', '/api/remote/pairing', {});
@@ -581,6 +582,8 @@ test('Cloudflare: refused when it answers without Access; registered behind Acce
   const check = cliResult(['remote', 'check'], { env, home });
   assert.equal(check.code, 1);
   assert.match(check.stdout, /Not behind Cloudflare Access ✗/);
+  assert.equal(readJsonFile(path.join(home, '.clawdling', 'remote-devices.json')).devices.filter((d) => d.host === CF_URL).length, 0, 'an address found unprotected signs its devices out');
+  assert.match(check.stdout, /Every device paired through it was signed out/);
   assert.equal((await raw('GET', '/api/org', { host: CF_HOST, headers: { cookie, 'cf-access-jwt-assertion': jwt } })).status, 403);
   setMode('forward');
 });
@@ -592,7 +595,7 @@ test('remote remove and remote off; Donna cannot run `clawdling remote`', async 
   const before = readJsonFile(path.join(home, '.clawdling', 'remote-devices.json')).devices.filter((d) => d.host === CF_URL).length;
   const rm = cli(['remote', 'remove', CF_URL], { env, home });
   assert.match(rm, /Removed https:\/\/cockpit\.example\.com\./);
-  assert.ok(before >= 1, 'the device paired through Cloudflare');
+  assert.equal(before, 0, 'already signed out when its check failed (the Cloudflare test)');
   assert.equal(readJsonFile(path.join(home, '.clawdling', 'remote-devices.json')).devices.filter((d) => d.host === CF_URL).length, 0, 'removing the address signed it out');
   assert.match(cliResult(['remote', 'remove', CF_URL], { env, home }).stderr, /not a remote address/);
   assert.match(cli(['remote', 'off'], { env, home }), /Use from anywhere is off/);
@@ -603,9 +606,9 @@ test('remote remove and remote off; Donna cannot run `clawdling remote`', async 
   assert.match(cli(['remote', 'list'], { env, home }), /Use from anywhere: off\. Nothing outside/);
 });
 
-test('while on, every address is checked again on its own: Funnel turned on later stops it', async () => {
+test('while on, the serve config is watched: Funnel turned on later stops the address and signs its devices out', async () => {
   const h2 = tempHome();
-  const s2env = { ...env, CLAWDLING_REMOTE_RECHECK_MS: '300', CLAWDLING_TMUX_SOCKET: uniqueSocket(), FAKE_TS_SERVE: path.join(h2, 'serve.json') };
+  const s2env = { ...env, CLAWDLING_REMOTE_RECHECK_MS: '600000', CLAWDLING_REMOTE_QUICK_MS: '200', CLAWDLING_TMUX_SOCKET: uniqueSocket(), FAKE_TS_SERVE: path.join(h2, 'serve.json') };
   try {
     cli(['init', '--defaults'], { env: s2env, home: h2 });
     fs.writeFileSync(path.join(h2, 'serve.json'), '{}');
@@ -614,12 +617,20 @@ test('while on, every address is checked again on its own: Funnel turned on late
     fs.writeFileSync(path.join(h2, '.clawdling', 'remote.json'), JSON.stringify({ version: 1, enabled: true, hosts: [{ url: TS_URL, kind: 'tailscale', status: 'private', added_at: new Date().toISOString(), checked_at: null, detail: null, login: OWNER, path: servePath(tok2, TS_URL) }] }));
     const s2 = await startServerProc({ home: h2, env: s2env });
     try {
+      const prefix = servePath(tok2, TS_URL);
+      const pr = await request(s2, 'POST', '/api/remote/pairing', {});
+      const code = new URL(pr.body.links[0].link).searchParams.get('pair');
+      const paired = await raw('POST', '/api/remote/pair', { port: s2.port, prefix, headers: { ...phone, ...origin() }, body: { code } });
+      assert.equal(paired.status, 201, paired.text);
+      assert.equal((await request(s2, 'GET', '/api/remote')).body.devices.length, 1);
       fs.writeFileSync(path.join(h2, 'serve.json'), JSON.stringify({ AllowFunnel: { [TS_HOST]: true } }));
       const v = await waitFor(async () => {
         const r = await request(s2, 'GET', '/api/remote');
         return r.body.hosts[0].status === 'public' ? r.body : null;
-      }, { label: 'periodic check found Funnel', timeout: 8000 });
+      }, { label: 'the minute check found Funnel', timeout: 8000 });
       assert.equal(v.hosts[0].answering, false);
+      assert.deepEqual(v.devices, [], 'every device paired through it is signed out');
+      assert.match(v.hosts[0].detail, /Funnel was turned on/);
     } finally {
       await s2.stop();
       killTmux(s2env.CLAWDLING_TMUX_SOCKET);

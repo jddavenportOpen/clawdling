@@ -60,10 +60,11 @@ Say the plan, for example:
      after a yes). Wait while the owner opens the app and signs in.
    - Linux: `tailscale` (install guide: https://tailscale.com/download/linux; ask first).
    - Windows: `tailscale` from the Tailscale app (https://tailscale.com/download/windows).
-2. **Signed in?** `TS status`. If it is logged out or stopped, ask the owner to sign in from the
-   Tailscale app (menu bar or tray). On Linux without the app, the owner runs `sudo tailscale up`
-   in their own terminal and opens the link it prints. Do not run it for them. When they say it
-   is done, check again.
+2. **Signed in?** First ask the owner whether the Tailscale app says it is connected (signed in).
+   If not, they sign in from the app (menu bar or tray); on Linux without the app, they run
+   `sudo tailscale up` in their own terminal and open the link it prints. Wait until they say it
+   is connected (a signed-out status can print a sign-in link you must not see). Then run
+   `TS status` to confirm.
 3. **This computer's name.** `TS status --json` and take `Self.DNSName`, without the trailing
    dot (like `box.example.ts.net`). Do not repeat the other devices it lists.
 4. **Existing entries.** `TS serve status`. Remember what is there and leave it alone. The cockpit
