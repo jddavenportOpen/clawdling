@@ -34,7 +34,10 @@ export function safeName(name) {
   return (s.length > 40 ? s.slice(0, 40).trim() : s) || 'An agent';
 }
 
-/** The message: "Clawdling: Health needs you (a question). Open the cockpit to answer." */
+/**
+ * The message: "Clawdling: Health needs you (a question). Open the cockpit to answer." The agent is
+ * named only by a label the owner approved (see setEnabled); otherwise "An agent".
+ */
 export function pingText({ agentName, waitingOn, asking }) {
   const kind = (k) => (typeof k === 'string' && Object.hasOwn(WHAT, k) ? WHAT[k] : null);
   const what = kind(asking?.kind) || kind(waitingOn);
@@ -66,6 +69,9 @@ export class NeedsYouPinger {
     const st = readJson(this.paths.notify, {}) || {};
     return {
       needs_you: st.needs_you === true,
+      // The agents' names when the owner turned this on, as they saw them: the only names a
+      // message or notification uses (an agent can rename itself; that never reaches a message).
+      labels: st.labels && typeof st.labels === 'object' ? st.labels : {},
       sent: Array.isArray(st.sent) ? st.sent.filter((t) => Number.isFinite(t)) : [],
       last: st.last && typeof st.last === 'object' ? st.last : {},
     };
@@ -101,13 +107,18 @@ export class NeedsYouPinger {
     // Set up, but not proven yet: say what to do.
     const repair = !ch && tg.enabled && tg.chat_id !== null && tg.chat_id !== undefined && String(tg.chat_id) !== String(paired);
     const unverified = !ch && !!(im.enabled && im.handle) && !this.imessage?.verifiedHandle?.(org);
-    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, ...(this.guarded() ? {} : { unprotected: true }), ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
+    return { needs_you: this.enabled(), channel: ch ? ch.channel : null, labels: this.enabled() ? this.state().labels : {}, ...(this.guarded() ? {} : { unprotected: true }), ...(repair ? { telegram_repair: true } : {}), ...(unverified ? { imessage_unverified: true } : {}) };
   }
 
   setEnabled(on) {
     if (on === true && !this.guarded()) throw badRequest("Clawdling cannot keep agents out of its own settings in a folder whose path has characters like ( ) ' or accents, so it will not message you from here");
     const st = this.state();
     st.needs_you = on === true;
+    // Turning it on approves today's names (Settings lists them); off forgets them.
+    st.labels = {};
+    if (on === true) {
+      for (const a of this.org.agents?.() || []) if (a && typeof a.id === 'string') st.labels[a.id] = safeName(a.name || a.id);
+    }
     this.save(st);
     this.events?.record?.({ type: 'notify', needs_you: on === true });
     return this.status();
@@ -159,7 +170,8 @@ export class NeedsYouPinger {
     const org = this.org.read();
     const ch = this.channelFor(org);
     if (!ch) return { sent: false, why: 'no paired channel' };
-    const text = pingText({ agentName: rec.agent_name || rec.agent, waitingOn: rec.waiting_on, asking: rec.asking });
+    const label = Object.hasOwn(st.labels, rec.agent) ? st.labels[rec.agent] : null;
+    const text = pingText({ agentName: label, waitingOn: rec.waiting_on, asking: rec.asking });
     st.last[sid] = t;
     st.sent.push(t);
     this.save(st); // counted before sending: a failed send still counts

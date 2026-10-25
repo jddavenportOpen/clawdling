@@ -120,7 +120,7 @@ export function mergeSession(patch) {
     return { sessions: { ...s.sessions, [patch.sid]: next } };
   });
   const st = getState();
-  maybeNotify(before, st.sessions[patch.sid], { agentsById: st.agentsById, onOpen: focusSession });
+  maybeNotify(before, st.sessions[patch.sid], { onOpen: focusSession });
 }
 
 // A poll that STARTED before a local write may carry stale rows for that sid,

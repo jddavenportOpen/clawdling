@@ -47,7 +47,7 @@ const send = (sid, text) => request(srv, 'POST', `/api/sessions/${sid}/send`, { 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 test('off by default: a session waiting on you sends nothing', async () => {
-  assert.deepEqual((await request(srv, 'GET', '/api/notify')).body, { needs_you: false, channel: 'telegram' });
+  assert.deepEqual((await request(srv, 'GET', '/api/notify')).body, { needs_you: false, channel: 'telegram', labels: {} });
   const s = await ready('work', 'quiet');
   await send(s.sid, 'permission? now');
   await waitFor(async () => (await view(s.sid)).status === 'needs_you', { label: 'needs you' });
@@ -58,7 +58,10 @@ test('off by default: a session waiting on you sends nothing', async () => {
 
 test('on: one line naming the agent and the kind of wait, never the question; once per session', async () => {
   assert.equal((await request(srv, 'POST', '/api/notify', { needs_you: 'yes' })).status, 400);
-  assert.deepEqual((await request(srv, 'POST', '/api/notify', { needs_you: true })).body, { needs_you: true, channel: 'telegram' });
+  const on = (await request(srv, 'POST', '/api/notify', { needs_you: true })).body;
+  assert.equal(on.needs_you, true);
+  assert.equal(on.channel, 'telegram');
+  assert.equal(on.labels.health, 'Health', 'the names the owner sees now are the approved labels');
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, '.clawdling', 'notify.json'), 'utf8')).needs_you, true, 'kept where agents cannot edit it');
   assert.equal(JSON.parse(fs.readFileSync(path.join(home, 'org.json'), 'utf8')).notify, undefined);
   const s = await ready('health', 'colors');

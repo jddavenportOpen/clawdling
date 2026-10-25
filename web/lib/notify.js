@@ -2,13 +2,23 @@
 // a session starts waiting on you. Off until turned on in Settings (the browser asks permission
 // then). One per session a minute; a click brings the tab back on that session.
 import { load, save } from './prefs.js';
-import { agentLabel } from './model.js';
 
 const PREF = 'notifyNeedsYou';
 const PER_SESSION_MS = 60000;
 const PER_MINUTE = 6; // in all, however many sessions start waiting
 const last = new Map();
 let recent = [];
+// The agents' names the owner approved when turning on "Message me" (GET /api/notify `labels`):
+// the only names a notification shows; anything else is "An agent".
+let labels = {};
+export function setLabels(map) {
+  labels = map && typeof map === 'object' ? map : {};
+}
+function nameFor(agent) {
+  if (Object.hasOwn(labels, agent)) return safeName(labels[agent]);
+  const mine = load(`${PREF}.labels`, {}) || {};
+  return Object.hasOwn(mine, agent) ? safeName(mine[agent]) : 'An agent';
+}
 // What kind of wait, in fixed words: the notification can show on a lock screen, so it never
 // carries the question itself or anything else from the conversation.
 const WHAT = { question: 'a question', plan: 'a plan to approve', permission_prompt: 'a permission', elicitation_dialog: 'a question', login: 'a sign-in', error: 'an error', trust: 'a question before it starts', imports: 'a question before it starts', startup: 'a question before it starts' };
@@ -27,12 +37,19 @@ export function notifyBody(s) {
 export const notifySupported = () => typeof window !== 'undefined' && 'Notification' in window;
 export const notifyOn = () => notifySupported() && !!load(PREF, false) && window.Notification.permission === 'granted';
 
-/** Turn it on (asks the browser) or off. Returns the state it ended in: 'on' | 'off' | 'denied'. */
-export async function setNotify(on) {
+/**
+ * Turn it on (asks the browser) or off. `names` ({agent id: name}) are the names the owner sees
+ * now: they become this browser's approved labels. Returns 'on' | 'off' | 'denied'.
+ */
+export async function setNotify(on, names = {}) {
   if (!on || !notifySupported()) {
     save(PREF, false);
+    save(`${PREF}.labels`, null);
     return 'off';
   }
+  const snap = {};
+  for (const [id, n] of Object.entries(names || {})) snap[id] = safeName(n);
+  save(`${PREF}.labels`, snap);
   let perm = window.Notification.permission;
   if (perm === 'default') perm = await window.Notification.requestPermission();
   save(PREF, perm === 'granted');
@@ -40,7 +57,7 @@ export async function setNotify(on) {
 }
 
 /** Called with a session's old and new row: notify when it just started needing you. */
-export function maybeNotify(prev, next, { agentsById = {}, onOpen = () => {} } = {}) {
+export function maybeNotify(prev, next, { onOpen = () => {} } = {}) {
   if (!next || next.status !== 'needs_you' || (prev && prev.status === 'needs_you')) return false;
   if (typeof document === 'undefined' || !document.hidden || !notifyOn()) return false;
   const t = Date.now();
@@ -50,7 +67,7 @@ export function maybeNotify(prev, next, { agentsById = {}, onOpen = () => {} } =
   last.set(next.sid, t);
   recent.push(t);
   try {
-    const n = new window.Notification(`${safeName(agentLabel(next, agentsById))} needs you`, { body: notifyBody(next), tag: `clawdling-${next.sid}` });
+    const n = new window.Notification(`${nameFor(next.agent)} needs you`, { body: notifyBody(next), tag: `clawdling-${next.sid}` });
     n.onclick = () => {
       window.focus();
       onOpen(next.sid);

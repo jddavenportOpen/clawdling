@@ -62,7 +62,7 @@ function harness({ now = { t: 1000000 } } = {}) {
   let tgState = { paired_chat_id: 9 };
   const make = () => new NeedsYouPinger({
     paths,
-    org: { read: () => org },
+    org: { read: () => org, agents: () => [{ id: 'work', name: 'Work' }] },
     sessions: { get: (sid) => recs.get(sid) || null },
     telegram: { token: () => 'x', blocked: null, state: () => tgState, saveState: (s) => { tgState = s; }, reply: async (to, text) => sent.push([to, text]) },
     imessage: { supported: () => false, verifiedHandle: () => null },
@@ -74,10 +74,11 @@ function harness({ now = { t: 1000000 } } = {}) {
 
 test('NeedsYouPinger: off by default, still waiting after the delay, once per session per 10 minutes, six an hour, across restarts', async () => {
   const h = harness();
-  h.recs.set('a', { sid: 'a', agent: 'work', agent_name: 'Work', status: 'needs_you', waiting_on: 'permission_prompt' });
+  h.recs.set('a', { sid: 'a', agent: 'work', agent_name: 'Renamed by itself', status: 'needs_you', waiting_on: 'permission_prompt' });
   assert.deepEqual(await h.p.check('a'), { sent: false, why: 'off' });
   h.p.setEnabled(true);
   assert.equal(JSON.parse(fs.readFileSync(h.paths.notify, 'utf8')).needs_you, true);
+  assert.deepEqual(JSON.parse(fs.readFileSync(h.paths.notify, 'utf8')).labels, { work: 'Work' }, 'the names the owner saw when turning it on');
   assert.equal((await h.p.check('a')).sent, true);
   assert.deepEqual(h.sent, [[9, 'Clawdling: Work needs you (a permission). Open the cockpit to answer.']]);
   assert.equal((await h.p.check('a')).why, 'rate (session)');
@@ -123,12 +124,15 @@ test('browser notification: only when the tab is hidden, the setting is on, and 
     localStorage: { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, v), removeItem: (k) => store.delete(k) },
   };
   globalThis.document = { hidden: true };
-  const { maybeNotify } = await import('../../web/lib/notify.js');
+  const { maybeNotify, setLabels } = await import('../../web/lib/notify.js');
   const prefs = await import('../../web/lib/prefs.js');
   prefs.save('notifyNeedsYou', true);
   const next = { sid: 'n1', agent: 'health', agent_name: 'Health', status: 'needs_you', notification: 'Claude asks: Which color?' };
   assert.equal(maybeNotify({ ...next, status: 'working' }, next), true);
-  assert.deepEqual(shown[0], ['Health needs you', { body: 'Waiting on you. Open the cockpit to answer.', tag: 'clawdling-n1' }], 'never the question itself');
+  assert.deepEqual(shown[0], ['An agent needs you', { body: 'Waiting on you. Open the cockpit to answer.', tag: 'clawdling-n1' }], 'never the question; no approved name yet');
+  setLabels({ health: 'Health' });
+  assert.equal(maybeNotify({ ...next, sid: 'n1b', status: 'working' }, { ...next, sid: 'n1b', agent_name: 'Renamed by itself' }), true);
+  assert.equal(shown[1][0], 'Health needs you', 'the approved label, not the name the session carries');
   assert.equal(maybeNotify({ ...next, status: 'working' }, next), false, 'once a minute per session');
   assert.equal(maybeNotify(next, { ...next, sid: 'n2' }), false, 'already needing you: no new notification');
   globalThis.document.hidden = false;

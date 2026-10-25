@@ -3,6 +3,7 @@
 import { api, ApiError, keyQuery, setUnauthorizedHandler } from './api.js';
 import { getState, setState } from './store.js';
 import { applySessionList, mergeSession } from './actions.js';
+import { setLabels } from './notify.js';
 import { save } from './prefs.js';
 
 let es = null;
@@ -52,6 +53,7 @@ export async function refreshSessions() {
 }
 
 export async function refreshChannels() {
+  api.notify().then((n) => setLabels(n && n.labels)).catch(() => {});
   try {
     const channels = await api.channels();
     setState({ channels });

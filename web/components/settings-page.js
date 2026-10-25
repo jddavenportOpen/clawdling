@@ -2,7 +2,7 @@
 // your own Claude Code setup (#/settings/setup scrolls to it).
 import { html } from '../lib/html.js';
 import { useEffect, useState } from 'preact/hooks';
-import { useStore } from '../lib/store.js';
+import { useStore, getState } from '../lib/store.js';
 import { getThemePref, setThemePref } from '../lib/theme.js';
 import { load, save } from '../lib/prefs.js';
 import { terms } from '../lib/term.js';
@@ -14,7 +14,7 @@ import { api } from '../lib/api.js';
 import { Icon } from './icons.js';
 import { SetupCard } from './setup.js';
 import { RemoteCard } from './remote.js';
-import { notifySupported, notifyOn, setNotify } from '../lib/notify.js';
+import { notifySupported, notifyOn, setNotify, setLabels } from '../lib/notify.js';
 
 export function SettingsPage() {
   const health = useStore((s) => s.health);
@@ -197,7 +197,8 @@ function NotifyCard() {
   const [busy, setBusy] = useState(false);
   useEffect(() => { api.notify().then(setSrv).catch(() => setSrv({ needs_you: false, channel: null, error: true })); }, []);
   const pickBrowser = async (on) => {
-    const st = await setNotify(on);
+    const byId = getState().agentsById || {};
+    const st = await setNotify(on, Object.fromEntries(Object.entries(byId).map(([id, a]) => [id, (a && a.name) || id])));
     setBrowser(st === 'on');
     setDenied(st === 'denied');
     if (st === 'denied') toast('The browser blocked notifications for this page. Allow them in the site settings, then try again.', { ms: 5200 });
@@ -205,7 +206,9 @@ function NotifyCard() {
   const pickServer = async (on) => {
     setBusy(true);
     try {
-      setSrv(await api.setNotify(on));
+      const r = await api.setNotify(on);
+      setSrv(r);
+      setLabels(r && r.labels);
     } catch (e) {
       errorToast('Could not change that', e);
     }
@@ -236,6 +239,7 @@ function NotifyCard() {
       : html`Pair Donna with Telegram or iMessage first (<a href="#/donna">Donna</a>).`}</span></span>
       <label class="switch"><input type="checkbox" checked=${!!(srv && srv.needs_you)} disabled=${!srv || busy || (!channel && !(srv && srv.needs_you))} onChange=${(e) => pickServer(e.currentTarget.checked)}
         aria-labelledby="set-notify-msg" data-testid="notify-message" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    ${srv && srv.needs_you ? html`<p class="set-note" data-testid="notify-labels">Messages and notifications name these agents, as they were named when you turned this on: ${Object.values(srv.labels || {}).join(', ') || 'none'}. Others say "An agent". Turn it off and on to update the list.</p>` : null}
   </section>`;
 }
 
