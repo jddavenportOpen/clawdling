@@ -95,6 +95,17 @@ export const api = {
   promoteSubagent: async (body) => one(await request('POST', '/api/setup/promote', body), 'agent'),
 
   pair: () => request('GET', '/api/pair'),
+
+  // 1.3, Use from anywhere. {enabled, invalid, port, hosts, devices, here}. Turning it on, adding
+  // addresses and making pairing links work only on the computer itself; off works from anywhere.
+  remote: () => request('GET', '/api/remote'),
+  remoteCheck: () => request('POST', '/api/remote/check', {}),
+  remoteEnabled: (enabled) => request('POST', '/api/remote/enabled', { enabled }),
+  // {expires_at, minutes, links: [{url, kind, link, qr_svg}]}: one code, once, for a few minutes.
+  remotePairing: () => request('POST', '/api/remote/pairing', {}),
+  // The phone's side of a pairing link (through the remote address): sets this device's cookie.
+  remotePair: (code) => request('POST', '/api/remote/pair', { code }, { quiet401: true }),
+  remoteSignOut: (id) => request('DELETE', `/api/remote/devices/${enc(id)}`),
   channels: () => request('GET', '/api/channels'),
   telegram: (body) => request('POST', '/api/channels/telegram', body),
   imessage: (body) => request('POST', '/api/channels/imessage', body),

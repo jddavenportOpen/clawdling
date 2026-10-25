@@ -13,6 +13,7 @@ import { ok } from '../lib/model.js';
 import { api } from '../lib/api.js';
 import { Icon } from './icons.js';
 import { SetupCard } from './setup.js';
+import { RemoteCard } from './remote.js';
 
 export function SettingsPage() {
   const health = useStore((s) => s.health);
@@ -56,7 +57,8 @@ export function SettingsPage() {
     <header class="page-bar"><div class="page-bar-main"><h1 class="page-title">Settings</h1>
       <p class="page-sub">Appearance and workspace are stored in this browser. Your org itself lives in files on disk.</p></div></header>
     <div class="settings-grid">
-      <${PhoneCard} />
+      <${RemoteCard} />
+      ${health && health.remote ? null : html`<${PhoneCard} />`}
       <section class="card" aria-labelledby="set-look">
         <h2 id="set-look" class="card-title">Appearance</h2>
         <div class="set-row"><span class="set-label">Theme</span>
@@ -168,8 +170,8 @@ function PhoneCard() {
         : offline ? html`<p class="phone-warn" role="note" data-testid="pair-warning"><${Icon} name="alert" size=${14} />
           <span>Your phone can't reach this cockpit yet: this computer has no network address right now. Connect it to Wi-Fi, then reload this page.</span></p>`
         : html`<p class="phone-warn" role="note" data-testid="pair-warning"><${Icon} name="alert" size=${14} />
-          <span>Your phone can't reach this cockpit yet. Restart it with <code>${cliCmd('start --host 0.0.0.0', health)}</code> to reach it on the same Wi-Fi,
-          or with <code>--host</code> set to this computer's Tailscale address (<code>tailscale ip -4</code>) to reach it from anywhere on your tailnet. Then reload this page.</span></p>`}
+          <span>Your phone can't reach this cockpit yet. To use it from your phone anywhere, turn on “Use from anywhere” above.
+          Or, on the same Wi-Fi only, restart it with <code>${cliCmd('start --host 0.0.0.0', health)}</code> and reload this page.</span></p>`}
         <div class="phone-block phone-app" data-testid="pair-app">
           <h3 class="card-h">Clawdling iPhone app <span class="card-tag">public beta</span></h3>
           <p class="set-note phone-lead">The iPhone app is in public beta on TestFlight: install TestFlight, then open <a href="https://testflight.apple.com/join/2MHukWQG" target="_blank" rel="noopener">testflight.apple.com/join/2MHukWQG</a> on your iPhone. ${reachable ? "Then scan this code with the app." : "Once this cockpit is reachable from your phone, you'll pair it here."}</p>
