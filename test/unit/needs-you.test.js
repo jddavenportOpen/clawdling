@@ -56,7 +56,8 @@ test('sameSender: the whole number with its country code (or the address), not j
 
 function harness({ now = { t: 1000000 } } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-ping-'));
-  const paths = { home: path.join(dir, 'org'), notify: path.join(dir, 'notify.json') };
+  // A plain org path (the guard's rules can be written for it); the state file is a real temp file.
+  const paths = { home: '/home/ada/clawdling', notify: path.join(dir, 'notify.json') };
   const org = { channels: { telegram: { enabled: true, chat_id: 9 }, imessage: { enabled: false } } };
   const recs = new Map();
   const sent = [];
@@ -69,6 +70,7 @@ function harness({ now = { t: 1000000 } } = {}) {
     imessage: { supported: () => false, verifiedHandle: () => null },
     now: () => now.t,
     delayMs: 0,
+    platform: 'linux',
   });
   return { dir, paths, org, recs, sent, p: make(), make, now };
 }
