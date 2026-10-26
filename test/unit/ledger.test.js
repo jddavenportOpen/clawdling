@@ -334,3 +334,20 @@ test('a transcript with only slash-command plumbing is a known format (no false 
   assert.equal(summarize(new LedgerReader().session(f)).format.ok, true);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test("/resume of another session inside a pane: that transcript is counted under its own session only", () => {
+  const root = tmp();
+  const proj = path.join(root, 'projects', '-x');
+  fs.mkdirSync(proj, { recursive: true });
+  const a = '99999999-9999-4999-8999-999999999991';
+  const b = '99999999-9999-4999-8999-999999999992';
+  const fb = path.join(proj, `${b}.jsonl`);
+  fs.writeFileSync(fb, `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: 'r', message: { id: 'm', model: 'claude-sonnet-5', usage: { input_tokens: 5e5 }, content: [{ type: 'text', text: 'b' }] } })}\n`);
+  const now = new Date().toISOString();
+  const ra = { sid: a, agent: 'demo', status: 'ready', created_at: now, last_activity_at: now, claude_session_id: b };
+  const rb = { sid: b, agent: 'demo', status: 'ended', created_at: now, last_activity_at: now, ended_at: now };
+  const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[a, ra], [b, rb]]), transcriptFile: () => fb } });
+  assert.equal(rep.summary(rb).cost.usd, 1);
+  assert.notEqual(rep.summary(ra).cost.usd, 1, 'not counted twice');
+  fs.rmSync(root, { recursive: true, force: true });
+});

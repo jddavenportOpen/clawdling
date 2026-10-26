@@ -258,12 +258,23 @@ export class Reports {
    */
   summary(rec, { force = false, lazy = false, also = null } = {}) {
     const prev = this.store.read(rec.sid);
-    const file = this.transcriptOf(rec);
+    // A transcript that is another Clawdling session's own (`/resume <it>` typed inside this pane)
+    // is counted under that session, never twice.
+    const foreign = (f) => {
+      const id = path.basename(String(f), '.jsonl');
+      if (id === rec.sid) return false; // its own file
+      const others = [...this.sessions.records.values()].filter((r) => r.sid !== rec.sid);
+      if (others.some((r) => r.sid === id)) return true; // another session's own file
+      return rec.claude_session_id !== id && others.some((r) => r.claude_session_id === id);
+    };
+    const mine = this.transcriptOf(rec);
+    const file = mine && !foreign(mine) ? mine : null;
     const base = { v: 1, sid: rec.sid, agent: rec.agent, title: rec.title || null, status: rec.status, prompted: !!rec.prompted, account: rec.account || null, created_at: rec.created_at || null, ended_at: rec.ended_at || null, last_activity_at: rec.last_activity_at || null };
     const parts = Array.isArray(prev?.parts) ? prev.parts.map((p) => ({ ...p })) : prev && prev.transcript_path ? [legacyPart(prev)] : [];
     let changed = false;
     // The files this session used before (a /clear) are read again if they changed since.
-    const earlier = new Set([...parts.map((p) => p.path), ...(also ? [also] : [])].filter((f) => typeof f === 'string' && f !== file));
+    const earlier = new Set([...parts.map((p) => p.path), ...(also ? [also] : [])].filter((f) => typeof f === 'string' && f !== file && !foreign(f)));
+    for (let i = parts.length - 1; i >= 0; i--) if (foreign(parts[i].path)) parts.splice(i, 1);
     for (const f of earlier) {
       if (!/[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(f) || !fs.existsSync(f)) continue;
       const key = sourceKey(f);

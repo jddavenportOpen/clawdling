@@ -58,6 +58,8 @@ function post(p, body, { host = `127.0.0.1:${srv.port}`, headers = {} } = {}) {
 const payload = (file, sid) => JSON.parse(fs.readFileSync(path.join(FIX, file), 'utf8').replaceAll(FIX_SID, sid));
 const secret = () => readJsonFile(path.join(home, '.clawdling', 'otel.json'))?.secret;
 const hooksEnv = () => readJsonFile(path.join(home, '.clawdling', 'hooks-settings.json'))?.env;
+const launchEnv = (sid) => readJsonFile(path.join(home, '.clawdling', 'run', `${sid}.settings.json`))?.env;
+const launchedWith = (sid) => readLog(path.join(home, 'fake.log')).filter((e) => e.mode === 'interactive' && e.opts?.sessionId === sid).pop();
 
 test('off by default: no env block, and /otlp answers 404', async () => {
   const st = (await request(srv, 'GET', '/api/otel')).body;
@@ -71,13 +73,16 @@ test('on: the env block lands in our own --settings file; the ingest rules; reco
   const on = await request(srv, 'POST', '/api/otel', { enabled: true });
   assert.equal(on.status, 200, on.text);
   assert.equal(on.body.active, true);
-  const env = hooksEnv();
-  assert.equal(env.OTEL_EXPORTER_OTLP_ENDPOINT, `http://127.0.0.1:${srv.port}/otlp`);
-  assert.equal(env.OTEL_EXPORTER_OTLP_HEADERS, undefined, 'the header is per session, not in the shared settings file');
+  assert.equal(hooksEnv(), undefined, 'the shared settings file never carries the telemetry block');
   assert.equal(fs.existsSync(path.join(configDir, 'settings.json')), false, "the user's Claude settings are never written");
 
   const s = (await request(srv, 'POST', '/api/sessions', { agent: 'health', prompt: 'some work?' })).body;
   await waitFor(async () => (await request(srv, 'GET', `/api/sessions/${s.sid}`)).body.status === 'ready', { label: 'ready', timeout: 20000 });
+  // This launch's own --settings file: the block, with no header (that is in the session's environment).
+  const env = launchEnv(s.sid);
+  assert.equal(env.OTEL_EXPORTER_OTLP_ENDPOINT, `http://127.0.0.1:${srv.port}/otlp`);
+  assert.equal(env.OTEL_EXPORTER_OTLP_HEADERS, undefined);
+  assert.ok(launchedWith(s.sid).argv.join(' ').includes(`${s.sid}.settings.json`), 'claude was given that file');
   const tl0 = (await request(srv, 'GET', `/api/sessions/${s.sid}/timeline`)).body;
   const editId = tl0.entries.find((e) => e.name === 'Edit').id;
   const logs = payload('logs-2.json', s.sid);
@@ -158,7 +163,6 @@ test('turned off: the env block goes, the secret is forgotten, /otlp refuses', a
   const old = sessionCredential(secret(), sid);
   const off = await request(srv, 'POST', '/api/otel', { enabled: false });
   assert.equal(off.body.enabled, false);
-  assert.equal(hooksEnv(), undefined);
   assert.equal((await post('/otlp/v1/logs', { resourceLogs: [] }, { headers: { 'x-clawdling-otlp': old } })).status, 404);
   // On again: a new secret, so a credential from before is refused.
   await request(srv, 'POST', '/api/otel', { enabled: true });
@@ -168,7 +172,6 @@ test('turned off: the env block goes, the secret is forgotten, /otlp refuses', a
 
 test('the preflight runs again before every launch: settings added later turn it off for new sessions', async () => {
   await request(srv, 'POST', '/api/otel', { enabled: true });
-  assert.ok(hooksEnv());
   // An agent's own folder (where its sessions run) gets a project setting that turns telemetry off.
   const dir = path.join(home, 'domains', 'money', '.claude');
   fs.mkdirSync(dir, { recursive: true });
@@ -178,8 +181,9 @@ test('the preflight runs again before every launch: settings added later turn it
     await waitFor(() => readLog(path.join(home, 'fake.log')).some((e) => e.mode === 'interactive' && e.opts?.sessionId === s.sid), { label: 'launched' });
     const launched = readLog(path.join(home, 'fake.log')).filter((e) => e.mode === 'interactive' && e.opts?.sessionId === s.sid).pop();
     assert.equal(launched.env.OTEL_EXPORTER_OTLP_HEADERS, null, 'no credential for a session started after the user said no');
-    assert.equal(hooksEnv(), undefined, 'and the settings file lost its env block');
-    assert.equal((await request(srv, 'GET', '/api/otel')).body.blocked, true);
+    assert.equal(launchEnv(s.sid), undefined, 'and no settings file of its own with the block');
+    assert.ok(launched.argv.some((a) => a.endsWith('hooks-settings.json')), 'it got the shared file');
+    assert.equal((await request(srv, 'GET', '/api/otel')).body.blocked, true, 'Settings says why');
     await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
   } finally {
     fs.rmSync(path.join(dir, 'settings.local.json'), { force: true });
@@ -199,7 +203,6 @@ test("never turned on where the user's Claude Code already has telemetry setting
     const r = await request(srv, 'POST', '/api/otel', { enabled: true });
     assert.equal(r.status, 409);
     assert.equal(secret(), undefined);
-    assert.equal(hooksEnv(), undefined);
   } finally {
     fs.rmSync(path.join(configDir, 'settings.json'), { force: true });
   }

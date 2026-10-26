@@ -761,12 +761,21 @@ export class SessionManager {
     const c = Number.isInteger(cols) && cols >= 20 && cols <= 500 ? cols : 140;
     const r = Number.isInteger(rows) && rows >= 5 && rows <= 200 ? rows : 40;
     const ctxFile = this.writeContextFile(target);
+    // This launch's own extras (the detailed timeline): an environment to add, and its own --settings
+    // file, written for this launch alone so no other launch can change it before claude reads it.
+    let extra = {};
+    try {
+      extra = this.beforeLaunch ? this.beforeLaunch(rec) || {} : {};
+    } catch (err) {
+      this.logger?.warn?.(`before launch: ${err.message}`);
+    }
+    const ownSettings = typeof extra.settingsPath === 'string' && rec.guard !== 'remote-access' ? extra.settingsPath : null;
     const args = buildClaudeArgs({
       sid: rec.sid,
       resume,
       resumeId: rec.claude_session_id || rec.sid,
       name: `${rec.agent_name}: ${rec.title || 'new session'}`,
-      settingsPath: rec.guard === 'remote-access' && this.paths.hooksSettingsRemote ? this.paths.hooksSettingsRemote : this.paths.hooksSettings,
+      settingsPath: rec.guard === 'remote-access' && this.paths.hooksSettingsRemote ? this.paths.hooksSettingsRemote : ownSettings || this.paths.hooksSettings,
       model: rec.model,
       effort: rec.effort,
       permissionMode: cliPermissionMode(rec.permission_mode, this.modeChoices),
@@ -787,15 +796,8 @@ export class SessionManager {
       CLAWDLING_TMUX_SOCKET: this.socket,
       COLORTERM: 'truecolor',
     };
-    // Extra environment for this launch (the detailed timeline's per-session telemetry header). The
-    // hook also refreshes Clawdling's --settings file first, so it reflects the user's settings now.
-    let extra = {};
-    try {
-      extra = this.beforeLaunch ? this.beforeLaunch(rec) || {} : {};
-    } catch (err) {
-      this.logger?.warn?.(`before launch: ${err.message}`);
-    }
-    for (const [k, v] of Object.entries(extra)) if (/^[A-Z][A-Z0-9_]{0,63}$/.test(k) && typeof v === 'string' && /^[A-Za-z0-9=._:-]{1,300}$/.test(v)) sessionEnv[k] = v;
+    // The detailed timeline's per-session telemetry header (only with this launch's own settings file).
+    for (const [k, v] of Object.entries(ownSettings ? extra.env || {} : {})) if (/^[A-Z][A-Z0-9_]{0,63}$/.test(k) && typeof v === 'string' && /^[A-Za-z0-9=._:-]{1,300}$/.test(v)) sessionEnv[k] = v;
     // A second Claude account is only its own config folder, handed to this session's claude.
     const accountDir = this.accountDir(rec.account);
     if (accountDir) sessionEnv.CLAUDE_CONFIG_DIR = accountDir;
@@ -1028,6 +1030,11 @@ export class SessionManager {
     }
     try {
       fs.unlinkSync(path.join(this.paths.run, `${rec.sid}.sh`));
+    } catch {
+      // already gone
+    }
+    try {
+      fs.unlinkSync(path.join(this.paths.run, `${rec.sid}.settings.json`)); // this launch's own --settings
     } catch {
       // already gone
     }
