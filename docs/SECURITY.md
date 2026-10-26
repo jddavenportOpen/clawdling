@@ -395,9 +395,11 @@ To limit the damage a hostile script could do:
 - **The approval model.** Nothing runs until you approve the list. The cockpit proposes commands
   detected from the repo, each shown exactly with what it does (the script's own text, from
   `package.json`, or the target's recipe lines). The approve request must echo the exact command
-  strings shown, or it is refused. The list is written to `<agent folder>/checks.yaml`, and a
-  fingerprint of it (commands, names, timeouts and the repo's real path) to `.clawdling/checks/<agent>/approved.json`,
-  which agents' file tools are denied. Agents can edit their own folder, so a run starts only when
+  strings shown, or it is refused; a command with control or invisible characters (bidi overrides,
+  zero-width) is refused, so what you tick is what the shell runs. The list is written to
+  `<agent folder>/checks.yaml`, and a fingerprint of it (commands, names, timeouts and the repo's
+  real path) to `.clawdling/checks/<agent>/approved.json`, which agents' file tools are denied.
+  Agents can edit their own folder, so a run starts only when
   `checks.yaml` still matches that fingerprint: any change, by anyone, needs your approval again,
   and so does pointing the agent at another repo.
 - **Never the live repo.** `git stash create` snapshots the tracked files, uncommitted changes
@@ -406,7 +408,8 @@ To limit the damage a hostile script could do:
   under the system temp folder; the checks run there, in the agent's repo folder (a monorepo's
   `apps/web`, not its top); the worktree is removed with `git worktree remove --force` (never `git
   worktree prune`, which would also drop records of your own worktrees on an unplugged drive).
-  Untracked files are not copied (they can be secrets or build junk); the cockpit says so. Every
+  Untracked files are not copied (they can be secrets or build junk); the cockpit says so, and a run
+  that left new files out is shown with their count and does not count for claim receipts. Every
   git call carries `core.hooksPath` pointed at an empty folder, `core.fsmonitor=false`, every
   clean/smudge/process filter named in the git config switched off (LFS included),
   `protocol.allow=never` and `GIT_NO_LAZY_FETCH=1`, so the repo's own config cannot make git run a
@@ -451,8 +454,9 @@ To limit the damage a hostile script could do:
 - **The sandbox.** Each run copies the agent folder into a scratch folder under the temp folder,
   without `evals/` (so the agent cannot read its own test), `.env` files, links,
   `node_modules` and `.git` (a project agent also gets a detached worktree of its repo at HEAD).
-  The run gets the same context a real session gets (the org rules, the agent's CLAUDE.md and
-  NOW.md) and runs in that copy with `--permission-mode default`. Its tools are read-only (Read,
+  The run gets the context a real session gets (the org rules, the agent's CLAUDE.md and NOW.md, and
+  a repo agent's repo CLAUDE.md/AGENTS.md), as text read only from plain files (a link committed to
+  the repo, say `AGENTS.md -> ~/.aws/credentials`, is not followed), and runs in that copy with `--permission-mode default`. Its tools are read-only (Read,
   Glob, Grep, LS): no Bash and no write tools in 1.6, because a command pattern such as
   `Bash(npm test:*)` cannot be made safe here (allow rules merge from every settings layer, and
   `git`, `npx` or `/bin/sh` run anything). Your test commands run in the ship check instead. In

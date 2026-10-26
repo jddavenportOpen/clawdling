@@ -22,7 +22,7 @@ import { priceFor } from '../ledger.js';
 import { childEnv, which } from '../paths.js';
 import { commandFor, spawnOptions } from '../platform.js';
 import { toolSummary } from '../transcripts.js';
-import { HttpError, badRequest, conflict, isValidEffort, isValidModel, oneLine, readJson, writeJson } from '../util.js';
+import { HttpError, badRequest, conflict, isValidEffort, isValidModel, oneLine, readJson, readPlain, writeJson } from '../util.js';
 import { caseScore, fileTexts, grade, gradeLlm } from './graders.js';
 import { Approvals, DEFAULT_TOOLS, SUITE_DEFAULTS, caseDir, evalsDir, graderFile, loadSuite, parseSettings, promptFile, requireCase, writeCase, writeSettings } from './suite.js';
 
@@ -220,42 +220,6 @@ function walk(root, { max = LIST_MAX } = {}) {
  * runtime folder), by path and by real path. Throws when a path cannot be written as a rule: running
  * without the rule would hand the agent its own answers.
  */
-/**
- * The first `max` characters of `file`, a plain file under `root` reached through real folders only
- * (lstat on every part; no link, FIFO or device), or '' when it is anything else.
- */
-export function readPlain(root, file, max = 20000, { tail = false } = {}) {
-  const rel = path.relative(root, file);
-  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return '';
-  let cur = root;
-  const parts = rel.split(path.sep);
-  for (let i = 0; i < parts.length; i++) {
-    cur = path.join(cur, parts[i]);
-    let st;
-    try {
-      st = fs.lstatSync(cur);
-    } catch {
-      return '';
-    }
-    if (i < parts.length - 1 ? !st.isDirectory() : !st.isFile()) return '';
-  }
-  let fd;
-  try {
-    fd = fs.openSync(cur, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
-    if (!fs.fstatSync(fd).isFile()) return '';
-    const size = fs.fstatSync(fd).size;
-    const buf = Buffer.alloc(Math.min(size, max * 4 + 4));
-    const n = fs.readSync(fd, buf, 0, buf.length, tail ? Math.max(0, size - buf.length) : 0);
-    const t = buf.subarray(0, n).toString('utf8');
-    if (tail) return t.length > max ? t.slice(-max) : t;
-    return t.length > max ? `${t.slice(0, max)}\n[truncated]` : t;
-  } catch {
-    return '';
-  } finally {
-    if (fd !== undefined) fs.closeSync(fd);
-  }
-}
-
 /**
  * Remove `rel` under `root` (a scratch folder this module made) only when no part of the path is a
  * link: a link committed to the repo must not lead the delete outside the scratch copy.
@@ -752,14 +716,18 @@ export class Evals {
       let done = false;
       let timedOut = false;
       let truncated = false;
+      let started = false;
       const child = spawn(cmd.file, cmd.args, spawnOptions(cmd, { cwd, env, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }));
       this.children.add(child);
+      child.on('spawn', () => {
+        started = true;
+      });
       const finish = (code) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
         this.children.delete(child);
-        resolve({ code, stdout, stderr, timedOut, truncated });
+        resolve({ code, stdout, stderr, timedOut, truncated, started });
       };
       const timer = setTimeout(() => {
         timedOut = true;
@@ -883,6 +851,7 @@ export class Evals {
       const rel = path.relative(realPathOf(await this.checks.repoTop(agent.repo)), realPathOf(agent.dir));
       if (!rel.startsWith('..') && !path.isAbsolute(rel)) removeInside(wt, path.join(rel, 'evals'));
       cwd = path.join(wt, prefix);
+      if (!fs.existsSync(cwd)) throw new Error(`${path.basename(agent.repo)} is not committed to git yet, so the check-up's copy of the repo has no such folder`);
     }
     const target = { ...agent, dir: notes, cwd };
     const ctx = `${this.sessions.contextText(target, { orgRules: true })}\n${RUN_INSTRUCTIONS}\n`;
@@ -973,6 +942,7 @@ export class Evals {
         // dialog guards them.
         '--setting-sources', 'user',
         '--strict-mcp-config',
+        '--disable-slash-commands', // a case prompt starting with / is text, never one of your commands
         '--append-system-prompt-file', sc.ctxFile,
         ...(sc.notes !== sc.cwd ? ['--add-dir', sc.notes] : []),
       ];
@@ -983,7 +953,8 @@ export class Evals {
       // A run with no result line (a timeout, a crash, output past the cap) spent an unknown amount up
       // to its budget: count the whole budget, so the cap still holds.
       const unknownCost = !run.result || !Number.isFinite(Number(res.total_cost_usd));
-      const cost = unknownCost ? budget : Number(res.total_cost_usd);
+      // A claude that never started spent nothing.
+      const cost = r.started === false ? 0 : unknownCost ? budget : Number(res.total_cost_usd);
       state.spent += cost;
       const denials = Array.isArray(res.permission_denials) ? res.permission_denials.map((d) => ({ tool: String(d.tool_name || ''), input: oneLine(JSON.stringify(d.tool_input || {}), 160) })) : [];
       let error = null;
@@ -1111,7 +1082,8 @@ export class Evals {
       }
     }
     const current = outCells.find((c) => c.current) || outCells[0] || null;
-    const complete = current && current.cases.every((c) => c.runs.length === k);
+    // A grader the cap skipped is not a failure: no score from a cell with one.
+    const complete = current && current.cases.every((c) => c.runs.length === k && c.runs.every((r) => !r.graders.some((g) => g.explanation === 'skipped: cost cap reached')));
     const result = {
       v: 1,
       agent: agent.id,
@@ -1158,4 +1130,4 @@ export class Evals {
   }
 }
 
-export { parseSettings };
+export { parseSettings, readPlain };

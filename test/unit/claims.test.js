@@ -393,3 +393,34 @@ test('review 3: a check that started before an overlapping edit finished does no
   assert.equal(c.last_edit_at, t(3), 'the edit finished at 3 s');
   assert.equal(labelClaim(c).label, 'not_verified');
 });
+
+test('review 4: set +e and set +o pipefail turn the options off; any filter down the pipe, or a later echo, leaves it unknown', () => {
+  const fail = 'not ok 1 - adds\n# pass 4\n# fail 1';
+  const [a] = claimsOf([prompt('x'), edit(), bash('set -e; set +e; npm test; echo done', fail), say('Done.')]);
+  assert.notEqual(labelClaim(a).label, 'verified', 'errexit was turned off again: the exit is the echo\'s');
+  const [b] = claimsOf([prompt('x'), edit(), bash('set -o pipefail; set +o pipefail; npm test | cat', '# pass 5\n# fail 0'), say('Done.')]);
+  assert.equal(checkOf('set -o pipefail; set +o pipefail; npm test | cat').masked, true);
+  assert.equal(labelClaim(b).label, 'verified', 'totals with zero failures still count when the exit is hidden');
+  const [c] = claimsOf([prompt('x'), edit(), bash("npm test 2>&1 | tail -100 | grep '^# pass'", '# pass 4'), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'not_verified', 'grep further down the pipe dropped the failure totals');
+  const [d] = claimsOf([prompt('x'), edit(), bash('npm test >/dev/null 2>&1; echo "Tests: 5 passed"', 'Tests: 5 passed'), say('Done.')]);
+  assert.equal(labelClaim(d).label, 'not_verified', 'the pass came from the echo');
+  for (const cmd of ['go test -list . ./...', "go test -run '^$' ./...", 'vitest list', 'npx vitest list', 'mvn test -DskipTests', 'ctest -N', 'ctest --show-only']) assert.equal(checkOf(cmd), null, cmd);
+  assert.equal(checkOf('mvn verify -DskipTests').kind, 'build', 'a build, not a test run');
+});
+
+test('review 4: an edit-then-test command that started before an overlapping edit finished does not verify it', () => {
+  const t = (s) => new Date(Date.parse('2026-10-26T13:00:00Z') + s * 1000).toISOString();
+  const use = (at, id, name, input) => ({ type: 'assistant', timestamp: t(at), message: { id: `y${id}`, model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'tool_use', id, name, input }], usage: { input_tokens: 1, output_tokens: 1 } } });
+  const res = (at, id, content) => ({ type: 'user', timestamp: t(at), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: false }] } });
+  const recs = [
+    { type: 'user', timestamp: t(0), message: { role: 'user', content: 'x' } },
+    use(1, 'e2', 'Edit', { file_path: '/repo/a.js', old_string: 'a', new_string: 'b' }),
+    use(2, 'b2', 'Bash', { command: 'printf x > b.js && npm test' }),
+    res(5, 'b2', '# pass 3\n# fail 0'),
+    res(10, 'e2', 'The file was updated.'),
+    { type: 'assistant', timestamp: t(11), message: { id: 'y9', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'text', text: 'Done. All tests pass.' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  const [c] = claimsOf(recs);
+  assert.equal(labelClaim(c).label, 'not_verified');
+});

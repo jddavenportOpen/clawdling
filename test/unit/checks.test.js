@@ -124,3 +124,26 @@ test('a repo folder inside a monorepo: the ship check runs in that folder of the
   const r = await checks.run('web');
   assert.equal(r.results[0].ok, true, JSON.stringify(r.results[0]));
 });
+
+test('a ship check that left new files out records how many, and is not claim evidence', { skip: !hasGit && 'no git' }, async () => {
+  const repo = tmp();
+  fs.writeFileSync(path.join(repo, 'check.js'), 'process.exit(0)\n');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  fs.writeFileSync(path.join(repo, 'new-helper.js'), 'module.exports = 1\n');
+  const dir = tmp();
+  const agent = { id: 'web', name: 'Web', kind: 'project', dir, repo };
+  const checks = new Checks({ paths: { rt: tmp(), env: path.join(dir, '.env') }, org: { require: () => agent } });
+  checks.approve('web', { checks: [{ name: 'tests', run: 'node check.js', timeout: 60 }], shown: ['node check.js'] });
+  const r = await checks.run('web');
+  assert.equal(r.untracked, 1);
+  assert.deepEqual(checks.evidence('web'), [], 'it says nothing about the claims');
+  fs.rmSync(path.join(repo, 'new-helper.js'));
+  await checks.run('web');
+  assert.equal(checks.evidence('web').length, 1);
+  assert.throws(() => checks.approve('web', { checks: [{ name: 'tests', run: 'node check.js‮', timeout: 60 }], shown: ['node check.js‮'] }), /invisible/);
+});

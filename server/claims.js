@@ -271,6 +271,8 @@ export function wordsKind(w) {
   if (h === 'deno' && b === 'test') return 'test';
   if (h === 'deno' && (b === 'lint' || b === 'check')) return 'lint';
   if (h === 'deno' && b === 'task') return scriptKind(c);
+  if (h === 'vitest' && b === 'list') return null;
+  if (h === 'ctest' && a.some((x) => x === '-N' || x === '--show-only' || /^--show-only=/.test(x))) return null;
   if (['vitest', 'jest', 'mocha', 'ava', 'tap', 'uvu', 'karma', 'jasmine', 'pytest', 'py.test', 'nosetests', 'tox', 'nox', 'rspec', 'phpunit', 'ctest', 'unittest', 'behave', 'cucumber-js'].includes(lc(h))) return 'test';
   if (h === 'playwright' && b === 'test') return 'test';
   if (h === 'cypress' && b === 'run') return 'test';
@@ -285,13 +287,21 @@ export function wordsKind(w) {
   if (h === 'prettier' && (a.includes('--check') || a.includes('-c'))) return 'lint';
   if (h === 'manage.py' || (h === 'django-admin')) return b === 'test' ? 'test' : null;
   if (/^python[\d.]*$/.test(h) && /manage\.py$/.test(b || '') && c === 'test') return 'test';
-  if (h === 'go') return b === 'test' ? 'test' : b === 'build' ? 'build' : b === 'vet' ? 'lint' : null;
+  if (h === 'go') {
+    // `go test -list .` lists, `-run '^$'` compiles and runs no test.
+    if (b === 'test' && a.some((x, i) => x === '-list' || /^-list=/.test(x) || ((x === '-run' && /^['"]?\^\$['"]?$/.test(a[i + 1] || '')) || /^-run=['"]?\^\$['"]?$/.test(x)))) return null;
+    return b === 'test' ? 'test' : b === 'build' ? 'build' : b === 'vet' ? 'lint' : null;
+  }
   if (h === 'cargo') return b === 'test' || b === 'nextest' ? 'test' : b === 'build' || b === 'check' ? 'build' : b === 'clippy' ? 'lint' : null;
   if (h === 'make' || h === 'gmake' || h === 'just' || h === 'task' || h === 'mage') {
     const t = a.slice(1).find((x) => !x.startsWith('-') && !x.includes('='));
     return t ? MAKE_KIND[lc(t)] || scriptKind(t) : h === 'make' ? 'build' : null;
   }
   if (h === 'mvn' || h === 'mvnw' || h === 'gradle' || h === 'gradlew') {
+    if (a.some((x) => /^-D(skipTests|maven\.test\.skip)(=true)?$/.test(x)) || a.includes('-x') && a[a.indexOf('-x') + 1] === 'test') {
+      const t0 = a.slice(1).find((x) => !x.startsWith('-'));
+      return t0 === 'build' || t0 === 'package' || t0 === 'compile' || t0 === 'assemble' || t0 === 'verify' || t0 === 'install' ? 'build' : null;
+    }
     const t = a.slice(1).find((x) => !x.startsWith('-'));
     return t === 'test' || t === 'verify' || t === 'check' ? 'test' : t === 'build' || t === 'package' || t === 'compile' || t === 'assemble' ? 'build' : null;
   }
@@ -336,8 +346,16 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     const s = segs[i];
     const w = words(s.raw);
     if (w[0] === 'set') {
-      if (w.some((x) => /^-[a-z]*o?$/.test(x) && x.includes('e')) || w.includes('errexit')) errexit = true;
-      if (w.includes('pipefail')) pipefail = true;
+      // In order: `set -e` turns errexit on, `set +e` off; `-o`/`+o` name an option (pipefail, errexit).
+      for (let j = 1; j < w.length; j++) {
+        const x = w[j];
+        if (/^[-+]o$/.test(x)) {
+          const on = x[0] === '-';
+          if (w[j + 1] === 'pipefail') pipefail = on;
+          if (w[j + 1] === 'errexit') errexit = on;
+          j++;
+        } else if (/^[-+][a-zA-Z]+$/.test(x) && x.includes('e')) errexit = x[0] === '-';
+      }
       continue;
     }
     if (trivial(w)) continue;
@@ -371,8 +389,13 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     // Other commands ran before it in the line: failure marks in the output may be theirs.
     const preceded = segs.slice(0, i).some((sg) => !trivial(words(sg.raw)));
     // Piped into a program that keeps only some lines: the failure (or the totals) can be cut off.
-    const cut = s.op === '|' && !!segs[i + 1] && /^(head|grep|egrep|fgrep|rg|sed|awk|cut|less|more)$/.test((unwrap(words(segs[i + 1].raw)) || [''])[0]);
-    found = { kind, masked, chained: !masked && meaningful > 1, preceded, cut, cmd: trimmed };
+    let cut = false;
+    for (let j = i; j < segs.length - 1 && segs[j].op === '|'; j++) {
+      if (/^(head|grep|egrep|fgrep|rg|sed|awk|cut|less|more|jq|perl|python[\d.]*|node)$/.test((unwrap(words(segs[j + 1].raw)) || [''])[0])) cut = true;
+    }
+    // A later part of the line that can print (after ;, || or &&) could supply a pass of its own.
+    const later = rest.slice(0, -1).some((x, j) => (x.op === ';' || x.op === '||' || x.op === '&&') && rest[j + 1] && words(rest[j + 1].raw).length);
+    found = { kind, masked, chained: !masked && meaningful > 1, preceded, cut, later, cmd: trimmed };
     if (!masked) break; // an unmasked check decides
   }
   return found;
@@ -556,7 +579,8 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     // it, the check.
     // The session's first change after the claim ends the time a ship check can speak for it.
     const nextEdit = all.find((x) => cmp(x.key, at) > 0 && isWorkEdit(x.t, where));
-    const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter;
+    const otherEditsEnd = before.filter((x) => x !== lastEdit && isWorkEdit(x.t, where)).reduce((m, x) => Math.max(m, x.t.end ?? x.t.ts), -Infinity);
+    const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter && lastEdit.t.ts >= otherEditsEnd;
     const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
     const cmds = after.slice(-CMDS_PER_CLAIM).map(({ t }) => ({
       cmd: t.cmd,
@@ -583,7 +607,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
 }
 
 /** A command's outcome as a check: true (passed), false (failed) or null (cannot tell: not counted). */
-function outcome(c, masked, chained = false, preceded = false, cut = false) {
+function outcome(c, masked, chained = false, preceded = false, cut = false, later = false) {
   const failed = !(c.error !== true && (c.exit === 0 || c.exit === null) ? !c.fail || c.exit === 0 : false);
   // In an && chain with other commands, the line's failure (and its failure marks: "npm ERR!" from
   // `npm ci`, "Found 2 errors" from a build) may be theirs: only a pass counts, which means every
@@ -593,7 +617,7 @@ function outcome(c, masked, chained = false, preceded = false, cut = false) {
   // Masked exit code: only the output can say. A failure mark fails it (unless another command ran
   // before it in the line: then the mark may be that one's); otherwise it must say it passed.
   if (c.fail) return preceded ? null : false;
-  if (cut) return null; // piped into head, grep, sed...: the output may be cut before the totals
+  if (cut || later) return null; // output cut by head/grep..., or a later command could have printed the pass
   if (c.summary) return true;
   return null;
 }
@@ -616,7 +640,7 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
     const k = checkOf(x.cmd, { approved, detected });
     if (!k) continue;
-    const ok = outcome(x, k.masked, k.chained, k.preceded, k.cut);
+    const ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later);
     if (ok === null) continue;
     checks.push({ kind: k.kind, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
   }

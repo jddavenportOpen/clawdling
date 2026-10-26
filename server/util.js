@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
+import path from 'node:path';
 
 export const AGENT_ID_RE = /^[a-z0-9][a-z0-9-]{0,39}$/;
 export const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -201,3 +202,39 @@ export class HttpError extends Error {
 export const badRequest = (msg) => new HttpError(400, msg);
 export const notFound = (msg = 'not found') => new HttpError(404, msg);
 export const conflict = (msg) => new HttpError(409, msg);
+
+/**
+ * The first `max` characters of `file`, a plain file under `root` reached through real folders only
+ * (lstat on every part; no link, FIFO or device), or '' when it is anything else.
+ */
+export function readPlain(root, file, max = 20000, { tail = false } = {}) {
+  const rel = path.relative(root, file);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return '';
+  let cur = root;
+  const parts = rel.split(path.sep);
+  for (let i = 0; i < parts.length; i++) {
+    cur = path.join(cur, parts[i]);
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      return '';
+    }
+    if (i < parts.length - 1 ? !st.isDirectory() : !st.isFile()) return '';
+  }
+  let fd;
+  try {
+    fd = fs.openSync(cur, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+    if (!fs.fstatSync(fd).isFile()) return '';
+    const size = fs.fstatSync(fd).size;
+    const buf = Buffer.alloc(Math.min(size, max * 4 + 4));
+    const n = fs.readSync(fd, buf, 0, buf.length, tail ? Math.max(0, size - buf.length) : 0);
+    const t = buf.subarray(0, n).toString('utf8');
+    if (tail) return t.length > max ? t.slice(-max) : t;
+    return t.length > max ? `${t.slice(0, max)}\n[truncated]` : t;
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}

@@ -103,6 +103,9 @@ function cleanCommand(run, where) {
   if (typeof run !== 'string' || !run.trim()) throw badRequest(`${where}: a command is required`);
   if (run.length > 500) throw badRequest(`${where}: a command is at most 500 characters`);
   if (/[\0\r\n]/.test(run)) throw badRequest(`${where}: a command is one line`);
+  // Control and format characters (bidi overrides, zero-width) can make the command you are shown
+  // differ from the one the shell runs.
+  if (/[\p{Cc}\p{Cf}\u2028\u2029]/u.test(run)) throw badRequest(`${where}: a command cannot contain control or invisible characters`);
   return run.trim();
 }
 
@@ -340,10 +343,10 @@ export class Checks {
       .slice(0, limit);
   }
 
-  /** Ship-check runs as claim evidence ({at, results}), newest last. */
+  /** Ship-check runs as claim evidence ({at, results}), newest last; not runs that left new files out. */
   evidence(id) {
     try {
-      return this.history(id, 50).reverse().map((r) => ({ at: r.started_at, results: r.results }));
+      return this.history(id, 50).reverse().filter((r) => !(r.untracked > 0)).map((r) => ({ at: r.started_at, results: r.results }));
     } catch {
       return [];
     }
@@ -576,6 +579,7 @@ export class Checks {
     let snap = null;
     let error = null;
     let registered = false;
+    let untracked = 0;
     try {
       this.progress(id, { phase: 'start' });
       // The tracked changes as a commit object (the working tree and index are not touched), or HEAD.
@@ -592,6 +596,11 @@ export class Checks {
       // The worktree is the whole repository: the steps run in the agent's folder of it (a
       // monorepo's apps/web), where the commands you approved were detected.
       const cwd = path.join(dir, await this.repoPrefix(repo));
+      if (!fs.existsSync(cwd)) throw new Error(`${path.basename(repo)} is not committed to git yet, so the snapshot has no such folder`);
+      // New files not added to git are not in the snapshot: a run without them says nothing about
+      // the agent's claims (it could fail for a missing import, or pass without a new failing test).
+      const { stdout: others } = await this.git(repo, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']);
+      untracked = String(others).split('\0').filter(Boolean).length;
       const orgKeys = Object.keys(readEnvFile(this.paths.env));
       const env = checkEnv(this.env, orgKeys);
       const steps = [...c.config.setup.map((s, i) => ({ ...s, name: `setup${c.config.setup.length > 1 ? ` ${i + 1}` : ''}`, setup: true })), ...c.config.checks.map((x) => ({ ...x, setup: false }))];
@@ -629,6 +638,7 @@ export class Checks {
       error,
       setup_failed: setupFailed,
       results,
+      untracked,
       untracked_note: UNTRACKED_NOTE,
     };
     try {

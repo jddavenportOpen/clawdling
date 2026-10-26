@@ -20,6 +20,7 @@ import { cleanTitle, deriveTitle } from './titles.js';
 import { ASK_TOOLS, TranscriptReader, askOf, claudeConfigDir } from './transcripts.js';
 import {
   HttpError,
+  readPlain,
   badRequest,
   conflict,
   isUuid,
@@ -657,7 +658,10 @@ export class SessionManager {
    * repo-rooted project agent already gets it.
    */
   contextText(target, { orgRules = false } = {}) {
+    // A check-up (orgRules) reads only plain files through real folders: its working folder is a git
+    // worktree, where a committed link (AGENTS.md -> ~/.aws/credentials, or /dev/zero) is a real link.
     const read = (f, max = 60000) => {
+      if (orgRules) return readPlain(path.dirname(f), f, max);
       try {
         const t = fs.readFileSync(f, 'utf8');
         return t.length > max ? t.slice(0, max) + '\n[truncated]' : t;
@@ -680,7 +684,9 @@ export class SessionManager {
     }
     lines.push('', `## About ${owner} (me.md)`, '', read(this.paths.meMd).trim() || '(me.md is empty)');
     const repos = this.groupRepos(target);
-    if (repos.length) {
+    if (repos.length && orgRules) {
+      lines.push('', '## Your repos', '', 'This is a check-up: your code repos are not part of this run. Answer from your agent folder.');
+    } else if (repos.length) {
       const exists = (f) => {
         try {
           return fs.statSync(f).isFile();

@@ -478,3 +478,37 @@ test('budgets: a run or vote never gets more than is left; under a cent left, no
   await assert.rejects(ev.judgeVote({ cap: 1, spent: 0.997, judgeCost: 0, judgeModel: 'haiku' }, { criteria: 'c', text: 't', focus: 'last_message' }), (e) => e.cap === true);
   assert.equal(calls.length, 1, 'neither of the last two launched');
 });
+
+test('check-up context: the repo\'s CLAUDE.md is read as a plain file only, never through a committed link', async () => {
+  const { SessionManager } = await import('../../server/sessions.js');
+  const dir = tmp();
+  const wt = tmp();
+  const secret = path.join(tmp(), 'credentials');
+  fs.writeFileSync(secret, 'aws_secret_access_key = SECRETKEY');
+  fs.writeFileSync(path.join(dir, 'CLAUDE.md'), '# Web agent\n@memory/NOW.md\n');
+  fs.mkdirSync(path.join(dir, 'memory'));
+  fs.writeFileSync(path.join(dir, 'memory', 'NOW.md'), 'shipping the login page');
+  fs.writeFileSync(path.join(wt, 'CLAUDE.md'), 'Use pnpm.');
+  let linked = true;
+  try {
+    fs.symlinkSync(secret, path.join(wt, 'AGENTS.md'));
+  } catch {
+    linked = false;
+  }
+  const self = { org: { read: () => ({ owner: 'Sam' }) }, home: dir, paths: { meMd: path.join(dir, 'me.md'), orgClaudeMd: path.join(dir, 'org.md') }, groupRepos: () => ['/code/api'], isDir: () => true };
+  const text = SessionManager.prototype.contextText.call(self, { id: 'web', name: 'Web', kind: 'project', dir, cwd: wt }, { orgRules: true });
+  assert.match(text, /# Web agent/);
+  assert.match(text, /shipping the login page/);
+  assert.match(text, /Use pnpm\./, 'the repo\'s own CLAUDE.md');
+  if (linked) assert.ok(!text.includes('SECRETKEY'), 'a committed link is not followed');
+  assert.match(text, /not part of this run/, 'a group agent is told its repos are not here');
+});
+
+test('a claude that never started is charged nothing', async () => {
+  const dir = tmp();
+  const { ev, agent } = stubEvals(dir, { spawn: async () => ({ code: null, stdout: '', stderr: 'spawn ENOENT', timedOut: false, truncated: false, started: false }) });
+  const state = { id: 'x', cap: 2, spent: 0, judgeCost: 0 };
+  const r = await ev.runCase(agent, caseOf(), { model: null }, state, 1);
+  assert.equal(r.cost, 0);
+  assert.equal(state.spent, 0);
+});
