@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { LedgerReader, LedgerStore, PRICES, lastLine, priceFor, summarize, timeline, usageCost } from '../../server/ledger.js';
-import { needKind, needsYouView, nextOf, windowRange, dollars, COST_LABEL } from '../../server/report.js';
+import { Reports, mergeParts, needKind, needsYouView, nextOf, windowRange, dollars, COST_LABEL } from '../../server/report.js';
 import { needsYou } from '../../web/lib/model.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-ledger-'));
@@ -27,6 +27,7 @@ test('priceFor: exact ids, dated ids and Bedrock-style prefixes match; a newer m
   assert.equal(priceFor('us.anthropic.claude-opus-4-8').input, 5);
   assert.equal(priceFor('claude-opus-4-6[1m]').input, 5);
   assert.equal(priceFor('claude-fable-5-1').cache_read, 0.25);
+  assert.equal(priceFor('us.anthropic.claude-sonnet-4-5-20250929-v1:0').input, 3, 'a Bedrock id with a version after its date');
   assert.equal(priceFor('claude-opus-5-6'), null);
   assert.equal(priceFor('claude-sonnet-6'), null);
   assert.equal(priceFor('fake'), null);
@@ -189,4 +190,38 @@ test('dollar copy always reads as an equivalent, never a bill', () => {
   assert.equal(dollars(0), '$0.00');
   assert.match(COST_LABEL, /list-price equivalent, not a bill/);
   assert.doesNotMatch(COST_LABEL, /\b(spend|spent|charged)\b/i);
+});
+
+test('NOW.md: a heading inside a code fence is text; control characters never reach the terminal', () => {
+  const now = Date.now();
+  const md = '# NOW\n## Next steps\n- Run this:\n```sh\n# not a heading\nmake test\n```\n- Then ship \u001b]8;;http://evil\u0007it\n## Done\n- x';
+  const n = nextOf(md, now, now);
+  assert.match(n.text, /# not a heading/);
+  assert.match(n.text, /Then ship ]8;;http:\/\/evilit/);
+  assert.ok(!/[\u0000-\u0008\u000b-\u001f\u007f]/.test(n.text));
+});
+
+test('cost: a session whose only usage has no price is "unknown", never a quiet $0', () => {
+  const day = windowRange('7d', Date.now()).list[6];
+  const rep = new Reports({ paths: { rt: os.tmpdir(), ledger: path.join(os.tmpdir(), `cl-led-${process.pid}`) }, org: {}, sessions: { records: new Map() } });
+  const s = { sid: 'x', turns: 2, status: 'ended', last_at: new Date().toISOString(), days: {}, unknown_days: { [day]: ['claude-nova-9'] }, cost: { usd: 0, source: 'repriced', complete: false, unknown_models: ['claude-nova-9'], models: {} } };
+  const c = rep.costOf([s], windowRange('7d', Date.now()));
+  assert.equal(c.total_usd, 0);
+  assert.equal(c.complete, false);
+  assert.deepEqual(c.unknown_models, ['claude-nova-9']);
+  const today = rep.costOf([{ ...s, unknown_days: {} }], windowRange('today', Date.now()));
+  assert.equal(today.complete, false, 'an active session with unknown usage still makes the window incomplete');
+});
+
+test('parts (/clear starts a new transcript): the session\'s figures add up across them', () => {
+  const p1 = { turns: 3, tools: 10, tool_errors: 1, files_changed: 2, subagents: 0, cost: { usd: 4, source: 'cli', complete: true, unknown_models: [], models: { a: 4 } }, days: { '2026-10-20': 4 }, unknown_days: {}, commit_times: ['2026-10-20T10:00:00.000Z'], last_line: 'first', last_line_at: '2026-10-20T10:00:00.000Z', started_at: '2026-10-20T09:00:00.000Z', last_at: '2026-10-20T10:00:00.000Z', format: { ok: true, issues: [] } };
+  const p2 = { ...p1, turns: 1, cost: { usd: 1, source: 'repriced', complete: true, unknown_models: [], models: { a: 1 } }, days: { '2026-10-21': 1 }, commit_times: [], last_line: 'second', last_line_at: '2026-10-21T10:00:00.000Z', started_at: '2026-10-21T09:00:00.000Z', last_at: '2026-10-21T10:00:00.000Z' };
+  const m = mergeParts([p1, p2]);
+  assert.equal(m.turns, 4);
+  assert.equal(m.cost.usd, 5);
+  assert.equal(m.cost.source, 'mixed');
+  assert.deepEqual(m.days, { '2026-10-20': 4, '2026-10-21': 1 });
+  assert.equal(m.last_line, 'second');
+  assert.equal(m.started_at, '2026-10-20T09:00:00.000Z');
+  assert.equal(m.commit_times.length, 1);
 });

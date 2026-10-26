@@ -100,7 +100,7 @@ export function preflight({ env = process.env, configDirs = [], projectDirs = []
 }
 
 /** The `env` block for Clawdling's own --settings file while the detailed timeline is on. */
-export function envBlock({ port, secret }) {
+export function envBlock({ port }) {
   return {
     CLAUDE_CODE_ENABLE_TELEMETRY: '1',
     OTEL_LOGS_EXPORTER: 'otlp',
@@ -109,7 +109,8 @@ export function envBlock({ port, secret }) {
     CLAUDE_CODE_ENHANCED_TELEMETRY_BETA: '1',
     OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
     OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${port}/otlp`,
-    OTEL_EXPORTER_OTLP_HEADERS: `${SECRET_HEADER}=${secret}`,
+    // OTEL_EXPORTER_OTLP_HEADERS is NOT here: each session gets its own (sessionHeaders) in its own
+    // environment, which this settings block does not override because it does not set that key.
     OTEL_LOGS_EXPORT_INTERVAL: '2000',
     OTEL_METRIC_EXPORT_INTERVAL: '10000',
     OTEL_TRACES_EXPORT_INTERVAL: '2000',
@@ -158,11 +159,15 @@ const nanoIso = (n) => {
  * OTLP/JSON (logs, metrics or traces) -> [{sid, rec}] with rec {k, name, ts, attrs, ...}. Records
  * without a valid session.id are dropped (they belong to no session Clawdling knows).
  */
-export function normalize(kind, body) {
+export const MAX_RECORDS = 5000;
+
+export function normalize(kind, body, { only = null, max = MAX_RECORDS } = {}) {
   const out = [];
+  let seen = 0;
+  const more = () => ++seen <= max; // at most `max` records looked at per request
   const push = (rec, attrs, res) => {
     const sid = attrs['session.id'] ?? res['session.id'];
-    if (!isUuid(sid)) return;
+    if (!isUuid(sid) || (only && !only.has(sid))) return;
     delete attrs['session.id'];
     out.push({ sid, rec });
   };
@@ -172,6 +177,7 @@ export function normalize(kind, body) {
       const res = attrsOf(r?.resource?.attributes);
       for (const s of Array.isArray(r?.scopeLogs) ? r.scopeLogs : []) {
         for (const l of Array.isArray(s?.logRecords) ? s.logRecords : []) {
+          if (!more()) return out;
           const attrs = attrsOf(l?.attributes);
           const name = typeof attrs['event.name'] === 'string' ? attrs['event.name'] : typeof l?.body?.stringValue === 'string' ? l.body.stringValue.replace(/^claude_code\./, '').slice(0, 80) : 'event';
           push({ k: 'log', name, ts: attrs['event.timestamp'] || nanoIso(l?.timeUnixNano), attrs }, attrs, res);
@@ -185,6 +191,7 @@ export function normalize(kind, body) {
         for (const m of Array.isArray(s?.metrics) ? s.metrics : []) {
           const data = m?.sum || m?.gauge || null;
           for (const p of Array.isArray(data?.dataPoints) ? data.dataPoints : []) {
+            if (!more()) return out;
             const attrs = attrsOf(p?.attributes);
             const value = p.asDouble !== undefined ? Number(p.asDouble) : Number(p.asInt);
             push({ k: 'metric', name: String(m?.name || 'metric').slice(0, 80), ts: nanoIso(p?.timeUnixNano), value: Number.isFinite(value) ? value : null, attrs }, attrs, res);
@@ -197,6 +204,7 @@ export function normalize(kind, body) {
       const res = attrsOf(r?.resource?.attributes);
       for (const s of Array.isArray(r?.scopeSpans) ? r.scopeSpans : []) {
         for (const sp of Array.isArray(s?.spans) ? s.spans : []) {
+          if (!more()) return out;
           const attrs = attrsOf(sp?.attributes);
           const start = nanoIso(sp?.startTimeUnixNano);
           const end = nanoIso(sp?.endTimeUnixNano);
@@ -206,6 +214,16 @@ export function normalize(kind, body) {
     }
   }
   return out;
+}
+
+/** A session's own telemetry credential: its sid and an HMAC of it under the org's secret. */
+export function sessionCredential(secret, sid) {
+  return `${sid}.${crypto.createHmac('sha256', secret).update(sid).digest('hex')}`;
+}
+
+/** The OTEL_EXPORTER_OTLP_HEADERS value for one session. */
+export function sessionHeaders(secret, sid) {
+  return `${SECRET_HEADER}=${sessionCredential(secret, sid)}`;
 }
 
 /** At most `max` requests in any one second. */
@@ -245,13 +263,18 @@ export class OtelState {
     return this.read();
   }
 
-  /** Constant-time check of the header Claude Code sends. */
-  check(header) {
+  /**
+   * The session a telemetry header belongs to, or null: "<sid>.<hmac>", checked in constant time.
+   * A session can only ever send records for itself.
+   */
+  sidFor(header) {
     const st = this.read();
-    if (!st.enabled || typeof header !== 'string') return false;
+    if (!st.enabled || typeof header !== 'string') return null;
+    const m = /^([0-9a-f-]{36})\.[0-9a-f]{64}$/.exec(header);
+    if (!m || !isUuid(m[1])) return null;
     const a = Buffer.from(header);
-    const b = Buffer.from(st.secret);
-    return a.length === b.length && crypto.timingSafeEqual(a, b);
+    const b = Buffer.from(sessionCredential(st.secret, m[1]));
+    return a.length === b.length && crypto.timingSafeEqual(a, b) ? m[1] : null;
   }
 }
 
@@ -305,6 +328,40 @@ export class TraceStore {
     this.total += wrote;
     if (this.total > this.maxBytes) this.prune();
     return wrote;
+  }
+
+  /** Drop records older than the retention from files still being written to. */
+  trim(now = Date.now()) {
+    const cutoff = now - this.keepDays * 86400000;
+    for (const x of this.sizes()) {
+      if (x.t < cutoff) continue; // prune() deletes the whole file
+      let text;
+      try {
+        text = fs.readFileSync(x.f, 'utf8');
+      } catch {
+        continue;
+      }
+      const lines = text.split('\n').filter(Boolean);
+      const keep = lines.filter((l) => {
+        try {
+          const t = Date.parse(JSON.parse(l).ts || '');
+          return !Number.isFinite(t) || t >= cutoff;
+        } catch {
+          return false;
+        }
+      });
+      if (keep.length === lines.length) continue;
+      try {
+        if (!keep.length) fs.unlinkSync(x.f);
+        else {
+          fs.writeFileSync(`${x.f}.tmp`, `${keep.join('\n')}\n`, { mode: 0o600 });
+          fs.renameSync(`${x.f}.tmp`, x.f);
+        }
+      } catch {
+        // try again next time
+      }
+    }
+    this.total = null;
   }
 
   prune(now = Date.now()) {

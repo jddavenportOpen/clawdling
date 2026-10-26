@@ -20,29 +20,60 @@ export function duration(ms) {
 }
 
 /**
- * The Timeline of one session: the first page at once, more pages on request, and new entries
- * every 3 s while the session runs and the tab is visible. Errors keep the last good list.
+ * The Timeline of one session. The first page at once, later pages on request ("Show the next
+ * steps"). While the session runs and the tab is visible, everything shown is read again from the
+ * start every 3 s: a tool that was still running gets its result and duration, a turn its full
+ * cost, and a subagent's new steps land in the right place. Errors keep the last good list.
  */
 export function useTimeline(sid, ended, enabled) {
   const [st, setSt] = useState({ entries: [], loaded: false, more: false, total: 0, transcript: null, summary: null, cost: null, error: '' });
-  const ref = useRef({ sid, after: -1, entries: [], busy: false, more: false });
-  if (ref.current.sid !== sid) ref.current = { sid, after: -1, entries: [], busy: false, more: false };
+  const ref = useRef({ sid, entries: [], busy: false, more: false });
+  if (ref.current.sid !== sid) ref.current = { sid, entries: [], busy: false, more: false };
 
-  const fetchPage = async () => {
+  const apply = (entries, res) => {
+    const r = ref.current;
+    r.entries = entries;
+    r.more = !!(res && res.more);
+    setSt({ entries, loaded: true, more: r.more, total: (res && res.total) || entries.length, transcript: res ? res.transcript : null, summary: res ? res.summary || null : null, cost: res ? res.cost || null : null, error: '' });
+  };
+  const fail = (e) => setSt((x) => ({ ...x, loaded: true, error: e.message || 'Could not load the Timeline.' }));
+
+  // Read from the start until as many entries as are shown now (at least one page) are back.
+  const refresh = async () => {
     const r = ref.current;
     if (r.busy) return;
     r.busy = true;
     try {
-      const res = await api.timeline(sid, r.after);
-      const fresh = (res && Array.isArray(res.entries) ? res.entries : []).filter((e) => e && Number.isInteger(e.n) && e.n > r.after);
-      if (fresh.length) {
-        r.entries = r.entries.concat(fresh);
-        r.after = fresh[fresh.length - 1].n;
+      const want = Math.max(r.entries.length, 1);
+      let after = -1;
+      let out = [];
+      let res = null;
+      for (let page = 0; page < 20; page++) {
+        res = await api.timeline(sid, after);
+        const got = res && Array.isArray(res.entries) ? res.entries : [];
+        out = out.concat(got);
+        if (!res.more || !got.length || out.length >= want) break;
+        after = got[got.length - 1].n;
       }
-      r.more = !!(res && res.more);
-      setSt({ entries: r.entries, loaded: true, more: !!(res && res.more), total: (res && res.total) || r.entries.length, transcript: res ? res.transcript : null, summary: res ? res.summary || null : null, cost: res ? res.cost || null : null, error: '' });
+      apply(out, res);
     } catch (e) {
-      setSt((x) => ({ ...x, loaded: true, error: e.message || 'Could not load the Timeline.' }));
+      fail(e);
+    } finally {
+      r.busy = false;
+    }
+  };
+  // The next page, after what is shown.
+  const loadMore = async () => {
+    const r = ref.current;
+    if (r.busy) return;
+    r.busy = true;
+    try {
+      const after = r.entries.length ? r.entries[r.entries.length - 1].n : -1;
+      const res = await api.timeline(sid, after);
+      const got = (res && Array.isArray(res.entries) ? res.entries : []).filter((e) => e && Number.isInteger(e.n) && e.n > after);
+      apply(r.entries.concat(got), res);
+    } catch (e) {
+      fail(e);
     } finally {
       r.busy = false;
     }
@@ -51,17 +82,13 @@ export function useTimeline(sid, ended, enabled) {
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
-    fetchPage();
+    refresh();
     if (ended) return () => { alive = false; };
-    const t = setInterval(() => {
-      if (!alive || document.hidden) return;
-      // Keep up with the end only once every earlier page has been read.
-      if (!ref.current.more) fetchPage();
-    }, POLL_MS);
+    const t = setInterval(() => { if (alive && !document.hidden) refresh(); }, POLL_MS);
     return () => { alive = false; clearInterval(t); };
   }, [sid, ended, enabled]);
 
-  return { ...st, loadMore: fetchPage };
+  return { ...st, loadMore };
 }
 
 export function TimelineView({ s, ended }) {
@@ -95,10 +122,10 @@ function Entry({ e }) {
   if (e.kind === 'subagent') {
     return html`<li class="tl-row tl-sub" style=${pad} data-kind="subagent"><span class="tl-who">Subagent</span><span class="tl-text">${e.description}</span></li>`;
   }
-  const state = e.ok === true ? 'ok' : e.ok === false ? 'error' : 'running';
+  const state = e.ok === true ? 'ok' : e.ok === false ? 'error' : e.stopped ? 'stopped' : 'running';
   return html`<li class=${`tl-row tl-tool is-${state}`} style=${pad} data-kind="tool" data-tool=${e.name} data-ok=${state}>
-    <span class="tl-mark" aria-label=${state === 'ok' ? 'worked' : state === 'error' ? 'failed' : 'still running'} role="img">${state === 'ok' ? '✓' : state === 'error' ? '✕' : '…'}</span>
+    <span class="tl-mark" aria-label=${state === 'ok' ? 'worked' : state === 'error' ? 'failed' : state === 'stopped' ? 'did not finish' : 'still running'} role="img">${state === 'ok' ? '✓' : state === 'error' ? '✕' : state === 'stopped' ? '–' : '…'}</span>
     <span class="tl-name mono">${e.name}</span><span class="tl-text">${e.summary}</span>
     ${e.approval && e.approval.text ? html`<span class="tl-approval" title="Who let this tool run (detailed timeline)">${e.approval.text}</span>` : null}
-    <span class="tl-dur">${duration(e.ms)}</span></li>`;
+    <span class="tl-dur">${state === 'stopped' ? 'did not finish' : duration(e.ms)}</span></li>`;
 }

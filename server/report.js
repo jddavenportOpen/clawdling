@@ -6,7 +6,7 @@
 // Its JSON shape is a contract (`clawdling report --json`; the 1.7 CTO seat reads it): SCHEMA.
 import fs from 'node:fs';
 import path from 'node:path';
-import { LedgerReader, LedgerStore, localDay, summarize, timeline } from './ledger.js';
+import { LedgerReader, LedgerStore, localDay, subagentFiles, summarize, timeline } from './ledger.js';
 import { badRequest, execFileP, isUuid, oneLine } from './util.js';
 
 export const SCHEMA = 1;
@@ -16,8 +16,8 @@ const STALE_MS = 7 * DAY;
 const LIVE_REFRESH_MS = 60000;
 const NEXT_MAX = 1500;
 const GIT_TIMEOUT = 5000;
-// A commit counts for a session if it was made while the session ran (a minute of slack each side).
-const COMMIT_SLACK = 60000;
+// A commit counts for a session that ran `git commit` within two minutes of it (see agentReport).
+const COMMIT_SLACK = 2 * 60000;
 
 /** {key, days, start, end, list: ['YYYY-MM-DD', ...]} for today / 7d / 30d, in local time. */
 export function windowRange(key = '7d', now = Date.now()) {
@@ -63,10 +63,18 @@ export function nextOf(text, mtimeMs, now = Date.now()) {
   const updated_at = Number.isFinite(mtimeMs) ? new Date(mtimeMs).toISOString() : null;
   const stale = Number.isFinite(mtimeMs) ? now - mtimeMs > STALE_MS : false;
   if (typeof text !== 'string' || !text.trim()) return { text: '', heading: null, updated_at, stale, empty: true };
-  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  // No terminal control characters (the CLI prints this), and headings inside code fences are text.
+  const lines = text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').split('\n');
+  const fenced = [];
+  let inFence = false;
+  for (const l of lines) {
+    if (/^\s*(```|~~~)/.test(l)) inFence = !inFence;
+    fenced.push(inFence);
+  }
   let start = -1;
   let level = 0;
   for (let i = 0; i < lines.length; i++) {
+    if (fenced[i]) continue;
     const m = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
     if (m && /^next\b/i.test(m[2].replace(/[*_`]/g, '').trim())) {
       start = i;
@@ -80,7 +88,7 @@ export function nextOf(text, mtimeMs, now = Date.now()) {
     heading = lines[start].replace(/^#+\s*/, '').trim();
     body = [];
     for (let i = start + 1; i < lines.length; i++) {
-      const m = /^(#{1,6})\s/.exec(lines[i]);
+      const m = !fenced[i] && /^(#{1,6})\s/.exec(lines[i]);
       if (m && m[1].length <= level) break;
       body.push(lines[i]);
     }
@@ -103,13 +111,15 @@ export async function gitCommits(repo, sinceMs, { exec = execFileP, env = proces
   } catch {
     return { ok: false, error: 'the repo folder is gone', commits: [] };
   }
+  // protocol.allow=never and GIT_NO_LAZY_FETCH: a partial clone whose config names a promisor
+  // remote cannot make `git log` fetch (and so run a transport the repo's config chose).
   const args = [
-    '-c', 'log.showSignature=false', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'color.ui=false',
+    '-c', 'log.showSignature=false', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'color.ui=false', '-c', 'protocol.allow=never',
     '-C', repo, 'log', '--no-show-signature', '--no-notes', '--no-color', `--since=${new Date(sinceMs).toISOString()}`,
-    '--format=%H%x1f%s%x1f%aI', '-n', '200',
+    '--format=%H%x1f%s%x1f%cI', '-n', '200',
   ];
   try {
-    const { stdout } = await exec('git', args, { timeout, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat' } });
+    const { stdout } = await exec('git', args, { timeout, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_PAGER: 'cat', GIT_NO_LAZY_FETCH: '1', GIT_PROTOCOL_FROM_USER: '0' } });
     const commits = [];
     for (const line of String(stdout).split('\n')) {
       const [hash, subject, when] = line.split('\x1f');
@@ -136,6 +146,75 @@ export function dollars(usd) {
 }
 export const COST_LABEL = 'list-price equivalent, not a bill. On Pro and Max, usage is included in your plan.';
 
+/** What decides whether a transcript changed: the main file and its subagent files. */
+export function sourceKey(file) {
+  const key = { size: null, mtime_ms: null, subs: 0, subs_size: 0, subs_mtime: 0 };
+  try {
+    const st = fs.statSync(file);
+    key.size = st.size;
+    key.mtime_ms = st.mtimeMs;
+  } catch {
+    // raced away
+  }
+  for (const f of subagentFiles(file)) {
+    try {
+      const st = fs.statSync(f);
+      key.subs++;
+      key.subs_size += st.size;
+      key.subs_mtime = Math.max(key.subs_mtime, st.mtimeMs);
+    } catch {
+      // gone
+    }
+  }
+  return key;
+}
+const sameKey = (a, b) => !!a && !!b && ['size', 'mtime_ms', 'subs', 'subs_size', 'subs_mtime'].every((k) => a[k] === b[k]);
+
+const PART_FIELDS = ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents', 'cost', 'days', 'unknown_days', 'commit_times', 'last_line', 'last_line_at', 'started_at', 'last_at', 'format'];
+
+/** The per-file fields a receipt keeps (no prompt text: the last line is the agent's own words). */
+function partOf(s) {
+  if (!s) return { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null, format: { ok: false, issues: ['unreadable'] } };
+  return Object.fromEntries(PART_FIELDS.map((k) => [k, s[k] ?? null]));
+}
+
+/** A receipt from before parts existed (one file). */
+function legacyPart(r) {
+  return { path: r.transcript_path, ...Object.fromEntries(PART_FIELDS.map((k) => [k, r[k] ?? null])), source: r.source || null };
+}
+
+/** A session's figures from its parts. */
+export function mergeParts(parts) {
+  const out = { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null };
+  const cost = { usd: 0, source: null, complete: true, unknown_models: new Set(), models: {} };
+  const issues = new Set();
+  let ok = true;
+  for (const p of parts) {
+    for (const k of ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents']) out[k] += Number(p[k]) || 0;
+    const c = p.cost || {};
+    if (Number.isFinite(c.usd)) cost.usd += c.usd;
+    else cost.complete = false;
+    if (c.complete === false) cost.complete = false;
+    for (const m of c.unknown_models || []) cost.unknown_models.add(m);
+    for (const [m, v] of Object.entries(c.models || {})) if (Number.isFinite(v)) cost.models[m] = (cost.models[m] || 0) + v;
+    cost.source = cost.source === null ? c.source || 'none' : cost.source === c.source ? cost.source : 'mixed';
+    for (const [d, v] of Object.entries(p.days || {})) if (Number.isFinite(v)) out.days[d] = (out.days[d] || 0) + v;
+    for (const [d, ms] of Object.entries(p.unknown_days || {})) out.unknown_days[d] = [...new Set([...(out.unknown_days[d] || []), ...ms])].sort();
+    out.commit_times.push(...(Array.isArray(p.commit_times) ? p.commit_times : []));
+    if (p.last_line && (!out.last_line_at || String(p.last_line_at || '') >= out.last_line_at)) {
+      out.last_line = p.last_line;
+      out.last_line_at = p.last_line_at || out.last_line_at;
+    }
+    if (p.started_at && (!out.started_at || p.started_at < out.started_at)) out.started_at = p.started_at;
+    if (p.last_at && (!out.last_at || p.last_at > out.last_at)) out.last_at = p.last_at;
+    if (p.format && p.format.ok === false) ok = false;
+    for (const i of p.format?.issues || []) issues.add(i);
+  }
+  out.cost = { usd: cost.usd, source: cost.source || 'none', complete: cost.complete, unknown_models: [...cost.unknown_models].sort(), models: cost.models };
+  out.format = { ok, issues: [...issues].slice(0, 10) };
+  return out;
+}
+
 /**
  * Reports for one org. `sessions` is the SessionManager (records, views, transcript lookup).
  * Session summaries are cached in .clawdling/ledger (receipts that outlive transcripts).
@@ -158,41 +237,55 @@ export class Reports {
   }
 
   /**
-   * The summary for one session record: from its transcript when that changed since the last
-   * receipt, else the receipt. A transcript that is gone keeps the receipt, marked so.
+   * The summary for one session record. A record can use several transcript files over its life
+   * (`/clear` starts a new one): each is a "part" of its receipt, summarized from its file when that
+   * changed (the main file or any subagent file) and kept as it was once the file is gone. The
+   * session's figures are the parts added up.
    */
   summary(rec, { force = false } = {}) {
     const prev = this.store.read(rec.sid);
     const file = this.transcriptOf(rec);
     const base = { v: 1, sid: rec.sid, agent: rec.agent, title: rec.title || null, status: rec.status, prompted: !!rec.prompted, account: rec.account || null, created_at: rec.created_at || null, ended_at: rec.ended_at || null, last_activity_at: rec.last_activity_at || null };
-    if (!file) {
-      if (prev) return { ...prev, ...base, transcript: 'gone' };
-      return { ...base, transcript: 'missing', turns: 0, tools: 0, tool_errors: 0, files_changed: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, last_line: rec.last_message || null };
+    const parts = Array.isArray(prev?.parts) ? prev.parts.map((p) => ({ ...p })) : prev && prev.transcript_path ? [legacyPart(prev)] : [];
+    let changed = false;
+    if (file) {
+      const key = sourceKey(file);
+      const i = parts.findIndex((p) => p.path === file);
+      if (force || i === -1 || !sameKey(parts[i].source, key)) {
+        let part;
+        try {
+          part = { path: file, ...partOf(summarize(this.reader.session(file))), source: key };
+        } catch (err) {
+          this.logger?.warn?.(`report: could not read the transcript of ${rec.sid}: ${err.message}`);
+          // Kept, so it is not parsed again on every request until the file changes.
+          part = { path: file, unreadable: true, ...partOf(null), source: key };
+        }
+        if (i === -1) parts.push(part);
+        else parts[i] = part;
+        changed = true;
+      }
     }
-    let size = null;
-    let mtime = null;
-    try {
-      const st = fs.statSync(file);
-      size = st.size;
-      mtime = st.mtimeMs;
-    } catch {
-      // raced away
+    if (!parts.length) {
+      return { ...base, transcript: 'missing', parts: [], ...mergeParts([]), cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, last_line: rec.last_message || null };
     }
-    const live = rec.status !== 'ended';
-    if (!force && prev && prev.source && prev.source.size === size && prev.source.mtime_ms === mtime && prev.transcript === 'ok' && (!live || prev.status === rec.status)) {
-      return { ...prev, ...base };
-    }
-    let s;
-    try {
-      s = summarize(this.reader.session(file));
-    } catch (err) {
-      this.logger?.warn?.(`report: could not read the transcript of ${rec.sid}: ${err.message}`);
-      return prev ? { ...prev, ...base, transcript: 'gone' } : { ...base, transcript: 'unreadable', turns: 0, tools: 0, tool_errors: 0, files_changed: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {} };
-    }
-    const out = { ...base, ...s, transcript: 'ok', transcript_path: file, last_line: s.last_line || rec.last_message || null, updated_at: new Date(this.now()).toISOString() };
+    parts.sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
+    const merged = mergeParts(parts);
+    const current = file ? parts.find((p) => p.path === file) : null;
+    const out = {
+      ...base,
+      ...merged,
+      parts,
+      transcript: !file ? 'gone' : current?.unreadable ? 'unreadable' : 'ok',
+      transcript_path: file || parts[parts.length - 1].path,
+      last_line: merged.last_line || rec.last_message || null,
+      updated_at: changed ? new Date(this.now()).toISOString() : prev?.updated_at || null,
+    };
+    const baseChanged = !prev || ['status', 'title', 'ended_at', 'agent'].some((k) => prev[k] !== out[k]);
+    if (!changed && !baseChanged) return out;
     // A running session is written at most once a minute; an ended one every time it changed.
+    const live = rec.status !== 'ended';
     const last = this.written.get(rec.sid) || 0;
-    if (!live || force || this.now() - last >= LIVE_REFRESH_MS || !prev) {
+    if (!live || force || !prev || this.now() - last >= LIVE_REFRESH_MS) {
       try {
         this.store.write(out);
         this.written.set(rec.sid, this.now());
@@ -201,6 +294,25 @@ export class Reports {
       }
     }
     return out;
+  }
+
+  /**
+   * Build the receipts the registry's sessions do not have yet (an upgrade, or a cold start), one
+   * session per event-loop turn, so a first report does not stall the server.
+   */
+  backfill() {
+    const recs = [...this.sessions.records.values()].filter((r) => r.purpose !== 'signin');
+    let i = 0;
+    const step = () => {
+      if (i >= recs.length || this.stopped) return;
+      try {
+        this.summary(recs[i++]);
+      } catch (err) {
+        this.logger?.warn?.(`report: ${err.message}`);
+      }
+      setImmediate(step).unref?.();
+    };
+    setImmediate(step).unref?.();
   }
 
   /** A session ended (or was resumed): write its receipt now. */
@@ -246,14 +358,23 @@ export class Reports {
     const pool = git.flatMap((g) => g.commits.map((c) => ({ ...c, repo: g.repo })));
     const used = new Set();
     const done = [];
+    // A commit is credited to a session only when that session ran a successful `git commit` within
+    // a minute of it (from its own transcript), and to one session at most.
+    const owner = new Map();
+    for (const s of all) {
+      for (const iso of Array.isArray(s.commit_times) ? s.commit_times : []) {
+        const t = Date.parse(iso);
+        for (const c of pool) {
+          const d = Math.abs(Date.parse(c.at) - t);
+          if (!Number.isFinite(d) || d > COMMIT_SLACK) continue;
+          const cur = owner.get(c.hash);
+          if (!cur || d < cur.d) owner.set(c.hash, { sid: s.sid, d });
+        }
+      }
+    }
     for (const s of all) {
       if (!(s.turns > 0 || s.tools > 0) || !inWindow(whenOf(s))) continue;
-      const from = Date.parse(s.started_at || s.created_at || '') - COMMIT_SLACK;
-      const to = (s.status === 'ended' ? Date.parse(s.ended_at || s.last_at || '') : this.now()) + COMMIT_SLACK;
-      const commits = repos.length ? pool.filter((c) => {
-        const t = Date.parse(c.at);
-        return Number.isFinite(from) && t >= from && t <= to;
-      }) : null;
+      const commits = repos.length ? pool.filter((c) => owner.get(c.hash)?.sid === s.sid) : null;
       if (commits) for (const c of commits) used.add(c.hash);
       done.push({
         sid: s.sid,
@@ -286,8 +407,18 @@ export class Reports {
     let mtime = NaN;
     try {
       const f = path.join(agent.dir, 'memory', 'NOW.md');
-      nowText = fs.readFileSync(f, 'utf8');
-      mtime = fs.statSync(f).mtimeMs;
+      const st = fs.statSync(f);
+      if (st.isFile()) {
+        mtime = st.mtimeMs;
+        const fd = fs.openSync(f, 'r');
+        try {
+          const buf = Buffer.alloc(Math.min(st.size, 256 * 1024));
+          fs.readSync(fd, buf, 0, buf.length, 0);
+          nowText = buf.toString('utf8');
+        } finally {
+          fs.closeSync(fd);
+        }
+      }
     } catch {
       // no NOW.md
     }
@@ -315,13 +446,18 @@ export class Reports {
     let missing = 0;
     for (const s of summaries) {
       const days = s.days && typeof s.days === 'object' ? s.days : {};
+      // Usage in the window on a model with no price: the total is incomplete, never a quiet $0.
+      const udays = s.unknown_days && typeof s.unknown_days === 'object' ? s.unknown_days : {};
+      for (const d of w.list) for (const m of udays[d] || []) unknown.add(m);
       let share = 0;
       for (const d of w.list) if (Number.isFinite(days[d])) share += days[d];
       const touched = w.list.some((d) => Object.hasOwn(days, d));
       if (!touched) {
-        // No usage on record in the window. A session active in it whose cost is unknown is counted.
+        // No priced usage in the window. A session active in it whose cost is unknown is counted.
         const t = Date.parse(s.last_activity_at || s.last_at || '');
-        if (s.cost && s.cost.usd === null && Number.isFinite(t) && t >= w.start && (s.turns > 0 || s.prompted)) missing++;
+        const active = Number.isFinite(t) && t >= w.start && (s.turns > 0 || s.prompted);
+        if (active && s.cost && s.cost.usd === null) missing++;
+        else if (active && s.cost && s.cost.complete === false && !w.list.some((d) => (udays[d] || []).length)) for (const m of s.cost.unknown_models || []) unknown.add(m);
         continue;
       }
       for (const d of w.list) if (Number.isFinite(days[d])) byDay[d] += days[d];
@@ -392,7 +528,7 @@ export class Reports {
   }
 
   /** The session's Timeline, paged: entries after `after`, at most `limit`. */
-  timeline(sid, { after = -1, limit = 500 } = {}) {
+  timeline(sid, { after = -1, limit = 500, enrich = null } = {}) {
     if (!isUuid(sid)) throw badRequest('invalid session id');
     const rec = this.sessions.require(sid);
     const file = this.transcriptOf(rec);
@@ -401,7 +537,9 @@ export class Reports {
       return { entries: [], next: after, more: false, total: 0, transcript: kept ? 'gone' : 'missing', summary: kept ? { turns: kept.turns, tools: kept.tools, last_line: kept.last_line, cost: kept.cost } : null, status: rec.status };
     }
     const data = this.reader.session(file);
-    const all = timeline(data);
+    const all = timeline(data, { ended: rec.status === 'ended' });
+    // Telemetry (the detailed timeline) is matched against the whole list, then paged.
+    if (enrich) enrich(all);
     const page = all.filter((e) => e.n > after).slice(0, limit);
     const next = page.length ? page[page.length - 1].n : after;
     const s = summarize(data);

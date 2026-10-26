@@ -775,6 +775,15 @@ export class SessionManager {
       CLAWDLING_TMUX_SOCKET: this.socket,
       COLORTERM: 'truecolor',
     };
+    // Extra environment for this launch (the detailed timeline's per-session telemetry header). The
+    // hook also refreshes Clawdling's --settings file first, so it reflects the user's settings now.
+    let extra = {};
+    try {
+      extra = this.beforeLaunch ? this.beforeLaunch(rec) || {} : {};
+    } catch (err) {
+      this.logger?.warn?.(`before launch: ${err.message}`);
+    }
+    for (const [k, v] of Object.entries(extra)) if (/^[A-Z][A-Z0-9_]{0,63}$/.test(k) && typeof v === 'string' && /^[A-Za-z0-9=._:-]{1,300}$/.test(v)) sessionEnv[k] = v;
     // A second Claude account is only its own config folder, handed to this session's claude.
     const accountDir = this.accountDir(rec.account);
     if (accountDir) sessionEnv.CLAUDE_CONFIG_DIR = accountDir;

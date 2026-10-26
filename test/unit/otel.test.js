@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { OtelState, RateLimit, TraceStore, droppedKey, enrich, envBlock, managedSettingsPaths, normalize, preflight, sourceText, telemetryKey } from '../../server/otel.js';
+import { OtelState, RateLimit, TraceStore, droppedKey, enrich, envBlock, managedSettingsPaths, normalize, preflight, sessionCredential, sessionHeaders, sourceText, telemetryKey } from '../../server/otel.js';
 import { buildHooksSettings } from '../../server/hooks.js';
 
 const FIX = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'fixtures', 'otlp');
@@ -64,10 +64,11 @@ test('managed settings paths per OS', () => {
 });
 
 test("the env block goes into Clawdling's own --settings file, endpoint on 127.0.0.1, content gates unset", () => {
-  const env = envBlock({ port: 4747, secret: 'a'.repeat(64) });
+  const env = envBlock({ port: 4747 });
   assert.equal(env.OTEL_EXPORTER_OTLP_ENDPOINT, 'http://127.0.0.1:4747/otlp');
   assert.equal(env.OTEL_EXPORTER_OTLP_PROTOCOL, 'http/json');
-  assert.equal(env.OTEL_EXPORTER_OTLP_HEADERS, `x-clawdling-otlp=${'a'.repeat(64)}`);
+  assert.ok(!('OTEL_EXPORTER_OTLP_HEADERS' in env), 'each session gets its own header in its own environment');
+  assert.match(sessionHeaders('a'.repeat(64), SID), new RegExp(`^x-clawdling-otlp=${SID}\\.[0-9a-f]{64}$`));
   for (const gate of ['OTEL_LOG_USER_PROMPTS', 'OTEL_LOG_TOOL_DETAILS', 'OTEL_LOG_TOOL_CONTENT']) assert.ok(!(gate in env), gate);
   const s = buildHooksSettings({ nodePath: '/n', hookScript: '/h', platform: 'linux', env });
   assert.equal(s.env.CLAUDE_CODE_ENABLE_TELEMETRY, '1');
@@ -97,6 +98,18 @@ test('normalize: the real 2.1.308 payloads, scrubbed; identity and content attri
   assert.ok(!span.rec.attrs['session.id'], 'session.id moves to the file name');
 });
 
+test('normalize: only the given sessions, and at most 5,000 records a request', () => {
+  const rec = (sid) => ({ attributes: [{ key: 'session.id', value: { stringValue: sid } }, { key: 'event.name', value: { stringValue: 'x' } }] });
+  const other = '77777777-7777-4777-8777-777777777777';
+  const body = { resourceLogs: [{ scopeLogs: [{ logRecords: [rec(SID), rec(other), rec(SID)] }] }] };
+  assert.deepEqual(normalize('logs', body, { only: new Set([SID]) }).map((x) => x.sid), [SID, SID]);
+  const many = { resourceLogs: [{ scopeLogs: [{ logRecords: Array.from({ length: 300000 }, () => ({})) }] }] };
+  const t0 = performance.now();
+  assert.deepEqual(normalize('logs', many), []);
+  assert.ok(performance.now() - t0 < 200, 'stops after 5,000 records');
+  assert.equal(normalize('logs', { resourceLogs: [{ scopeLogs: [{ logRecords: Array.from({ length: 6000 }, () => rec(SID)) }] }] }).length, 5000);
+});
+
 test('normalize: junk, a missing session id, big and nested values', () => {
   assert.deepEqual(normalize('logs', null), []);
   assert.deepEqual(normalize('logs', { resourceLogs: 'x' }), []);
@@ -115,21 +128,26 @@ test('normalize: junk, a missing session id, big and nested values', () => {
   assert.ok(droppedKey('organization.id') && droppedKey('gen_ai.prompt') && !droppedKey('prompt.id') && !droppedKey('prompt_length'));
 });
 
-test('the secret: made when turned on, compared in constant time, forgotten when turned off', () => {
+test('the secret: made when turned on; each session has its own credential, checked in constant time; forgotten when turned off', () => {
   const dir = tmp();
   const st = new OtelState(path.join(dir, 'otel.json'));
   assert.equal(st.read().enabled, false);
-  assert.equal(st.check('anything'), false);
+  assert.equal(st.sidFor('anything'), null);
   const on = st.set(true);
   assert.match(on.secret, /^[0-9a-f]{64}$/);
-  assert.equal(st.check(on.secret), true);
-  assert.equal(st.check(on.secret.slice(0, 63)), false);
-  assert.equal(st.check(undefined), false);
+  const cred = sessionCredential(on.secret, SID);
+  assert.equal(st.sidFor(cred), SID);
+  assert.equal(st.sidFor(on.secret), null, 'the org secret alone is no credential');
+  assert.equal(st.sidFor(`${SID}.${'0'.repeat(64)}`), null);
+  assert.equal(st.sidFor(cred.slice(0, -1)), null);
+  assert.equal(st.sidFor(`77777777-7777-4777-8777-777777777777.${cred.split('.')[1]}`), null, "one session's mac does not fit another");
+  assert.equal(st.sidFor(undefined), null);
   assert.equal((fs.statSync(path.join(dir, 'otel.json')).mode & 0o777).toString(8), process.platform === 'win32' ? (fs.statSync(path.join(dir, 'otel.json')).mode & 0o777).toString(8) : '600');
   const again = st.set(true);
   assert.notEqual(again.secret, on.secret, 'a new secret each time');
+  assert.equal(st.sidFor(cred), null, 'a credential from before is refused');
   st.set(false);
-  assert.equal(st.check(again.secret), false);
+  assert.equal(st.sidFor(sessionCredential(again.secret, SID)), null);
   assert.equal(st.read().secret, null);
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -157,6 +175,17 @@ test('trace store: per session, append-only, capped and pruned', () => {
   ts.append([{ sid: other, rec: { k: 'log', name: 'c', pad: 'y'.repeat(300) } }]);
   assert.equal(fs.existsSync(ts.file(SID)), false, 'over the cap: the oldest went first');
   assert.equal(ts.read(other).length, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('trace store: records older than 14 days are dropped from files still being written to', () => {
+  const dir = tmp();
+  const ts = new TraceStore(dir);
+  const old = new Date(Date.now() - 20 * 86400000).toISOString();
+  const now = new Date().toISOString();
+  ts.append([{ sid: SID, rec: { k: 'log', name: 'old', ts: old } }, { sid: SID, rec: { k: 'log', name: 'new', ts: now } }]);
+  ts.trim();
+  assert.deepEqual(ts.read(SID).map((r) => r.name), ['new']);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 

@@ -90,7 +90,7 @@ test('off by default; turning it on approves today\'s names and shows the exact 
 test('one a week: sends once the send time has passed, never twice in an ISO week; next week again', async () => {
   const monday7 = new Date(2026, 9, 26, 7, 0).getTime();
   const { d, sent, clock, dir } = harness({ now: monday7 });
-  d.configure({ enabled: true });
+  d.configure({ enabled: true, labels: d.status().preview_labels });
   assert.deepEqual(await d.check(), { sent: false, why: 'not yet' });
   clock.t = new Date(2026, 9, 26, 8, 5).getTime();
   const r = await d.check();
@@ -107,7 +107,7 @@ test('one a week: sends once the send time has passed, never twice in an ISO wee
 
 test('not running on Monday morning: sends at the next start in the same ISO week', async () => {
   const { d, sent, clock, dir } = harness({ now: new Date(2026, 9, 26, 7).getTime() });
-  d.configure({ enabled: true }); // before Monday 08:00: this week's report is still due
+  d.configure({ enabled: true, labels: d.status().preview_labels }); // before Monday 08:00: this week's report is still due
   clock.t = new Date(2026, 9, 29, 15).getTime(); // Clawdling starts again on Thursday
   assert.equal((await d.check()).sent, true);
   assert.equal(sent.length, 1);
@@ -116,7 +116,7 @@ test('not running on Monday morning: sends at the next start in the same ISO wee
 
 test('turned on mid-week after the send time: the first report waits for next Monday', async () => {
   const { d, sent, clock, dir } = harness({ now: new Date(2026, 9, 28, 12).getTime() });
-  const st = d.configure({ enabled: true });
+  const st = d.configure({ enabled: true, labels: d.status().preview_labels });
   assert.equal(new Date(st.next_at).getTime(), new Date(2026, 10, 2, 8).getTime());
   assert.deepEqual(await d.check(), { sent: false, why: 'sent this week' });
   clock.t = new Date(2026, 10, 2, 8, 1).getTime();
@@ -127,11 +127,11 @@ test('turned on mid-week after the send time: the first report waits for next Mo
 
 test('refused without a paired channel or where agents cannot be kept out; a failed send is not retried that week', async () => {
   const a = harness({ now: Date.now(), channel: null });
-  assert.throws(() => a.d.configure({ enabled: true }), /Pair Telegram or iMessage/);
+  assert.throws(() => a.d.configure({ enabled: true, labels: a.d.status().preview_labels }), /Pair Telegram or iMessage/);
   const b = harness({ now: Date.now(), guarded: false });
-  assert.throws(() => b.d.configure({ enabled: true }), /keep agents out/);
+  assert.throws(() => b.d.configure({ enabled: true, labels: b.d.status().preview_labels }), /keep agents out/);
   const c = harness({ now: new Date(2026, 9, 26, 7).getTime(), fail: true });
-  c.d.configure({ enabled: true });
+  c.d.configure({ enabled: true, labels: c.d.status().preview_labels });
   c.clock.t = new Date(2026, 9, 26, 9).getTime();
   const r = await c.d.check();
   assert.equal(r.sent, false);
@@ -143,4 +143,31 @@ test('refused without a paired channel or where agents cannot be kept out; a fai
   c.d.configure({ enabled: false });
   assert.deepEqual(c.d.state().labels, {}, 'off forgets the approved names');
   for (const h of [a, b, c]) fs.rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('approval is bound to the names the owner was shown: a rename in between is refused', () => {
+  const h = harness({ now: Date.now() });
+  const shown = h.d.status().preview_labels;
+  assert.throws(() => h.d.configure({ enabled: true }), /names changed/);
+  assert.throws(() => h.d.configure({ enabled: true, labels: { ...shown, site: 'Site, pay me' } }), /names changed/);
+  assert.equal(h.d.state().enabled, false);
+  assert.equal(h.d.configure({ enabled: true, labels: shown }).enabled, true);
+  fs.rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('a send that fails after the owner turned the report off never turns it back on', async () => {
+  const h = harness({ now: new Date(2026, 9, 26, 7).getTime() });
+  h.d.configure({ enabled: true, labels: h.d.status().preview_labels });
+  h.clock.t = new Date(2026, 9, 26, 9).getTime();
+  let release;
+  h.d.pinger.deliver = () => new Promise((_, reject) => { release = () => reject(new Error('telegram down')); });
+  const p = h.d.check();
+  await new Promise((r) => setTimeout(r, 10));
+  h.d.configure({ enabled: false });
+  release();
+  await p;
+  assert.equal(h.d.state().enabled, false);
+  assert.deepEqual(h.d.state().labels, {});
+  assert.match(h.d.state().last_error, /telegram down/);
+  fs.rmSync(h.dir, { recursive: true, force: true });
 });

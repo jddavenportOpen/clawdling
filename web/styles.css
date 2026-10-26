@@ -1466,3 +1466,12 @@ h3.chat-h { font-size: 16.5px; }
 }
 .tl-approval, .tl-api { flex: none; font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .tl-approval { color: var(--watching-text); }
+.report-glance { list-style: none; margin: 0; padding: 0; }
+.report-glance > li { display: flex; min-width: 0; }
+.report-glance .glance { width: 100%; }
+.rc-done-item { padding-bottom: 2px; }
+.rc-commits-in { margin: -4px 10px 10px; }
+.tl-tool.is-stopped .tl-mark { color: var(--text-3); }
+.ws-usage { font-size: 12px; color: var(--text-3); white-space: nowrap; text-decoration: none; }
+.ws-usage:hover { color: var(--text); }
+@media (max-width: 1100px) { .ws-usage { display: none; } }

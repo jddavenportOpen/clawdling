@@ -258,9 +258,11 @@ function MondayCard() {
   const change = async (body) => {
     setBusy(true);
     try {
-      setSt(await api.setDigest(body));
+      // Turning it on approves exactly the names this card showed.
+      setSt(await api.setDigest(body.enabled === true ? { ...body, labels: (st && st.preview_labels) || {} } : body));
     } catch (e) {
-      errorToast('Could not change the Monday report', e);
+      if (e.status === 409) { toast(e.message, { ms: 5200 }); api.digest().then(setSt).catch(() => {}); }
+      else errorToast('Could not change the Monday report', e);
     }
     setBusy(false);
   };

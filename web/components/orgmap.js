@@ -16,7 +16,7 @@ import { load, save } from '../lib/prefs.js';
 import { OrgError, useImportStep } from './first-run.js';
 import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf, countOf } from './setup.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
-import { usd } from './report-card.js';
+import { usd, useOrgReport } from './report-card.js';
 
 const TAU = Math.PI * 2;
 const R_OWNER = 30;
@@ -293,7 +293,7 @@ export function OrgMap() {
   };
 
   // Usage over 7 days and when each agent last finished work (the report card, 1.5).
-  const orgRep = useOrgReport(agents);
+  const orgRep = useOrgReport(agents.map((a) => a.id).join(','));
   const repById = useMemo(() => Object.fromEntries(((orgRep && orgRep.agents) || []).map((a) => [a.id, a])), [orgRep]);
 
   const counts = useMemo(() => ({
@@ -471,20 +471,6 @@ export function usageLine(rep, now = Date.now()) {
     short: [cost ? `${cost}${rep.cost_complete ? '' : '+'}` : null, when].filter(Boolean).join(' · '),
     long: [cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price` : null, when ? `last finished work ${when}` : null].filter(Boolean).join(', '),
   };
-}
-
-/** The org's report (7 days), refreshed every 30 s while the map is open, and when the org changes. */
-function useOrgReport(agents) {
-  const [rep, setRep] = useState(null);
-  const ids = agents.map((a) => a.id).join(',');
-  useEffect(() => {
-    let live = true;
-    const get = () => { if (!document.hidden) api.orgReport('7d').then((r) => { if (live) setRep(r); }).catch(() => {}); };
-    get();
-    const t = setInterval(get, 30000);
-    return () => { live = false; clearInterval(t); };
-  }, [ids]);
-  return rep;
 }
 
 // One chip of the setup layer: "Skills 9". Click (or Enter) opens that list in the side panel.

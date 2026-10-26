@@ -88,7 +88,7 @@ test('Done, Needs you, Cost and the Timeline after one working session; receipts
   const tl = (await request(srv, 'GET', `/api/sessions/${s.sid}/timeline`)).body;
   assert.equal(tl.transcript, 'ok');
   const names = tl.entries.filter((e) => e.kind === 'tool').map((e) => `${e.depth}:${e.name}:${e.ok}`);
-  assert.deepEqual(names, ['0:Bash:true', '0:Edit:true', '0:Bash:false', '0:Agent:true', '1:Read:true']);
+  assert.deepEqual(names, ['0:Bash:true', '0:Edit:true', '0:Bash:false', '0:Agent:true', '1:Read:true', '0:Bash:true']);
   assert.equal(tl.entries[0].kind, 'prompt');
   assert.equal(tl.entries[0].cost.toFixed(6), TURN_USD.toFixed(6));
   const page = (await request(srv, 'GET', `/api/sessions/${s.sid}/timeline?after=1&limit=2`)).body;

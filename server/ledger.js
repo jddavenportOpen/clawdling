@@ -35,7 +35,8 @@ export function priceFor(model, prices = PRICES) {
   for (const p of prices.models) {
     if (!id.startsWith(p.match)) continue;
     const rest = id.slice(p.match.length);
-    if (rest && !/^(?:-\d{8}|@.*|-v\d.*)$/.test(rest)) continue; // claude-opus-5 is not claude-opus-5-6
+    // A date, a Bedrock version (-v1:0, also after a date) or an @version; claude-opus-5 is not claude-opus-5-6.
+    if (rest && !/^(?:-\d{8}(?:-v\d[\w:.-]*)?|@.*|-v\d[\w:.-]*)$/.test(rest)) continue;
     if (!best || p.match.length > best.match.length) best = p;
   }
   return best;
@@ -153,7 +154,7 @@ export function applyRecord(st, o, { sub = false } = {}) {
       } else if (b.type === 'tool_use' && typeof b.id === 'string') {
         const input = b.input && typeof b.input === 'object' ? b.input : {};
         const name = typeof b.name === 'string' ? b.name.slice(0, 80) : 'tool';
-        const t = { id: b.id.slice(0, 100), name, summary: toolSummary(input), file: EDIT_TOOLS.has(name) && typeof input.file_path === 'string' ? input.file_path : EDIT_TOOLS.has(name) && typeof input.notebook_path === 'string' ? input.notebook_path : null, ts: at, end: null, error: null, turn: st.turn, side };
+        const t = { id: b.id.slice(0, 100), name, summary: toolSummary(input), commit: name === 'Bash' && typeof input.command === 'string' && /\bgit\b[^;&|\n]*\bcommit\b/.test(input.command), file: EDIT_TOOLS.has(name) && typeof input.file_path === 'string' ? input.file_path : EDIT_TOOLS.has(name) && typeof input.notebook_path === 'string' ? input.notebook_path : null, ts: at, end: null, error: null, turn: st.turn, side };
         // A subagent written into the main file (older versions): under the newest open Agent call.
         if (side && !sub) t.parent = st.openAgent || null;
         if (!st.tools.has(t.id)) {
@@ -256,12 +257,13 @@ export function subagentFiles(mainFile) {
 
 /** Incremental reader of whole sessions (main transcript plus its subagents), cached per file. */
 export class LedgerReader {
-  constructor({ maxFiles = 256 } = {}) {
+  constructor({ maxFiles = 2048 } = {}) {
     this.cache = new Map();
     this.maxFiles = maxFiles;
   }
 
-  state(file, sub) {
+  state(file, sub, touched) {
+    touched?.add(file);
     let st = this.cache.get(file);
     if (!st) {
       st = newState(file, null);
@@ -276,9 +278,14 @@ export class LedgerReader {
 
   /** {main, subs[]} for a session's transcript file, read up to now. */
   session(mainFile) {
-    const main = this.state(mainFile, false);
-    const subs = main.gone ? [] : subagentFiles(mainFile).map((f) => this.state(f, true));
-    while (this.cache.size > this.maxFiles) this.cache.delete(this.cache.keys().next().value);
+    const touched = new Set();
+    const main = this.state(mainFile, false, touched);
+    const subs = main.gone ? [] : subagentFiles(mainFile).map((f) => this.state(f, true, touched));
+    // Evict the least recently used files, never one this call just read.
+    for (const k of this.cache.keys()) {
+      if (this.cache.size <= this.maxFiles) break;
+      if (!touched.has(k)) this.cache.delete(k);
+    }
     return { main, subs };
   }
 }
@@ -302,13 +309,15 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
   const byModel = {};
   const unknown = new Set();
   const priced = []; // {ts, usd}
+  const unknownDays = {}; // day -> models whose usage there has no price
   let newest = null;
   for (const u of all) {
     const usd = usageCost(u.model, u.usage, prices);
     if (u.ts !== null && (newest === null || u.ts > newest)) newest = u.ts;
     if (usd === null) {
-      if (u.model) unknown.add(u.model);
-      else unknown.add('unknown model');
+      const m = u.model || 'unknown model';
+      unknown.add(m);
+      if (u.ts !== null) (unknownDays[localDay(u.ts)] ||= new Set()).add(m);
       continue;
     }
     repriced += usd;
@@ -351,6 +360,10 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
   // A transcript with records but no turn, tool or usage this parser knows is a format it has not seen.
   const unseen = main.records > 0 && main.assistants === 0 && main.prompts === 0 && !main.costState;
   if (unseen) issues.add('no record this version of Clawdling knows');
+  // When it is the CLI's own number, it already priced every model (hasUnknownModelCost is false).
+  const unknown_days = cost.source === 'cli' ? {} : Object.fromEntries(Object.entries(unknownDays).map(([d, s]) => [d, [...s].sort()]));
+  // Successful `git commit` calls, so commits are credited only to a session that made them.
+  const commit_times = tools.filter((t) => t.commit && t.error === false && t.end !== null).map((t) => new Date(t.end).toISOString());
   return {
     turns: main.prompts,
     tools: tools.length,
@@ -359,6 +372,8 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
     subagents: subs.length,
     cost,
     days,
+    unknown_days,
+    commit_times,
     last_line: main.lastText ? lastLine(main.lastText.text) : null,
     last_line_at: main.lastText ? new Date(main.lastText.ts ?? main.lastTs ?? Date.now()).toISOString() : null,
     started_at: main.firstTs !== null ? new Date(main.firstTs).toISOString() : null,
@@ -374,7 +389,7 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
  * agent's words, and subagents nested under the call that started them; cost per turn on each
  * prompt (always repriced: the CLI keeps no per-turn number). Entries are numbered for paging.
  */
-export function timeline({ main, subs }, { prices = PRICES } = {}) {
+export function timeline({ main, subs }, { prices = PRICES, ended = false } = {}) {
   const turnCost = new Map();
   const turnUnknown = new Set();
   const parentTurn = new Map();
@@ -402,6 +417,8 @@ export function timeline({ main, subs }, { prices = PRICES } = {}) {
     kind: 'tool', id: t.id, name: t.name, summary: t.summary, ts: iso(t.ts), depth,
     ms: t.end !== null && t.ts !== null ? Math.max(0, t.end - t.ts) : null,
     ok: t.end === null ? null : !t.error,
+    // The session ended before this call came back (killed, or Claude Code exited).
+    ...(t.end === null && ended ? { stopped: true } : {}),
     ...(t.parent ? { parent: t.parent } : {}),
   });
   const emit = (st, depth, seen) => {
@@ -458,6 +475,7 @@ export class LedgerStore {
     this.dir = dir;
     this.keepDays = keepDays;
     this.maxBytes = maxBytes;
+    this.cache = new Map(); // sid -> {mtimeMs, size, rec}: a report never re-parses an unchanged file
   }
 
   file(sid) {
@@ -466,9 +484,22 @@ export class LedgerStore {
   }
 
   read(sid) {
+    let f;
+    let st;
     try {
-      const o = JSON.parse(fs.readFileSync(this.file(sid), 'utf8'));
-      return o && typeof o === 'object' && o.sid === sid ? o : null;
+      f = this.file(sid);
+      st = fs.statSync(f);
+    } catch {
+      this.cache.delete(sid);
+      return null;
+    }
+    const c = this.cache.get(sid);
+    if (c && c.mtimeMs === st.mtimeMs && c.size === st.size) return c.rec;
+    try {
+      const o = JSON.parse(fs.readFileSync(f, 'utf8'));
+      const rec = o && typeof o === 'object' && o.sid === sid ? o : null;
+      this.cache.set(sid, { mtimeMs: st.mtimeMs, size: st.size, rec });
+      return rec;
     } catch {
       return null;
     }
@@ -480,6 +511,12 @@ export class LedgerStore {
     const tmp = `${f}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, JSON.stringify(rec), { mode: 0o600 });
     fs.renameSync(tmp, f);
+    try {
+      const st = fs.statSync(f);
+      this.cache.set(rec.sid, { mtimeMs: st.mtimeMs, size: st.size, rec });
+    } catch {
+      this.cache.delete(rec.sid);
+    }
   }
 
   /** Every summary (optionally one agent's), newest first by end. */

@@ -182,7 +182,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
         </div>
       </div>` : null}
     </div>
-    ${mobile && !ended && !chat && !timeline ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
+    ${mobile && !ended && !chat ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
   </section>`;
 }
 

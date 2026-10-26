@@ -118,12 +118,12 @@ export function ReportCard({ id, agent }) {
       <button class="btn btn-quiet btn-sm" onClick=${() => setTick((x) => x + 1)}>Try again</button></div>` : null}
     ${!fresh && !err ? html`<div class="report-grid" aria-busy="true"><div class="panel-skel tall" aria-label="Loading the report card"></div></div>` : null}
     ${fresh ? html`
-      <div class="report-glance" role="list" aria-label="At a glance">
-        <button type="button" role="listitem" class="glance" onClick=${() => go('#rc-done')}><span class="glance-n">${fresh.done.length}</span><span class="glance-l">${fresh.done.length === 1 ? 'session' : 'sessions'} with work done</span></button>
-        <button type="button" role="listitem" class=${`glance ${needs.length ? 'tone-needs' : ''}`} onClick=${() => go('#rc-needs')}><span class="glance-n">${needs.length}</span><span class="glance-l">${needs.length === 1 ? 'thing needs' : 'things need'} you</span></button>
-        <button type="button" role="listitem" class="glance" onClick=${() => go('#rc-cost')}><span class="glance-n">${usd(fresh.cost.total_usd).replace(/^about /, '')}</span><span class="glance-l">of usage at list price</span></button>
-        <button type="button" role="listitem" class=${`glance ${fresh.next.stale ? 'tone-needs' : ''}`} onClick=${() => go('#rc-next')}><span class="glance-n">${fresh.next.empty ? 'None' : agoText(fresh.next.updated_at, now) || 'Written'}</span><span class="glance-l">${fresh.next.empty ? 'next steps written yet' : 'next steps last updated'}</span></button>
-      </div>
+      <ul class="report-glance" aria-label="At a glance">
+        <li><button type="button" class="glance" onClick=${() => go('#rc-done')}><span class="glance-n">${fresh.done.length}</span><span class="glance-l">${fresh.done.length === 1 ? 'session' : 'sessions'} with work done</span></button></li>
+        <li><button type="button" class=${`glance ${needs.length ? 'tone-needs' : ''}`} onClick=${() => go('#rc-needs')}><span class="glance-n">${needs.length}</span><span class="glance-l">${needs.length === 1 ? 'thing needs' : 'things need'} you</span></button></li>
+        <li><button type="button" class="glance" onClick=${() => go('#rc-cost')}><span class="glance-n">${usd(fresh.cost.total_usd).replace(/^about /, '')}${fresh.cost.complete ? '' : '+'}</span><span class="glance-l">of usage at list price${fresh.cost.complete ? '' : ', plus some unknown'}</span></button></li>
+        <li><button type="button" class=${`glance ${fresh.next.stale ? 'tone-needs' : ''}`} onClick=${() => go('#rc-next')}><span class="glance-n">${fresh.next.empty ? 'None' : agoText(fresh.next.updated_at, now) || 'Written'}</span><span class="glance-l">${fresh.next.empty ? 'next steps written yet' : 'next steps last updated'}</span></button></li>
+      </ul>
       <div class="report-grid">
         <${DoneBlock} r=${fresh} win=${win} name=${name} now=${now} agentsById=${agentsById} />
         <div class="report-side">
@@ -146,7 +146,7 @@ function Block({ id, title, count, tone, sub, children, testid }) {
 function DoneBlock({ r, win, name, now, agentsById }) {
   const other = r.repo_commits && Array.isArray(r.repo_commits.other) ? r.repo_commits.other : [];
   return html`<${Block} id="rc-done" title="Done" count=${r.done.length} sub=${IN_WINDOW[win]} testid="rc-done">
-    ${r.done.length ? html`<ul class="rc-list">${r.done.map((d) => html`<li key=${d.sid}>
+    ${r.done.length ? html`<ul class="rc-list">${r.done.map((d) => html`<li key=${d.sid} class="rc-done-item">
       <button type="button" class="rc-item" onClick=${() => focusSession(d.sid)} data-sid=${d.sid} title="Open this session">
         <span class="rc-item-top">
           <span class="rc-item-title">${d.title || sessionName({ agent: r.agent.id }, agentsById)}</span>
@@ -159,9 +159,10 @@ function DoneBlock({ r, win, name, now, agentsById }) {
           ${d.tool_errors ? html`<span class="tone-amber-text">${plural(d.tool_errors, 'step')} hit an error along the way</span>` : null}
           ${d.transcript === 'gone' ? html`<span class="rc-gone" title="Claude Code deleted this session's transcript (its retention cleanup). Clawdling kept its summary.">Transcript gone, kept summary only</span>` : null}
         </span>
-        ${d.commits && d.commits.length ? html`<ul class="rc-commits" aria-label="Commits">${d.commits.slice(0, 5).map((c) => html`<li key=${c.hash}><${Icon} name="check" size=${12} /> ${c.subject}</li>`)}
-          ${d.commits.length > 5 ? html`<li class="rc-more">and ${d.commits.length - 5} more</li>` : null}</ul>` : null}
-      </button></li>`)}</ul>`
+      </button>
+      ${d.commits && d.commits.length ? html`<ul class="rc-commits rc-commits-in" aria-label=${`Commits from ${d.title || 'this session'}`}>${d.commits.slice(0, 5).map((c) => html`<li key=${c.hash}><${Icon} name="check" size=${12} /> ${c.subject}</li>`)}
+        ${d.commits.length > 5 ? html`<li class="rc-more">and ${d.commits.length - 5} more</li>` : null}</ul>` : null}
+    </li>`)}</ul>`
       : html`<p class="rc-empty">Nothing done ${IN_WINDOW[win]} yet. When a session of ${name} finishes some work, it shows up here with its own closing words${r.agent.has_repo ? ' and the commits it made' : ''}.</p>`}
     ${other.length ? html`<div class="rc-other"><h3 class="rc-sub-h">Also committed in the repo <span class="rc-h-sub">outside these sessions</span></h3>
       <ul class="rc-commits">${other.slice(0, 8).map((c) => html`<li key=${c.hash} title=${longTime(c.at)}><${Icon} name="check" size=${12} /> ${c.subject}</li>`)}</ul></div>` : null}
@@ -188,7 +189,7 @@ function CostBlock({ c, win, name }) {
     <p class="rc-big"><span class="rc-big-n" data-testid="rc-cost-total">${usd(c.total_usd)}</span> <span class="rc-big-l">of usage at list price</span></p>
     ${unknown ? html`<p class="rc-note tone-amber-text">${c.unknown_models.length ? `Plus usage with an unknown cost (${c.unknown_models.map(modelName).join(', ')} is not in Clawdling's price table).` : ''}${c.sessions_without_cost ? ` ${plural(c.sessions_without_cost, 'session')} had no transcript to read, so ${c.sessions_without_cost === 1 ? 'its' : 'their'} usage is unknown.` : ''}</p>` : null}
     <p class="rc-label" data-testid="rc-cost-label">${COST_NOTE}</p>
-    ${c.total_usd > 0 && win !== 'today' ? html`<div class="rc-bars" role="img" aria-label=${`Usage by day: ${c.by_day.filter((d) => d.usd > 0).map((d) => `${dayLabel(d.day, '7d')} ${usd(d.usd)}`).join(', ')}`}>
+    ${c.total_usd > 0 && win !== 'today' ? html`<div class="rc-bars" role="img" aria-label=${`Usage by day: ${c.by_day.filter((d) => d.usd > 0).map((d) => `${new Date(`${d.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${usd(d.usd)}`).join(', ') || 'none'}`}>
       ${c.by_day.map((d) => html`<span class="rc-bar" key=${d.day} title=${`${d.day}: ${usd(d.usd)}`}>
         <span class="rc-bar-fill" style=${{ height: `${max > 0 ? Math.max(d.usd > 0 ? 4 : 0, Math.round((d.usd / max) * 100)) : 0}%` }}></span>
         <span class="rc-bar-l" aria-hidden="true">${win === '7d' || d.day.endsWith('-01') || Number(d.day.slice(8)) % 5 === 0 ? dayLabel(d.day, win) : ''}</span></span>`)}
@@ -210,4 +211,20 @@ function NextBlock({ n, id, name, now }) {
       : html`<div class="rc-next chat-body">${blocks.map(renderBlock)}</div>`}
     <button type="button" class="link-btn" onClick=${() => navigate(`#/agent/${encodeURIComponent(id)}/memory`)}>Open memory</button>
   </${Block}>`;
+}
+
+/**
+ * The org's report (7 days: per agent, and the totals for today and 7 days), refreshed every
+ * `everyMs` while the page is visible and whenever `key` changes (agents added or removed).
+ */
+export function useOrgReport(key = '', everyMs = 30000) {
+  const [rep, setRep] = useState(null);
+  useEffect(() => {
+    let live = true;
+    const get = () => { if (!document.hidden) api.orgReport('7d').then((r) => { if (live) setRep(r); }).catch(() => {}); };
+    get();
+    const t = setInterval(get, everyMs);
+    return () => { live = false; clearInterval(t); };
+  }, [key, everyMs]);
+  return rep;
 }

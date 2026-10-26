@@ -9,7 +9,7 @@
 // Schedule: an in-process timer checked every 10 minutes against .clawdling/digest.json; once per
 // ISO week; a Clawdling that was not running at 08:00 on Monday sends at its next start that week.
 import { safeName } from './needs-you.js';
-import { badRequest, readJson, writeJson } from './util.js';
+import { HttpError, badRequest, readJson, writeJson } from './util.js';
 
 export const CHECK_MS = 10 * 60000;
 const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -122,7 +122,11 @@ export class Digest {
     };
   }
 
-  /** {enabled?, day?, hour?}. Turning it on approves today's agent names; off forgets them. */
+  /**
+   * {enabled?, day?, hour?, labels?}. Turning it on approves the agent names the owner was shown:
+   * `labels` must equal today's names (the preview's preview_labels), or nothing changes and the
+   * owner is asked to look again; off forgets them.
+   */
   configure(b = {}) {
     const st = this.state();
     if (b.day !== undefined) {
@@ -138,7 +142,15 @@ export class Digest {
       if (b.enabled && !this.pinger.guarded()) throw badRequest("Clawdling cannot keep agents out of its own settings in a folder whose path has characters like ( ) ' or accents, so it will not message you from here");
       if (b.enabled && !this.pinger.channelFor(this.org.read())) throw badRequest('Pair Telegram or iMessage with Donna first: the Monday report goes to that chat.');
       if (b.enabled && !st.enabled) {
-        st.labels = this.currentLabels();
+        const now = this.currentLabels();
+        const shown = b.labels && typeof b.labels === 'object' && !Array.isArray(b.labels) ? b.labels : null;
+        const same = shown && Object.keys(now).length === Object.keys(shown).length && Object.entries(now).every(([k, v]) => shown[k] === v);
+        if (!same) {
+          const e = new HttpError(409, 'The agent names changed since this page showed them. Look at the message again, then turn it on.');
+          e.body = { preview_labels: now };
+          throw e;
+        }
+        st.labels = now;
         // Turned on mid-week after this week's send time: the first report waits for next week.
         if (this.now() >= weekSendTime(this.now(), st)) st.last_sent_week = isoWeek(this.now());
       }
@@ -167,20 +179,26 @@ export class Digest {
     st.last_sent_at = new Date(now).toISOString();
     st.last_error = null;
     this.save(st);
+    // Only the result is written afterwards, onto the state as it is then: a change the owner made
+    // while the message was on its way (turning it off) is never undone.
+    const result = (error) => {
+      const now = this.state();
+      now.last_error = error;
+      this.save(now);
+    };
     try {
       const r = await this.pinger.deliver(text);
       if (!r.sent) {
-        st.last_error = r.why;
-        this.save(st);
+        result(r.why);
         return { sent: false, why: r.why };
       }
       this.events?.record?.({ type: 'digest_sent', channel: r.channel, week });
       return { sent: true, channel: r.channel, text };
     } catch (err) {
-      st.last_error = String(err.message || err).slice(0, 200);
-      this.save(st);
-      this.logger?.warn?.(`monday report: ${st.last_error}`);
-      return { sent: false, why: st.last_error };
+      const why = String(err.message || err).slice(0, 200);
+      result(why);
+      this.logger?.warn?.(`monday report: ${why}`);
+      return { sent: false, why };
     } finally {
       this.sending = false;
     }

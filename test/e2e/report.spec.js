@@ -58,7 +58,7 @@ test.describe('report card: the Overview tab', () => {
     await login(page, '#/agent/site');
     const done = page.getByTestId('rc-done');
     await expect(done.locator('.rc-item')).toHaveCount(4);
-    const signup = done.locator('.rc-item', { hasText: 'Add the signup form' });
+    const signup = done.locator('.rc-done-item', { hasText: 'Add the signup form' });
     await expect(signup).toContainText('The signup form works');
     await expect(signup).toContainText('6 files changed');
     await expect(signup).toContainText('2 commits');

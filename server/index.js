@@ -79,7 +79,7 @@ import { claudeConfigDir, findTranscript } from './transcripts.js';
 import { NeedsYouPinger } from './needs-you.js';
 import { Reports } from './report.js';
 import { Digest } from './digest.js';
-import { KINDS as OTLP_KINDS, INGEST_MAX_BYTES, OtelState, RateLimit, SECRET_HEADER, TraceStore, enrich, envBlock, normalize, preflight } from './otel.js';
+import { KINDS as OTLP_KINDS, INGEST_MAX_BYTES, OtelState, RateLimit, SECRET_HEADER, TraceStore, enrich, envBlock, normalize, preflight, sessionHeaders } from './otel.js';
 import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
@@ -453,18 +453,29 @@ export async function startServer(opts = {}) {
       return preflight({
         env,
         configDirs: [configDir, ...accounts.list().map((a) => a.dir).filter(Boolean)],
-        projectDirs: [home, ...org.agents().flatMap((a) => [a.repo, ...(Array.isArray(a.repos) ? a.repos : [])]).filter(Boolean)],
+        // Every folder a session runs in or adds: the org, each agent's own folder, each repo.
+        projectDirs: [home, ...org.agents().flatMap((a) => [a.dir, a.repo, ...(Array.isArray(a.repos) ? a.repos : [])]).filter(Boolean)],
         ...(managedOverride ? { managed: managedOverride, profiles: [] } : {}),
       });
     }
     const OTEL_BLOCKED = 'Your Claude Code already has telemetry settings, so the detailed timeline stays off and Clawdling uses transcripts.';
+    let otelActive = false;
     function otelEnv() {
       const st = otelState.read();
-      return st.enabled && otelPreflight().clear ? envBlock({ port, secret: st.secret }) : null;
+      otelActive = st.enabled && otelPreflight().clear;
+      return otelActive ? envBlock({ port }) : null;
     }
     function writeHooks() {
       writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, env: otelEnv() }), 0o600);
     }
+    // Before every launch and resume: the preflight runs again (settings may have changed since), and
+    // a session started while it is on gets its own telemetry credential, never the org's secret.
+    sessions.beforeLaunch = (rec) => {
+      writeHooks();
+      const st = otelState.read();
+      if (!otelActive || !st.enabled || rec.guard === 'remote-access') return {};
+      return { OTEL_EXPORTER_OTLP_HEADERS: sessionHeaders(st.secret, rec.sid) };
+    };
     function otelStatus() {
       const st = otelState.read();
       const pf = otelPreflight();
@@ -1346,12 +1357,8 @@ export async function startServer(opts = {}) {
         if (!Number.isInteger(after) || after < -1) throw badRequest('after must be an integer >= -1');
         const limitRaw = Number(url.searchParams.get('limit') || 500);
         const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 500;
-        const out = reports.timeline(sid, { after, limit });
         // With the detailed timeline on: who approved each tool, and each turn's API requests.
-        if (out.entries.length) {
-          const rec = sessions.get(sid);
-          enrich(out.entries, traces.read(rec?.claude_session_id && isUuid(rec.claude_session_id) ? rec.claude_session_id : sid));
-        }
+        const out = reports.timeline(sid, { after, limit, enrich: (all) => enrich(all, traces.read(sid)) });
         return [200, { ...out, detailed: otelState.read().enabled }];
       }],
       // The Monday report: status with the exact text it would send now; {enabled?, day?, hour?}.
@@ -1360,6 +1367,8 @@ export async function startServer(opts = {}) {
       // The detailed timeline (beta): only from the computer itself.
       ['GET', /^\/api\/otel$/, () => [200, otelStatus()]],
       ['POST', /^\/api\/otel$/, async (req) => {
+        // The computer itself only: not through a remote address, nor from the Wi-Fi with --host 0.0.0.0.
+        if (!loopbackPeer(req.socket.remoteAddress)) throw new HttpError(403, 'Only the computer Clawdling runs on can do this. Open Settings there.');
         const b = await jsonBody(req);
         if (typeof b.enabled !== 'boolean') throw badRequest('send {enabled: true|false}');
         if (b.enabled) {
@@ -1549,7 +1558,9 @@ export async function startServer(opts = {}) {
       if (!kind) return sendJson(res, 404, { error: 'not found' });
       if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
       if (!otelState.read().enabled) return sendJson(res, 404, { error: 'the detailed timeline is off' });
-      if (!otelState.check(req.headers[SECRET_HEADER])) return sendJson(res, 401, { error: 'missing or wrong telemetry secret' });
+      const sid = otelState.sidFor(req.headers[SECRET_HEADER]);
+      const rec = sid ? sessions.get(sid) : null;
+      if (!rec) return sendJson(res, 401, { error: 'missing or wrong telemetry secret' });
       if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return sendJson(res, 415, { error: 'send OTLP/JSON (OTEL_EXPORTER_OTLP_PROTOCOL=http/json)' });
       if (Number(req.headers['content-length']) > INGEST_MAX_BYTES) {
         res.setHeader('Connection', 'close');
@@ -1563,8 +1574,9 @@ export async function startServer(opts = {}) {
       } catch {
         return sendJson(res, 400, { error: 'invalid JSON' });
       }
-      const items = normalize(kind, body).filter(({ sid }) => sessions.records.has(sid) || [...sessions.records.values()].some((r) => r.claude_session_id === sid));
-      traces.append(items);
+      // Only this session's own records (its Clawdling id, or Claude Code's id for it after a resume).
+      const ids = new Set([sid, rec.claude_session_id].filter((x) => isUuid(x)));
+      traces.append(normalize(kind, body, { only: ids }).map((x) => ({ sid, rec: x.rec })));
       return sendJson(res, 200, {});
     }
 
@@ -1680,6 +1692,19 @@ export async function startServer(opts = {}) {
     sessions.replaySpool(); // hooks that got a 503 while we were starting were spooled
     telegram.start();
     imessage.start();
+    reports.backfill();
+    // The detailed timeline's records: 14 days, 50 MB, checked at start and every hour.
+    const tracePrune = () => {
+      try {
+        traces.trim();
+        traces.prune();
+      } catch (err) {
+        logger.warn(`traces: ${err.message}`);
+      }
+    };
+    tracePrune();
+    const traceTimer = setInterval(tracePrune, 3600000);
+    traceTimer.unref?.();
     digest.start(testMode && Number(env.CLAWDLING_DIGEST_CHECK_MS) > 0 ? Number(env.CLAWDLING_DIGEST_CHECK_MS) : undefined);
 
     const urlHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
@@ -1696,6 +1721,8 @@ export async function startServer(opts = {}) {
       imessage.stop();
       pinger.stop();
       digest.stop();
+      clearInterval(traceTimer);
+      reports.stopped = true;
       donna.stop();
       found.worker?.terminate().catch(() => {});
       await sessions.shutdown();

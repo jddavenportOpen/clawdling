@@ -1222,7 +1222,7 @@ async function cmdRemote(args) {
 
 /** {ok: true|false|null, detail}: the newest session's transcript, parsed the way the report card does. */
 export function transcriptFormat(paths) {
-  const list = (readJson(paths.sessions, null)?.sessions || []).filter((r) => r && typeof r.transcript_path === 'string' && /\.jsonl$/.test(r.transcript_path));
+  const list = (readJson(paths.sessions, null)?.sessions || []).filter((r) => r && r.purpose !== 'signin' && typeof r.transcript_path === 'string' && /\.jsonl$/.test(r.transcript_path));
   list.sort((a, b) => String(b.last_activity_at || b.created_at || '').localeCompare(String(a.last_activity_at || a.created_at || '')));
   const rec = list.find((r) => fs.existsSync(r.transcript_path));
   if (!rec) return { ok: null, detail: 'no session transcript to check yet' };

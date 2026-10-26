@@ -112,7 +112,7 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 const sid = opts.resume || opts.sessionId || crypto.randomUUID();
-log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, PATH0: (process.env.PATH || '').split(path.delimiter)[0] } });
+log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS ?? null, PATH0: (process.env.PATH || '').split(path.delimiter)[0] } });
 
 // ------------------------------------------------------------------ print mode (Donna turns)
 if (opts.print) {
@@ -539,11 +539,15 @@ async function interactive() {
       }
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_w${n}4`, content: 'The docs look fine.' }] }, { toolUseResult: { status: 'completed', agentId } });
       if (text.includes('commit')) {
+        // As Claude Code would: a Bash tool call that runs git commit, then its result.
+        transcript('assistant', { id: `msg_${n}c`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 0, output_tokens: 0 }, content: [{ type: 'tool_use', id: `toolu_w${n}5`, name: 'Bash', input: { command: 'git add -A && git commit -m "Add a README section"', description: 'Commit' } }] }, { requestId: `req_${n}c` });
+        let ok = true;
         try {
           execFileSync('git', ['-c', 'user.name=Fake Claude', '-c', 'user.email=fake@example.invalid', 'commit', '--allow-empty', '-q', '-m', 'Add a README section'], { cwd: process.cwd(), stdio: 'ignore' });
         } catch {
-          // not a repo
+          ok = false; // not a repo
         }
+        transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_w${n}5`, content: ok ? '[main abc1234] Add a README section' : 'Exit code 128', ...(ok ? {} : { is_error: true }) }] });
       }
       const reply = 'I added a README section. The test command failed, so the tests need a look.';
       transcript('assistant', { id: `msg_${n}b`, role: 'assistant', model: 'claude-sonnet-5', usage: u2, content: [{ type: 'text', text: reply }] }, { requestId: `req_${n}b` });
