@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { looksLikeCredential } from '../checks.js';
+import { looksLikeCredential, realPathInside } from '../checks.js';
 import { killTree } from '../channels/donna.js';
 import { readEnvFile } from '../envfile.js';
 import { absPathRule } from '../hooks.js';
@@ -185,7 +185,11 @@ export function holds(cell, current, { k, judgeOk }) {
 export function recommend(cells, { k, judgeOk }) {
   const current = cells.find((c) => c.current) || cells[0];
   if (!current || !judgeOk) return null;
-  const ok = cells.filter((c) => !c.error && c.runs_total > 0 && holds(c, current, { k, judgeOk }) && Number.isFinite(c.cost_per_run));
+  // Too little to go on: fewer than 3 cases, or the current setting passes under half of them. A
+  // setting that passed no case is never recommended.
+  const caseCount = (current.cases || []).length;
+  if (caseCount < 3 || current.passes < caseCount / 2) return null;
+  const ok = cells.filter((c) => !c.error && c.runs_total > 0 && c.passes >= 1 && c.score !== null && holds(c, current, { k, judgeOk }) && Number.isFinite(c.cost_per_run));
   if (!ok.length) return null;
   ok.sort((a, b) => a.cost_per_run - b.cost_per_run);
   const best = ok[0];
@@ -831,6 +835,7 @@ export class Evals {
     } catch (err) {
       await this.removeScratch(entry);
       this.unregister(dir);
+      err.scratch = true; // before claude started: the check-up cannot run at all
       throw err;
     }
   }
@@ -839,6 +844,7 @@ export class Evals {
     const notes = path.join(dir, 'agent');
     copyAgentFolder(agent.dir, notes);
     let cwd = notes;
+    let cwdRoot = notes;
     if (agent.kind === 'project' && agent.repo && fs.existsSync(agent.repo) && this.checks) {
       const wt = path.join(dir, 'repo');
       entry.repo = agent.repo;
@@ -851,9 +857,11 @@ export class Evals {
       const rel = path.relative(realPathOf(await this.checks.repoTop(agent.repo)), realPathOf(agent.dir));
       if (!rel.startsWith('..') && !path.isAbsolute(rel)) removeInside(wt, path.join(rel, 'evals'));
       cwd = path.join(wt, prefix);
-      if (!fs.existsSync(cwd)) throw new Error(`${path.basename(agent.repo)} is not committed to git yet, so the check-up's copy of the repo has no such folder`);
+      // Through real folders only: a link committed in place of apps/web would lead the run outside.
+      if (!realPathInside(wt, cwd)) throw new Error(`${path.basename(agent.repo)} is not committed to git yet (or is a link in the commit), so the check-up's copy of the repo has no such folder`);
+      cwdRoot = wt;
     }
-    const target = { ...agent, dir: notes, cwd };
+    const target = { ...agent, dir: notes, cwd, cwdRoot };
     const ctx = `${this.sessions.contextText(target, { orgRules: true })}\n${RUN_INSTRUCTIONS}\n`;
     const ctxFile = path.join(dir, 'context.md');
     fs.writeFileSync(ctxFile, ctx, { mode: 0o600 });
@@ -968,7 +976,9 @@ export class Evals {
       run.cwd = sc.cwd;
       // Graders run after the scratch copy is gone: read the files they need now.
       run.fileTexts = fileTexts(c.graders, run);
-      return { run, cost, cost_unknown: unknownCost, error, denials, num_turns: res.num_turns ?? null, duration_ms: res.duration_ms ?? Date.now() - started };
+      // Stopped at its budget: the cap cut it short, so it is ungraded rather than failed.
+      const capStopped = !!(res.is_error && res.subtype === 'error_max_budget_usd');
+      return { run, cost, cost_unknown: unknownCost, capStopped, error, denials, num_turns: res.num_turns ?? null, duration_ms: res.duration_ms ?? Date.now() - started };
     } finally {
       await this.removeScratch(sc.entry);
       this.unregister(sc.entry.dir);
@@ -1039,12 +1049,17 @@ export class Evals {
                 capped = true;
                 break outer;
               }
+              if (err.scratch) {
+                error = `could not make the check-up's copy: ${oneLine(err.message, 200)}`;
+                break outer;
+              }
               r = { run: { last_message: '', trace: [], tool_calls: [], steps: [], files: [] }, cost: 0, error: oneLine(err.message, 200), denials: [] };
             }
             cellOut.cost_usd += r.cost;
             cellOut.agent_runs++;
-            const run = { ...r.run, skipPaid: state.spent >= state.cap };
-            if (run.skipPaid) capped = true;
+            // A run that failed scores 0 whatever the graders say: no paid judge votes for it.
+            const run = { ...r.run, skipPaid: state.spent >= state.cap, skipJudge: !!r.error };
+            if (run.skipPaid || r.capStopped) capped = true;
             const graders = [];
             for (const g of c.graders) {
               let res;
@@ -1057,7 +1072,7 @@ export class Evals {
               graders.push(res);
             }
             const score = caseScore(graders, { error: r.error });
-            caseOut.runs.push({ n: i + 1, score, passed: !r.error && score >= 1, error: r.error, cost_usd: r.cost, num_turns: r.num_turns ?? null, duration_ms: r.duration_ms ?? null, denials: r.denials || [], graders, steps: r.run.steps || [], files: (r.run.files || []).slice(0, 50), last_message: String(r.run.last_message || '').slice(0, 4000) });
+            caseOut.runs.push({ n: i + 1, ungraded: !!r.capStopped || graders.some((g) => g.explanation === 'skipped: cost cap reached'), score, passed: !r.error && score >= 1, error: r.error, cost_usd: r.cost, num_turns: r.num_turns ?? null, duration_ms: r.duration_ms ?? null, denials: r.denials || [], graders, steps: r.run.steps || [], files: (r.run.files || []).slice(0, 50), last_message: String(r.run.last_message || '').slice(0, 4000) });
             this.progress(state, { done: state.done + 1 });
           }
         }
@@ -1066,12 +1081,13 @@ export class Evals {
     // Scores per cell: case score = mean over its runs; suite score = mean of the case scores.
     for (const cell of outCells) {
       for (const c of cell.cases) {
-        c.score = c.runs.length ? c.runs.reduce((s, r) => s + r.score, 0) / c.runs.length : 0;
+        // A run the cap cut short (a grader skipped, or the run stopped at its budget) is ungraded, not failed.
+        c.score = c.runs.some((r) => r.ungraded) ? null : c.runs.length ? c.runs.reduce((s, r) => s + r.score, 0) / c.runs.length : 0;
         c.pass_at_k = c.runs.some((r) => r.passed);
         c.pass_hat_k = c.runs.length === k && c.runs.every((r) => r.passed);
       }
       const done = cell.cases.filter((c) => c.runs.length);
-      cell.score = done.length ? done.reduce((s, c) => s + c.score, 0) / done.length : null;
+      cell.score = done.length && done.every((c) => c.score !== null) ? done.reduce((s, c) => s + c.score, 0) / done.length : null;
       cell.passes = cell.cases.filter((c) => c.runs.length && c.runs.every((r) => r.passed)).length;
       cell.runs_total = cell.cases.reduce((s, c) => s + c.runs.length, 0);
       cell.runs_passed = cell.cases.reduce((s, c) => s + c.runs.filter((r) => r.passed).length, 0);

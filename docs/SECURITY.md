@@ -408,8 +408,12 @@ To limit the damage a hostile script could do:
   under the system temp folder; the checks run there, in the agent's repo folder (a monorepo's
   `apps/web`, not its top); the worktree is removed with `git worktree remove --force` (never `git
   worktree prune`, which would also drop records of your own worktrees on an unplugged drive).
-  Untracked files are not copied (they can be secrets or build junk); the cockpit says so, and a run
-  that left new files out is shown with their count and does not count for claim receipts. Every
+  Untracked files are not copied (they can be secrets or build junk), submodules are checked out
+  empty and filtered files (LFS, encryption) stay as git stores them; the cockpit says so, and a run
+  that left any of these out is shown with the counts and does not count for claim receipts. The
+  worktree is made without its checkout, then checked out with every filter named in the repo's
+  config or the worktree's (an `includeIf "gitdir:"` can apply only there) switched off, inside a
+  private (0700) temp folder. Every
   git call carries `core.hooksPath` pointed at an empty folder, `core.fsmonitor=false`, every
   clean/smudge/process filter named in the git config switched off (LFS included),
   `protocol.allow=never` and `GIT_NO_LAZY_FETCH=1`, so the repo's own config cannot make git run a
@@ -492,7 +496,8 @@ To limit the damage a hostile script could do:
 
 Approving commands, running a ship check, drafting, editing and approving cases, running a
 check-up and "Use this" work only from the computer Clawdling runs on (`403` through a remote
-address, like turning on the detailed timeline). A paired phone can read the results and use "Ask
+address, like turning on the detailed timeline; served on a LAN address with `--host`, the token
+alone is not enough: the request must come from the computer itself). A paired phone can read the results and use "Ask
 the agent to fix it", which only sends the shown message into a session it could already type into.
 Donna's text-message turns cannot run `clawdling check` or `clawdling checkup`.
 

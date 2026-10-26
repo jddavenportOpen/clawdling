@@ -1,14 +1,22 @@
 // The ship check's isolation (1.6 review fixes): credential scrub, filters, the repo in the
 // fingerprint, and steps that leave a background child behind.
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { Checks, checkEnv, filterDrivers, fingerprint, looksLikeCredential } from '../../server/checks.js';
+import { Checks, checkEnv, filterDrivers, fingerprint, looksLikeCredential, realPathInside } from '../../server/checks.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-checks-'));
+const made = [];
+const tmp = () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-checks-'));
+  made.push(d);
+  return d;
+};
+after(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+});
 const hasGit = spawnSync('git', ['--version']).status === 0;
 
 test('credential scrub: names with PASS, PWD or DSN and URLs with a password go; PWD and PATH stay', () => {
@@ -146,4 +154,51 @@ test('a ship check that left new files out records how many, and is not claim ev
   await checks.run('web');
   assert.equal(checks.evidence('web').length, 1);
   assert.throws(() => checks.approve('web', { checks: [{ name: 'tests', run: 'node check.js‮', timeout: 60 }], shown: ['node check.js‮'] }), /invisible/);
+});
+
+test('review 5: a filter switched on only in worktrees (includeIf) never runs; submodules and new files anywhere are left-out counts', { skip: !hasGit && 'no git' }, async () => {
+  const repo = tmp();
+  const marker = path.join(tmp(), 'ran');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  fs.mkdirSync(path.join(repo, 'apps', 'web'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'apps', 'web', 'a.txt'), 'hello\n');
+  fs.writeFileSync(path.join(repo, '.gitattributes'), '*.txt filter=wt\n');
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  const head = String(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'])).trim();
+  git('update-index', '--add', '--cacheinfo', `160000,${head},vendor/ui`);
+  git('commit', '-qm', 'submodule');
+  const cfg = path.join(tmp(), 'wt.cfg');
+  fs.writeFileSync(cfg, `[filter "wt"]\n\tsmudge = touch '${marker.replace(/\\/g, '/')}'; cat\n\trequired = true\n`);
+  git('config', 'includeIf.gitdir:**/worktrees/**.path', cfg.replace(/\\/g, '/'));
+  const rt = tmp();
+  const checks = new Checks({ paths: { rt, env: path.join(rt, '.env') }, org: {} });
+  const wt = path.join(tmp(), 'wt');
+  await checks.addWorktree(repo, wt, 'HEAD');
+  assert.equal(fs.readFileSync(path.join(wt, 'apps', 'web', 'a.txt'), 'utf8'), 'hello\n');
+  assert.equal(fs.existsSync(marker), false, 'the worktree-only filter did not run');
+  fs.mkdirSync(path.join(repo, 'packages', 'shared'), { recursive: true });
+  fs.writeFileSync(path.join(repo, 'packages', 'shared', 'format.js'), 'x');
+  const left = await checks.leftOut(path.join(repo, 'apps', 'web'), String(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'])).trim());
+  assert.equal(left.untracked, 1, 'a new file in a sibling folder of a monorepo');
+  assert.equal(left.submodules, 1);
+  await checks.removeWorktreeAt(repo, wt);
+});
+
+test('review 5: scratch worktrees live in a private folder; a link in place of the repo folder is refused', () => {
+  const t = tmp();
+  const checks = new Checks({ paths: { rt: tmp() }, org: {}, tmpdir: t });
+  const parent = fs.mkdtempSync(path.join(t, 'clawdling-check-web-'));
+  assert.equal(checks.ours(path.join(parent, 'wt')), true);
+  assert.equal(checks.ours(parent), false);
+  assert.equal(checks.ours(path.join(t, 'other', 'wt')), false);
+  if (process.platform !== 'win32') assert.equal(fs.statSync(parent).mode & 0o077, 0, 'no access for other accounts');
+  const root = tmp();
+  fs.mkdirSync(path.join(root, 'apps'));
+  fs.symlinkSync(tmp(), path.join(root, 'apps', 'web'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(realPathInside(root, path.join(root, 'apps', 'web')), false);
+  assert.equal(realPathInside(root, path.join(root, 'apps')), true);
 });

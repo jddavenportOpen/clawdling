@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -10,7 +10,15 @@ import { GRADER_KEYS, PLUGIN_EVAL_GRADER_KEYS, PLUGIN_EVAL_PROMPT_KEYS, PROMPT_K
 import { splitFrontmatter } from '../../server/yaml-lite.js';
 import { absPathRule } from '../../server/hooks.js';
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-evals-'));
+const made = [];
+const tmp = () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-evals-'));
+  made.push(d);
+  return d;
+};
+after(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+});
 const run = (o = {}) => ({ last_message: '', trace: [], tool_calls: [], files: [], cwd: os.tmpdir(), ...o });
 const call = (name, input = {}) => ({ name, input, inputText: JSON.stringify(input) });
 
@@ -220,7 +228,8 @@ test('the default matrix: current; one effort lower; one cheaper family at mediu
 });
 
 test('the noise rule: k=1 within one case; k=3 within the Wilson interval; the judge controls must pass', () => {
-  const cur = { current: true, passes: 5, runs_total: 5, runs_passed: 5, cost_per_run: 0.1 };
+  const five = [1, 2, 3, 4, 5].map((i) => ({ id: `c${i}` }));
+  const cur = { current: true, passes: 5, runs_total: 5, runs_passed: 5, cost_per_run: 0.1, cases: five };
   const a = { passes: 4, runs_total: 5, runs_passed: 4, cost_per_run: 0.02, label: 'haiku' };
   const b = { passes: 3, runs_total: 5, runs_passed: 3, cost_per_run: 0.01, label: 'tiny' };
   assert.equal(holds(a, cur, { k: 1, judgeOk: true }), true);
@@ -230,6 +239,10 @@ test('the noise rule: k=1 within one case; k=3 within the Wilson interval; the j
   assert.equal(rec.label, 'haiku');
   assert.equal(rec.saves_pct, 80);
   assert.equal(recommend([cur, a], { k: 1, judgeOk: false }), null);
+  // Too little to go on: under 3 cases, or the current setting passes under half of them.
+  assert.equal(recommend([{ ...cur, cases: five.slice(0, 2), passes: 2 }, a], { k: 1, judgeOk: true }), null);
+  assert.equal(recommend([{ ...cur, passes: 2 }, { ...a, passes: 1 }], { k: 1, judgeOk: true }), null);
+  assert.equal(recommend([{ ...cur, passes: 3 }, { ...a, passes: 0 }], { k: 1, judgeOk: true }).current, true, 'a setting that passed nothing is never the pick');
   // k = 3: 15 runs; the current passed 14; a cell at 12/15 (0.80) is inside the interval, 9/15 is not.
   const c3 = { current: true, runs_total: 15, runs_passed: 14 };
   assert.ok(wilsonLow(14, 15) < 0.8 && wilsonLow(14, 15) > 0.6);
@@ -309,7 +322,7 @@ const stubEvals = (dir, { spawn, env = {} } = {}) => {
     calls.push({ args, opts });
     return spawn(args, opts);
   };
-  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-evals-run-'));
+  const work = tmp();
   ev.scratch = async () => ({ dir: work, cwd: work, notes: work, ctxFile: path.join(work, 'ctx.md'), settingsFile: path.join(work, 's.json'), entry: { dir: work } });
   ev.removeScratch = async () => fs.rmSync(work, { recursive: true, force: true });
   ev.unregister = () => {};
@@ -511,4 +524,26 @@ test('a claude that never started is charged nothing', async () => {
   const r = await ev.runCase(agent, caseOf(), { model: null }, state, 1);
   assert.equal(r.cost, 0);
   assert.equal(state.spent, 0);
+});
+
+test('review 5: a check-up whose copy cannot be made ends with an error and no score, and spends no votes', async () => {
+  const dir = tmp();
+  const { ev, agent } = stubEvals(dir, { spawn: async () => ({}) });
+  ev.controls = async () => [];
+  ev.scratch = async () => {
+    const e = new Error('the agent folder is too big to copy');
+    e.scratch = true;
+    throw e;
+  };
+  let votes = 0;
+  ev.judgeVote = async () => {
+    votes++;
+    return { pass: true, reason: '', cost_usd: 0 };
+  };
+  const g = parseGrader('c', '---\ntype: llm\n---\nNames the budget.');
+  const state = { id: 'x', agent: 'demo', started_at: new Date().toISOString(), cap: 2, spent: 0, judgeCost: 0, judgeModel: 'haiku', done: 0 };
+  const result = await ev.runSuite(agent, [caseOf([g], { name: 'a' })], { k: 1, cells: [{ model: null, current: true, label: 'current' }], state, suiteSkipped: 0 });
+  assert.match(result.error, /could not make the check-up's copy/);
+  assert.equal(result.score, null);
+  assert.equal(votes, 0);
 });

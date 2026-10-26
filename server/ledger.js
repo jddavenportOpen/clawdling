@@ -176,6 +176,7 @@ export function applyRecord(st, o, { sub = false } = {}) {
         // A shell command, for claim receipts: the command line and whether it ran in the background.
         if (SHELL_TOOLS.has(name) && typeof input.command === 'string') {
           t.cmd = input.command.length > CMD_MAX ? input.command.slice(0, CMD_MAX) : input.command;
+          if (input.command.length > CMD_MAX) t.cmdCut = true; // the rest could hide its exit (|| true): not a check
           t.bg = input.run_in_background === true;
         }
         // A subagent written into the main file (older versions): under the newest open Agent call.

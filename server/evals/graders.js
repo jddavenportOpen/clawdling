@@ -224,6 +224,7 @@ export async function grade(g, run, judge) {
         return gradeFileExists(g, run);
       case 'llm':
         if (run.skipPaid) return fail(g, 'skipped: cost cap reached');
+        if (run.skipJudge) return fail(g, 'skipped: the run failed, so it scores 0');
         return await gradeLlm(g, run, judge);
       default:
         return fail(g, `unsupported grader type ${g.type}`);

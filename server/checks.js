@@ -79,6 +79,22 @@ export function gitSafe(hooksDir) {
   ];
 }
 
+/** Is `sub` a real folder inside `root`, through real folders only (no part of the way a link)? */
+export function realPathInside(root, sub) {
+  const rel = path.relative(root, sub);
+  if (rel.startsWith('..') || path.isAbsolute(rel)) return false;
+  let cur = root;
+  for (const part of ['', ...rel.split(path.sep).filter(Boolean)]) {
+    cur = part ? path.join(cur, part) : cur;
+    try {
+      if (!fs.lstatSync(cur).isDirectory()) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
 /**
  * Filter driver names from `git config -z --get-regexp ^filter\.` output (NUL between entries, a
  * newline between key and value; a name may contain dots). Throws on a name `-c` cannot express.
@@ -346,7 +362,7 @@ export class Checks {
   /** Ship-check runs as claim evidence ({at, results}), newest last; not runs that left new files out. */
   evidence(id) {
     try {
-      return this.history(id, 50).reverse().filter((r) => !(r.untracked > 0)).map((r) => ({ at: r.started_at, results: r.results }));
+      return this.history(id, 50).reverse().filter((r) => !(r.untracked > 0 || r.submodules > 0 || r.filtered > 0)).map((r) => ({ at: r.started_at, results: r.results }));
     } catch {
       return [];
     }
@@ -362,11 +378,16 @@ export class Checks {
     writeJson(this.activeFile(), { runs }, 0o600);
   }
 
-  /** Is `dir` one of our scratch worktrees (inside the temp folder, our name)? Never anything else. */
+  /**
+   * Is `dir` one of our scratch worktrees (<temp>/<our name>/wt: a private 0700 folder, so other
+   * accounts on a shared /tmp cannot read the snapshot)? Never anything else.
+   */
   ours(dir) {
     if (typeof dir !== 'string' || !path.isAbsolute(dir)) return false;
-    const base = path.basename(dir);
-    return path.dirname(path.resolve(dir)) === path.resolve(this.tmpdir) && base.startsWith(PREFIX) && !base.includes('..');
+    const r = path.resolve(dir);
+    const parent = path.dirname(r);
+    const base = path.basename(parent);
+    return path.basename(r) === 'wt' && path.dirname(parent) === path.resolve(this.tmpdir) && base.startsWith(PREFIX) && !base.includes('..');
   }
 
   hooksDir() {
@@ -393,10 +414,13 @@ export class Checks {
     return filterDrivers(stdout);
   }
 
-  async git(repo, args, { timeout = GIT_TIMEOUT } = {}) {
+  async git(repo, args, { timeout = GIT_TIMEOUT, filtersFrom = [repo] } = {}) {
     // A clean/smudge/process filter is a program from the repo's config: switch every one off, so making
-    // the scratch copy runs nothing but git itself.
-    const filters = (await this.filterNames(repo)).flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`, '-c', `filter.${n}.required=false`]);
+    // the scratch copy runs nothing but git itself. `filtersFrom`: the configs to read the names from
+    // (a worktree's config can differ: includeIf "gitdir:").
+    const names = new Set();
+    for (const d of filtersFrom) for (const n of await this.filterNames(d)) names.add(n);
+    const filters = [...names].flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`, '-c', `filter.${n}.required=false`]);
     return this.exec('git', [...gitSafe(this.hooksDir()), ...filters, '-C', repo, ...args], { timeout, env: this.gitEnv() });
   }
 
@@ -412,7 +436,7 @@ export class Checks {
       // not registered any more, or the repo moved: the folder still goes
     }
     try {
-      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
+      fs.rmSync(path.dirname(path.resolve(dir)), { recursive: true, force: true, maxRetries: 3 });
     } catch (err) {
       this.logger?.warn?.(`checks: could not remove ${dir}: ${err.message}`);
     }
@@ -437,7 +461,35 @@ export class Checks {
     const { stdout } = await this.git(repo, ['rev-parse', '--verify', `${rev}^{commit}`]);
     const sha = String(stdout).trim();
     if (!/^[0-9a-f]{40,64}$/.test(sha)) throw new Error('the repo has no commit yet');
-    await this.git(repo, ['worktree', 'add', '--detach', '--quiet', dir, sha], { timeout: 5 * 60000 });
+    await this.checkoutWorktree(repo, dir, sha);
+  }
+
+  /**
+   * `git worktree add` without its checkout, then the checkout with every filter off, read from both
+   * the repo's config and the new worktree's (an includeIf "gitdir:" can apply only there): a filter
+   * program never runs, whichever config names it.
+   */
+  async checkoutWorktree(repo, dir, sha) {
+    await this.git(repo, ['worktree', 'add', '--detach', '--no-checkout', '--quiet', dir, sha], { timeout: 5 * 60000 });
+    await this.git(dir, ['reset', '--hard', '--quiet', sha], { timeout: 5 * 60000, filtersFrom: [repo, dir] });
+  }
+
+  /**
+   * What the snapshot `sha` leaves out that the live repo has: new files git does not track (anywhere
+   * in the repository), submodules (checked out empty) and files a filter would have changed (LFS
+   * pointers, encrypted files). A run with any of them says nothing about the agent's claims.
+   */
+  async leftOut(repo, sha) {
+    const count = (s) => String(s).split('\0').filter(Boolean).length;
+    const { stdout: others } = await this.git(repo, ['ls-files', '--others', '--exclude-standard', '-z', '--', ':/']);
+    const { stdout: tree } = await this.git(repo, ['ls-tree', '-r', '-z', '--full-tree', sha]);
+    const submodules = String(tree).split('\0').filter((l) => l.startsWith('160000 ')).length;
+    let filtered = 0;
+    for (const n of await this.filterNames(repo)) {
+      const { stdout } = await this.git(repo, ['ls-files', '-z', '--', `:(top,attr:filter=${n})`]);
+      filtered += count(stdout);
+    }
+    return { untracked: count(others), submodules, filtered };
   }
 
   /** Remove git's record of a worktree another module made (the folder itself is the caller's). */
@@ -574,12 +626,12 @@ export class Checks {
     const startedAt = new Date(this.now());
     this.running = { agent: id, started_at: startedAt.toISOString(), current: null };
     const stamp = startedAt.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-    const dir = path.join(this.tmpdir, `${PREFIX}${id}-${stamp}-${crypto.randomBytes(3).toString('hex')}`);
+    const dir = path.join(fs.mkdtempSync(path.join(this.tmpdir, `${PREFIX}${id}-${stamp}-`)), 'wt');
     const results = [];
     let snap = null;
     let error = null;
     let registered = false;
-    let untracked = 0;
+    let leftOut = { untracked: 0, submodules: 0, filtered: 0 };
     try {
       this.progress(id, { phase: 'start' });
       // The tracked changes as a commit object (the working tree and index are not touched), or HEAD.
@@ -592,15 +644,14 @@ export class Checks {
       if (!/^[0-9a-f]{40,64}$/.test(snap)) throw new Error('the repo has no commit to check yet');
       this.writeActive([...this.readActive(), { agent: id, repo, dir, started_at: startedAt.toISOString(), pid: process.pid }]);
       registered = true;
-      await this.git(repo, ['worktree', 'add', '--detach', '--quiet', dir, snap], { timeout: 5 * 60000 });
+      await this.checkoutWorktree(repo, dir, snap);
       // The worktree is the whole repository: the steps run in the agent's folder of it (a
       // monorepo's apps/web), where the commands you approved were detected.
       const cwd = path.join(dir, await this.repoPrefix(repo));
-      if (!fs.existsSync(cwd)) throw new Error(`${path.basename(repo)} is not committed to git yet, so the snapshot has no such folder`);
-      // New files not added to git are not in the snapshot: a run without them says nothing about
-      // the agent's claims (it could fail for a missing import, or pass without a new failing test).
-      const { stdout: others } = await this.git(repo, ['ls-files', '--others', '--exclude-standard', '-z', '--', '.']);
-      untracked = String(others).split('\0').filter(Boolean).length;
+      if (!realPathInside(dir, cwd)) throw new Error(`${path.basename(repo)} is not committed to git yet (or is a link in the commit), so the snapshot has no such folder`);
+      // What the snapshot leaves out: a run without it says nothing about the agent's claims (it could
+      // fail for a missing import, or pass without a new failing test).
+      leftOut = await this.leftOut(repo, snap);
       const orgKeys = Object.keys(readEnvFile(this.paths.env));
       const env = checkEnv(this.env, orgKeys);
       const steps = [...c.config.setup.map((s, i) => ({ ...s, name: `setup${c.config.setup.length > 1 ? ` ${i + 1}` : ''}`, setup: true })), ...c.config.checks.map((x) => ({ ...x, setup: false }))];
@@ -638,7 +689,9 @@ export class Checks {
       error,
       setup_failed: setupFailed,
       results,
-      untracked,
+      untracked: leftOut.untracked,
+      submodules: leftOut.submodules,
+      filtered: leftOut.filtered,
       untracked_note: UNTRACKED_NOTE,
     };
     try {

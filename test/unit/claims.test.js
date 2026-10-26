@@ -1,5 +1,5 @@
 process.env.TZ = 'UTC';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -153,7 +153,15 @@ test('resultInfo: exit codes, the first error line, denials and hook blocks', ()
 
 // ------------------------------------------------------------------------- evidence and labels
 
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-claims-'));
+const made = [];
+const tmp = () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-claims-'));
+  made.push(d);
+  return d;
+};
+after(() => {
+  for (const d of made) fs.rmSync(d, { recursive: true, force: true });
+});
 let clock = Date.parse('2026-10-26T10:00:00Z');
 const ts = () => new Date((clock += 1000)).toISOString();
 const say = (text) => ({ type: 'assistant', timestamp: ts(), message: { id: `m${clock}`, model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'text', text }], usage: { input_tokens: 1, output_tokens: 1 } } });
@@ -423,4 +431,26 @@ test('review 4: an edit-then-test command that started before an overlapping edi
   ];
   const [c] = claimsOf(recs);
   assert.equal(labelClaim(c).label, 'not_verified');
+});
+
+test('review 5: a shell edit that fails is still a change; the latest check of each kind decides', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test'), bash("sed -i 's/>/>=/' src/cart.js && npm test", 'Exit code 1\nnot ok 1 - total\n# fail 1', true), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified', 'the code changed after the pass');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1 - adds\n# fail 1', true), bash('npm run lint', 'clean\nAll checks passed'), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'contradicted', 'a lint that passed after it does not cancel a failed test');
+  const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
+  const at = new Date(Date.parse(c.at) + 60000).toISOString();
+  const run = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL a' }, { name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: true }] };
+  assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'contradicted', 'a failed ship check never reads Verified');
+});
+
+test('review 5: set -e does not stop at a check inside an && list; set -euo pipefail sets pipefail; a cut command is no check', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('set -e; npm test && true; echo done', 'not ok 1\n# fail 1'), say('Done.')]);
+  assert.notEqual(labelClaim(a).label, 'verified');
+  assert.equal(checkOf('set -euo pipefail; npx jest 2>&1 | tail -30').masked, false, 'pipefail from the flag group');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -20 || true', '# pass 5\n# fail 0'), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'verified', '`|| true` prints nothing: the totals still count');
+  const long = `npm test ${'-x '.repeat(400)}|| true`;
+  const [c] = claimsOf([prompt('x'), edit(), bash(long, 'not ok 1\n# fail 1'), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'not_verified', 'only its first 1,000 characters were kept');
 });

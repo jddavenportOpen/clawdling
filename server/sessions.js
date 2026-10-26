@@ -724,7 +724,8 @@ export class SessionManager {
     if (orgRules && target.cwd && target.cwd !== target.dir) {
       // The repo's own instructions, which a live session in the repo loads by folder.
       for (const f of ['CLAUDE.md', 'AGENTS.md']) {
-        const t = read(path.join(target.cwd, f)).trim();
+        // Read from the scratch worktree's top, so no folder on the way can be a committed link.
+        const t = (orgRules ? readPlain(target.cwdRoot || target.cwd, path.join(target.cwd, f), 60000) : read(path.join(target.cwd, f))).trim();
         if (t) lines.push('', `## The repo's ${f}`, '', t);
       }
     }

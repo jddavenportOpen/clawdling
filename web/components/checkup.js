@@ -158,7 +158,7 @@ function ShipSetup({ v, id, onDone, onCancel }) {
 function ShipResult({ r, now }) {
   return html`<div class=${`cu-result ${r.ok ? 'tone-ok' : 'tone-bad'}`} data-testid="ship-result" data-ok=${r.ok ? 'true' : 'false'}>
     <p class="cu-result-h"><${Icon} name=${r.ok ? 'check' : 'alert'} size=${14} /> ${r.ok ? 'Passed' : 'Failed'} <span class="rc-when">${ago(r.started_at, now)} · ${secs(r.ms)}</span></p>
-    ${r.untracked > 0 ? html`<p class="rc-note tone-amber-text" data-testid="ship-untracked">${plural(r.untracked, 'new file')} not added to git ${r.untracked === 1 ? 'was' : 'were'} left out, so this run does not count for the agent's claims. Add them with git add, then run it again.</p>` : null}
+    ${r.untracked > 0 || r.submodules > 0 || r.filtered > 0 ? html`<p class="rc-note tone-amber-text" data-testid="ship-untracked">The snapshot left out ${[r.untracked > 0 ? `${plural(r.untracked, 'new file')} not added to git` : null, r.submodules > 0 ? plural(r.submodules, 'submodule') : null, r.filtered > 0 ? `${plural(r.filtered, 'file')} a git filter changes (LFS, encryption)` : null].filter(Boolean).join(', ')}, so this run does not count for the agent's claims.${r.untracked > 0 ? ' Add new files with git add (or ignore them), then run it again.' : ''}</p>` : null}
     ${r.error ? html`<p class="form-error">${r.error}</p>` : null}
     <ul class="cu-steps">${r.results.map((x) => html`<li key=${x.name} class=${x.ok ? 'is-ok' : 'is-bad'}>
       <details><summary><span class="cu-step-mark">${x.ok ? 'Pass' : 'Fail'}</span> <span class="cu-cmd-name">${x.setup ? 'setup' : x.name}</span> <code class="cu-cmd">${x.cmd}</code> <span class="rc-when">${secs(x.ms)}</span></summary>
