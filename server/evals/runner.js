@@ -294,7 +294,12 @@ export function parseStream(text) {
   return run;
 }
 
-class CapReached extends Error {}
+class CapReached extends Error {
+  constructor(message) {
+    super(message);
+    this.cap = true;
+  }
+}
 
 /**
  * Check-ups for one org. `sessions` gives the context builder (sessions.contextText), `reports`

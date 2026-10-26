@@ -406,3 +406,63 @@ US-65 to US-74, in the same order (brief US-60 = US-65 ... US-69 = US-74).
 - **US-74 (P0, Sam; 1.5)** **Honest gaps:** when Claude Code deleted a transcript, the report card
   keeps what Clawdling recorded and marks the session "Transcript gone, kept summary only"; a format
   Clawdling has not seen is reported by `clawdling doctor`, never shown as zero.
+
+## New in 1.6: verified done
+
+The build brief numbered these US-70 to US-79; 1.5 already uses those numbers, so here they are
+US-75 to US-84, in the same order (brief US-70 = US-75 ... US-79 = US-84).
+
+- **US-75 (P0, Lou; 1.6)** When a session's last message claims completion ("done", "finished",
+  "fixed", "implemented", "tests pass", "all green", "builds", "works now", "deployed", "shipped"),
+  the message gets a receipt badge in the chat view, and the session's row in the report card's
+  Done block shows the same label.
+  - **Verified:** a check ran after the agent's last file change and passed; the badge names it
+    ("`npm test` passed at 14:02, after the last edit").
+  - **Not verified:** no check ran after the last change. The default; not an accusation.
+  - **Contradicted:** a check ran after the last change and failed; the badge quotes the first error
+    line.
+  - Accept: deterministic, no model call; fixture tests cover all three labels and "edit after the
+    passing test" (Not verified).
+- **US-76 (P0, Lou; 1.6)** A Contradicted claim also appears in **Needs you**, with "Ask the agent to
+  fix it", which sends one message into the session: "Your last check failed: `<command>` → `<first
+  error line>`. Please fix it and re-run the check." The message is shown before sending.
+- **US-77 (P0, Hal; 1.6)** **Ship check setup:** on a project agent, "Set up a ship check" proposes the
+  commands detected in the repo (test, build, lint scripts, Makefile and justfile targets), each
+  shown exactly with what it does; the owner ticks the ones to allow.
+  - Accept: nothing runs until approved; the approved list is saved in `<agent folder>/checks.yaml`;
+    changing a command needs approval again.
+- **US-78 (P0, Hal, Lou; 1.6)** **Run ship check:** a scratch worktree of the repo (with uncommitted
+  changes to tracked files), the approved setup then each check with timeouts, pass or fail, the
+  exit code, the duration and the last 40 lines of output, then the worktree is removed. The result
+  is the project's newest receipt and can turn a Not verified claim into Verified.
+  - Accept: the live repo is byte-identical before and after; the worktree is always removed, even
+    after a crash (a sweeper on start).
+- **US-79 (P0, Dev; 1.6)** **Agent check-up, drafting:** "Give this agent a check-up" shows the cost
+  first; one `claude -p` call drafts five cases from the agent's CLAUDE.md and NOW.md (knows its job,
+  its next step, declines out-of-scope work, follows its house rules, remembers its last handoff) in
+  plugin-eval format under `<agent folder>/evals/`; the owner reads and edits them in the browser
+  before the first run.
+  - Accept: the draft never runs by itself; the files use only plugin eval's documented frontmatter
+    keys.
+- **US-80 (P0, Dev; 1.6)** **Agent check-up, running:** before the run, "This starts N Claude Code runs on
+  your plan, about $X list-price equivalent, capped at $Y"; runs in a scratch copy with the agent's
+  real context; graders run; the result shows the score, pass or fail per case, the judge's reasons,
+  the cost and each run's Timeline.
+  - Accept: the cap is enforced (checked before each launch, plus `--max-budget-usd` per run); the
+    live agent folder and repo are unchanged; a note for Pro (shown to everyone).
+- **US-81 (P0, Rin; 1.6)** **Judge controls on every run:** the judge also grades an empty answer and
+  each case's `reference.md`; if it passes the empty answer or fails the reference, the suite shows
+  "judge unreliable" instead of a score.
+  - Accept: a fixture with a deliberately lenient rubric triggers "judge unreliable".
+- **US-82 (P1, Maya; 1.6)** **Try a cheaper model:** the matrix defaults to the agent's model and
+  effort, the same model one effort lower, and one cheaper family at medium; the cost is shown
+  first; score and cost per cell; the cheapest cell within noise of the current one is recommended
+  (at most one case worse at k=1, within the pass^k interval at k=3). "Use this" writes the agent's
+  default model and effort to Clawdling's own config (the agent's `agent.json`), never to Claude
+  Code's settings.
+- **US-83 (P1, Dev; 1.6)** The **org map** shows each agent's last check-up score, its age and its cost
+  per run. The report card shows a **Verified** block: the last ship check, the last check-up, and
+  the last 7 days' claims by label.
+- **US-84 (P2, Rin; 1.6)** `clawdling check <agent>` and `clawdling checkup <agent> [--models a,b]
+  [--max-cost 2]` run the same from the CLI, with `--json` and exit codes: 0 pass, 1 fail, 2 the cost
+  cap was hit or the judge was unreliable.

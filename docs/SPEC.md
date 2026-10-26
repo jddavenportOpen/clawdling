@@ -463,3 +463,148 @@ count and `duration_ms`).
 
 `test/fixtures/transcripts/` (synthetic, every record shape above, hand-worked totals) and
 `test/fixtures/otlp/` (a real 2.1.308 capture, scrubbed); `test/unit/contract.test.js` checks them.
+
+## 1.6 addendum: Verified done
+
+When an agent says "done", Clawdling shows the receipt, or says "not verified". Four parts,
+cheapest first: claim receipts (free, automatic), the ship check (on demand, no model), agent
+check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SECURITY.md,
+"Verified done". The case format: docs/EVALS.md.
+
+### Claim receipts (`server/claims.js`)
+
+- **Detection.** For each turn, the final assistant text of the main transcript (the ledger keeps
+  it per turn). Its last 600 characters, fenced code removed, are split into sentences; a sentence
+  that matches a pattern in `server/claims-patterns.json` and none of its exclusions is a claim.
+  Kinds: `completion` (done, fixed, implemented, works now, shipped...) and `tests` (tests pass, all
+  green, the build succeeds, lint clean), which names what had to pass (`needs`: test, build,
+  lint). Questions, negations, plans, hedges and conditionals are excluded; a message that admits a
+  current failure anywhere ("one test still fails") makes no claim; failure words after a fix verb
+  ("fixed the failing test") name what was fixed. Other languages give no label.
+- **Evidence** (`claimEvidence`, stored in the receipt as `claims[]`): per claim, when it was said,
+  the time of the last successful Edit, Write, MultiEdit, NotebookEdit or `apply_patch` call before
+  it (main transcript and subagents, in time order), how many edits there were, and the shell
+  commands (Bash, PowerShell) that finished between that edit and the claim (up to 30), each with
+  what its result said: exit code (`Exit code N`), the first error line, and pass/fail marks from
+  the output's end. Declined, hook-blocked and background calls are left out. No output is kept.
+- **Labels** (`labelClaim`, at read time, so approvals and ship checks made later count):
+  a command is a check when it matches the project's approved `checks.yaml` commands (exact, or the
+  same first two words), the stack's detected test/build/lint commands, or the generic list
+  (`npm test`, `pnpm test`, `yarn test`, `pytest`, `go test`, `cargo test`, `make test`, `make
+  check`, `npm run build`, `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`,
+  `python -m`, `cd x &&`). A check whose exit code cannot reach the result (piped, `|| true`, `;`
+  without `set -e`) counts only when its output says pass or fail. Each ship-check run after the
+  last edit adds its checks. The latest check decides: **verified** when it passed, **contradicted**
+  when it failed; **not_verified** when there is none (the default); a `tests` claim needs a check
+  of each kind it names; a completion claim with no edit is **no_changes**.
+- `GET /api/sessions/:sid/claims` → `{claims[{at, kind, needs, phrase, label, check{cmd, at, ok,
+  first_error_line, ship?}, badge, fix?}]}`; `fix` (the last claim, when contradicted) is the one
+  message "Ask the agent to fix it" sends: ``Your last check failed: `<command>` → `<first error
+  line>`. Please fix it and re-run the check.`` `POST /api/sessions/:sid/fix {text}` sends it only
+  when `text` is exactly that message (resuming an ended session first).
+- The report card (schema 1, additive): each Done row has `claim` (the session's last); a Needs-you
+  row whose finished turn was contradicted has `kind: contradicted` and `fix`; `contradicted[]` lists
+  ended sessions whose last claim was contradicted (apart from `needs`, so its count stays the
+  rail's); `verified{claims_7d{verified, not_verified, contradicted, no_changes}, ship, checkup}`. The
+  org report adds each agent's `checkup`.
+
+### The ship check (`server/checks.js`)
+
+- `<agent folder>/checks.yaml` (written by Clawdling, a YAML subset read by `server/yaml-lite.js`):
+  `{schema: 1, approved_at, setup?: [{run, timeout}], checks: [{name, run, timeout}]}`; at most 3
+  setup commands and 10 checks; a command is one line, at most 500 characters; timeouts 5 to 3600 s
+  (default 600). Its fingerprint (sha256 of the setup and check lists) is in
+  `.clawdling/checks/<agent>/approved.json`; a run needs the two to match.
+- Proposals: `detectStack(repo).commands` of kind test, build, lint, typecheck or check, plus the
+  install command as an optional setup step (`npm ci` when there is a `package-lock.json`), each
+  with `what` (the `package.json` script's text, or a Makefile/justfile target's recipe lines).
+- Run: `git stash create` (else `HEAD`), `git worktree add --detach <tmp>/clawdling-check-<agent>-
+  <time>-<random> <snap>`, registered in `.clawdling/checks/active.json`; setup steps then checks,
+  each through `/bin/sh -c` or `powershell.exe -NoProfile -NonInteractive -Command`, with `cwd` the
+  worktree, the scrubbed environment (`checkEnv`) and a timeout that kills the process tree;
+  a failed setup step stops the run; then `git worktree remove --force`, the folder removed,
+  `git worktree prune`. Result `.clawdling/checks/<agent>/<time>.json`: `{started_at, ms, snap, ok,
+  error, setup_failed, results[{name, cmd, kind, setup, ok, exit, ms, timed_out, tail (last 40 lines),
+  err1}]}`, 90 days. Start-up sweeper. One run per org at a time.
+- `GET /api/agents/:id/checks` (`{available, why, proposals, exists, config, approved, running, last,
+  history, notes}`), `PUT` (approve: `{setup, checks, shown}`, `shown` the exact command strings in
+  order), `POST .../checks/run` (202, then `check` events; poll the GET).
+
+### Agent check-ups (`server/evals/`)
+
+- **Format** (`suite.js`): plugin eval's, a deliberate subset (docs/EVALS.md). The key lists Clawdling
+  holds are pinned from Claude Code 2.1.308: prompt.md's frontmatter (top-level `schema_version, name,
+  description, tags, plugins, runs, expected_outcome`, execution `model, max_turns, timeout_seconds,
+  allowed_tools, disallowed_tools, artifact_publish, growthbook_overrides, append_system_prompt, env`)
+  and each grader type's strict keys. Clawdling reads `name, description, tags, max_turns,
+  timeout_seconds, allowed_tools, model` and grader types `regex, tool_used, tool_order,
+  file_exists, llm`; it refuses the rest with a reason. Clawdling-only files: `reference.md` and
+  `.clawdling-suite.yaml` (`runs` 1 or 3, `judge_model`, `max_cost_usd`). `test/unit/evals.test.js`
+  holds the lists, diffs them against `claude plugin eval init --bare` when the local CLI has it,
+  and (opt-in, `CLAWDLING_TEST_PLUGIN_EVAL=1`) has the real plugin eval loader read the drafted
+  files.
+- **Approval**: per case, the sha256 of its files, in `.clawdling/evals/<agent>/approved.json`;
+  saving a case in the cockpit approves it as written; `POST .../evals/approve {cases[{id, hash}]}`
+  approves what the owner read (a hash that no longer matches the disk is refused).
+- **Drafting** (`POST .../evals/draft`): one `claude -p --output-format json --model sonnet
+  --max-budget-usd 0.5 --tools "" --json-schema <five cases> --settings <disableAllHooks>
+  --strict-mcp-config --disable-slash-commands --no-session-persistence --append-system-prompt ...`,
+  the prompt (CLAUDE.md, NOW.md, the last 15 lines of LOG.md, me.md) on stdin; writes the cases
+  `knows-its-job, knows-its-next-step, declines-out-of-scope, follows-house-rules,
+  remembers-last-handoff` (prompt.md, an llm grader, an optional regex grader, reference.md),
+  unapproved.
+- **A run** (`runner.js`, per case per run): a scratch copy (`<tmp>/clawdling-eval-<agent>-...`:
+  the agent folder without `evals/`, `.env*`, links, `node_modules`, `.git`; a project agent's repo
+  as a detached worktree at HEAD, the notes copy added with `--add-dir`), registered in
+  `.clawdling/evals/active.json`; the context `sessions.contextText(target, {orgRules: true})` plus a
+  short "check-up run" note (answer directly; no questions); then
+  `claude -p --output-format stream-json --verbose [--model m] [--effort e] --max-budget-usd
+  <what is left of the cap> --max-turns <max_turns> --tools <tool names> [--allowedTools
+  <Bash(...) patterns>] --permission-mode default --no-session-persistence --settings
+  <disableAllHooks + deny: the live evals/ folder, .clawdling> --strict-mcp-config
+  --append-system-prompt-file <context>`, the prompt on stdin, `OTEL_RESOURCE_ATTRIBUTES=
+  clawdling.eval_run=<id>`. From the stream: the final `result` (`total_cost_usd`, `num_turns`,
+  `duration_ms`, `permission_denials`, `result`) and the tool calls; the files the run created (a
+  listing before and after). A timeout, an error result or an AskUserQuestion/ExitPlanMode denial is
+  a run error (score 0).
+- **Graders** (`graders.js`): plugin eval's semantics (docs/EVALS.md). `llm`: three votes, each a
+  `claude -p --model <judge> --tools "" --json-schema {pass, reason} --max-budget-usd 0.05` with the
+  criterion and the focused text between two random markers; passes on more than half.
+- **Controls**, once per run of the suite and before any agent run: each llm grader (focus not a
+  file) grades an empty answer (must fail) and, where there is one, the case's reference (must pass).
+  Any wrong → `judge_unreliable`, no agent run, no score.
+- **Scoring**: a run's case score = the weighted share of graders passed; a case = the mean of its
+  runs; the suite = the mean of the cases (null when the judge is unreliable or the cap cut it
+  short). k=3 adds pass@3 and pass^3.
+- **Cost**: estimate = (the median cost per turn of the agent's last 20 turns, from its receipts, or
+  $0.15) scaled by each cell's output price against the agent's usual model × cases × k × cells,
+  shown as half to one and a half times that, plus judge votes at $0.008 each (4× for a non-haiku
+  judge). The cap (default $2) is checked before every agent run and judge vote; each run carries
+  `--max-budget-usd` with what is left; past the cap, paid graders are skipped and the result says
+  `capped`.
+- **Results**: `<agent folder>/evals/results/<time>.json`, the newest 50: `{id, started_at, ended_at, k,
+  judge_model, max_cost_usd, cost_usd, judge_cost_usd, capped, judge_unreliable, controls[], score,
+  cells[{label, model, effort, current, score, passes, runs_total, runs_passed, cost_per_run,
+  cases[{id, name, score, pass_at_k, pass_hat_k, runs[{score, passed, error, cost_usd, num_turns,
+  duration_ms, denials, graders[{name, type, passed, weight, explanation, judge_votes?, reasons?}],
+  steps (the run's Timeline), files, last_message}]}]}], recommendation}`.
+- **Try a cheaper model** (`runner.js` `defaultMatrix`, `holds`, `recommend`): up to 4 cells;
+  default: the agent's model and effort; the same model one effort lower; the next cheaper family
+  (fable/mythos → opus → sonnet → haiku) at medium. A cell holds when its judge controls passed and,
+  at k=1, it fully passes at least (current passes − 1) cases; at k=3, its share of passing runs is
+  at least the lower bound of the 95% Wilson interval of the current cell's. The recommendation is
+  the cheapest holding cell by measured cost per run. `POST .../evals/apply {model, effort}` writes
+  them to the agent's `agent.json` (`effort` is a new agent field; new sessions use it like `model`).
+- API: `GET .../evals` (cases with their files and hashes, settings, matrix, estimate, active,
+  last_run, history), `GET .../evals/estimate?k=&models=default|model:effort,...`,
+  `POST .../evals/draft|approve|settings|run|apply`, `PUT|DELETE .../evals/:case`. `run` → 202 and
+  `eval` events; poll the GET.
+- Every POST/PUT/DELETE above needs the token and the Origin and Host checks, and is `local` (only
+  from the computer itself; 403 through a remote address). One check-up per org at a time.
+
+### CLI
+
+`clawdling check <agent> [--json]` (exit 0 when every check passed, else 1) and `clawdling checkup
+<agent> [--models a,b] [--k 1|3] [--max-cost 2] [--threshold 1] [--json]` (prints the estimate
+first; exit 0 at or above the threshold, 1 below, 2 when the cap was hit or the judge was
+unreliable). Neither is on the agents' allow-list, and Donna's text-message turns cannot run them.

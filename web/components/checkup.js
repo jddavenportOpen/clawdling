@@ -401,7 +401,8 @@ function Result({ r, now, id, onApplied }) {
     <h3 class="rc-sub-h cu-last-h">Last check-up <span class="rc-h-sub">${ago(r.started_at, now)}</span></h3>
     ${r.judge_unreliable ? html`<div class="cu-warn tone-bad" data-testid="judge-unreliable"><${Icon} name="alert" size=${14} /> <span><strong>Judge unreliable.</strong> The judge passed an empty answer or failed a good one, so a score would mean nothing. No agent run was spent. Make the criteria concrete (what a good answer must say), then run it again.</span></div>
       <ul class="cu-controls">${r.controls.filter((x) => !x.ok).map((x) => html`<li key=${`${x.case}-${x.grader}-${x.kind}`}>${x.case} / ${x.grader}: ${x.kind === 'empty' ? 'passed an empty answer' : 'failed the reference answer'}${x.reasons && x.reasons[0] ? ` ("${x.reasons[0]}")` : ''}</li>`)}</ul>`
-      : html`<p class="cu-score" data-testid="checkup-score">${r.score === null ? html`<span class="tone-amber-text">${r.capped ? 'Stopped at the cost cap before every case ran, so there is no score.' : r.error || 'No score.'}</span>` : html`<span class="cu-score-n">${pct(r.score)}</span> <span class="cu-score-l">of the graders passed${cur ? `, ${cur.passes} of ${cur.cases.length} cases fully` : ''}</span>`}</p>`}
+      : html`<p class="cu-score" data-testid="checkup-score">${r.score === null ? html`<span class="tone-amber-text">${r.capped ? 'Stopped at the cost cap before every case ran, so there is no score.' : r.error || 'No score.'}</span>` : html`<span class="cu-score-n">${pct(r.score)}</span> <span class="cu-score-l">of the graders passed${cur ? `, ${cur.passes} of ${cur.cases.length} cases fully` : ''}</span>`}</p>
+        ${cur && r.k === 3 && cur.pass_at_3 !== undefined ? html`<p class="rc-note">pass@3 ${pct(cur.pass_at_3)} (a case passed at least once in 3 runs) · pass^3 ${pct(cur.pass_hat_3)} (it passed all 3)</p>` : null}`}
     <p class="rc-note">Cost: ${money(r.cost_usd)} (${money(r.judge_cost_usd)} of it the judge). ${r.label}${r.capped ? ' The cost cap stopped it.' : ''}</p>
     ${cur && cells.length === 1 ? html`<${CaseResults} cell=${cur} k=${r.k} />` : null}
     ${cells.length > 1 ? html`<${Comparison} r=${r} id=${id} onApplied=${onApplied} />` : null}
@@ -411,8 +412,10 @@ function Result({ r, now, id, onApplied }) {
 function CaseResults({ cell, k }) {
   return html`<ul class="cu-case-results">${cell.cases.map((c) => {
     const ok = c.runs.length && c.runs.every((x) => x.passed);
+    // With 3 runs, a case that passed some and failed others is flaky: say so (pass@3 vs pass^3).
+    const flaky = k > 1 && c.runs.some((x) => x.passed) && c.runs.some((x) => !x.passed);
     return html`<li key=${c.id} class=${ok ? 'is-ok' : 'is-bad'} data-testid="case-result" data-case=${c.id}>
-      <details><summary><span class="cu-step-mark">${ok ? 'Pass' : 'Fail'}</span> ${c.name} <span class="rc-when">${pct(c.score)}${k > 1 ? ` · ${c.runs.filter((x) => x.passed).length}/${c.runs.length} runs` : ''}</span></summary>
+      <details><summary><span class="cu-step-mark">${ok ? 'Pass' : 'Fail'}</span> ${c.name} <span class="rc-when">${pct(c.score)}${k > 1 ? ` · ${c.runs.filter((x) => x.passed).length}/${c.runs.length} runs` : ''}</span>${flaky ? html`<span class="cu-chip tone-needs" data-testid="case-flaky" title="It passed some runs and failed others: the answer, or the judge, is not stable.">flip-flops</span>` : null}</summary>
         ${c.runs.map((run) => html`<div class="cu-run-detail" key=${run.n}>
           ${k > 1 ? html`<p class="cu-file-name">Run ${run.n}</p>` : null}
           ${run.error ? html`<p class="form-error">${run.error}</p>` : null}

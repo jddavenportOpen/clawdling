@@ -53,6 +53,46 @@ Everything comes from files already on your computer: Claude Code's own session 
 repo's `git log` and the agent's memory. When Claude Code cleans up an old transcript, Clawdling
 keeps a small summary, so the card stays honest ("transcript gone, kept summary only").
 
+## Verified done
+
+**When an agent says "done", Clawdling shows the receipt, or says "not verified".** A developer can
+read the diff; an owner needs a receipt. Under every message where an agent claims it finished
+("done", "fixed", "tests pass", "builds"), Clawdling checks the session's own record and adds one
+of three labels:
+
+- **Verified**: a check ran after the agent's last change and passed ("`npm test` passed at
+  14:02, after the last edit").
+- **Not verified**: no check ran after the last change. This is the default, and it is not an
+  accusation: it just means there is no receipt yet.
+- **Contradicted**: a check ran after the last change and failed. The label quotes the first
+  error line, the claim waits in **Needs you**, and **Ask the agent to fix it** sends one message,
+  which you see before it goes.
+
+![Receipts under an agent's "done" messages: Verified, Not verified, Contradicted](docs/img/verified-done.png)
+
+No model judges anything: the label is a fact from Claude Code's own transcript, so it is free and
+instant. To get more receipts:
+
+- **A ship check per project.** Pick, once, the commands that prove the project works (tests,
+  build, lint); Clawdling shows each one exactly, with what it does, and runs only what you ticked.
+  Press Run (or `clawdling check <agent>`) and they run in a scratch copy of the repo, never in the
+  live one. A pass after the agent's last change turns "Not verified" into "Verified".
+- **Agent check-ups.** Five questions drafted from the agent's own CLAUDE.md and NOW.md: does it
+  know its job, its next step, what is not its job, its house rules, its last handoff? You read and
+  edit them first; each run uses the agent's real folder and memory (in a scratch copy) on your
+  plan, with the cost shown before it starts and a hard cap. A built-in control catches a judge
+  that would pass anything. The files use the format of Anthropic's `claude plugin eval`
+  ([writing cases](docs/EVALS.md)).
+- **Try a cheaper model.** The same check-up across models and effort levels; Clawdling recommends
+  the cheapest one that holds up, and changes nothing until you click "Use this".
+
+![An agent's check-up: the score, each case with the judge's reasons, and Try a cheaper model](docs/img/checkup.png)
+
+The report card gets a **Verified** block (the week's claims by label, the last ship check and the
+last check-up), and the org map shows each agent's last check-up. Everything stays on your computer:
+receipts, approved commands and check-up results are files in the agent's folder and in
+`.clawdling/`. What a ship check runs, and how check-ups are sandboxed: [SECURITY.md](docs/SECURITY.md#verified-done-16).
+
 ## What you need
 
 - **A Mac, Windows PC or Linux computer.** Clawdling runs on your computer, not on a phone or in a
