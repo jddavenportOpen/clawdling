@@ -478,12 +478,18 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   that matches a pattern in `server/claims-patterns.json` and none of its exclusions is a claim.
   Kinds: `completion` (done, fixed, implemented, works now, shipped...) and `tests` (tests pass, all
   green, the build succeeds, lint clean), which names what had to pass (`needs`: test, build,
-  lint). Questions, negations, plans, hedges and conditionals are excluded; a message that admits a
-  current failure anywhere ("one test still fails") makes no claim; failure words after a fix verb
-  ("fixed the failing test") name what was fixed. Other languages give no label.
+  lint). Each clause is read on its own ("Done, but one test fails" holds the claim "done").
+  Questions, negations, plans, hedges, conditionals and short counts ("14 of 15 tests passed") are
+  excluded; a claim beside an admitted failure stays a claim, so the record decides (after a failing
+  check: Contradicted); failure words after a fix verb ("fixed the failing test") name what was
+  fixed, and negated ones ("none failing") are good news. Other languages give no label.
 - **Evidence** (`claimEvidence`, stored in the receipt as `claims[]`): per claim, when it was said,
-  the time of the last successful Edit, Write, MultiEdit, NotebookEdit or `apply_patch` call before
-  it (main transcript and subagents, in time order), how many edits there were, and the shell
+  the time of the last change to the work before it (main transcript and subagents, in time order):
+  a successful Edit, Write, MultiEdit, NotebookEdit or `apply_patch` call on a file inside the
+  session's folder (not the agent's `memory/NOW.md` or `LOG.md` handoff notes), or a shell command
+  that writes files (an output redirection to a file, `sed -i`, `mv`, `cp`, `rm`, `tee`, a formatter
+  with `--write` or `--fix`, `git apply`/`checkout`/`restore`/`merge`, a package install: the 1.6
+  real run saw an agent add a line with `printf >> README.md`); how many there were, and the shell
   commands (Bash, PowerShell) that finished between that edit and the claim (up to 30), each with
   what its result said: exit code (`Exit code N`), the first error line, and pass/fail marks from
   the output's end. Declined, hook-blocked and background calls are left out. No output is kept.

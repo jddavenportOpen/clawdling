@@ -367,7 +367,8 @@ change and passed), **Contradicted** (one ran and failed), **Not verified** (non
 or **No changes made**. The claim patterns are a tested list of English phrases
 (`server/claims-patterns.json`); the checks are the project's approved ship-check commands, the
 commands found in its manifests, and a short generic list (`npm test`, `pytest`, `go test`...).
-Nothing is executed and no model is called: a model deciding "is this really done" would be one
+"The last change" is the last edit to a file in the session's folder (the agent's memory notes do
+not count) or the last shell command that writes files. Nothing is executed and no model is called: a model deciding "is this really done" would be one
 more claim. A declined or hook-blocked command is not a check; a command whose exit code a pipe
 hides (`npm test | tail`) counts only when its output says it passed or failed. Receipts keep the
 command line and the first error line of a check, never its output. "Ask the agent to fix it" sends
