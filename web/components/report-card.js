@@ -156,7 +156,7 @@ function DoneBlock({ r, win, name, now, agentsById }) {
         <span class="rc-facts">
           <span>${plural(d.files_changed, 'file')} changed</span>
           ${d.commits && (d.commits.length || !d.live) ? html`<span>${plural(d.commits.length, 'commit')}</span>` : null}
-          ${d.tool_errors ? html`<span class="tone-amber-text">${plural(d.tool_errors, 'step')} failed along the way</span>` : null}
+          ${d.tool_errors ? html`<span class="tone-amber-text">${plural(d.tool_errors, 'step')} hit an error along the way</span>` : null}
           ${d.transcript === 'gone' ? html`<span class="rc-gone" title="Claude Code deleted this session's transcript (its retention cleanup). Clawdling kept its summary.">Transcript gone, kept summary only</span>` : null}
         </span>
         ${d.commits && d.commits.length ? html`<ul class="rc-commits" aria-label="Commits">${d.commits.slice(0, 5).map((c) => html`<li key=${c.hash}><${Icon} name="check" size=${12} /> ${c.subject}</li>`)}

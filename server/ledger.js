@@ -73,10 +73,12 @@ const cut = (s, max) => {
 export function lastLine(text, max = 160) {
   const t = oneLine(String(text || '').replace(/[`*_#>]+/g, ''), 4000).trim();
   if (t.length <= max) return t;
-  const head = t.slice(0, max);
-  const stop = Math.max(head.lastIndexOf('. '), head.lastIndexOf('! '), head.lastIndexOf('? '));
+  const head = t.slice(0, max + 1);
+  // A sentence ends at . ! or ? after a word (not in "./..." or "e.g." style runs of dots), then a space.
+  let stop = -1;
+  for (const m of head.matchAll(/[\p{L}\p{N})"'\]][.!?](?=\s)/gu)) if (m.index + 1 < max) stop = m.index + 1;
   if (stop >= max * 0.25) return head.slice(0, stop + 1);
-  const sp = head.lastIndexOf(' ');
+  const sp = head.slice(0, max).lastIndexOf(' ');
   return `${head.slice(0, sp > max * 0.5 ? sp : max - 1)}…`;
 }
 

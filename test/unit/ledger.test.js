@@ -51,6 +51,9 @@ test('lastLine: cut at a sentence end within 160 characters, else at a word', ()
   const l = lastLine(long);
   assert.ok(l.length <= 160 && l.endsWith('…'));
   assert.equal(lastLine(`First sentence that is long enough to count here, really. ${'x'.repeat(200)}`), 'First sentence that is long enough to count here, really.');
+  // Seen in a real 2.1.308 session: "./..." is not the end of a sentence.
+  const real = 'I created hello/README.md with a "Running the tests" section (it was missing), and cd hello && go test ./... passed: hello/reverse is ok and the root package has no test files.';
+  assert.equal(lastLine(real), 'I created hello/README.md with a "Running the tests" section (it was missing), and cd hello && go test ./... passed: hello/reverse is ok and the root package…');
 });
 
 test('LedgerReader reads only what was appended, and waits for a line to finish', () => {
