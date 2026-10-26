@@ -598,7 +598,7 @@ test.describe('your Claude Code setup', () => {
     await expect(page.getByTestId('map-panel')).toContainText('PreToolUse (2)');
 
     // A project's panel gains "Its repo adds".
-    await page.locator('[data-node="shop"]').click();
+    await page.locator('[data-node="shop"] .node-disc').click();
     const adds = page.getByTestId('panel-repo-adds');
     await expect(adds).toContainText('Its repo adds');
     await expect(adds).toContainText('db-migrator');
@@ -607,10 +607,10 @@ test.describe('your Claude Code setup', () => {
     await expect(adds).not.toContainText('No repo linked');
     await shot(page, '13-org-map-project-repo-adds-1440x900');
     // "No repo linked" only for a project with no repo; a repo that adds nothing says that.
-    await page.locator('[data-node="marathon"]').click();
+    await page.locator('[data-node="marathon"] .node-disc').click();
     await expect(page.getByTestId('panel-repo-adds')).toContainText('No repo linked, so nothing extra.');
     await api('POST', '/api/import', { path: '/Users/ada/code/recipe-box', domain: 'work' });
-    await page.locator('[data-node="recipe-box"]').click();
+    await page.locator('[data-node="recipe-box"] .node-disc').click();
     await expect(page.getByTestId('panel-repo-adds')).toContainText('Nothing beyond your own setup.');
     await expect(page.locator('[data-node="recipe-box"] [data-setup-badge]')).toHaveCount(0);
 

@@ -68,7 +68,7 @@ for (const vp of [{ w: 1440, h: 900 }, { w: 1024, h: 768 }]) {
       await expect(page.locator('[data-node]').first()).toBeVisible();
       await settle(page);
       await shot(page, `org-map-4-agents-${tag}`);
-      await page.locator('[data-node="health"]').click();
+      await page.locator('[data-node="health"] .node-disc').click();
       await expect(page.getByTestId('map-panel')).toBeVisible();
       await settle(page);
       await shot(page, `org-map-4-agents-panel-${tag}`);

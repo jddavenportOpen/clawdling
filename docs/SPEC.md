@@ -447,10 +447,14 @@ needs-you ping's channel rules; no new sender). Text: counts, approved agent nam
 
 ### The detailed timeline (`server/otel.js`, beta)
 
-Preflight by key name (see SECURITY.md); when clear and on, an `env` block in Clawdling's own
-`--settings` file: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, the logs, metrics and traces exporters set to
-`otlp`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, `http/json` to `http://127.0.0.1:<port>/otlp` with
-the `x-clawdling-otlp` header. Records are attributed by `session.id` (the `--session-id` Clawdling
+Preflight by key name (see SECURITY.md), run again before every launch with that launch's own
+Claude Code folder; when clear and on, that session gets its own `--settings` file
+(`.clawdling/run/<sid>.settings.json`) with an `env` block: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, the logs,
+metrics and traces exporters set to `otlp`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, `http/json` to
+`http://127.0.0.1:<port>/otlp`; and in its own environment `OTEL_EXPORTER_OTLP_HEADERS` with its
+credential, `x-clawdling-otlp: <sid>.<HMAC-SHA256(secret, sid)>` (the settings block does not set that
+key, so it does not override it). The tmux launcher of such a session first clears telemetry
+variables and `CLAUDE_CONFIG_DIR` a long-lived tmux server may carry. Records are attributed by `session.id` (the `--session-id` Clawdling
 passes), normalized, filtered and stored per session. The Timeline adds who approved each tool
 (`tool_decision.source`, matched by `tool_use_id`) and each turn's API requests (`api_request`
 count and `duration_ms`).

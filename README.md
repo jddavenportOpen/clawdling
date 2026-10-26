@@ -40,7 +40,10 @@ on your own machine.** Open any agent and its Overview answers four questions, f
 
 Every session also gets a **Timeline** tab beside Chat and Raw: each prompt, each tool call with
 how long it took and whether it worked, subagents under the call that started them, and what each
-turn used. The org map shows each agent's last 7 days and when it last finished work. `clawdling
+turn used.
+
+![A session's Timeline: prompts, tool calls with results and durations, a subagent, cost per turn](docs/img/timeline.png)
+ The org map shows each agent's last 7 days and when it last finished work. `clawdling
 report [agent] --json` prints the same card for scripts. Optional, and off until you turn them on:
 a **Monday report** to the Telegram or iMessage chat you paired with Donna (counts, agent names and
 dollar figures only), and a **detailed timeline** (beta) that also shows who approved each tool,

@@ -20,7 +20,7 @@ test.describe('org map', () => {
     await expect(page.locator('[data-node="__owner"]')).toHaveCount(1);
 
     const health = agents.find((a) => a.id === 'health');
-    await page.locator('[data-node="health"]').click();
+    await page.locator('[data-node="health"] .node-disc').click();
     const panel = page.getByTestId('map-panel');
     await expect(panel).toBeVisible();
     await expect(panel.locator('.panel-title')).toHaveText(health.name);
@@ -82,7 +82,7 @@ test.describe('org map', () => {
   test('New session from the map panel lands focused in the cockpit', async ({ page }) => {
     await reset('empty');
     await login(page, '#/map');
-    await page.locator('[data-node="money"]').click();
+    await page.locator('[data-node="money"] .node-disc').click();
     await page.getByTestId('panel-new-session').click();
     await expect(page.locator('.page-layer')).toHaveCount(0);
     await expect(panes(page)).toHaveCount(1);

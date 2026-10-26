@@ -35,11 +35,24 @@
   settings: a preflight reads setting names, never values. The ingest takes only this computer,
   with a secret made when you turn it on, and drops account identifiers and prompt or response
   fields (see SECURITY.md).
-- **Tests.** New unit suites `ledger`, `contract` (synthetic transcripts with hand-worked totals),
+- **Tests.** 502 unit and integration tests on each backend (tmux, built-in terminal), 153 e2e
+  tests against the mock and 60 against the real server on each backend. New unit suites `ledger`,
+  `contract` (synthetic transcripts with hand-worked totals),
   `otel` (a real 2.1.308 telemetry capture, scrubbed) and `digest`; integration `report` and `otel`
   on both backends (the `/otlp` rules: no secret, wrong secret, remote address, proxy, Origin, too
   large, too fast); e2e `report.spec.js` (desktop) and a 375 px phone check, against the mock and the
   real server. The e2e real server now runs with its own `CLAUDE_CONFIG_DIR`.
+- **Reviews.** The `/otlp` ingest and the Monday report had the top tier, a fresh `claude -p --effort
+  xhigh` reviewer and a second-model (GPT) reviewer, for eight rounds until both passed with no
+  Medium or higher open. What they changed: each session gets its own telemetry credential and its
+  own `--settings` file; the preflight runs before every launch, reads only key names, never follows
+  a link and covers every agent folder and the exact Claude folder of the launch; the tmux launcher
+  clears telemetry variables a long-lived tmux server may carry; uploads are bounded in size, count,
+  time and rate; enabling the Monday report is bound to the names the owner saw. The rest had a
+  `high` reviewer for thirteen rounds (cost that is unknown never reads as \$0; receipts survive
+  `/clear` and `/resume` without double counting; commits are credited only to the session that ran
+  `git commit`). A third-party visual reviewer judged the ten new stories, and the plain-language
+  check, from screenshots as Lou, until all passed. Open Lows are GitHub issues.
 - **Real run.** A throwaway home, a leased plan and the real Claude Code 2.1.308 on a public repo
   (golang/example): the folder-trust question answered, only `go test` approved; the card showed
   the session in Done with its file change, and a cost equal to Claude Code's own `cost-state`

@@ -221,7 +221,7 @@ test.describe('questions in a pane', () => {
     await expect(pane(page, home.sid).getByTestId('dialog-yes')).toHaveClass(/btn-primary/);
     await expect(pane(page, work.sid).getByTestId('question-choice').first()).toHaveClass(/btn-quiet/);
     await page.goto('/#/map');
-    await page.locator('[data-node="health"]').click();
+    await page.locator('[data-node="health"] .node-disc').click();
     await expect(page.getByTestId('map-panel')).toBeVisible();
     await expect(page.getByTestId('panel-new-session')).toHaveClass(/btn-quiet/);
     expect(await page.locator('.btn-primary:visible').count()).toBeLessThanOrEqual(1);

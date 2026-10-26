@@ -312,10 +312,12 @@ turned off).
 ## The detailed timeline: `/otlp` (1.5, beta)
 
 - **Off by default.** `POST /api/otel {enabled}` works only from the computer itself (refused
-  through Use from anywhere). Turning it on writes OpenTelemetry settings into Clawdling's own
-  `--settings` file (`.clawdling/hooks-settings.json`), never into your Claude Code settings; turning
-  it off removes them. Sessions pick the change up at their next start. The remote-access setup chat
-  never gets them.
+  through Use from anywhere, or from the Wi-Fi with `--host 0.0.0.0`). While it is on, each session
+  that passes its own preflight at launch is started with its own `--settings` file
+  (`.clawdling/run/<sid>.settings.json`, mode 600, removed when the session ends) holding Clawdling's
+  hooks plus the OpenTelemetry block; the shared `.clawdling/hooks-settings.json` never carries it,
+  and nothing is ever written into your Claude Code settings. Sessions pick a change up at their next
+  start. The remote-access setup chat never gets it.
 - **Never where you already have telemetry settings.** A preflight reads key **names** only, never
   values, from: Clawdling's own launch environment, your Claude Code `settings.json` (and each extra
   login's), the `.claude/settings.json` and `settings.local.json` of the org folder and of every
