@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "about": "Claim receipts (1.6): English phrases that claim work is finished, read from the last 600 characters of an agent's final message, one sentence at a time, lower-cased. Conservative on purpose: a miss means no label, never a wrong one. Steps: idioms rewrite positive phrasings and the objects of fix verbs; a claim pattern must match; exclude_any words anywhere in the sentence cancel it; exclude_before words cancel it only when they come before the claim. Every pattern is a JavaScript RegExp source (flags 'u'). Tested in test/unit/claims.test.js.",
+  "idioms": [
+    {
+      "re": "\\b(without|with no) (any )?(errors?|warnings?|failures?|issues?|problems?|regressions?)\\b",
+      "with": "cleanly"
+    },
+    {
+      "re": "\\bno (more )?(lint|linting|eslint|ruff) (errors|warnings|issues|problems)\\b",
+      "with": "lint clean"
+    },
+    {
+      "re": "\\bno (more )?(type|typescript|tsc|mypy|typing) (errors|issues|problems)\\b",
+      "with": "typecheck clean"
+    },
+    {
+      "re": "\\bno (more )?(compile|compiler|build) (errors|warnings)\\b",
+      "with": "build clean"
+    },
+    {
+      "re": "\\b(0|zero|no) (tests? )?(failed|failing|failures|errors|warnings|skipped)\\b",
+      "with": ""
+    },
+    {
+      "re": "\\b(fail(s|ed|ing)?|errors?) (to )?(0|zero)\\b",
+      "with": ""
+    },
+    {
+      "re": "\\bnothing (left )?to (fix|do)\\b",
+      "with": ""
+    }
+  ],
+  "fix_scope": {
+    "about": "After a fix verb, failure words up to the end of its clause name what was fixed (\"fixed the failing test and the build error\"): they become 'item'.",
+    "verbs": "\\b(fix(?:ed|es)?|resolv(?:ed|es)?|address(?:ed|es)?|repair(?:ed|s)?|correct(?:ed|s)?|handl(?:ed|es)?|squash(?:ed|es)?|clean(?:ed)? up|got rid of|removed|silenced|caught|worked around|debugged)\\b",
+    "words": "\\b(failing|failed|broken|flaky|erroring|crashing|red|errors?|failures?|crash(?:es)?|bugs?|warnings?|regressions?)\\b",
+    "clause_end": "[,;:]|\\b(but|though|although|however|yet)\\b"
+  },
+  "message_cancel": {
+    "about": "A sentence anywhere in the window that admits a current failure cancels the whole message's claim (\"Fixed the bug. One test still fails.\").",
+    "re": "\\b(fail(s|ed|ing|ure|ures)?|broken|break(s|ing)?|error(s|ed)?|flaky|crash(es|ed|ing)?)\\b"
+  },
+  "tests": [
+    {
+      "need": "test",
+      "re": "\\b((all|the|every|both)\\s+)?(\\d+\\s+)?((unit|integration|e2e|end-to-end|new|existing|relevant)\\s+)?tests?\\s+(now\\s+|all\\s+|still\\s+|are\\s+now\\s+|are\\s+all\\s+)?(pass(es|ed|ing)?|are passing|are green|green)\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\btests? (suite )?(is |are )?(now )?(passing|green)\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\bpass(es|ed|ing)? (all|every|the) (\\d+ )?(of the )?((unit|integration|e2e|new|existing) )?tests\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\ball (the )?(checks |tests )?(are |is )?(now )?green\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\b\\d+(/\\d+| of \\d+)? (tests?|specs?|checks?)? ?(pass(ed|ing)?)\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\b(test suite|the suite|specs?) (now )?(pass(es|ed)?|is green)\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\b(tests|test run|suite):? (all )?(green|passing|pass(ed)?)\\b"
+    },
+    {
+      "need": "build",
+      "re": "\\b(the )?build (now )?(succeeds|succeeded|passes|passed|is green|is clean|works|is successful|was successful|clean)\\b"
+    },
+    {
+      "need": "build",
+      "re": "\\b(builds|compiles) (cleanly|successfully|fine|clean)\\b"
+    },
+    {
+      "need": "build",
+      "re": "\\b(it|everything|the project|the app|the code|now it) (now )?(builds|compiles)\\b"
+    },
+    {
+      "need": "lint",
+      "re": "\\b(lint(ing|er)?|eslint|ruff|clippy|prettier) (is |are |now |all )*(clean|passes|passed|happy|green)\\b"
+    },
+    {
+      "need": "lint",
+      "re": "\\b(typecheck(s|ing)?|type[- ]check(s|ing)?|tsc|mypy|pyright) (is |are |now |all )*(clean|passes|passed|green|succeeds)\\b"
+    }
+  ],
+  "completion": [
+    {
+      "re": "^(all )?(done|finished|fixed|complete|completed|shipped|deployed|implemented)\\b"
+    },
+    {
+      "re": "\\b(i'?ve|i have|we'?ve|we have) (now )?(also )?(fixed|implemented|finished|completed|resolved|shipped|deployed|added|built|updated|made the change|wired|refactored|renamed|removed|created|written|wrote|replaced|moved|changed)\\b"
+    },
+    {
+      "re": "\\b(it'?s|it is|that'?s|that is|this is|everything is|everything'?s|all is|the (bug|issue|fix|feature|change|task|work|page|endpoint|function|test|button|form) is) (now )?(all )?(done|fixed|finished|complete|completed|working|resolved|implemented|in place|live|deployed)\\b"
+    },
+    {
+      "re": "\\b(is|are|has been|have been) (now )?(successfully )?(fixed|implemented|completed|resolved|deployed|shipped|done|added|in place)\\b"
+    },
+    {
+      "re": "\\b(works|working) (now|again|correctly|as expected)\\b"
+    },
+    {
+      "re": "\\bnow (works|working)\\b"
+    },
+    {
+      "re": "\\bsuccessfully (fixed|implemented|deployed|shipped|completed|added|updated|built|resolved|created|refactored)\\b"
+    },
+    {
+      "re": "\\b(task|work|change|changes|fix|implementation|feature|refactor) (is |are )?(now )?(complete|completed|done|finished|in place)\\b"
+    },
+    {
+      "re": "^(i )?(fixed|implemented|finished|completed|resolved|shipped|deployed|added|updated|refactored|renamed|removed|created|replaced|wired) (it|the|this|that|your|both|all|a|an|two|three|\\d+)\\b"
+    },
+    {
+      "re": "\\bthe (bug|issue|problem|error|crash) is (gone|resolved|fixed)\\b"
+    },
+    {
+      "re": "\\bready (for review|to (merge|ship|use|go|test))\\b"
+    },
+    {
+      "re": "\\b(summary|changes made|what i changed|what changed)\\b.*\\b(fixed|added|implemented|updated|changed)\\b"
+    }
+  ],
+  "exclude_any": [
+    "\\b(not|n't|no longer|never|nothing|none|neither|nor|cannot)\\b",
+    "\\b(should|would|could|might|may|will|shall|must|can|going to|gonna|about to|plan to|want to|need to|needs to|have to|has to|try to|trying to|let me|let's|i'?ll|we'?ll|you'?ll|i'?d|i'?m going)\\b",
+    "\\b(fail(s|ed|ing|ure|ures)?|broken|break(s|ing)?|error(s|ed)?|flaky|skipp(ed|ing)|todo|pending|partially|partial|almost|nearly|mostly|some of|except|apart from|aside from|but (one|two|\\d+))\\b",
+    "\\b(to be done|left to|remaining|remains|next step|still to)\\b",
+    "\\b(was|were) (done|fixed|finished|complete|completed|working|passing) (before|earlier|previously|already)\\b",
+    "\\b(previously|earlier|before this|originally)\\b",
+    "\\b(i think|i believe|probably|hopefully|presumably|likely|seems|appears|looks like)\\b",
+    "\\b(most|many|several|some|a few|half|majority|nearly all)\\b"
+  ],
+  "exclude_before": [
+    "\\b(if|once|when|whenever|until|unless|after|before|as soon as|whether|so that|in order to|to make sure|to ensure|to verify|to check)\\b"
+  ]
+}

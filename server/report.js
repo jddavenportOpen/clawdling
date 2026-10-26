@@ -178,11 +178,11 @@ export function sourceKey(file) {
 }
 const sameKey = (a, b) => !!a && !!b && ['size', 'mtime_ms', 'subs', 'subs_size', 'subs_mtime'].every((k) => a[k] === b[k]);
 
-const PART_FIELDS = ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents', 'cost', 'days', 'unknown_days', 'commit_times', 'last_line', 'last_line_at', 'started_at', 'last_at', 'format'];
+const PART_FIELDS = ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents', 'cost', 'days', 'unknown_days', 'commit_times', 'last_line', 'last_line_at', 'started_at', 'last_at', 'format', 'claims'];
 
 /** The per-file fields a receipt keeps (no prompt text: the last line is the agent's own words). */
 function partOf(s) {
-  if (!s) return { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null, format: { ok: false, issues: ['unreadable'] } };
+  if (!s) return { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null, format: { ok: false, issues: ['unreadable'] }, claims: [] };
   return Object.fromEntries(PART_FIELDS.map((k) => [k, s[k] ?? null]));
 }
 
@@ -193,7 +193,7 @@ function legacyPart(r) {
 
 /** A session's figures from its parts. */
 export function mergeParts(parts) {
-  const out = { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null };
+  const out = { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null, claims: [] };
   const cost = { usd: 0, source: null, complete: true, unknown_models: new Set(), models: {} };
   let priced = 0;
   const issues = new Set();
@@ -212,6 +212,7 @@ export function mergeParts(parts) {
     for (const [d, v] of Object.entries(p.days || {})) if (Number.isFinite(v)) out.days[d] = (out.days[d] || 0) + v;
     for (const [d, ms] of Object.entries(p.unknown_days || {})) out.unknown_days[d] = [...new Set([...(out.unknown_days[d] || []), ...ms])].sort();
     out.commit_times.push(...(Array.isArray(p.commit_times) ? p.commit_times : []));
+    out.claims.push(...(Array.isArray(p.claims) ? p.claims : []));
     if (p.last_line && (!out.last_line_at || String(p.last_line_at || '') >= out.last_line_at)) {
       out.last_line = p.last_line;
       out.last_line_at = p.last_line_at || out.last_line_at;
@@ -221,6 +222,7 @@ export function mergeParts(parts) {
     if (p.format && p.format.ok === false) ok = false;
     for (const i of p.format?.issues || []) issues.add(i);
   }
+  out.claims = out.claims.sort((a, b) => String(a.at || '').localeCompare(String(b.at || ''))).slice(-50);
   // No part with a known cost (unreadable transcripts): unknown, never $0.
   out.cost = { usd: priced || !parts.length ? cost.usd : null, source: cost.source || 'none', complete: cost.complete, unknown_models: [...cost.unknown_models].sort(), models: cost.models };
   out.format = { ok, issues: [...issues].slice(0, 10) };
@@ -315,7 +317,8 @@ export class Reports {
       if (!/[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(f) || !fs.existsSync(f)) continue;
       const key = sourceKey(f);
       const i = parts.findIndex((p) => p.path === f);
-      if (i !== -1 && sameKey(parts[i].source, key)) continue;
+      // A part from before claim receipts (1.6) is read once more, while its transcript is there.
+      if (i !== -1 && sameKey(parts[i].source, key) && Array.isArray(parts[i].claims)) continue;
       try {
         const part = { path: f, ...partOf(summarize(this.reader.session(f))), source: key };
         if (i === -1) parts.push(part);
@@ -329,7 +332,7 @@ export class Reports {
     if (file) {
       const key = sourceKey(file);
       const i = parts.findIndex((p) => p.path === file);
-      const stale = force || i === -1 || !sameKey(parts[i].source, key);
+      const stale = force || i === -1 || !sameKey(parts[i].source, key) || !Array.isArray(parts[i].claims);
       // While the start-up backfill runs, a request never parses an ended session's transcript: it
       // uses the receipt it has, or says the session is still being counted.
       if (stale && lazy && this.backfilling && rec.status === 'ended') {
