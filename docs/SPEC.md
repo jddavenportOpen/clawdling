@@ -588,7 +588,7 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   judge). The cap (default $2) is checked before every agent run and judge vote; each run carries
   `--max-budget-usd` with what is left; past the cap, paid graders are skipped and the result says
   `capped`.
-- **Results**: `<agent folder>/evals/results/<time>.json`, the newest 50: `{id, started_at, ended_at, k,
+- **Results**: `.clawdling/evals/<agent>/results/<time>.json` (moved out of the agent folder in review, so an agent cannot forge a score or link a result elsewhere), the newest 50: `{id, started_at, ended_at, k,
   judge_model, max_cost_usd, cost_usd, judge_cost_usd, capped, judge_unreliable, controls[], score,
   cells[{label, model, effort, current, score, passes, runs_total, runs_passed, cost_per_run,
   cases[{id, name, score, pass_at_k, pass_hat_k, runs[{score, passed, error, cost_usd, num_turns,

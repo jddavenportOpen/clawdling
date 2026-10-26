@@ -596,7 +596,7 @@ export class Reports {
     const list = (Array.isArray(s.claims) ? s.claims : []).slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
     return list.map((c, i) => {
       // The session's next change after this claim: a ship check after it speaks for that, not this.
-      const next = list.slice(i + 1).map((x) => x.last_edit_at).find((t) => t && t > c.at);
+      const next = c.next_edit_at || list.slice(i + 1).map((x) => x.last_edit_at).find((t) => t && t > c.at);
       const l = labelClaim(next ? { ...c, until: next } : c, ctx);
       return { at: c.at, kind: c.kind, needs: c.needs || [], phrase: c.phrase || null, label: l.label, check: l.check, badge: badgeText(l) };
     });

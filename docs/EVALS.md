@@ -17,8 +17,10 @@ accepts, and keeps its own settings in separate files plugin eval ignores.
   knows-its-job/graders/criteria.md  how the answer is graded (one file per grader)
   knows-its-job/reference.md         optional: a good answer (Clawdling only, see "Controls")
   .clawdling-suite.yaml              Clawdling only: runs per case, judge model, cost cap
-  results/<time>.json                Clawdling's results
 ```
+
+Clawdling keeps the results itself, in `.clawdling/evals/<agent>/results/<time>.json` inside your
+org folder (the newest 50), where the agent cannot change them.
 
 A case is a folder whose name is lower-case letters, numbers and `-`. The agent folder is
 `domains/<id>/` or `projects/<id>/` inside your org folder.

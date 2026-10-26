@@ -311,18 +311,23 @@ test('review: an approved command matches exactly or with flags, never another s
   assert.equal(checkOf('npm run lint -- --max-warnings 0', { approved }).kind, 'lint');
   assert.equal(checkOf('npm run format', { approved }), null);
   assert.equal(checkOf('npm run --help', { approved }), null);
-  for (const c of ['npx tsc --version', 'pytest --collect-only', 'jest --listTests', 'eslint --version', 'cargo test --no-run']) assert.equal(checkOf(c), null, c);
+  for (const c of ['npx tsc --version', 'pytest --collect-only', 'jest --listTests', 'eslint --version', 'cargo test --no-run', 'make -n test', 'go test -n ./...']) assert.equal(checkOf(c), null, c);
+  assert.equal(checkOf('pytest -n auto').kind, 'test', 'pytest-xdist workers: a real run');
   assert.equal(checkOf('just qa --fast', { detected: [{ kind: 'test', cmd: 'just qa' }] }).kind, 'test');
   assert.equal(checkOf('just qa-other', { detected: [{ kind: 'test', cmd: 'just qa' }] }), null);
 });
 
-test('review: in an && chain, a failure of the line is pinned on the check only when its output says so', () => {
+test('review: in an && chain with other commands, only a pass counts (a failure mark may be another command\'s)', () => {
   const [a] = claimsOf([prompt('x'), edit(), bash('false && npm test', 'Exit code 1', true), say('Done.')]);
   assert.equal(labelClaim(a).label, 'not_verified', 'the test never ran');
   const [b] = claimsOf([prompt('x'), edit(), bash('npm test && npm run deploy', 'Exit code 1\n# pass 5\n# fail 0\ndeploy: no credentials', true), say('Done.')]);
   assert.equal(labelClaim(b).label, 'not_verified', 'the tests passed; the deploy after them failed');
-  const [c] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test', 'Exit code 1\nnot ok 1 - adds\n# fail 1', true), say('Done.')]);
-  assert.equal(labelClaim(c).label, 'contradicted', 'its own failure marks');
+  const [c] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test', 'Exit code 1\nnpm ERR! code ERESOLVE\n# fail 1', true), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'not_verified', 'npm ci failed: the tests may never have run');
+  const [e] = claimsOf([prompt('x'), edit(), bash('npm test && npm run build', 'Exit code 1\n# pass 5\n# fail 0\nFound 2 errors', true), say('All tests pass.')]);
+  assert.equal(labelClaim(e).label, 'not_verified', 'the build\'s errors are not the tests\'');
+  const [f] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test', '# pass 5\n# fail 0'), say('Done.')]);
+  assert.equal(labelClaim(f).label, 'verified', 'the whole line passed');
   const [d] = claimsOf([prompt('x'), edit(), bash('cd app && npm test', 'Exit code 1\nnot ok', true), say('Done.')]);
   assert.equal(labelClaim(d).label, 'contradicted', 'cd is not another command');
 });
@@ -335,6 +340,11 @@ test('review: a ship check speaks for a claim only within a day after it, and no
   assert.equal(labelClaim({ ...c, until: at(60000) }, { shipRuns: [run(at(120000), false)] }).label, 'not_verified', 'after the next edit');
   assert.equal(labelClaim(c, { shipRuns: [run(at(3600000), true)] }).label, 'verified');
   assert.match(whenText('2020-01-02T03:04:00Z'), /Jan 2/, 'not today: the date is shown');
+  // The window ends at the session's first change after the claim, even with no later claim.
+  const [d] = claimsOf([prompt('x'), edit(), say('Done.'), edit('/repo/b.js')]);
+  assert.ok(d.next_edit_at && d.next_edit_at > d.at);
+  const run2 = (when) => ({ at: when, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL b' }] });
+  assert.equal(labelClaim({ ...d, until: d.next_edit_at }, { shipRuns: [run2(new Date(Date.parse(d.next_edit_at) + 60000).toISOString())] }).label, 'not_verified');
 });
 
 test('review: a group project agent\'s edits inside its repos are changes', () => {

@@ -297,8 +297,9 @@ test('check-up: draft five cases, nothing runs until they are approved, then a r
   const printed = logs.filter((l) => l.mode === 'print' || l.mode === 'checkup-print' || l.mode === 'checkup-run');
   assert.ok(printed.every((l) => !l.argv || (l.argv.includes('--no-session-persistence') && l.argv.includes('--strict-mcp-config'))));
   assert.deepEqual(leftovers('clawdling-eval-health-'), []);
-  // Results live in the agent's evals folder, in a plugin-eval-like shape.
-  assert.ok(fs.readdirSync(path.join(evalsDir(), 'results')).length >= 1);
+  // Results live in Clawdling's own folder, out of the agent's reach.
+  assert.ok(fs.readdirSync(path.join(home, '.clawdling', 'evals', 'health', 'results')).length >= 1);
+  assert.ok(!fs.existsSync(path.join(evalsDir(), 'results')), 'not in the agent folder');
 });
 
 test('check-up: the cost cap is checked before every launch and each run carries --max-budget-usd', async () => {

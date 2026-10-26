@@ -36,6 +36,7 @@ const DEFAULT_TIMEOUT = 600;
 const PREFIX = 'clawdling-check-';
 const GIT_TIMEOUT = 60000;
 const EXIT_DRAIN_MS = 500;
+const CONFIG_MAX = 64 * 1024;
 export const UNTRACKED_NOTE = 'Checks run on committed and modified tracked files. New files the agent has not added to git are not included.';
 export const SCRIPTS_NOTE = "A check runs your project's own scripts as you. A script's contents can change without the command changing, so approve only commands from projects you trust.";
 export const SETUP_NOTE = 'A setup step usually downloads and runs code from the internet (npm ci, pip install). It is off unless you tick it.';
@@ -249,6 +250,16 @@ export class Checks {
   config(id) {
     const { agent, repo } = this.target(id);
     const file = this.configFile(agent);
+    let st = null;
+    try {
+      st = fs.lstatSync(file);
+    } catch {
+      return { exists: false, config: null, approved: false, changed: false, error: null };
+    }
+    // The agent can write its folder: only a plain, small file is read (never a link to a secret,
+    // a FIFO or a huge file, whose contents a parse error would echo to the cockpit).
+    if (!st.isFile()) return { exists: true, config: null, approved: false, changed: true, error: 'checks.yaml is a link or not a plain file; Clawdling reads only a plain checks.yaml' };
+    if (st.size > CONFIG_MAX) return { exists: true, config: null, approved: false, changed: true, error: 'checks.yaml is over 64 KB' };
     let text = null;
     try {
       text = fs.readFileSync(file, 'utf8');
@@ -372,8 +383,9 @@ export class Checks {
     let stdout = '';
     try {
       ({ stdout } = await this.exec('git', [...gitSafe(this.hooksDir()), '-C', repo, 'config', '-z', '--get-regexp', '^filter\\.'], { timeout: GIT_TIMEOUT, env: this.gitEnv() }));
-    } catch {
-      return []; // no filter configured (git config exits 1)
+    } catch (err) {
+      if (err && err.code === 1) return []; // no filter configured
+      throw new Error(`could not read the repo's git config to switch its filters off (${oneLine(String(err?.stderr || err?.message || err), 160)})`);
     }
     return filterDrivers(stdout);
   }

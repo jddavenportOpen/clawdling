@@ -125,14 +125,25 @@ export function gradeRegex(g, run) {
   return { name: g.name, type: g.type, passed: n === Number(m[1]), weight: g.weight, explanation: `found ${n} matches (expected ${m[1]})` };
 }
 
-function callMatches(call, spec) {
-  if (call.name !== spec.tool) return false;
-  if (spec.input_match) return runRegex(spec.input_match, '', call.inputText).value === true;
-  return true;
+/** The indexes of the calls matching {tool, input_match}, or {error} when the pattern failed (never "no match"). */
+function matching(calls, spec) {
+  const out = [];
+  for (let i = 0; i < calls.length; i++) {
+    if (calls[i].name !== spec.tool) continue;
+    if (spec.input_match) {
+      const r = runRegex(spec.input_match, '', calls[i].inputText);
+      if (r.error) return { error: `input_match: ${r.error}` };
+      if (r.value !== true) continue;
+    }
+    out.push(i);
+  }
+  return { list: out };
 }
 
 export function gradeToolUsed(g, run) {
-  const n = (run.tool_calls || []).filter((c) => callMatches(c, g)).length;
+  const m = matching(run.tool_calls || [], g);
+  if (m.error) return fail(g, m.error);
+  const n = m.list.length;
   const min = g.min ?? 1;
   const max = g.max ?? Infinity;
   return { name: g.name, type: g.type, passed: n >= min && n <= max, weight: g.weight, explanation: `${g.tool} called ${n}x (expected ${min}..${max === Infinity ? '∞' : max})` };
@@ -140,8 +151,11 @@ export function gradeToolUsed(g, run) {
 
 export function gradeToolOrder(g, run) {
   const calls = run.tool_calls || [];
-  const b = calls.findIndex((c) => callMatches(c, g.before));
-  const a = calls.findIndex((c) => callMatches(c, g.after));
+  const mb = matching(calls, g.before);
+  const ma = matching(calls, g.after);
+  if (mb.error || ma.error) return fail(g, mb.error || ma.error);
+  const b = mb.list.length ? mb.list[0] : -1;
+  const a = ma.list.length ? ma.list[0] : -1;
   if (b === -1) return fail(g, `"before" tool ${g.before.tool} never called`);
   if (a === -1) return fail(g, `"after" tool ${g.after.tool} never called`);
   const ok = b < a;

@@ -79,3 +79,27 @@ test('a step that leaves a background child is done when its shell exits, and th
   }
   assert.equal(alive, false, 'the background sleep was ended with the step');
 });
+
+test('checks.yaml is read only as a plain small file: a link to a secret is refused, never echoed', () => {
+  const dir = tmp();
+  const repo = tmp();
+  const secret = path.join(tmp(), '.env');
+  fs.writeFileSync(secret, 'GH_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789\n');
+  const agent = { id: 'web', name: 'Web', kind: 'project', dir, repo };
+  const checks = new Checks({ paths: { rt: tmp() }, org: { require: () => agent } });
+  let linked = true;
+  try {
+    fs.symlinkSync(secret, path.join(dir, 'checks.yaml'));
+  } catch {
+    linked = false; // Windows without the right to make file links
+  }
+  if (linked) {
+    const c = checks.config('web');
+    assert.equal(c.config, null);
+    assert.match(c.error, /link/);
+    assert.ok(!JSON.stringify(c).includes('ghp_'), 'no part of the secret reaches the view');
+    fs.rmSync(path.join(dir, 'checks.yaml'));
+  }
+  fs.writeFileSync(path.join(dir, 'checks.yaml'), `# ${'x'.repeat(70 * 1024)}\n`);
+  assert.match(checks.config('web').error, /64 KB/);
+});

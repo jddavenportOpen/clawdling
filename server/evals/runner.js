@@ -24,7 +24,7 @@ import { commandFor, spawnOptions } from '../platform.js';
 import { toolSummary } from '../transcripts.js';
 import { HttpError, badRequest, conflict, isValidEffort, isValidModel, oneLine, readJson, writeJson } from '../util.js';
 import { caseScore, fileTexts, grade, gradeLlm } from './graders.js';
-import { Approvals, DEFAULT_TOOLS, SUITE_DEFAULTS, caseDir, evalsDir, realDir, graderFile, loadSuite, parseSettings, promptFile, requireCase, writeCase, writeSettings } from './suite.js';
+import { Approvals, DEFAULT_TOOLS, SUITE_DEFAULTS, caseDir, evalsDir, graderFile, loadSuite, parseSettings, promptFile, requireCase, writeCase, writeSettings } from './suite.js';
 
 export const EVAL_PREFIX = 'clawdling-eval-';
 const JUDGE_BUDGET = 0.05;
@@ -404,8 +404,13 @@ export class Evals {
     return { id: a.id, started_at: a.started_at, phase: a.phase, done: a.done, total: a.total, spent_usd: Number(a.spent.toFixed(6)), cap_usd: a.cap, current: a.current, error: a.error || null, result: a.result || null };
   }
 
+  /**
+   * Results live in Clawdling's own folder (.clawdling/evals/<agent>/results), which agents' file
+   * tools are denied: an agent cannot forge a score or a "Use this" recommendation, or link a result
+   * to another file so the cockpit serves it.
+   */
   resultsDir(agent) {
-    return path.join(evalsDir(agent.dir), 'results');
+    return path.join(this.root, agent.id, 'results');
   }
 
   /** Past results (summaries), newest first. */
@@ -413,7 +418,6 @@ export class Evals {
     const agent = this.agent(id);
     let names = [];
     try {
-      if (!realDir(evalsDir(agent.dir)) || !realDir(this.resultsDir(agent))) return [];
       names = fs.readdirSync(this.resultsDir(agent));
     } catch {
       return [];
@@ -649,15 +653,13 @@ export class Evals {
 
   /**
    * The environment a check-up's claude gets: no Clawdling variables, nothing from the org .env, and
-   * nothing credential-looking except what the CLI itself signs in with (Anthropic, Claude Code,
-   * and Bedrock's or Vertex's when the CLI is set to use them).
+   * nothing credential-looking except what the CLI itself may sign in with (Anthropic, Claude Code,
+   * and the Bedrock and Vertex providers, which a user's Claude Code settings can switch on).
    */
   baseEnv() {
     const env = childEnv(this.env);
     const org = new Set(Object.keys(readEnvFile(this.paths.env)));
-    const bedrock = /^(1|true)$/i.test(env.CLAUDE_CODE_USE_BEDROCK || '');
-    const vertex = /^(1|true)$/i.test(env.CLAUDE_CODE_USE_VERTEX || '');
-    const cliAuth = (k) => /^(ANTHROPIC_|CLAUDE_CODE_)/.test(k) || k === 'CLAUDE_CONFIG_DIR' || (bedrock && /^AWS_/.test(k)) || (vertex && /^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_ML_)/.test(k));
+    const cliAuth = (k) => /^(ANTHROPIC_|CLAUDE_CODE_|AWS_|GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_ML_)/.test(k) || k === 'CLAUDE_CONFIG_DIR';
     for (const k of Object.keys(env)) {
       if (/^CLAWDLING_/.test(k) || (org.has(k) && !cliAuth(k)) || (!cliAuth(k) && looksLikeCredential(k, env[k]))) delete env[k];
     }
@@ -672,7 +674,7 @@ export class Evals {
     writeJson(settings, { disableAllHooks: true }, 0o600);
     const work = path.join(dir, 'work');
     fs.mkdirSync(work);
-    const args = ['-p', '--output-format', 'json', ...(model ? ['--model', model] : []), '--max-budget-usd', String(budget), '--tools', '', '--json-schema', JSON.stringify(schema), '--settings', settings, '--setting-sources', 'project', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--append-system-prompt', system];
+    const args = ['-p', '--output-format', 'json', ...(model ? ['--model', model] : []), '--max-budget-usd', String(budget), '--tools', '', '--json-schema', JSON.stringify(schema), '--settings', settings, '--setting-sources', 'user', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--append-system-prompt', system];
     return this.spawnClaude(claude, args, { cwd: work, stdin: prompt, timeoutMs }).then((r) => {
       fs.rmSync(dir, { recursive: true, force: true });
       let o = null;
@@ -746,7 +748,8 @@ export class Evals {
       '',
       'Does the output meet the criterion? Answer pass (true or false) and one short reason.',
     ].join('\n');
-    const r = await this.print({ prompt, model: state.judgeModel, budget: JUDGE_BUDGET, schema: JUDGE_SCHEMA, system: JUDGE_SYSTEM, timeoutMs: 120000 });
+    const budget = Math.max(0.01, Math.min(JUDGE_BUDGET, Math.floor((state.cap - state.spent) * 100) / 100));
+    const r = await this.print({ prompt, model: state.judgeModel, budget, schema: JUDGE_SCHEMA, system: JUDGE_SYSTEM, timeoutMs: 120000 });
     state.spent += r.cost;
     state.judgeCost += r.cost;
     if (!r.structured) throw new Error(r.error || 'no verdict');
@@ -820,6 +823,10 @@ export class Evals {
       entry.worktree = wt;
       this.register(entry);
       await this.checks.addWorktree(agent.repo, wt, 'HEAD');
+      // An agent folder kept inside its own repo has its committed evals/ (answers included) in the
+      // worktree too: remove it from the scratch copy.
+      const rel = path.relative(realPathOf(agent.repo), realPathOf(agent.dir));
+      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) fs.rmSync(path.join(wt, rel, 'evals'), { recursive: true, force: true });
       cwd = wt;
     }
     const target = { ...agent, dir: notes, cwd };
@@ -841,6 +848,12 @@ export class Evals {
     const agent = this.agent(id);
     const s = this.suite(id);
     if (s.settings_error) throw badRequest(s.settings_error);
+    // Before any paid call: the folders the run must not reach can be written as deny rules.
+    try {
+      denyRules([evalsDir(agent.dir), this.paths.home && path.join(this.paths.home, '.clawdling')]);
+    } catch (err) {
+      throw badRequest(err.message);
+    }
     if (s.settings_text && !s.settings_approved) throw new HttpError(409, 'The suite settings changed since you approved them. Review them in the Check-up tab.');
     const cases = s.cases.filter((c) => !c.error && c.approved);
     if (!cases.length) throw new HttpError(409, s.cases.length ? 'No approved case to run. Read the cases in the Check-up tab and approve them first.' : 'This agent has no check-up yet. Draft one in the Check-up tab first.');
@@ -899,9 +912,10 @@ export class Evals {
         '--permission-mode', 'default',
         '--no-session-persistence',
         '--settings', sc.settingsFile,
-        // Only the scratch copy's own project settings (its permissions travel with the agent): never
-        // the user's or a settings.local.json "don't ask again" list, which are not part of the case.
-        '--setting-sources', 'project',
+        // The user's own settings (their sign-in, default model and deny rules), never the scratch
+        // copy's project or local settings: the agent can edit those, and in print mode no trust
+        // dialog guards them.
+        '--setting-sources', 'user',
         '--strict-mcp-config',
         '--append-system-prompt-file', sc.ctxFile,
         ...(sc.notes !== sc.cwd ? ['--add-dir', sc.notes] : []),
@@ -1064,8 +1078,7 @@ export class Evals {
       label: COST_NOTE,
     };
     const dir = this.resultsDir(agent);
-    realDir(evalsDir(agent.dir), { create: true });
-    realDir(dir, { create: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const stamp = state.started_at.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
     let f = path.join(dir, `${stamp}.json`);
     for (let i = 1; fs.existsSync(f); i++) f = path.join(dir, `${stamp}-${i}.json`);

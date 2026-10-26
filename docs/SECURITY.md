@@ -419,7 +419,8 @@ To limit the damage a hostile script could do:
   URL with a password in it), without any variable named in the org's `.env`,
   and with `CI=true` so test runners run once instead of watching.
 - **Bounded.** A step is over when its shell exits (a background child holding the output open
-  gets half a second), and anything the step left running in its process group is ended. One ship
+  gets half a second). On macOS and Linux anything the step left running in its process group is
+  then ended; on Windows a left-over process is ended only at the step's timeout. One ship
   check per org at a time; output capped at 256 KB per command, of which the
   last 40 lines are kept, for 90 days, in `.clawdling/checks/<agent>/`. Scratch worktrees in use are
   listed in `.clawdling/checks/active.json`, and Clawdling removes any a crash left behind when it
@@ -434,12 +435,12 @@ To limit the damage a hostile script could do:
   on a subscription). Clawdling never calls the Anthropic API and never reads a credential. Every
   call passes `--no-session-persistence`, `--strict-mcp-config` (no MCP server starts) and a
   `--settings` file with `disableAllHooks`, so your own hooks and MCP servers do not run inside a
-  check-up. The run's `claude` gets only the settings file and the scratch copy's own project
-  settings (`--setting-sources project`): your user settings and any `settings.local.json` "don't
-  ask again" list do not widen what a check-up may do. Its environment has no Clawdling variables,
-  nothing from the org `.env` and nothing credential-looking, except what the CLI itself signs in
-  with (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `CLAUDE_CONFIG_DIR`, and Bedrock's or Vertex's variables
-  when the CLI is set to use them).
+  check-up. The run's `claude` loads your user settings (your sign-in, default model and deny rules)
+  but not the scratch copy's project or local settings (`--setting-sources user`): the agent can
+  edit those, and print mode shows no trust dialog. Its environment has no Clawdling variables,
+  nothing from the org `.env` and nothing credential-looking, except what the CLI itself may sign in
+  with (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `CLAUDE_CONFIG_DIR`, and the AWS and Google Cloud variables
+  Bedrock and Vertex use). A check-up has no tool that can read its environment.
 - **Drafting** is one call with no tools (`--tools ""`), a JSON schema and `--max-budget-usd 0.50`,
   given the agent's CLAUDE.md, NOW.md, the end of LOG.md and the org's me.md. It writes the cases
   unapproved; nothing runs until you have read them.
@@ -460,8 +461,9 @@ To limit the damage a hostile script could do:
   path with characters Claude Code rules cannot express), the check-up refuses to run. The copy is
   removed after each run, and on start if a crash left one.
 - **Links.** Clawdling reads and writes check-ups only in real folders: a link at `evals/`, at a
-  case folder, at `graders/` or at `results/` is refused, never listed, written into or deleted
-  through.
+  case folder or at `graders/` is refused, never listed, written into or deleted through. Results
+  are kept in `.clawdling/evals/<agent>/results/`, out of the agent's reach, so an agent cannot
+  forge a score.
 - **The judge** has no tools, gets only the criterion and the answer (between two random markers,
   with an instruction to treat the answer as data), answers through a JSON schema, and votes three
   times; a case passes on two of three. A steered judge can only mis-score, never act. Before any

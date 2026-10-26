@@ -294,7 +294,10 @@ export function wordsKind(w) {
   return null;
 }
 
-const NO_RUN = /^(--version|-V|--help|-h|--collect-only|--co|--list|--list-.*|--listTests|--list-tests|--showConfig|--dry-run|-n|--no-run|--print-config)$/;
+const NO_RUN = /^(--version|-V|--help|-h|--collect-only|--co|--list|--list-.*|--listTests|--list-tests|--showConfig|--dry-run|--no-run|--print-config)$/;
+// `-n` is a dry run only for these (`pytest -n auto` is pytest-xdist's worker count, a real run).
+const DRY_N = new Set(['make', 'gmake', 'just', 'go']);
+const runsNothing = (w) => w.some((x) => NO_RUN.test(x)) || (DRY_N.has(w[0]) && w.some((x) => x === '-n' || x === '--just-print' || x === '--recon'));
 /** The approved command itself, or it with extra flags (`npm test -- --ci`), never another script. */
 function sameOrFlags(cmd, base) {
   const a = words(String(cmd || '').trim());
@@ -329,7 +332,7 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     }
     if (trivial(w)) continue;
     // Listing, help and version flags run nothing: never a check (`npx tsc --version`, `jest --listTests`).
-    if (w.some((x) => NO_RUN.test(x))) continue;
+    if (runsNothing(w)) continue;
     let kind = null;
     const trimmed = s.raw.trim();
     for (const ap of approved) {
@@ -529,6 +532,8 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     }
     // A command that writes and then runs a check (`... > f && npm test`) is the edit and, just after
     // it, the check.
+    // The session's first change after the claim ends the time a ship check can speak for it.
+    const nextEdit = all.find((x) => cmp(x.key, at) > 0 && isWorkEdit(x.t, where));
     const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter;
     const after = before.filter((x) => (!lastEdit || cmp(x.key, lastEdit.key) > 0 || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
     const cmds = after.slice(-CMDS_PER_CLAIM).map(({ t }) => ({
@@ -547,6 +552,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       phrase: claim.phrase,
       edits,
       last_edit_at: lastEdit ? new Date(lastEdit.t.end ?? lastEdit.t.ts).toISOString() : null,
+      next_edit_at: nextEdit ? new Date(nextEdit.t.ts).toISOString() : null,
       cmds,
     });
   }
@@ -556,9 +562,10 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
 /** A command's outcome as a check: true (passed), false (failed) or null (cannot tell: not counted). */
 function outcome(c, masked, chained = false) {
   const failed = !(c.error !== true && (c.exit === 0 || c.exit === null) ? !c.fail || c.exit === 0 : false);
-  // In an && chain with other commands, the line's failure may be theirs: only the check's own
-  // failure marks pin it on the check. A pass means every command in it passed.
-  if (!masked && chained && failed) return c.fail ? false : null;
+  // In an && chain with other commands, the line's failure (and its failure marks: "npm ERR!" from
+  // `npm ci`, "Found 2 errors" from a build) may be theirs: only a pass counts, which means every
+  // command in it passed.
+  if (!masked && chained && failed) return null;
   if (!masked) return !failed;
   // Masked exit code: only the output can say. A failure mark fails it; otherwise it must say it passed.
   if (c.fail) return false;

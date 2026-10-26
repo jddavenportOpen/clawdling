@@ -336,7 +336,7 @@ test('cost cap: a run with no result line (timeout, crash) counts as its whole b
   assert.equal(st2.spent, 0.05);
 });
 
-test('check-up runs: read-only tools, project settings only, no --allowedTools, file graders read before cleanup', async () => {
+test('check-up runs: read-only tools, user settings only, no --allowedTools, file graders read before cleanup', async () => {
   const dir = tmp();
   const result = { type: 'result', subtype: 'success', is_error: false, result: 'done', total_cost_usd: 0.02, num_turns: 2 };
   const { ev, agent, calls, work } = stubEvals(dir, {
@@ -354,7 +354,7 @@ test('check-up runs: read-only tools, project settings only, no --allowedTools, 
   assert.equal(gradeRegex(g, { ...r.run }).passed, true, 'graded from the text read before cleanup');
   const a = calls[0].args;
   assert.equal(a[a.indexOf('--tools') + 1], 'Read,Grep');
-  assert.equal(a[a.indexOf('--setting-sources') + 1], 'project');
+  assert.equal(a[a.indexOf('--setting-sources') + 1], 'user', 'never the agent-editable project settings');
   assert.ok(!a.includes('--allowedTools'));
 });
 
@@ -363,10 +363,8 @@ test('check-up environment: credentials and the org .env stay out; the CLI keeps
   fs.writeFileSync(path.join(dir, '.env'), 'ORG_ONLY=1\nANTHROPIC_MODEL=x\n');
   const { ev } = stubEvals(dir, { spawn: async () => ({}), env: { HOME: dir, GH_TOKEN: 'g', PGPASSWORD: 'p', DATABASE_URL: 'postgres://u:secret@h/db', ORG_ONLY: '1', CLAUDE_CODE_OAUTH_TOKEN: 'o', ANTHROPIC_API_KEY: 'k', ANTHROPIC_MODEL: 'x', CLAUDE_CONFIG_DIR: '/c', AWS_ACCESS_KEY_ID: 'a', CLAWDLING_TOKEN: 't', LANG: 'C' } });
   const env = ev.baseEnv();
-  for (const k of ['GH_TOKEN', 'PGPASSWORD', 'DATABASE_URL', 'ORG_ONLY', 'AWS_ACCESS_KEY_ID', 'CLAWDLING_TOKEN']) assert.equal(env[k], undefined, k);
-  for (const k of ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'CLAUDE_CONFIG_DIR', 'LANG', 'HOME']) assert.ok(env[k], k);
-  ev.env = { ...ev.env, CLAUDE_CODE_USE_BEDROCK: '1', AWS_ACCESS_KEY_ID: 'a' };
-  assert.equal(ev.baseEnv().AWS_ACCESS_KEY_ID, 'a', 'Bedrock sign-in kept when the CLI uses Bedrock');
+  for (const k of ['GH_TOKEN', 'PGPASSWORD', 'DATABASE_URL', 'ORG_ONLY', 'CLAWDLING_TOKEN']) assert.equal(env[k], undefined, k);
+  for (const k of ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'CLAUDE_CONFIG_DIR', 'AWS_ACCESS_KEY_ID', 'LANG', 'HOME']) assert.ok(env[k], k);
 });
 
 test('symlinks: a linked evals/, case folder or graders/ is refused, never listed, written into or deleted', () => {
@@ -374,7 +372,8 @@ test('symlinks: a linked evals/, case folder or graders/ is refused, never liste
   const outside = tmp();
   fs.mkdirSync(path.join(outside, 'code'));
   fs.writeFileSync(path.join(outside, 'code', 'keep.txt'), 'x');
-  fs.symlinkSync(outside, path.join(dir, 'evals'), 'dir');
+  const dirLink = process.platform === 'win32' ? 'junction' : 'dir'; // junctions need no admin rights
+  fs.symlinkSync(outside, path.join(dir, 'evals'), dirLink);
   const s = loadSuite(dir, {});
   assert.deepEqual(s.cases, [], 'the linked folder\'s children are not shown as cases');
   assert.match(s.settings_error, /link/);
@@ -386,11 +385,11 @@ test('symlinks: a linked evals/, case folder or graders/ is refused, never liste
   // A real evals/ with a linked case folder or graders/ folder.
   const d2 = tmp();
   fs.mkdirSync(path.join(d2, 'evals'));
-  fs.symlinkSync(outside, path.join(d2, 'evals', 'code'), 'dir');
+  fs.symlinkSync(outside, path.join(d2, 'evals', 'code'), dirLink);
   assert.throws(() => writeCase(d2, 'code', body), /link/);
   writeCase(d2, 'real', body);
   fs.rmSync(path.join(d2, 'evals', 'real', 'graders'), { recursive: true });
-  fs.symlinkSync(path.join(outside, 'code'), path.join(d2, 'evals', 'real', 'graders'), 'dir');
+  fs.symlinkSync(path.join(outside, 'code'), path.join(d2, 'evals', 'real', 'graders'), dirLink);
   assert.throws(() => writeCase(d2, 'real', body), /link/);
   assert.deepEqual(fs.readdirSync(path.join(outside, 'code')), ['keep.txt']);
   assert.match(loadSuite(d2, {}).cases.find((c) => c.id === 'real').error, /grader/);
@@ -403,7 +402,9 @@ test('regex graders run in a sandbox with a deadline: a pattern that backtracks 
   assert.match(r.explanation, /backtracks/);
   assert.ok(Date.now() - t0 < 5000);
   assert.deepEqual(runRegex('b', 'i', 'aBc'), { value: true });
-  assert.equal(gradeToolUsed({ name: 't', tool: 'Read', input_match: '^(a+)+$', min: 0, max: 0 }, run({ tool_calls: [call('Read', { p: `${'a'.repeat(30)}b` })] })).passed, true);
+  const timedOut = gradeToolUsed({ name: 't', tool: 'Read', input_match: '"(a+)+$', min: 0, max: 0 }, run({ tool_calls: [call('Read', { p: `${'a'.repeat(30)}b` })] }));
+  assert.equal(timedOut.passed, false, 'a "must not call" grader whose pattern timed out fails, never passes');
+  assert.match(timedOut.explanation, /input_match/);
   assert.deepEqual(fileTexts([], run()), {});
 });
 

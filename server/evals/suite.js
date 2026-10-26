@@ -7,7 +7,7 @@
 //                                                   (llm) or pattern (regex)
 //   <agent folder>/evals/<case>/reference.md        Clawdling only: a good answer, for the judge control
 //   <agent folder>/evals/.clawdling-suite.yaml      Clawdling only: runs, judge model, cost cap
-//   <agent folder>/evals/results/<ts>.json          Clawdling's results
+//   .clawdling/evals/<agent>/results/<ts>.json      Clawdling's results (out of the agent's reach)
 //
 // prompt.md and grader frontmatter use only keys plugin eval's loader accepts (it refuses unknown
 // keys), so these files also load with `claude plugin eval`. The key lists are pinned below from
