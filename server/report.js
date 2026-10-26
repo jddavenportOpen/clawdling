@@ -62,7 +62,7 @@ export function needKind(v) {
 export function nextOf(text, mtimeMs, now = Date.now()) {
   const updated_at = Number.isFinite(mtimeMs) ? new Date(mtimeMs).toISOString() : null;
   const stale = Number.isFinite(mtimeMs) ? now - mtimeMs > STALE_MS : false;
-  if (typeof text !== 'string' || !text.trim()) return { text: '', heading: null, updated_at, stale, empty: true };
+  if (typeof text !== 'string' || !text.trim()) return { text: '', heading: null, updated_at, stale: false, empty: true }; // nothing to be stale
   // No terminal control characters (the CLI prints this), and headings inside code fences are text.
   const lines = text.replace(/\r\n?/g, '\n').replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '').split('\n');
   const fenced = [];
@@ -97,7 +97,7 @@ export function nextOf(text, mtimeMs, now = Date.now()) {
   }
   let out = body.join('\n').replace(/^\n+|\s+$/g, '');
   if (out.length > NEXT_MAX) out = `${out.slice(0, NEXT_MAX - 1)}…`;
-  return { text: out, heading, updated_at, stale, empty: !out.trim() };
+  return { text: out, heading, updated_at, stale: stale && !!out.trim(), empty: !out.trim() };
 }
 
 /**
@@ -263,18 +263,21 @@ export class Reports {
    */
   owners() {
     const map = new Map();
-    const when = new Map();
-    const claim = (id, r) => {
+    const rank = new Map(); // id -> [is it their current conversation, last activity]
+    const claim = (id, r, current) => {
       if (!id) return;
       const t = String(r.last_activity_at || r.created_at || '');
-      if (!map.has(id) || t > when.get(id)) {
+      const prev = rank.get(id);
+      // A session using it now always beats one that used it before (and moved on with /clear).
+      if (!prev || (current && !prev[0]) || (current === prev[0] && t > prev[1])) {
         map.set(id, r.sid);
-        when.set(id, t);
+        rank.set(id, [current, t]);
       }
     };
     for (const r of this.sessions.records.values()) {
-      claim(r.sid, r);
-      if (r.claude_session_id && r.claude_session_id !== r.sid) claim(r.claude_session_id, r);
+      const now = r.claude_session_id || r.sid;
+      claim(now, r, true);
+      if (r.sid !== now) claim(r.sid, r, false);
     }
     return map;
   }

@@ -161,6 +161,7 @@ test('nextOf: the "Next" section of NOW.md, else its first five lines; stale aft
   assert.equal(plain.text, 'one\ntwo\nthree\nfour\nfive');
   assert.equal(plain.stale, true);
   assert.equal(nextOf('', NaN, now).empty, true);
+  assert.equal(nextOf('', now - 30 * 86400000, now).stale, false, 'an empty note is not stale');
   assert.equal(nextOf('# x\n## **Next**\n- a', now, now).text, '- a');
 });
 
@@ -370,5 +371,26 @@ test('two sessions holding one conversation id: its cost is counted once, under 
   const total = all.reduce((n, s) => n + (Number.isFinite(s.cost?.usd) ? s.cost.usd : 0), 0);
   assert.equal(total, 1, 'once');
   assert.equal(all.find((s) => s.sid === b.sid).cost.usd, 1, 'under the most recently active');
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('a session that moved on (/clear) never takes its first conversation back from the one continuing it', () => {
+  const root = tmp();
+  const proj = path.join(root, 'projects', '-x');
+  fs.mkdirSync(proj, { recursive: true });
+  const X = '99999999-9999-4999-8999-9999999999d1';
+  const Y = '99999999-9999-4999-8999-9999999999d2';
+  const line = (id, usd) => `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: id, message: { id, model: 'claude-sonnet-5', usage: { input_tokens: usd * 5e5 }, content: [{ type: 'text', text: id }] } })}\n`;
+  fs.writeFileSync(path.join(proj, `${X}.jsonl`), line('x', 1));
+  fs.writeFileSync(path.join(proj, `${Y}.jsonl`), line('y', 2));
+  const A = { sid: X, agent: 'demo', status: 'working', created_at: '2026-10-20T00:00:00.000Z', last_activity_at: '2026-10-25T10:00:00.000Z', claude_session_id: Y };
+  const B = { sid: '99999999-9999-4999-8999-9999999999d3', agent: 'demo', status: 'ready', created_at: '2026-10-24T00:00:00.000Z', last_activity_at: '2026-10-24T10:00:00.000Z', claude_session_id: X };
+  const files = { [A.sid]: path.join(proj, `${Y}.jsonl`), [B.sid]: path.join(proj, `${X}.jsonl`) };
+  const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[A.sid, A], [B.sid, B]]), transcriptFile: (r) => files[r.sid], require: (sid) => (sid === A.sid ? A : B), get: (sid) => (sid === A.sid ? A : B) } });
+  assert.equal(rep.owners().get(X), B.sid, 'B is the one using X now, though A is more recent');
+  const all = rep.summaries();
+  assert.equal(all.find((s) => s.sid === B.sid).cost.usd, 1);
+  assert.equal(all.find((s) => s.sid === A.sid).cost.usd, 2);
+  assert.equal(rep.timeline(B.sid).transcript, 'ok');
   fs.rmSync(root, { recursive: true, force: true });
 });

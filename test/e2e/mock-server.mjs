@@ -247,6 +247,7 @@ const FIXTURES = {
       '## Next steps', '- Get the hero to stack properly on phones (in progress).', '- Ask Ada to approve the pricing copy before Friday.', '- Point the domain at the new site after the approval.', '',
       '## Open threads', '- Waiting on the logo files from the designer.', ''].join('\n');
     by.site._nowAge = 3 * HOUR;
+    by.marathon._now = ''; // a project that has not written its next steps yet (the empty state)
     const hero = fx.sessions.find((s) => s.agent === 'site');
     rep(hero, { line: 'The hero now stacks on phones under 400 px wide; checking Safari next.', files: 3, cost: [1.84], models: { 'claude-opus-5-5': 0.8, 'claude-sonnet-5': 0.2 } });
     const extra = [
@@ -779,7 +780,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const sum = (list, w) => list.reduce((n, s) => n + sessionCost(s, w).total, 0);
     const agents = st.agents.map((a) => {
       const mine = all.filter((s) => s.agent === a.id);
-      const ended = mine.filter((s) => s.status === 'ended').map((s) => s.ended_at).sort().reverse();
+      // Like core: an ended session by its end, a running one by its last finished turn.
+      const ended = mine.map((s) => (s.status === 'ended' ? s.ended_at : s.last_message ? s.last_activity_at : null)).filter(Boolean).sort().reverse();
       const needs = [...st.sessions.values()].filter((s) => s.agent === a.id && (s.status === 'needs_you' || (s.status === 'ready' && s.last_message))).length;
       return { id: a.id, name: a.name, kind: a.kind, cost_usd: sum(mine, week), cost_complete: true, done: mine.filter((s) => Date.parse(whenOf(s)) >= week.start).length, needs, last_done_at: ended[0] || null };
     });
