@@ -278,6 +278,12 @@ export class Reports {
       const now = r.claude_session_id || r.sid;
       claim(now, r, true);
       if (r.sid !== now) claim(r.sid, r, false);
+      // Every conversation the session used in between (each /clear), from its receipt's parts.
+      if (r.resumed_from) claim(r.resumed_from, r, false);
+      for (const p of this.store.read(r.sid)?.parts || []) {
+        const id = path.basename(String(p.path || ''), '.jsonl');
+        if (id !== now && id !== r.sid) claim(id, r, false);
+      }
     }
     return map;
   }
@@ -298,7 +304,11 @@ export class Reports {
     let changed = false;
     // The files this session used before (a /clear) are read again if they changed since.
     const earlier = new Set([...parts.map((p) => p.path), ...(also ? [also] : [])].filter((f) => typeof f === 'string' && f !== file && !foreign(f)));
-    for (let i = parts.length - 1; i >= 0; i--) if (foreign(parts[i].path)) parts.splice(i, 1);
+    for (let i = parts.length - 1; i >= 0; i--) {
+      if (!foreign(parts[i].path)) continue;
+      parts.splice(i, 1);
+      changed = true; // the receipt drops it for good
+    }
     for (const f of earlier) {
       if (!/[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(f) || !fs.existsSync(f)) continue;
       const key = sourceKey(f);

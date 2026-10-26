@@ -394,3 +394,33 @@ test('a session that moved on (/clear) never takes its first conversation back f
   assert.equal(rep.timeline(B.sid).transcript, 'ok');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('a conversation used between two /clears is owned once, even after another session resumes it and moves on', () => {
+  const root = tmp();
+  const proj = path.join(root, 'projects', '-x');
+  fs.mkdirSync(proj, { recursive: true });
+  const id = (n) => `99999999-9999-4999-8999-9999999999e${n}`;
+  const line = (k, usd) => `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: k, message: { id: k, model: 'claude-sonnet-5', usage: { input_tokens: usd * 5e5 }, content: [{ type: 'text', text: k }] } })}\n`;
+  const f = (n) => path.join(proj, `${id(n)}.jsonl`);
+  fs.writeFileSync(f(1), line('a', 1)); // A's own
+  fs.writeFileSync(f(2), line('c1', 2)); // A's middle conversation
+  fs.writeFileSync(f(3), line('c2', 4)); // A's last
+  fs.writeFileSync(f(4), line('c3', 8)); // where B moved on to
+  const A = { sid: id(1), agent: 'demo', status: 'ended', created_at: '2026-10-20T00:00:00.000Z', last_activity_at: '2026-10-20T05:00:00.000Z', ended_at: '2026-10-20T05:00:00.000Z', claude_session_id: id(3) };
+  const B = { sid: id(5), agent: 'demo', status: 'ready', created_at: '2026-10-24T00:00:00.000Z', last_activity_at: '2026-10-24T05:00:00.000Z', claude_session_id: id(2) };
+  let bFile = f(2);
+  const files = { [A.sid]: () => f(3), [B.sid]: () => bFile };
+  const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[A.sid, A], [B.sid, B]]), transcriptFile: (r) => files[r.sid]() } });
+  // A's receipt names all three of its conversations (written while it ran).
+  rep.transcriptSwitched({ ...A, claude_session_id: id(2), status: 'working' }, f(1));
+  rep.transcriptSwitched({ ...A, status: 'working' }, f(2));
+  rep.summary(A, { force: true });
+  // B resumed c1, worked, then moved on to c3.
+  fs.appendFileSync(f(2), line('c1b', 16));
+  B.claude_session_id = id(4);
+  bFile = f(4);
+  rep.transcriptSwitched(B, f(2));
+  const total = rep.summaries().reduce((n, s) => n + (Number.isFinite(s.cost?.usd) ? s.cost.usd : 0), 0);
+  assert.equal(total, 1 + 2 + 16 + 4 + 8, 'every conversation once');
+  fs.rmSync(root, { recursive: true, force: true });
+});
