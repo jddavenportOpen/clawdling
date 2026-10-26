@@ -312,10 +312,10 @@ function DetailedTimelineCard() {
     <h2 id="set-otel" class="card-title">Detailed timeline <span class="card-tag">beta</span></h2>
     <div class="set-row"><span class="set-label" id="set-otel-on">Collect Claude Code's own telemetry<span class="set-sub">${!st ? 'Checking…'
       : st.error ? 'Could not load this setting.'
-      : st.blocked ? st.reason
+      : st.blocked ? `${st.reason}${st.enabled ? ' It is switched on, but no session gets it while this is so; switch it off to forget it.' : ''}`
       : remote ? 'Turn this on or off at the computer Clawdling runs on.'
       : 'The Timeline then also shows who approved each tool and how long each request to Claude took. It stays on this computer: Claude Code sends it to Clawdling on 127.0.0.1, never to anyone else, and never your prompts or file contents.'}</span></span>
-      <label class="switch"><input type="checkbox" checked=${!!(st && st.enabled && !st.blocked)} disabled=${!st || busy || remote || (st.blocked && !st.enabled)} onChange=${(e) => pick(e.currentTarget.checked)}
+      <label class="switch"><input type="checkbox" checked=${!!(st && st.enabled)} disabled=${!st || busy || remote || (st.blocked && !st.enabled)} onChange=${(e) => pick(e.currentTarget.checked)}
         aria-labelledby="set-otel-on" data-testid="otel-switch" /><span class="switch-ui" aria-hidden="true"></span></label></div>
     ${st && st.blocked && Array.isArray(st.found) && st.found.length ? html`<p class="set-note" data-testid="otel-found">Found: ${st.found.map((f) => `${f.key} (${f.where})`).join(', ')}. Clawdling read only these names, not their values. The report card works the same without it.</p>` : null}
     ${st && !st.blocked && !st.error ? html`<p class="set-note">${st.note} The report card works the same with it off.</p>` : null}

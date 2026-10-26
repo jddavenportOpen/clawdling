@@ -57,7 +57,7 @@ export function digestText(org, { labels = {} } = {}) {
     const low = used[used.length - 1];
     lines.push(`Most usage: ${name(top)} (${money(top.cost_usd)}). Least: ${name(low)} (${money(low.cost_usd)}).`);
   }
-  lines.push(`Total: ${money(org.totals?.week_usd ?? 0)}. Usage is a list-price equivalent, not a bill: on Pro and Max it is included in your plan. Open the cockpit for the details.`);
+  lines.push(`Total: ${money(org.totals?.week_usd ?? 0)}${org.totals && org.totals.complete === false ? ' (part unknown)' : ''}. Usage is a list-price equivalent, not a bill: on Pro and Max it is included in your plan. Open the cockpit for the details.`);
   return lines.join('\n');
 }
 

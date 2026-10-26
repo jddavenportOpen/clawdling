@@ -22,6 +22,8 @@ const AGENT_TOOLS = new Set(['Task', 'Agent']);
 const TEXT_MAX = 300;
 const PROMPT_MAX = 500;
 const SUB_FILES_MAX = 500;
+const CHUNK = 16 * 1024 * 1024;
+const MAX_LINE = 64 * 1024 * 1024;
 // Where the CLI's own number and the repriced one differ by more than this, the CLI's number is
 // shown and the gap is counted (a price table out of date, or a record shape that changed).
 const GAP = 0.02;
@@ -183,6 +185,10 @@ export function applyRecord(st, o, { sub = false } = {}) {
       return;
     }
     if (side) return;
+    // Claude Code's own summary after /compact, and background-task notices, are not your prompts.
+    if (o.isCompactSummary === true || o.isVisibleInTranscriptOnly === true) return;
+    const raw = typeof content === 'string' ? content : Array.isArray(content) ? content.filter((b) => b?.type === 'text').map((b) => b.text).join('\n') : '';
+    if (/^\s*<task-notification>/.test(raw)) return;
     const e = transcriptEntry(o);
     if (e && e.role === 'user') {
       st.turn++;
@@ -208,23 +214,31 @@ function advance(st) {
   if (fstat.size === st.offset) return st;
   const fd = fs.openSync(st.file, 'r');
   try {
-    const buf = Buffer.alloc(fstat.size - st.offset);
-    fs.readSync(fd, buf, 0, buf.length, st.offset);
-    st.offset = fstat.size;
-    const all = st.rest.length ? Buffer.concat([st.rest, buf]) : buf;
-    const nl = all.lastIndexOf(0x0a);
-    const complete = nl === -1 ? '' : all.subarray(0, nl).toString('utf8');
-    st.rest = Buffer.from(nl === -1 ? all : all.subarray(nl + 1));
-    for (const line of complete.split('\n')) {
-      if (!line.trim()) continue;
-      let o;
-      try {
-        o = JSON.parse(line);
-      } catch {
-        st.issues.add('a line that is not JSON');
-        continue;
+    // In chunks, so a transcript of any size never becomes one giant string.
+    while (st.offset < fstat.size) {
+      const buf = Buffer.alloc(Math.min(CHUNK, fstat.size - st.offset));
+      const got = fs.readSync(fd, buf, 0, buf.length, st.offset);
+      if (got <= 0) break;
+      st.offset += got;
+      const all = st.rest.length ? Buffer.concat([st.rest, buf.subarray(0, got)]) : buf.subarray(0, got);
+      const nl = all.lastIndexOf(0x0a);
+      const complete = nl === -1 ? '' : all.subarray(0, nl).toString('utf8');
+      st.rest = Buffer.from(nl === -1 ? all : all.subarray(nl + 1));
+      if (st.rest.length > MAX_LINE) {
+        st.issues.add('a line longer than 64 MB');
+        st.rest = Buffer.alloc(0);
       }
-      applyRecord(st, o, { sub: !!st.meta || st.isSub });
+      for (const line of complete.split('\n')) {
+        if (!line.trim()) continue;
+        let o;
+        try {
+          o = JSON.parse(line);
+        } catch {
+          st.issues.add('a line that is not JSON');
+          continue;
+        }
+        applyRecord(st, o, { sub: !!st.meta || st.isSub });
+      }
     }
   } finally {
     fs.closeSync(fd);
@@ -276,6 +290,13 @@ export class LedgerReader {
     return advance(st);
   }
 
+  /** Drop a session's files from the cache (an ended session's totals live in its receipt). */
+  forget(mainFile) {
+    this.cache.delete(mainFile);
+    const prefix = path.join(path.dirname(mainFile), path.basename(mainFile, '.jsonl'), 'subagents');
+    for (const k of [...this.cache.keys()]) if (k.startsWith(prefix)) this.cache.delete(k);
+  }
+
   /** {main, subs[]} for a session's transcript file, read up to now. */
   session(mainFile) {
     const touched = new Set();
@@ -296,13 +317,31 @@ export class LedgerReader {
  * model; else the usage is repriced with prices.json, and a model not in it makes the total
  * incomplete ("cost unknown for model X"), never 0.
  */
+/**
+ * The main transcript's turn each subagent file belongs to, following nested subagents (a subagent
+ * started by a subagent) up to the main file's call. null when the chain does not reach it.
+ */
+export function subTurns({ main, subs }) {
+  const owner = new Map(); // tool id -> the file state that made the call
+  for (const t of main.tools.values()) owner.set(t.id, main);
+  for (const s of subs) for (const t of s.tools.values()) owner.set(t.id, s);
+  const turnOf = (state, depth = 0) => {
+    if (state === main || depth > 10) return null;
+    const p = state.meta?.toolUseId;
+    const o = p ? owner.get(p) : null;
+    if (!o) return null;
+    if (o === main) return main.tools.get(p).turn;
+    return turnOf(o, depth + 1);
+  };
+  return { owner, turns: new Map(subs.map((s) => [s, turnOf(s)])) };
+}
+
 export function summarize({ main, subs }, { prices = PRICES } = {}) {
-  const parentTurn = new Map();
-  for (const t of main.tools.values()) parentTurn.set(t.id, t.turn);
+  const { turns } = subTurns({ main, subs });
   const all = [];
   for (const u of main.usage.values()) all.push(u);
   for (const s of subs) {
-    const turn = s.meta?.toolUseId && parentTurn.has(s.meta.toolUseId) ? parentTurn.get(s.meta.toolUseId) : null;
+    const turn = turns.get(s);
     for (const u of s.usage.values()) all.push({ ...u, turn: turn ?? u.turn });
   }
   let repriced = 0;
@@ -392,8 +431,7 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
 export function timeline({ main, subs }, { prices = PRICES, ended = false } = {}) {
   const turnCost = new Map();
   const turnUnknown = new Set();
-  const parentTurn = new Map();
-  for (const t of main.tools.values()) parentTurn.set(t.id, t.turn);
+  const { owner, turns } = subTurns({ main, subs });
   const addCost = (u, turn) => {
     const usd = usageCost(u.model, u.usage, prices);
     if (usd === null) turnUnknown.add(turn);
@@ -404,9 +442,9 @@ export function timeline({ main, subs }, { prices = PRICES, ended = false } = {}
   const loose = [];
   for (const s of subs) {
     const p = s.meta?.toolUseId;
-    const turn = p && parentTurn.has(p) ? parentTurn.get(p) : null;
+    const turn = turns.get(s);
     for (const u of s.usage.values()) addCost(u, turn ?? u.turn);
-    if (p && main.tools.has(p)) {
+    if (p && owner.has(p) && owner.get(p) !== s) {
       if (!byParent.has(p)) byParent.set(p, []);
       byParent.get(p).push(s);
     } else loose.push(s);

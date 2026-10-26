@@ -463,13 +463,13 @@ function MapNode({ n, st, rep, now, selected, dim, reduced, adds, onSelect, onHo
 /** An agent's line on the map: "$4.10 · 2h ago" (and a long form for screen readers), or null. */
 export function usageLine(rep, now = Date.now()) {
   if (!rep) return null;
-  const cost = rep.cost_usd > 0 ? (rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`) : null;
+  const cost = rep.cost_usd > 0 ? (rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`) : !rep.cost_complete ? 'cost unknown' : null;
   const ago = rep.last_done_at ? relTime(rep.last_done_at, now) : null;
   const when = ago ? (ago === 'now' ? 'just now' : /^\d/.test(ago) ? `${ago} ago` : ago) : null;
   if (!cost && !when) return null;
   return {
-    short: [cost ? `${cost}${rep.cost_complete ? '' : '+'}` : null, when].filter(Boolean).join(' · '),
-    long: [cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price` : null, when ? `last finished work ${when}` : null].filter(Boolean).join(', '),
+    short: [cost ? `${cost}${rep.cost_complete || cost === 'cost unknown' ? '' : '+'}` : null, when].filter(Boolean).join(' · '),
+    long: [cost === 'cost unknown' ? 'usage with an unknown cost in 7 days' : cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price${rep.cost_complete ? '' : ', plus some with an unknown cost'}` : null, when ? `last finished work ${when}` : null].filter(Boolean).join(', '),
   };
 }
 

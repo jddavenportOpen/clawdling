@@ -208,3 +208,22 @@ test('enrich: who approved each tool (by tool_use_id), and each turn\'s API requ
   assert.deepEqual(entries[2].api, { requests: 1, ms: 700 });
   assert.equal(sourceText('config'), 'your settings allowed it');
 });
+
+test('hostile values ({"toString": 1}) are ignored, never thrown', () => {
+  const evil = { toString: 1, valueOf: 1 };
+  const body = { resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano: evil, body: { stringValue: evil }, attributes: [{ key: 'session.id', value: { stringValue: SID } }, { key: 'n', value: { intValue: evil } }] }] }] }],
+    resourceMetrics: [{ scopeMetrics: [{ metrics: [{ name: evil, sum: { dataPoints: [{ asDouble: evil, timeUnixNano: evil, attributes: [{ key: 'session.id', value: { stringValue: SID } }] }] } }] }] }],
+    resourceSpans: [{ scopeSpans: [{ spans: [{ name: evil, startTimeUnixNano: evil, attributes: [{ key: 'session.id', value: { stringValue: SID } }] }] }] }] };
+  for (const k of ['logs', 'metrics', 'traces']) assert.doesNotThrow(() => normalize(k, body));
+  const [m] = normalize('metrics', body);
+  assert.equal(m.rec.name, 'metric');
+  assert.equal(m.rec.value, null);
+  assert.equal(normalize('logs', body)[0].rec.ts, null);
+});
+
+test('rate limit is per session: one session cannot use up another\'s', () => {
+  const rl = new RateLimit(2, () => 5000);
+  assert.ok(rl.allow('a') && rl.allow('a'));
+  assert.equal(rl.allow('a'), false);
+  assert.equal(rl.allow('b'), true);
+});

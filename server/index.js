@@ -448,6 +448,11 @@ export async function startServer(opts = {}) {
     const otelState = new OtelState(paths.otel);
     const traces = new TraceStore(paths.traces);
     const otelLimit = new RateLimit();
+    const OTLP_INFLIGHT_MAX = 4;
+    let otelInflight = 0;
+    // Agents must be kept out of .clawdling (its secret is there): with an org path Claude Code's file
+    // rules cannot express, the detailed timeline stays off, like the needs-you ping and the report.
+    const otelGuarded = () => pinger.guarded();
     const managedOverride = testMode && typeof env.CLAWDLING_MANAGED_SETTINGS === 'string' ? env.CLAWDLING_MANAGED_SETTINGS.split(path.delimiter).filter(Boolean) : null;
     function otelPreflight() {
       return preflight({
@@ -459,10 +464,11 @@ export async function startServer(opts = {}) {
       });
     }
     const OTEL_BLOCKED = 'Your Claude Code already has telemetry settings, so the detailed timeline stays off and Clawdling uses transcripts.';
+    const OTEL_UNGUARDED = "Clawdling cannot keep agents out of its own settings in a folder whose path has characters like ( ) ' or accents, so the detailed timeline stays off here.";
     let otelActive = false;
     function otelEnv() {
       const st = otelState.read();
-      otelActive = st.enabled && otelPreflight().clear;
+      otelActive = st.enabled && otelGuarded() && otelPreflight().clear;
       return otelActive ? envBlock({ port }) : null;
     }
     function writeHooks() {
@@ -479,11 +485,12 @@ export async function startServer(opts = {}) {
     function otelStatus() {
       const st = otelState.read();
       const pf = otelPreflight();
+      const guarded = otelGuarded();
       return {
         enabled: st.enabled,
-        active: st.enabled && pf.clear,
-        blocked: !pf.clear,
-        ...(pf.clear ? {} : { reason: OTEL_BLOCKED, found: pf.found.map(({ where, key }) => ({ where, key })) }),
+        active: st.enabled && pf.clear && guarded,
+        blocked: !pf.clear || !guarded,
+        ...(!guarded ? { reason: OTEL_UNGUARDED } : pf.clear ? {} : { reason: OTEL_BLOCKED, found: pf.found.map(({ where, key }) => ({ where, key })) }),
         note: "It takes effect at each session's next start: sessions started earlier keep their setting until they restart.",
       };
     }
@@ -1358,7 +1365,14 @@ export async function startServer(opts = {}) {
         const limitRaw = Number(url.searchParams.get('limit') || 500);
         const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 500;
         // With the detailed timeline on: who approved each tool, and each turn's API requests.
-        const out = reports.timeline(sid, { after, limit, enrich: (all) => enrich(all, traces.read(sid)) });
+        let out;
+        try {
+          out = reports.timeline(sid, { after, limit, enrich: (all) => enrich(all, traces.read(sid)), enrichStamp: () => traces.stamp(sid) });
+        } catch (err) {
+          if (err instanceof HttpError) throw err;
+          logger.warn(`timeline ${sid}: ${err.message}`);
+          out = { entries: [], next: after, more: false, total: 0, transcript: 'unreadable', status: sessions.get(sid)?.status || null };
+        }
         return [200, { ...out, detailed: otelState.read().enabled }];
       }],
       // The Monday report: status with the exact text it would send now; {enabled?, day?, hour?}.
@@ -1372,6 +1386,7 @@ export async function startServer(opts = {}) {
         const b = await jsonBody(req);
         if (typeof b.enabled !== 'boolean') throw badRequest('send {enabled: true|false}');
         if (b.enabled) {
+          if (!otelGuarded()) throw new HttpError(409, OTEL_UNGUARDED);
           const pf = otelPreflight();
           if (!pf.clear) {
             const e = new HttpError(409, OTEL_BLOCKED);
@@ -1558,6 +1573,7 @@ export async function startServer(opts = {}) {
       if (!kind) return sendJson(res, 404, { error: 'not found' });
       if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
       if (!otelState.read().enabled) return sendJson(res, 404, { error: 'the detailed timeline is off' });
+      if (!otelGuarded()) return sendJson(res, 404, { error: 'the detailed timeline is off here' });
       const sid = otelState.sidFor(req.headers[SECRET_HEADER]);
       const rec = sid ? sessions.get(sid) : null;
       if (!rec) return sendJson(res, 401, { error: 'missing or wrong telemetry secret' });
@@ -1566,17 +1582,36 @@ export async function startServer(opts = {}) {
         res.setHeader('Connection', 'close');
         return sendJson(res, 413, { error: 'telemetry request over 1 MB' });
       }
-      if (!otelLimit.allow()) return sendJson(res, 429, { error: 'too many telemetry requests' });
-      const text = await readBody(req, INGEST_MAX_BYTES);
-      let body;
+      if (!otelLimit.allow(sid)) return sendJson(res, 429, { error: 'too many telemetry requests' });
+      // At most a few uploads in flight (so at most a few MB buffered), each finished within 10 s.
+      if (otelInflight >= OTLP_INFLIGHT_MAX) return sendJson(res, 429, { error: 'too many telemetry requests in flight' });
+      otelInflight++;
+      let deadline;
+      let text;
       try {
-        body = JSON.parse(text);
-      } catch {
-        return sendJson(res, 400, { error: 'invalid JSON' });
+        text = await Promise.race([
+          readBody(req, INGEST_MAX_BYTES),
+          new Promise((resolve, reject) => {
+            deadline = setTimeout(() => {
+              reject(new HttpError(408, 'telemetry upload took too long'));
+              req.destroy();
+            }, 10000);
+            req.once('close', () => { if (!req.complete) reject(new HttpError(400, 'telemetry upload was cut off')); });
+          }),
+        ]);
+      } finally {
+        clearTimeout(deadline);
+        otelInflight--;
       }
-      // Only this session's own records (its Clawdling id, or Claude Code's id for it after a resume).
-      const ids = new Set([sid, rec.claude_session_id].filter((x) => isUuid(x)));
-      traces.append(normalize(kind, body, { only: ids }).map((x) => ({ sid, rec: x.rec })));
+      let items;
+      try {
+        // Only this session's own records (its Clawdling id, or Claude Code's id for it after a resume).
+        const ids = new Set([sid, rec.claude_session_id].filter((x) => isUuid(x)));
+        items = normalize(kind, JSON.parse(text), { only: ids }).map((x) => ({ sid, rec: x.rec }));
+      } catch {
+        return sendJson(res, 400, { error: 'invalid OTLP/JSON' }); // a bad payload is never logged
+      }
+      traces.append(items);
       return sendJson(res, 200, {});
     }
 

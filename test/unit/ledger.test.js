@@ -225,3 +225,48 @@ test('parts (/clear starts a new transcript): the session\'s figures add up acro
   assert.equal(m.started_at, '2026-10-20T09:00:00.000Z');
   assert.equal(m.commit_times.length, 1);
 });
+
+test('an unreadable transcript is "unknown", never $0', () => {
+  const m = mergeParts([{ unreadable: true, turns: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, format: { ok: false, issues: ['unreadable'] } }]);
+  assert.equal(m.cost.usd, null);
+  const rep = new Reports({ paths: { rt: os.tmpdir(), ledger: path.join(os.tmpdir(), `cl-led2-${process.pid}`) }, org: {}, sessions: { records: new Map() } });
+  const w = windowRange('7d', Date.now());
+  const c = rep.costOf([{ sid: 'x', turns: 0, prompted: true, status: 'ended', last_activity_at: new Date().toISOString(), days: {}, cost: m.cost }], w);
+  assert.equal(c.complete, false);
+  assert.equal(c.sessions_without_cost, 1);
+  const partial = rep.costOf([{ sid: 'y', turns: 2, status: 'ended', last_activity_at: new Date().toISOString(), days: { [w.list[6]]: 1 }, cost: { usd: 1, complete: false, unknown_models: [], models: {} } }], w);
+  assert.equal(partial.complete, false, 'part of it unreadable: incomplete');
+  assert.equal(rep.costOf([{ sid: 'z', counting: true, ended_at: new Date().toISOString() }], w).sessions_counting, 1);
+});
+
+test('a subagent started by a subagent is priced in the turn that started the chain', () => {
+  const dir = tmp();
+  const main = path.join(dir, '55555555-5555-4555-8555-555555555555.jsonl');
+  const subdir = path.join(dir, '55555555-5555-4555-8555-555555555555', 'subagents');
+  fs.mkdirSync(subdir, { recursive: true });
+  const L = (o) => `${JSON.stringify(o)}\n`;
+  fs.writeFileSync(main, L({ type: 'user', timestamp: '2026-10-20T10:00:00.000Z', message: { role: 'user', content: 'Go' } })
+    + L({ type: 'assistant', timestamp: '2026-10-20T10:00:01.000Z', requestId: 'r1', message: { id: 'm1', model: 'claude-sonnet-5', usage: { input_tokens: 0 }, content: [{ type: 'tool_use', id: 'toolu_A', name: 'Agent', input: { description: 'outer' } }] } }));
+  fs.writeFileSync(path.join(subdir, 'agent-outer.jsonl'), L({ type: 'assistant', isSidechain: true, timestamp: '2026-10-20T10:00:02.000Z', requestId: 'r2', message: { id: 'm2', model: 'claude-sonnet-5', usage: { input_tokens: 0 }, content: [{ type: 'tool_use', id: 'toolu_B', name: 'Agent', input: { description: 'inner' } }] } }));
+  fs.writeFileSync(path.join(subdir, 'agent-outer.meta.json'), JSON.stringify({ toolUseId: 'toolu_A', description: 'outer' }));
+  fs.writeFileSync(path.join(subdir, 'agent-inner.jsonl'), L({ type: 'assistant', isSidechain: true, timestamp: '2026-10-20T10:00:03.000Z', requestId: 'r3', message: { id: 'm3', model: 'claude-sonnet-5', usage: { input_tokens: 1e6 }, content: [{ type: 'text', text: 'deep' }] } }));
+  fs.writeFileSync(path.join(subdir, 'agent-inner.meta.json'), JSON.stringify({ toolUseId: 'toolu_B', description: 'inner' }));
+  const tl = timeline(new LedgerReader().session(main));
+  assert.equal(tl[0].kind, 'prompt');
+  assert.equal(tl[0].cost, 2, 'the inner subagent\'s $2 lands on turn 1');
+  const inner = tl.find((e) => e.kind === 'subagent' && e.description === 'inner');
+  assert.equal(inner.depth, 2);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('Claude Code\'s /compact summary and background-task notices are not prompts', () => {
+  const dir = tmp();
+  const f = path.join(dir, 'c.jsonl');
+  fs.writeFileSync(f, [
+    { type: 'user', timestamp: '2026-10-20T10:00:00.000Z', message: { role: 'user', content: 'Real prompt' } },
+    { type: 'user', isCompactSummary: true, isVisibleInTranscriptOnly: true, timestamp: '2026-10-20T10:01:00.000Z', message: { role: 'user', content: 'This session is being continued from a previous conversation...' } },
+    { type: 'user', timestamp: '2026-10-20T10:02:00.000Z', message: { role: 'user', content: '<task-notification>\n<task-id>b1</task-id>\n</task-notification>' } },
+  ].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  assert.equal(summarize(new LedgerReader().session(f)).turns, 1);
+  fs.rmSync(dir, { recursive: true, force: true });
+});

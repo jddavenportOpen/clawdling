@@ -13,6 +13,7 @@
 //     dropped at ingest anyway, with the account identifiers.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { isUuid, readJson, writeJson } from './util.js';
 
@@ -44,6 +45,20 @@ export function managedSettingsPaths(platform = process.platform, env = process.
 // A policy pushed by device management (macOS configuration profile): its values are not read, but
 // its presence keeps the detailed timeline off.
 const MANAGED_PROFILES = { darwin: ['/Library/Managed Preferences/com.anthropic.claudecode.plist'] };
+/** The device-level and this user's own configuration profiles (macOS), if any. */
+export function managedProfiles(platform = process.platform) {
+  const list = [...(MANAGED_PROFILES[platform] || [])];
+  if (platform === 'darwin') {
+    let user = null;
+    try {
+      user = os.userInfo().username;
+    } catch {
+      user = null;
+    }
+    if (user && /^[A-Za-z0-9._-]+$/.test(user)) list.push(`/Library/Managed Preferences/${user}/com.anthropic.claudecode.plist`);
+  }
+  return list;
+}
 
 /** The key names in a settings file's `env`, plus telemetry keys at its top level. Never values. */
 function settingsKeyNames(file) {
@@ -72,7 +87,7 @@ function settingsKeyNames(file) {
  * settings of the org folder and of every agent's repo (a --settings env block overrides those
  * too), and the managed settings for this OS. {clear, found: [{where, key}]}.
  */
-export function preflight({ env = process.env, configDirs = [], projectDirs = [], managed = managedSettingsPaths(), profiles = MANAGED_PROFILES[process.platform] || [] } = {}) {
+export function preflight({ env = process.env, configDirs = [], projectDirs = [], managed = managedSettingsPaths(), profiles = managedProfiles() } = {}) {
   const found = [];
   for (const k of Object.keys(env || {})) if (telemetryKey(k)) found.push({ where: "Clawdling's own environment", key: k });
   const check = (file, where) => {
@@ -128,7 +143,7 @@ const MAX_STR = 300;
 function anyValue(v) {
   if (!v || typeof v !== 'object') return undefined;
   if (typeof v.stringValue === 'string') return v.stringValue.slice(0, MAX_STR);
-  if (v.intValue !== undefined) {
+  if (typeof v.intValue === 'string' || typeof v.intValue === 'number') {
     const n = Number(v.intValue);
     return Number.isFinite(n) ? n : undefined;
   }
@@ -150,10 +165,16 @@ function attrsOf(list) {
   return out;
 }
 
+// Only strings and numbers are ever coerced: a hostile object ({"toString": 1}) is just ignored.
 const nanoIso = (n) => {
-  const ms = Number(BigInt.asUintN(64, BigInt(String(n || '0').replace(/\D/g, '') || '0')) / 1000000n);
-  return ms > 0 ? new Date(ms).toISOString() : null;
+  if (typeof n !== 'string' && typeof n !== 'number') return null;
+  const digits = String(n).replace(/\D/g, '').slice(0, 20);
+  if (!digits) return null;
+  const ms = Number(BigInt(digits) / 1000000n);
+  return ms > 0 && ms < 8.64e15 ? new Date(ms).toISOString() : null;
 };
+const str = (v, fallback, max = 80) => (typeof v === 'string' ? v.slice(0, max) : fallback);
+const numOf = (v) => (typeof v === 'string' || typeof v === 'number' ? Number(v) : NaN);
 
 /**
  * OTLP/JSON (logs, metrics or traces) -> [{sid, rec}] with rec {k, name, ts, attrs, ...}. Records
@@ -180,7 +201,7 @@ export function normalize(kind, body, { only = null, max = MAX_RECORDS } = {}) {
           if (!more()) return out;
           const attrs = attrsOf(l?.attributes);
           const name = typeof attrs['event.name'] === 'string' ? attrs['event.name'] : typeof l?.body?.stringValue === 'string' ? l.body.stringValue.replace(/^claude_code\./, '').slice(0, 80) : 'event';
-          push({ k: 'log', name, ts: attrs['event.timestamp'] || nanoIso(l?.timeUnixNano), attrs }, attrs, res);
+          push({ k: 'log', name, ts: typeof attrs['event.timestamp'] === 'string' ? attrs['event.timestamp'] : nanoIso(l?.timeUnixNano), attrs }, attrs, res);
         }
       }
     }
@@ -193,8 +214,8 @@ export function normalize(kind, body, { only = null, max = MAX_RECORDS } = {}) {
           for (const p of Array.isArray(data?.dataPoints) ? data.dataPoints : []) {
             if (!more()) return out;
             const attrs = attrsOf(p?.attributes);
-            const value = p.asDouble !== undefined ? Number(p.asDouble) : Number(p.asInt);
-            push({ k: 'metric', name: String(m?.name || 'metric').slice(0, 80), ts: nanoIso(p?.timeUnixNano), value: Number.isFinite(value) ? value : null, attrs }, attrs, res);
+            const value = p.asDouble !== undefined ? numOf(p.asDouble) : numOf(p.asInt);
+            push({ k: 'metric', name: str(m?.name, 'metric'), ts: nanoIso(p?.timeUnixNano), value: Number.isFinite(value) ? value : null, attrs }, attrs, res);
           }
         }
       }
@@ -208,7 +229,7 @@ export function normalize(kind, body, { only = null, max = MAX_RECORDS } = {}) {
           const attrs = attrsOf(sp?.attributes);
           const start = nanoIso(sp?.startTimeUnixNano);
           const end = nanoIso(sp?.endTimeUnixNano);
-          push({ k: 'span', name: String(sp?.name || 'span').replace(/^claude_code\./, '').slice(0, 80), ts: start, dur_ms: start && end ? Date.parse(end) - Date.parse(start) : null, attrs }, attrs, res);
+          push({ k: 'span', name: str(sp?.name, 'span').replace(/^claude_code\./, ''), ts: start, dur_ms: start && end ? Date.parse(end) - Date.parse(start) : null, attrs }, attrs, res);
         }
       }
     }
@@ -235,13 +256,17 @@ export class RateLimit {
     this.count = 0;
   }
 
-  allow() {
+  /** One budget per key (a session), so one session cannot use up another's. */
+  allow(key = '') {
     const s = Math.floor(this.now() / 1000);
     if (s !== this.sec) {
       this.sec = s;
-      this.count = 0;
+      this.counts = new Map();
     }
-    return ++this.count <= this.max;
+    this.counts ||= new Map();
+    const n = (this.counts.get(key) || 0) + 1;
+    this.counts.set(key, n);
+    return n <= this.max;
   }
 }
 
@@ -380,6 +405,16 @@ export class TraceStore {
     }
     this.total = total;
     return removed;
+  }
+
+  /** Size and mtime of a session's file: what decides whether its records changed. */
+  stamp(sid) {
+    try {
+      const st = fs.statSync(this.file(sid));
+      return `${st.size}/${st.mtimeMs}`;
+    } catch {
+      return '';
+    }
   }
 
   /** A session's records (the newest 5 MB at most). */

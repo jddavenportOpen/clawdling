@@ -276,11 +276,16 @@ turned off).
   leaves the computer. The cost is a list-price equivalent: Claude Code's own `cost-state` number
   when it is current, else the de-duplicated usage repriced with `server/prices.json`, which is
   bundled and dated (CI fails when it is more than 120 days old) and never fetched at runtime.
-- **`git log` only, hardened.** One `git log --since=<window> --format=%H%x1f%s%x1f%aI -n 200` per
+- **`git log` only, hardened.** One `git log --since=<window> --format=%H%x1f%s%x1f%cI -n 200` per
   repo of the agent (paths from OrgStore), arguments as an array through `execFile` (no shell), a
   5-second timeout, and `-c log.showSignature=false -c core.fsmonitor=false -c core.pager=cat`,
   `--no-show-signature`, `GIT_OPTIONAL_LOCKS=0`: a repo's own config cannot make it start a
-  signature checker, a pager or an fsmonitor. No diffs are read. Domain agents (no repo) run nothing.
+  signature checker, a pager or an fsmonitor. `-c protocol.allow=never` plus
+  `-c protocol.<ext|file|ssh|git|http|https>.allow=never` (a command-line value beats the repo's own)
+  and `GIT_NO_LAZY_FETCH=1`: a partial clone whose config names a promisor remote cannot make it
+  fetch, so it never starts a transport the repo chose. No diffs are read. Domain agents (no repo)
+  run nothing. A commit is shown under a session only when that session ran a successful
+  `git commit` within two minutes of it, and under one session at most.
 - **Receipts.** `.clawdling/ledger/<sid>.json` (mode 600) keeps one small summary per session so the
   card stays honest after Claude Code deletes old transcripts: title, agent, times, counts of turns,
   tools, errors and files changed, the cost and its split by model and day, the agent's last line
@@ -315,25 +320,37 @@ turned off).
   values, from: Clawdling's own launch environment, your Claude Code `settings.json` (and each extra
   login's), the `.claude/settings.json` and `settings.local.json` of the org folder and of every
   agent's repo (a `--settings` env block would override those too), and the managed settings for
-  your OS (with their `managed-settings.d/` folder; on macOS, a device-management profile for
-  Claude Code keeps it off too). Any of `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`, `DISABLE_TELEMETRY`,
+  your OS (with their `managed-settings.d/` folder; on macOS, a device-level or user-level
+  configuration profile for Claude Code keeps it off too). Any of `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`, `DISABLE_TELEMETRY`,
   `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` or `otelHeadersHelper` keeps it off, so it never redirects
   your organization's telemetry or turns on what you turned off. Not checked: Windows registry
-  policies (Clawdling does not read the registry).
+  policies (Clawdling does not read the registry) and settings an organization pushes from the
+  Claude.ai admin console (Clawdling cannot see them). If your Claude Code is managed that way, leave
+  the detailed timeline off.
 - **The ingest** (`POST /otlp/v1/logs|metrics|traces` on the same server): loopback peer and
   loopback `Host` only; refused through every remote address (Tailscale, Cloudflare, paired
   devices), through a proxy, with a browser `Origin`, and while the switch is off. It needs the
-  `x-clawdling-otlp` secret (32 random bytes made when you turn it on, compared in constant time,
-  forgotten when you turn it off; kept in `.clawdling/otel.json`, mode 600). JSON only, 1 MB, at
-  most 50 requests a second. Records are kept only for sessions Clawdling started.
-- **What is kept**: `.clawdling/traces/<sid>.jsonl` (mode 600), 14 days, 50 MB in all. The content
+  `x-clawdling-otlp` header: each session's own credential, `<session id>.<HMAC-SHA256 of it>` under
+  a 32-byte secret made when you turn it on and forgotten when you turn it off (`.clawdling/otel.json`,
+  mode 600), checked in constant time. The credential is put in that session's own environment at
+  launch (Clawdling's shared settings file carries no header), and only records for that session are
+  kept, so one session cannot write another's. JSON only, 1 MB, at most 50 requests a second per
+  session, at most 4 uploads in flight, each within 10 seconds; at most 5,000 records a request; a
+  malformed payload gets a 400 and is not logged. The preflight runs again before every launch and
+  resume, so a setting you add later keeps new sessions out. Where agents cannot be kept out of
+  `.clawdling/` (an org path with characters like `( ) '` or accents), it stays off.
+- **What is kept**: `.clawdling/traces/<sid>.jsonl` (mode 600), 14 days (enforced hourly, record by
+  record), 50 MB in all. The content
   gates (`OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_TOOL_CONTENT`) stay unset, so
   Claude Code sends prompts and responses as "<REDACTED>"; Clawdling drops those attributes anyway,
   with `user.id`, `user.email`, `user.account_uuid`, `organization.id` and any `*.prompt`,
   `*.content` or `*.response`.
-- **Known limit**: the secret is in the environment of the sessions started while it is on, so a
-  command an agent runs can read it and post made-up telemetry to `/otlp`. That can only change what
-  your own Timeline shows for that session (a wrong "approved by" label); it reaches nothing else.
+- **Known limit**: a session's credential is in its environment, and a shell command you approve
+  runs as you: it can read that environment, other sessions' environments (`ps eww`,
+  `/proc/<pid>/environ`) or `.clawdling/otel.json`, and post made-up telemetry for those sessions.
+  That can only change what your own Timeline shows (a wrong "approved by" label); it reaches
+  nothing else, and an approved arbitrary command can do far more than that already (see Not in
+  scope).
 
 ## Agents
 

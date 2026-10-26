@@ -115,6 +115,23 @@ test('on: the env block lands in our own --settings file; the ingest rules; reco
   assert.equal(tl.detailed, true);
   assert.deepEqual(tl.entries.find((e) => e.id === editId).approval, { decision: 'accept', source: 'config', text: 'your settings allowed it' });
 
+  // A malformed payload: 400, never a 500 in the server log.
+  const evil = { resourceLogs: [{ scopeLogs: [{ logRecords: [{ timeUnixNano: { toString: 0 }, attributes: [{ key: 'session.id', value: { stringValue: s.sid } }] }] }] }] };
+  assert.equal((await post('/otlp/v1/logs', evil, { headers: good })).status, 200, 'hostile values are ignored');
+  assert.equal((await post('/otlp/v1/logs', '{"resourceLogs": [', { headers: good })).status, 400);
+  // Uploads that never finish: at most 4 in flight; the next is refused at once.
+  const hanging = [];
+  for (let i = 0; i < 4; i++) {
+    const r = http.request({ host: '127.0.0.1', port: srv.port, path: '/otlp/v1/logs', method: 'POST', headers: { host: `127.0.0.1:${srv.port}`, 'content-type': 'application/json', 'content-length': 1000, ...good } });
+    r.on('error', () => {});
+    r.write('{"resourceLogs": [');
+    hanging.push(r);
+  }
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await post('/otlp/v1/metrics', { resourceMetrics: [] }, { headers: good })).status, 429, 'too many in flight');
+  for (const r of hanging) r.destroy();
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal((await post('/otlp/v1/metrics', { resourceMetrics: [] }, { headers: good })).status, 200, 'slots come back when uploads end');
   // Too fast: at most 50 a second.
   const burst = await Promise.all(Array.from({ length: 70 }, () => post('/otlp/v1/metrics', { resourceMetrics: [] }, { headers: good })));
   assert.ok(burst.some((r) => r.status === 429), 'some refused');

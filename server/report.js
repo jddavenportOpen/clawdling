@@ -115,6 +115,8 @@ export async function gitCommits(repo, sinceMs, { exec = execFileP, env = proces
   // remote cannot make `git log` fetch (and so run a transport the repo's config chose).
   const args = [
     '-c', 'log.showSignature=false', '-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', '-c', 'color.ui=false', '-c', 'protocol.allow=never',
+    // A repo's own protocol.<name>.allow beats protocol.allow; these command-line values beat it.
+    ...['ext', 'file', 'ssh', 'git', 'http', 'https'].flatMap((p) => ['-c', `protocol.${p}.allow=never`]),
     '-C', repo, 'log', '--no-show-signature', '--no-notes', '--no-color', `--since=${new Date(sinceMs).toISOString()}`,
     '--format=%H%x1f%s%x1f%cI', '-n', '200',
   ];
@@ -187,13 +189,16 @@ function legacyPart(r) {
 export function mergeParts(parts) {
   const out = { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null };
   const cost = { usd: 0, source: null, complete: true, unknown_models: new Set(), models: {} };
+  let priced = 0;
   const issues = new Set();
   let ok = true;
   for (const p of parts) {
     for (const k of ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents']) out[k] += Number(p[k]) || 0;
     const c = p.cost || {};
-    if (Number.isFinite(c.usd)) cost.usd += c.usd;
-    else cost.complete = false;
+    if (Number.isFinite(c.usd)) {
+      cost.usd += c.usd;
+      priced++;
+    } else cost.complete = false;
     if (c.complete === false) cost.complete = false;
     for (const m of c.unknown_models || []) cost.unknown_models.add(m);
     for (const [m, v] of Object.entries(c.models || {})) if (Number.isFinite(v)) cost.models[m] = (cost.models[m] || 0) + v;
@@ -210,7 +215,8 @@ export function mergeParts(parts) {
     if (p.format && p.format.ok === false) ok = false;
     for (const i of p.format?.issues || []) issues.add(i);
   }
-  out.cost = { usd: cost.usd, source: cost.source || 'none', complete: cost.complete, unknown_models: [...cost.unknown_models].sort(), models: cost.models };
+  // No part with a known cost (unreadable transcripts): unknown, never $0.
+  out.cost = { usd: priced || !parts.length ? cost.usd : null, source: cost.source || 'none', complete: cost.complete, unknown_models: [...cost.unknown_models].sort(), models: cost.models };
   out.format = { ok, issues: [...issues].slice(0, 10) };
   return out;
 }
@@ -224,6 +230,8 @@ export class Reports {
     Object.assign(this, { paths, org, sessions, env, logger, exec, now, reader });
     this.store = new LedgerStore(paths.ledger || path.join(paths.rt, 'ledger'));
     this.written = new Map(); // sid -> ms of the last write while live
+    this.timelines = new Map(); // sid -> {stamp, all, cost}: the Timeline, built once per change
+    this.backfilling = false;
     this.pruned = 0;
   }
 
@@ -242,7 +250,7 @@ export class Reports {
    * changed (the main file or any subagent file) and kept as it was once the file is gone. The
    * session's figures are the parts added up.
    */
-  summary(rec, { force = false } = {}) {
+  summary(rec, { force = false, lazy = false } = {}) {
     const prev = this.store.read(rec.sid);
     const file = this.transcriptOf(rec);
     const base = { v: 1, sid: rec.sid, agent: rec.agent, title: rec.title || null, status: rec.status, prompted: !!rec.prompted, account: rec.account || null, created_at: rec.created_at || null, ended_at: rec.ended_at || null, last_activity_at: rec.last_activity_at || null };
@@ -251,18 +259,24 @@ export class Reports {
     if (file) {
       const key = sourceKey(file);
       const i = parts.findIndex((p) => p.path === file);
-      if (force || i === -1 || !sameKey(parts[i].source, key)) {
+      const stale = force || i === -1 || !sameKey(parts[i].source, key);
+      // While the start-up backfill runs, a request never parses an ended session's transcript: it
+      // uses the receipt it has, or says the session is still being counted.
+      if (stale && lazy && this.backfilling && rec.status === 'ended') {
+        if (!parts.length) return { ...base, transcript: 'counting', counting: true, parts: [], ...mergeParts([]), cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, last_line: rec.last_message || null };
+      } else if (stale) {
         let part;
         try {
           part = { path: file, ...partOf(summarize(this.reader.session(file))), source: key };
         } catch (err) {
           this.logger?.warn?.(`report: could not read the transcript of ${rec.sid}: ${err.message}`);
           // Kept, so it is not parsed again on every request until the file changes.
-          part = { path: file, unreadable: true, ...partOf(null), source: key };
+          part = { path: file, unreadable: true, ...partOf(null), source: null }; // retried next time
         }
         if (i === -1) parts.push(part);
         else parts[i] = part;
         changed = true;
+        if (rec.status === 'ended') this.reader.forget(file); // its totals now live in the receipt
       }
     }
     if (!parts.length) {
@@ -303,8 +317,12 @@ export class Reports {
   backfill() {
     const recs = [...this.sessions.records.values()].filter((r) => r.purpose !== 'signin');
     let i = 0;
+    this.backfilling = recs.length > 0;
     const step = () => {
-      if (i >= recs.length || this.stopped) return;
+      if (i >= recs.length || this.stopped) {
+        this.backfilling = false;
+        return;
+      }
       try {
         this.summary(recs[i++]);
       } catch (err) {
@@ -334,7 +352,7 @@ export class Reports {
     for (const rec of this.sessions.records.values()) {
       if (agent && rec.agent !== agent) continue;
       if (rec.purpose === 'signin') continue; // a sign-in session is not work
-      out.set(rec.sid, this.summary(rec));
+      out.set(rec.sid, this.summary(rec, { lazy: true }));
     }
     for (const r of this.store.list({ agent })) {
       if (!out.has(r.sid)) out.set(r.sid, { ...r, transcript: r.transcript_path && fs.existsSync(r.transcript_path) ? 'ok' : 'gone' });
@@ -444,7 +462,15 @@ export class Reports {
     const unknown = new Set();
     let total = 0;
     let missing = 0;
+    let counting = 0;
     for (const s of summaries) {
+      if (s.counting) {
+        const t = Date.parse(s.ended_at || s.last_activity_at || '');
+        if (Number.isFinite(t) && t >= w.start) counting++;
+        continue;
+      }
+      // A cost Clawdling could not read (no model to blame): that session's usage is unknown.
+      const unreadable = s.cost && s.cost.complete === false && !(s.cost.unknown_models || []).length;
       const days = s.days && typeof s.days === 'object' ? s.days : {};
       // Usage in the window on a model with no price: the total is incomplete, never a quiet $0.
       const udays = s.unknown_days && typeof s.unknown_days === 'object' ? s.unknown_days : {};
@@ -456,11 +482,12 @@ export class Reports {
         // No priced usage in the window. A session active in it whose cost is unknown is counted.
         const t = Date.parse(s.last_activity_at || s.last_at || '');
         const active = Number.isFinite(t) && t >= w.start && (s.turns > 0 || s.prompted);
-        if (active && s.cost && s.cost.usd === null) missing++;
+        if (active && s.cost && (s.cost.usd === null || unreadable)) missing++;
         else if (active && s.cost && s.cost.complete === false && !w.list.some((d) => (udays[d] || []).length)) for (const m of s.cost.unknown_models || []) unknown.add(m);
         continue;
       }
       for (const d of w.list) if (Number.isFinite(days[d])) byDay[d] += days[d];
+      if (unreadable) missing++;
       total += share;
       const sessionTotal = Object.values(days).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
       const k = sessionTotal > 0 ? share / sessionTotal : 0;
@@ -475,9 +502,10 @@ export class Reports {
     return {
       total_usd: r6(total),
       label: COST_LABEL,
-      complete: unknown.size === 0 && missing === 0,
+      complete: unknown.size === 0 && missing === 0 && counting === 0,
       unknown_models: [...unknown].sort(),
       sessions_without_cost: missing,
+      sessions_counting: counting,
       by_day: w.list.map((d) => ({ day: d, usd: r6(byDay[d]) })),
       by_model: Object.entries(byModel).map(([model, usd]) => ({ model, usd: r6(usd) })).sort((a, b) => b.usd - a.usd),
       by_account: Object.keys(byAccount).length > 1 ? Object.entries(byAccount).map(([account, usd]) => ({ account, usd: r6(usd) })) : [],
@@ -528,7 +556,7 @@ export class Reports {
   }
 
   /** The session's Timeline, paged: entries after `after`, at most `limit`. */
-  timeline(sid, { after = -1, limit = 500, enrich = null } = {}) {
+  timeline(sid, { after = -1, limit = 500, enrich = null, enrichStamp = null } = {}) {
     if (!isUuid(sid)) throw badRequest('invalid session id');
     const rec = this.sessions.require(sid);
     const file = this.transcriptOf(rec);
@@ -537,12 +565,22 @@ export class Reports {
       return { entries: [], next: after, more: false, total: 0, transcript: kept ? 'gone' : 'missing', summary: kept ? { turns: kept.turns, tools: kept.tools, last_line: kept.last_line, cost: kept.cost } : null, status: rec.status };
     }
     const data = this.reader.session(file);
-    const all = timeline(data, { ended: rec.status === 'ended' });
-    // Telemetry (the detailed timeline) is matched against the whole list, then paged.
-    if (enrich) enrich(all);
+    // Built once per change (paging a live session reads the same list several times in a row).
+    const stamp = `${file}:${data.main.size}:${data.main.mtimeMs}:${data.subs.map((x) => `${x.size}/${x.mtimeMs}`).join(',')}:${rec.status}:${enrichStamp ? enrichStamp() : ''}`;
+    let memo = this.timelines.get(sid);
+    if (!memo || memo.stamp !== stamp) {
+      const all = timeline(data, { ended: rec.status === 'ended' });
+      // Telemetry (the detailed timeline) is matched against the whole list, then paged.
+      if (enrich) enrich(all);
+      memo = { stamp, all, cost: summarize(data).cost };
+      this.timelines.delete(sid);
+      this.timelines.set(sid, memo);
+      while (this.timelines.size > 16) this.timelines.delete(this.timelines.keys().next().value);
+    }
+    const { all } = memo;
     const page = all.filter((e) => e.n > after).slice(0, limit);
     const next = page.length ? page[page.length - 1].n : after;
-    const s = summarize(data);
+    const s = { cost: memo.cost };
     return { entries: page, next, more: all.length > 0 && all[all.length - 1].n > next, total: all.length, transcript: 'ok', status: rec.status, cost: s.cost, label: COST_LABEL };
   }
 }

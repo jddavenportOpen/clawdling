@@ -187,7 +187,8 @@ function CostBlock({ c, win, name }) {
   const unknown = !c.complete;
   return html`<${Block} id="rc-cost" title="Cost" sub=${IN_WINDOW[win]} testid="rc-cost">
     <p class="rc-big"><span class="rc-big-n" data-testid="rc-cost-total">${usd(c.total_usd)}</span> <span class="rc-big-l">of usage at list price</span></p>
-    ${unknown ? html`<p class="rc-note tone-amber-text">${c.unknown_models.length ? `Plus usage with an unknown cost (${c.unknown_models.map(modelName).join(', ')} is not in Clawdling's price table).` : ''}${c.sessions_without_cost ? ` ${plural(c.sessions_without_cost, 'session')} had no transcript to read, so ${c.sessions_without_cost === 1 ? 'its' : 'their'} usage is unknown.` : ''}</p>` : null}
+    ${c.sessions_counting ? html`<p class="rc-note" data-testid="rc-counting">Still reading ${plural(c.sessions_counting, 'older session')}; this figure will grow.</p>` : null}
+    ${unknown && !c.sessions_counting ? html`<p class="rc-note tone-amber-text">${c.unknown_models.length ? `Plus usage with an unknown cost (${c.unknown_models.map(modelName).join(', ')} is not in Clawdling's price table).` : ''}${c.sessions_without_cost ? ` ${plural(c.sessions_without_cost, 'session')} had no transcript to read, so ${c.sessions_without_cost === 1 ? 'its' : 'their'} usage is unknown.` : ''}</p>` : null}
     <p class="rc-label" data-testid="rc-cost-label">${COST_NOTE}</p>
     ${c.total_usd > 0 && win !== 'today' ? html`<div class="rc-bars" role="img" aria-label=${`Usage by day: ${c.by_day.filter((d) => d.usd > 0).map((d) => `${new Date(`${d.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${usd(d.usd)}`).join(', ') || 'none'}`}>
       ${c.by_day.map((d) => html`<span class="rc-bar" key=${d.day} title=${`${d.day}: ${usd(d.usd)}`}>
