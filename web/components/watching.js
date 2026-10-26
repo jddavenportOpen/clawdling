@@ -24,7 +24,8 @@ export function WatchingPill({ s, now = Date.now() }) {
   if (!watching) return null;
   const { count, tasks = [] } = s.background;
   const label = `Watching · ${count}`;
-  return html`<span class="watch-wrap" ref=${wrap}>
+  // Escape on the pill itself too: the document listener above is only added a frame after opening.
+  return html`<span class="watch-wrap" ref=${wrap} onKeyDown=${(e) => { if (e.key === 'Escape' && open) { e.stopPropagation(); setOpen(false); } }}>
     <button type="button" class="watch-pill" aria-expanded=${open ? 'true' : 'false'} aria-controls=${`watch-${s.sid}`} data-testid="watching-pill"
       title="Claude's turn is over, but background work it started is still running"
       onClick=${(e) => { e.stopPropagation(); setOpen(!open); }}>

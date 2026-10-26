@@ -209,7 +209,11 @@ function QuestionCard({ t, s, answer }) {
 const planChoice = (c) => String((c && c.label) || '').replace(/^\s*\d+[.)]\s*/, '').replace(/\s+shift\+tab.*$/i, '');
 const FEEDBACK = /^tell claude what to change\b/i;
 
-/** Claude's plan (ExitPlanMode): the plan itself, and Claude Code's own choices to approve it or send it back. */
+/**
+ * Claude's plan (ExitPlanMode): the plan itself, and Claude Code's own choices to approve it or send
+ * it back. The filled button is "Yes, manually approve edits": the obvious tap is never the one that
+ * stops asking before edits.
+ */
 function PlanCard({ t, s, answer }) {
   const pending = isPending(t, s, answer);
   const blocks = useMemo(() => parseMarkdown(t.ask.plan || ''), [t.ask.plan]);
@@ -236,13 +240,13 @@ function PlanCard({ t, s, answer }) {
     <div class="plan-body chat-body">${blocks.map(renderBlock)}</div>
     ${state === 'feedback' ? html`<p class="ask-typed" data-testid="plan-feedback">“${answer.feedback}”</p>` : null}
     ${live && choices.length ? html`<div class="ask-foot plan-actions">
-      ${choices.filter((c) => c !== fb).map((c, i) => html`<button type="button" key=${c.option} class=${`btn ${i === 0 ? 'btn-primary' : 'btn-quiet'} btn-sm`}
+      ${choices.filter((c) => c !== fb).map((c) => html`<button type="button" key=${c.option} class=${`btn ${/manually/i.test(planChoice(c)) ? 'btn-primary' : 'btn-quiet'} btn-sm`}
         onClick=${() => send(c.option)} disabled=${!!busy} data-testid="plan-choice" data-option=${c.option}>${busy === c.option ? 'Sending…' : planChoice(c)}</button>`)}
       ${fb && feedback === null ? html`<button type="button" class="btn btn-quiet btn-sm" onClick=${() => setFeedback('')} disabled=${!!busy} data-testid="plan-change">Tell Claude what to change…</button>` : null}
     </div>` : null}
     ${live && fb && feedback !== null ? html`<div class="plan-feedback">
       <textarea class="plan-feedback-input" rows="3" maxLength="1000" value=${feedback} placeholder="What should Claude change?" aria-label="What Claude should change in the plan"
-        onInput=${(e) => setFeedback(e.currentTarget.value)} data-testid="plan-feedback-input" ref=${(el) => el && !el.dataset.seen && (el.dataset.seen = '1', el.focus())}></textarea>
+        onInput=${(e) => setFeedback(e.currentTarget.value)} data-testid="plan-feedback-input" ref=${(el) => { if (el && !el.dataset.seen) { el.dataset.seen = '1'; el.focus(); el.closest('.plan-feedback')?.scrollIntoView?.({ block: 'nearest' }); } }}></textarea>
       <div class="ask-foot"><button type="button" class="btn btn-quiet btn-sm" onClick=${() => setFeedback(null)} disabled=${!!busy}>Cancel</button>
         <button type="button" class="btn btn-primary btn-sm" onClick=${() => send(fb.option, feedback.trim())} disabled=${!feedback.trim() || !!busy} data-testid="plan-feedback-send">${busy ? 'Sending…' : 'Send back'}</button></div>
     </div>` : null}
