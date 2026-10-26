@@ -78,6 +78,8 @@ import { SessionManager } from './sessions.js';
 import { claudeConfigDir, findTranscript } from './transcripts.js';
 import { NeedsYouPinger } from './needs-you.js';
 import { Reports } from './report.js';
+import { Digest } from './digest.js';
+import { KINDS as OTLP_KINDS, INGEST_MAX_BYTES, OtelState, RateLimit, SECRET_HEADER, TraceStore, enrich, envBlock, normalize, preflight } from './otel.js';
 import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
@@ -436,6 +438,49 @@ export async function startServer(opts = {}) {
     sessions.onEnded = (rec) => setImmediate(() => reports.sessionEnded(rec));
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
+
+    // The Monday report (1.5, opt-in): one message a week to the paired channel, through the pinger.
+    const digest = new Digest({ paths, org, reports, pinger, events, logger });
+
+    // The detailed timeline (1.5, beta, off by default): Claude Code's own OpenTelemetry, received on
+    // /otlp from this computer only, with this org's secret. Its settings go only into Clawdling's own
+    // --settings file, and never where the user already has telemetry settings (otel.js preflight).
+    const otelState = new OtelState(paths.otel);
+    const traces = new TraceStore(paths.traces);
+    const otelLimit = new RateLimit();
+    const managedOverride = testMode && typeof env.CLAWDLING_MANAGED_SETTINGS === 'string' ? env.CLAWDLING_MANAGED_SETTINGS.split(path.delimiter).filter(Boolean) : null;
+    function otelPreflight() {
+      return preflight({
+        env,
+        configDirs: [configDir, ...accounts.list().map((a) => a.dir).filter(Boolean)],
+        projectDirs: [home, ...org.agents().flatMap((a) => [a.repo, ...(Array.isArray(a.repos) ? a.repos : [])]).filter(Boolean)],
+        ...(managedOverride ? { managed: managedOverride, profiles: [] } : {}),
+      });
+    }
+    const OTEL_BLOCKED = 'Your Claude Code already has telemetry settings, so the detailed timeline stays off and Clawdling uses transcripts.';
+    function otelEnv() {
+      const st = otelState.read();
+      return st.enabled && otelPreflight().clear ? envBlock({ port, secret: st.secret }) : null;
+    }
+    function writeHooks() {
+      writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, env: otelEnv() }), 0o600);
+    }
+    function otelStatus() {
+      const st = otelState.read();
+      const pf = otelPreflight();
+      return {
+        enabled: st.enabled,
+        active: st.enabled && pf.clear,
+        blocked: !pf.clear,
+        ...(pf.clear ? {} : { reason: OTEL_BLOCKED, found: pf.found.map(({ where, key }) => ({ where, key })) }),
+        note: "It takes effect at each session's next start: sessions started earlier keep their setting until they restart.",
+      };
+    }
+    try {
+      writeHooks();
+    } catch (err) {
+      logger.warn(`could not write the detailed timeline's settings: ${err.message}`);
+    }
     // Orgs from before 1.2 get the /onboard-project skill (repo-rooted sessions find skills at the org root).
     try {
       org.ensureSkills();
@@ -1295,13 +1340,41 @@ export async function startServer(opts = {}) {
       ['GET', /^\/api\/agents\/([^/]+)\/report$/, async (req, m, res, url) => [200, await reports.agentReport(agentParam(m), { window: url.searchParams.get('window') || '7d' })]],
       ['GET', /^\/api\/org\/report$/, (req, m, res, url) => [200, reports.orgReport({ window: url.searchParams.get('window') || '7d' })]],
       ['GET', /^\/api\/sessions\/([^/]+)\/timeline$/, (req, m, res, url) => {
+        const sid = sidParam(m);
         const afterRaw = url.searchParams.get('after');
         const after = afterRaw === null || afterRaw === '' ? -1 : Number(afterRaw);
         if (!Number.isInteger(after) || after < -1) throw badRequest('after must be an integer >= -1');
         const limitRaw = Number(url.searchParams.get('limit') || 500);
         const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 500;
-        return [200, reports.timeline(sidParam(m), { after, limit })];
+        const out = reports.timeline(sid, { after, limit });
+        // With the detailed timeline on: who approved each tool, and each turn's API requests.
+        if (out.entries.length) {
+          const rec = sessions.get(sid);
+          enrich(out.entries, traces.read(rec?.claude_session_id && isUuid(rec.claude_session_id) ? rec.claude_session_id : sid));
+        }
+        return [200, { ...out, detailed: otelState.read().enabled }];
       }],
+      // The Monday report: status with the exact text it would send now; {enabled?, day?, hour?}.
+      ['GET', /^\/api\/digest$/, () => [200, digest.status()]],
+      ['POST', /^\/api\/digest$/, async (req) => [200, digest.configure(await jsonBody(req))]],
+      // The detailed timeline (beta): only from the computer itself.
+      ['GET', /^\/api\/otel$/, () => [200, otelStatus()]],
+      ['POST', /^\/api\/otel$/, async (req) => {
+        const b = await jsonBody(req);
+        if (typeof b.enabled !== 'boolean') throw badRequest('send {enabled: true|false}');
+        if (b.enabled) {
+          const pf = otelPreflight();
+          if (!pf.clear) {
+            const e = new HttpError(409, OTEL_BLOCKED);
+            e.body = { found: pf.found.map(({ where, key }) => ({ where, key })) };
+            throw e;
+          }
+        }
+        otelState.set(b.enabled);
+        writeHooks();
+        events.record({ type: 'otel', enabled: b.enabled });
+        return [200, otelStatus()];
+      }, { local: true }],
       ['POST', /^\/api\/donna\/chat$/, async (req) => {
         const b = await jsonBody(req);
         const text = typeof b.text === 'string' ? b.text.replace(/\0/g, '').trim() : '';
@@ -1462,6 +1535,39 @@ export async function startServer(opts = {}) {
       return sendJson(res, 404, { error: 'not found' });
     }
 
+    /**
+     * POST /otlp/v1/{logs,metrics,traces}: Claude Code's own telemetry from the sessions on this
+     * computer. Loopback peer and loopback Host only, never through a remote address, no browser
+     * Origin, the org's secret header (constant time), JSON only, 1 MB, 50 requests a second, and
+     * only while the detailed timeline is on. Identity and content attributes are dropped (otel.js).
+     */
+    async function handleOtlp(req, res, url) {
+      if (req.who.remote || req.who.hello) return refuse(res, 'Telemetry is accepted only from this computer.');
+      if (!loopbackPeer(req.socket.remoteAddress)) return sendJson(res, 403, { error: 'Telemetry is accepted only from this computer.' });
+      if (req.headers.origin !== undefined) return sendJson(res, 403, { error: 'cross-origin request refused' });
+      const kind = OTLP_KINDS[url.pathname];
+      if (!kind) return sendJson(res, 404, { error: 'not found' });
+      if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+      if (!otelState.read().enabled) return sendJson(res, 404, { error: 'the detailed timeline is off' });
+      if (!otelState.check(req.headers[SECRET_HEADER])) return sendJson(res, 401, { error: 'missing or wrong telemetry secret' });
+      if (!/^application\/json\b/i.test(String(req.headers['content-type'] || ''))) return sendJson(res, 415, { error: 'send OTLP/JSON (OTEL_EXPORTER_OTLP_PROTOCOL=http/json)' });
+      if (Number(req.headers['content-length']) > INGEST_MAX_BYTES) {
+        res.setHeader('Connection', 'close');
+        return sendJson(res, 413, { error: 'telemetry request over 1 MB' });
+      }
+      if (!otelLimit.allow()) return sendJson(res, 429, { error: 'too many telemetry requests' });
+      const text = await readBody(req, INGEST_MAX_BYTES);
+      let body;
+      try {
+        body = JSON.parse(text);
+      } catch {
+        return sendJson(res, 400, { error: 'invalid JSON' });
+      }
+      const items = normalize(kind, body).filter(({ sid }) => sessions.records.has(sid) || [...sessions.records.values()].some((r) => r.claude_session_id === sid));
+      traces.append(items);
+      return sendJson(res, 200, {});
+    }
+
     const handleRequest = (req, res) => {
       securityHeaders(res);
       let url;
@@ -1483,6 +1589,7 @@ export async function startServer(opts = {}) {
           const own = ['/app.js', '/components/', '/lib/', '/vendor/'].map((p) => `https://${origin}${p}`).join(' ');
           res.setHeader('Content-Security-Policy', `frame-ancestors 'none'; object-src 'none'; base-uri 'self'; script-src ${own} ${inlineScriptHashes()}; worker-src 'none'; connect-src 'self' wss://${origin}`);
         }
+        if (url.pathname.startsWith('/otlp/')) return handleOtlp(req, res, url);
         return url.pathname.startsWith('/api/') ? handleApi(req, res, url) : handleStatic(req, res, url);
       });
       work.catch((err) => {
@@ -1573,6 +1680,7 @@ export async function startServer(opts = {}) {
     sessions.replaySpool(); // hooks that got a 503 while we were starting were spooled
     telegram.start();
     imessage.start();
+    digest.start(testMode && Number(env.CLAWDLING_DIGEST_CHECK_MS) > 0 ? Number(env.CLAWDLING_DIGEST_CHECK_MS) : undefined);
 
     const urlHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
     const baseUrl = `http://${urlHost}:${port}`;
@@ -1587,6 +1695,7 @@ export async function startServer(opts = {}) {
       telegram.stop();
       imessage.stop();
       pinger.stop();
+      digest.stop();
       donna.stop();
       found.worker?.terminate().catch(() => {});
       await sessions.shutdown();
@@ -1624,6 +1733,8 @@ export async function startServer(opts = {}) {
       imessage,
       donna,
       reports,
+      digest,
+      otel: { state: otelState, traces },
       backend,
       tmux: backend,
       stop,

@@ -10,6 +10,7 @@ import { TerminalView } from './terminal.js';
 import { Composer } from './composer.js';
 import { PaneChips } from './chips.js';
 import { ChatView, useTranscript } from './chat-view.js';
+import { TimelineView } from './timeline.js';
 import { terms, onTraceTick } from '../lib/term.js';
 import {
   touchFocus, toggleMaximize, askEndSession, copyAttach, renameSession, mergeSession, resumeSession,
@@ -38,12 +39,14 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   const lastTick = useRef(focused ? -1 : focusTick);
   // A jump whose keyboard a dialog or menu held back (see below); paid once that closes.
   const owed = useRef(false);
-  // Chat | Raw, remembered per pane. Chat shows once the transcript has messages; until then the
-  // raw terminal shows with a note. The terminal stays mounted under the chat either way.
-  const [view, setViewState] = useState(() => (load(`view.${sid}`, 'chat') === 'raw' ? 'raw' : 'chat'));
+  // Chat | Timeline | Raw, remembered per pane. Chat shows once the transcript has messages; until
+  // then the raw terminal shows with a note. The terminal stays mounted under the chat and the
+  // Timeline either way.
+  const [view, setViewState] = useState(() => { const v = load(`view.${sid}`, 'chat'); return v === 'raw' || v === 'timeline' ? v : 'chat'; });
   const ended0 = !!s && s.status === 'ended';
   const { messages, loaded } = useTranscript(sid, ended0, view === 'chat' && !!s);
   const chat = view === 'chat' && messages.length > 0;
+  const timeline = view === 'timeline' && !!s;
   const chatRef = useRef(chat);
   chatRef.current = chat;
   const setView = (v) => {
@@ -119,8 +122,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
   if (span > 1) style.gridRow = `span ${span}`;
 
   return html`<section ref=${el}
-      class=${`pane st-${s.status} ${chat ? 'is-chat' : ''} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
-      data-pane=${sid} data-status=${s.status} data-display=${displayStatus(s)} data-view=${chat ? 'chat' : 'raw'} data-focused=${focused ? 'true' : 'false'} style=${style}
+      class=${`pane st-${s.status} ${chat || timeline ? 'is-chat' : ''} ${focused ? 'is-focused' : ''} ${hidden ? 'is-hidden' : ''} ${flash ? 'is-flash' : ''}`}
+      data-pane=${sid} data-status=${s.status} data-display=${displayStatus(s)} data-view=${chat ? 'chat' : timeline ? 'timeline' : 'raw'} data-focused=${focused ? 'true' : 'false'} style=${style}
       role="region" aria-label=${`${name} (${agentLabel(s, agentsById)})`}
       onMouseDown=${() => touchFocus(sid)} onFocusIn=${() => touchFocus(sid)}>
     <header class="pane-head">
@@ -136,6 +139,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
       <div class="seg pane-view" role="group" aria-label="View">
         <button type="button" class=${`seg-btn ${view === 'chat' ? 'is-on' : ''}`} aria-pressed=${view === 'chat' ? 'true' : 'false'}
           onClick=${() => setView('chat')} title="Chat view" data-testid="pane-view-chat">Chat</button>
+        <button type="button" class=${`seg-btn ${view === 'timeline' ? 'is-on' : ''}`} aria-pressed=${view === 'timeline' ? 'true' : 'false'}
+          onClick=${() => setView('timeline')} title="Timeline: every step and what it used" data-testid="pane-view-timeline">Timeline</button>
         <button type="button" class=${`seg-btn ${view === 'raw' ? 'is-on' : ''}`} aria-pressed=${view === 'raw' ? 'true' : 'false'}
           onClick=${() => setView('raw')} title="Raw terminal" data-testid="pane-view-raw">Raw</button>
       </div>
@@ -164,6 +169,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     <div class="pane-body">
       <${TerminalView} sid=${sid} ended=${ended} onConn=${setConn} onStatus=${onStatus} onEnded=${onEnded} />
       ${chat ? html`<${ChatView} s=${s} agent=${agentLabel(s, agentsById)} messages=${messages} />` : null}
+      ${timeline ? html`<${TimelineView} s=${s} ended=${ended} />` : null}
       ${ended ? html`<div class="pane-ended" role="group" aria-label="Session ended">
         <div class="ended-card">
           <p class="ended-title"><${StatusGlyph} status="ended" label=${false} /> Session ended ${relTime(sessionTime(s), now) === 'now' ? 'just now' : `${relTime(sessionTime(s), now)} ago`}</p>
@@ -176,7 +182,7 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
         </div>
       </div>` : null}
     </div>
-    ${mobile && !ended && !chat ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
+    ${mobile && !ended && !chat && !timeline ? html`<${Composer} s=${s} agent=${agentLabel(s, agentsById)} />` : null}
   </section>`;
 }
 

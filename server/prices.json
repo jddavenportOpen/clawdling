@@ -1,7 +1,7 @@
 {
   "date": "2026-10-25",
   "source": "https://platform.claude.com/docs/en/about-claude/pricing",
-  "note": "List prices in US dollars per million tokens, used only to show a list-price equivalent when Claude Code's own cost-state number is missing or out of date. It is never a bill: on Pro and Max, usage is included in the plan. Cache writes cost cache.write_5m or cache.write_1h times the input price. A model id matches an entry when it equals `match`, or is `match` followed by a date (-YYYYMMDD) or an @version; any other model (a newer one included) has an unknown cost. A model that matches nothing here has an unknown cost, never 0. CI fails when this file is more than 120 days old.",
+  "note": "List prices in US dollars per million tokens, used only to show a list-price equivalent when Claude Code's own cost-state number is missing or out of date. It is never a bill: on Pro and Max, usage is included in the plan. Cache writes cost cache.write_5m or cache.write_1h times the input price. A model id matches an entry when it equals `match`, or is `match` followed by a date (-YYYYMMDD) or an @version; any other model (a newer one included) has an unknown cost. A model that matches nothing here has an unknown cost, never 0. CI fails when this file is more than 120 days old. claude-sonnet-5-5 and claude-haiku-4-5 were checked against the cost Claude Code 2.1.308 itself reports (cost-state and api_request events) on 2026-10-25.",
   "cache": { "write_5m": 1.25, "write_1h": 2 },
   "models": [
     { "match": "claude-fable-5-1", "input": 10, "output": 50, "cache_read": 0.25 },
@@ -16,6 +16,7 @@
     { "match": "claude-opus-4-1", "input": 15, "output": 75, "cache_read": 1.5 },
     { "match": "claude-opus-4-0", "input": 15, "output": 75, "cache_read": 1.5 },
     { "match": "claude-opus-4", "input": 15, "output": 75, "cache_read": 1.5 },
+    { "match": "claude-sonnet-5-5", "input": 2, "output": 10, "cache_read": 0.1 },
     { "match": "claude-sonnet-5", "input": 2, "output": 10, "cache_read": 0.2 },
     { "match": "claude-sonnet-4-6", "input": 3, "output": 15, "cache_read": 0.3 },
     { "match": "claude-sonnet-4-5", "input": 3, "output": 15, "cache_read": 0.3 },

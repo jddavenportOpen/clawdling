@@ -142,7 +142,7 @@ export const COST_LABEL = 'list-price equivalent, not a bill. On Pro and Max, us
 export class Reports {
   constructor({ paths, org, sessions, env = process.env, logger, exec = execFileP, now = () => Date.now(), reader = new LedgerReader() }) {
     Object.assign(this, { paths, org, sessions, env, logger, exec, now, reader });
-    this.store = new LedgerStore(path.join(paths.rt, 'ledger'));
+    this.store = new LedgerStore(paths.ledger || path.join(paths.rt, 'ledger'));
     this.written = new Map(); // sid -> ms of the last write while live
     this.pruned = 0;
   }

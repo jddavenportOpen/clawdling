@@ -179,10 +179,27 @@ export class NeedsYouPinger {
     st.last[sid] = t;
     st.sent.push(t);
     this.save(st); // counted before sending: a failed send still counts
-    if (ch.channel === 'telegram') await this.telegram.reply(ch.to, text);
-    else await this.imessage.send(ch.to, text);
+    await this.send(ch, text);
     this.events?.record?.({ type: 'ping', sid, agent: rec.agent, channel: ch.channel });
     return { sent: true, channel: ch.channel, text };
+  }
+
+  /** The one sender: the owner's paired channel, nothing else. */
+  async send(ch, text) {
+    if (ch.channel === 'telegram') await this.telegram.reply(ch.to, text);
+    else await this.imessage.send(ch.to, text);
+  }
+
+  /**
+   * Another owner-only message on the same path (the Monday report, digest.js): the paired channel
+   * as chosen above, or nothing. {sent, channel} or {sent: false, why}.
+   */
+  async deliver(text) {
+    if (!this.guarded()) return { sent: false, why: 'unprotected' };
+    const ch = this.channelFor(this.org.read());
+    if (!ch) return { sent: false, why: 'no paired channel' };
+    await this.send(ch, text);
+    return { sent: true, channel: ch.channel };
   }
 
   stop() {

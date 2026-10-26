@@ -98,7 +98,7 @@ export function parseRoute(hash = location.hash) {
   if (head === 'map') return { name: 'map' };
   if (head === 'donna') return { name: 'donna' };
   if (head === 'settings') return { name: 'settings', section: rest[0] || null };
-  if (head === 'agent' && rest[0]) return { name: 'agent', id: decodeURIComponent(rest[0]), tab: rest[1] || 'sessions' };
+  if (head === 'agent' && rest[0]) return { name: 'agent', id: decodeURIComponent(rest[0]), tab: rest[1] || 'overview' };
   return { name: 'cockpit' };
 }
 

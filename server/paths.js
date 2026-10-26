@@ -61,6 +61,11 @@ export function runtimePaths(home) {
     trust: path.join(rt, 'trust.json'),
     remote: path.join(rt, 'remote.json'),
     remoteDevices: path.join(rt, 'remote-devices.json'),
+    // 1.5: the report card's receipts, the Monday report, the detailed timeline (OTel) and its records.
+    ledger: path.join(rt, 'ledger'),
+    digest: path.join(rt, 'digest.json'),
+    otel: path.join(rt, 'otel.json'),
+    traces: path.join(rt, 'traces'),
   };
 }
 

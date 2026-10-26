@@ -129,6 +129,18 @@ export const api = {
     return r;
   },
   remoteSignOut: (id) => request('DELETE', `/api/remote/devices/${enc(id)}`),
+  // 1.5, the report card (read-only). window: 'today' | '7d' | '30d'. Dollar figures are list-price
+  // equivalents, never a bill.
+  agentReport: (id, window = '7d') => request('GET', `/api/agents/${enc(id)}/report?window=${enc(window)}`),
+  orgReport: (window = '7d') => request('GET', `/api/org/report?window=${enc(window)}`),
+  // A session's Timeline: {entries: [{n, kind, ...}], next, more, total, transcript, cost}, 500 at a time.
+  timeline: (sid, after = -1) => request('GET', `/api/sessions/${enc(sid)}/timeline?after=${enc(String(after))}`),
+  // The Monday report (opt-in): {enabled, channel, preview, day, hour, last_sent_week, ...}.
+  digest: () => request('GET', '/api/digest'),
+  setDigest: (body) => request('POST', '/api/digest', body),
+  // The detailed timeline (beta, OpenTelemetry): {enabled, blocked, reason, ...}.
+  otel: () => request('GET', '/api/otel'),
+  setOtel: (enabled) => request('POST', '/api/otel', { enabled: !!enabled }),
   channels: () => request('GET', '/api/channels'),
   notify: () => request('GET', '/api/notify'),
   setNotify: (needsYou) => request('POST', '/api/notify', { needs_you: !!needsYou }),

@@ -16,6 +16,7 @@ import { load, save } from '../lib/prefs.js';
 import { OrgError, useImportStep } from './first-run.js';
 import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf, countOf } from './setup.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
+import { usd } from './report-card.js';
 
 const TAU = Math.PI * 2;
 const R_OWNER = 30;
@@ -158,7 +159,8 @@ export function layoutOrg(agents, ownerName, { setup = false } = {}) {
       maxY = Math.max(maxY, n.ly + (n.sub ? 32 : 18));
     }
   }
-  return { nodes, edges, rings: { R1: r1, R2, R3 }, bounds: { minX, maxX, minY, maxY }, hasChief: !!chief };
+  // Room for each agent's usage line (1.5), above or below its label.
+  return { nodes, edges, rings: { R1: r1, R2, R3 }, bounds: { minX, maxX, minY: minY - 16, maxY: maxY + 16 }, hasChief: !!chief };
 }
 
 function nodeStats(n, sessions) {
@@ -173,6 +175,7 @@ export function OrgMap() {
   const me = useStore((s) => s.me);
   const orgError = useStore((s) => s.orgError);
   const mobile = useStore((s) => s.mobile);
+  const now = useStore((s) => s.now);
   const sessions = useMemo(() => Object.values(sessionsMap), [sessionsMap]);
   const owner = (org && (org.owner || org.name)) || (me && me.owner) || 'You';
   const ownerName = org && org.owner ? org.owner : owner;
@@ -289,6 +292,10 @@ export function OrgMap() {
     if (d && !d.moved) setSel(null);
   };
 
+  // Usage over 7 days and when each agent last finished work (the report card, 1.5).
+  const orgRep = useOrgReport(agents);
+  const repById = useMemo(() => Object.fromEntries(((orgRep && orgRep.agents) || []).map((a) => [a.id, a])), [orgRep]);
+
   const counts = useMemo(() => ({
     domains: agents.filter((a) => a.kind === 'domain').length,
     projects: agents.filter((a) => a.kind === 'project').length,
@@ -335,11 +342,13 @@ export function OrgMap() {
       <div class="page-bar-main">
         <h1 class="page-title">Org map</h1>
         <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}${agents.length && !orgError ? ` · ${mobile ? 'Tap' : 'Click'} an agent to see what it knows` : ''}</p>
+        ${orgRep && orgRep.totals ? html`<p class="page-sub map-usage" data-testid="map-usage">Usage today: ${usd(orgRep.totals.today_usd)} · last 7 days: ${usd(orgRep.totals.week_usd)}${orgRep.totals.complete ? '' : ' (plus some with an unknown cost)'} <span class="map-usage-note">at list price, not a bill</span></p>` : null}
       </div>
       <ul class="legend" aria-label="Legend">
         <li><span class="legend-ring ring-working" aria-hidden="true"></span> Working</li>
         <li title="Claude Code asked something and waits for your answer"><span class="legend-ring ring-needs" aria-hidden="true"></span> Needs you</li>
         <li title="Claude finished and waits for your next message"><span class="legend-ring ring-ready" aria-hidden="true"></span> Your turn</li>
+        ${orgRep ? html`<li title="Under each agent: its usage over the last 7 days at list price (not a bill), and when it last finished some work"><span class="legend-usage" aria-hidden="true">$</span> Usage, 7 days · last done</li>` : null}
       </ul>
       <div class="zoom" role="group" aria-label="Zoom">
         <button class="icon-btn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}><span aria-hidden="true" class="zoom-glyph">−</span></button>
@@ -383,7 +392,7 @@ export function OrgMap() {
             </g>
             ${chips.length ? html`<circle class="setup-halo" r=${HALO} aria-hidden="true" />` : null}
             <g class="nodes">
-              ${L.nodes.map((n) => html`<${MapNode} key=${n.id} n=${n} st=${statsById[n.id]} selected=${sel === n.id}
+              ${L.nodes.map((n) => html`<${MapNode} key=${n.id} n=${n} st=${statsById[n.id]} rep=${repById[n.id]} now=${now} selected=${sel === n.id}
                 dim=${related ? !related.has(n.id) : false} reduced=${reduced} adds=${n.kind === 'project' && (adds[n.id] || []).some(repoAdds)}
                 onSelect=${() => setSel(sel === n.id ? null : n.id)} onHover=${(on) => setHover(on ? n.id : null)} />`)}
             </g>
@@ -406,15 +415,21 @@ export function OrgMap() {
           <button class="icon-btn" onClick=${dismissImportCard} aria-label="Hide this" title="Hide this"><${Icon} name="x" size=${14} /></button></div>` : null}
       </div>
       ${setupSel && sdata ? html`<${SetupPanel} kind=${setupSel} data=${sdata} onClose=${() => setSel(null)} />`
-        : selNode ? html`<${MapPanel} n=${selNode} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName}
+        : selNode ? html`<${MapPanel} n=${selNode} rep=${repById[selNode.id]} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName}
           repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} setupBusy=${layer && setup.refreshing} />` : null}
     </div>
   </div>`;
 }
 
-function MapNode({ n, st, selected, dim, reduced, adds, onSelect, onHover }) {
+function MapNode({ n, st, rep, now, selected, dim, reduced, adds, onSelect, onHover }) {
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
-  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}`;
+  const use = usageLine(rep, now);
+  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${use ? `, ${use.long}` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}`;
+  // The usage line sits on the far side of the label from the node (below a label under it, above
+  // one over it, under a label beside it).
+  const below = n.base === 'hanging';
+  const uy = n.ly - n.y + (n.kind === 'chief' ? -15 : below ? (n.sub && n.kind !== 'project' ? 31 : 15) : n.base === 'middle' ? 15 : 0);
+  const ly = n.ly - n.y + (use && n.base === 'auto' && n.kind !== 'chief' ? -15 : 0);
   // Amber only when Claude asked something; green when it is your turn; blue while working.
   const tone = st.blocked ? 'needs' : st.turn ? 'ready' : st.working ? 'working' : 'idle';
   const count = tone === 'needs' || tone === 'ready' ? st.needs : st.live;
@@ -439,10 +454,38 @@ function MapNode({ n, st, selected, dim, reduced, adds, onSelect, onHover }) {
       <text y="0.5">${count}</text></g>` : null}
     ${adds ? html`<g class="setup-badge" transform=${`translate(${-n.r * 0.74} ${n.r * 0.74})`} data-setup-badge="true">
       <title>Its repo adds its own Claude Code setup</title><circle r="6" /><circle class="setup-badge-dot" r="2.2" /></g>` : null}
-    <text class="node-label" x=${n.lx - n.x} y=${n.ly - n.y} text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.text}</text>
+    <text class="node-label" x=${n.lx - n.x} y=${ly} text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.text}</text>
+    ${use ? html`<text class="node-usage" x=${n.lx - n.x} y=${uy} text-anchor=${n.anchor} dominant-baseline=${n.base} data-usage=${n.id}>${use.short}</text>` : null}
     ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (n.kind === 'chief' ? 14 : 16)}
       text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.sub}</text>` : null}
   </g>`;
+}
+
+/** An agent's line on the map: "$4.10 · 2h ago" (and a long form for screen readers), or null. */
+export function usageLine(rep, now = Date.now()) {
+  if (!rep) return null;
+  const cost = rep.cost_usd > 0 ? (rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`) : null;
+  const ago = rep.last_done_at ? relTime(rep.last_done_at, now) : null;
+  const when = ago ? (ago === 'now' ? 'just now' : /^\d/.test(ago) ? `${ago} ago` : ago) : null;
+  if (!cost && !when) return null;
+  return {
+    short: [cost ? `${cost}${rep.cost_complete ? '' : '+'}` : null, when].filter(Boolean).join(' · '),
+    long: [cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price` : null, when ? `last finished work ${when}` : null].filter(Boolean).join(', '),
+  };
+}
+
+/** The org's report (7 days), refreshed every 30 s while the map is open, and when the org changes. */
+function useOrgReport(agents) {
+  const [rep, setRep] = useState(null);
+  const ids = agents.map((a) => a.id).join(',');
+  useEffect(() => {
+    let live = true;
+    const get = () => { if (!document.hidden) api.orgReport('7d').then((r) => { if (live) setRep(r); }).catch(() => {}); };
+    get();
+    const t = setInterval(get, 30000);
+    return () => { live = false; clearInterval(t); };
+  }, [ids]);
+  return rep;
 }
 
 // One chip of the setup layer: "Skills 9". Click (or Enter) opens that list in the side panel.
@@ -481,7 +524,7 @@ function SetupPanel({ kind, data, onClose }) {
   </aside>`;
 }
 
-function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup, setupBusy }) {
+function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, setupBusy }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState('');
   const now = useStore((s) => s.now);
@@ -520,10 +563,14 @@ function MapPanel({ n, sessions, onClose, agents, ownerName, repoSetup, setupBus
   } else {
     body = html`
       ${a && a.mission ? html`<p class="panel-mission">${a.mission}</p>` : null}
+      ${rep ? html`<dl class="panel-facts" data-testid="panel-usage"><div><dt>Done, 7 days</dt><dd>${rep.done}</dd></div>
+        <div><dt>Usage, 7 days</dt><dd title="List-price equivalent, not a bill">${rep.cost_usd > 0 && rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`}${rep.cost_complete ? '' : '+'}</dd></div>
+        <div><dt>Last done</dt><dd>${rep.last_done_at ? relTime(rep.last_done_at, now) : '–'}</dd></div></dl>
+        <p class="panel-quiet panel-usage-note">Usage is a list-price equivalent, not a bill. On Pro and Max it is included in your plan.</p>` : null}
       <div class="panel-actions">
         <button class="btn btn-quiet" onClick=${() => startSession(n.id).catch(() => {})} data-testid="panel-new-session"
           disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> New session</button>
-        <button class="btn btn-quiet" onClick=${() => navigate(`#/agent/${encodeURIComponent(n.id)}`)} data-testid="panel-open-agent">Open agent page</button>
+        <button class="btn btn-quiet" onClick=${() => navigate(`#/agent/${encodeURIComponent(n.id)}`)} data-testid="panel-open-agent">Open report card</button>
       </div>
       ${n.kind === 'project' && repoSetup !== undefined ? html`<section class="panel-adds" data-testid="panel-repo-adds">
         <h3 class="panel-h">Its repo adds <span class="panel-h-sub">on top of your own setup</span></h3>

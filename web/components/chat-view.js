@@ -280,7 +280,7 @@ function renderInline(n, i) {
 
 const inl = (nodes) => nodes.map(renderInline);
 
-function renderBlock(b, i) {
+export function renderBlock(b, i) {
   switch (b.type) {
     case 'p': return html`<p key=${i}>${inl(b.inline)}</p>`;
     case 'h': {

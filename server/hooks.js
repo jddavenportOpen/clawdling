@@ -103,7 +103,7 @@ export function runtimeDeny(home, platform = process.platform) {
  * Windows: exec form (`command` + `args`, Claude Code 2.1.139+), so no shell parses the paths,
  * whether Claude Code runs hooks in Git Bash or in PowerShell; paths use forward slashes.
  */
-export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false, home = null, guardScript = null }) {
+export function buildHooksSettings({ nodePath, hookScript, platform = process.platform, stopFailure = false, home = null, guardScript = null, env = null }) {
   const hooks = {};
   for (const ev of HOOK_EVENTS) {
     if (ev === 'StopFailure' && !stopFailure) continue;
@@ -127,7 +127,8 @@ export function buildHooksSettings({ nodePath, hookScript, platform = process.pl
   }
   const deny = runtimeDeny(home, platform);
   // A setup chat's hooks cannot be switched off by a settings file in the org folder.
-  return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) }, ...(guardScript ? { disableAllHooks: false } : {}) };
+  // env: the detailed timeline's OpenTelemetry settings (otel.js), only while it is on.
+  return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) }, ...(guardScript ? { disableAllHooks: false } : {}), ...(env && typeof env === 'object' ? { env } : {}) };
 }
 
 export const STATUSES = ['starting', 'working', 'ready', 'needs_you', 'ended'];

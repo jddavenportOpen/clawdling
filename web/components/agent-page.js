@@ -1,5 +1,6 @@
-// Agent page (#/agent/<id>): mission, sessions (live + recent, resume), and the
-// files that make the agent who it is: CLAUDE.md (Context) and NOW.md + LOG (Memory).
+// Agent page (#/agent/<id>): mission, the report card (Overview, the default tab: 1.5), sessions
+// (live + recent, resume), and the files that make the agent who it is: CLAUDE.md (Context) and
+// NOW.md + LOG (Memory).
 import { html } from '../lib/html.js';
 import { useEffect, useMemo, useState, useRef } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
@@ -11,10 +12,12 @@ import { refreshOrg } from '../lib/live.js';
 import { sessionName, statusText, KIND_LABEL, agentFolder, groupSessions, sessionTime, permissionLabel, permissionSetting, liveModeLabel } from '../lib/model.js';
 import { relTime, longTime, isMac } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
+import { ReportCard } from './report-card.js';
 
 const MAX_BYTES = 200 * 1024;
 
-export function AgentPage({ id, tab = 'sessions' }) {
+export function AgentPage({ id, tab: asked = 'overview' }) {
+  const tab = ['overview', 'sessions', 'context', 'memory'].includes(asked) ? asked : 'overview';
   const agentsById = useStore((s) => s.agentsById);
   const sessionsMap = useStore((s) => s.sessions);
   const now = useStore((s) => s.now);
@@ -43,7 +46,7 @@ export function AgentPage({ id, tab = 'sessions' }) {
   }
   if (!info) return html`<div class="page agent-page"><div class="page-pad"><div class="panel-skel tall" aria-label="Loading"></div></div></div>`;
 
-  const setTab = (t) => navigate(`#/agent/${encodeURIComponent(id)}${t === 'sessions' ? '' : `/${t}`}`);
+  const setTab = (t) => navigate(`#/agent/${encodeURIComponent(id)}${t === 'overview' ? '' : `/${t}`}`);
   const parent = info.domain ? agentsById[info.domain] : null;
 
   return html`<div class="page agent-page" data-testid="agent-page" data-agent=${id}>
@@ -70,12 +73,13 @@ export function AgentPage({ id, tab = 'sessions' }) {
     </header>
 
     <div class="tabs" role="tablist" aria-label=${`${info.name} sections`}>
-      ${[['sessions', `Sessions`, live.length + g.recent.length], ['context', 'Context', null], ['memory', 'Memory', null]].map(([t, label, n]) => html`
+      ${[['overview', 'Overview', null], ['sessions', `Sessions`, live.length + g.recent.length], ['context', 'Context', null], ['memory', 'Memory', null]].map(([t, label, n]) => html`
         <button role="tab" aria-selected=${tab === t ? 'true' : 'false'} class=${`tab-btn ${tab === t ? 'is-on' : ''}`} onClick=${() => setTab(t)} data-tab-btn=${t}>
           ${label}${n ? html`<span class="sec-count">${n}</span>` : null}</button>`)}
     </div>
 
     <div class="tab-panel" role="tabpanel">
+      ${tab === 'overview' ? html`<${ReportCard} id=${id} agent=${info} />` : null}
       ${tab === 'sessions' ? html`<${AgentSessions} live=${live} recent=${g.recent} now=${now} agentsById=${agentsById} name=${info.name} id=${id} />` : null}
       ${tab === 'context' ? html`<${FileEditor} key=${`ctx-${id}`} id=${id} field="claude_md" file="CLAUDE.md"
         value=${detail ? detail.claude_md || '' : null} err=${err}
