@@ -125,6 +125,8 @@ export function applyRecord(st, o, { sub = false } = {}) {
     if (st.lastTs === null || ts > st.lastTs) st.lastTs = ts;
   }
   const at = Number.isFinite(ts) ? ts : st.lastTs;
+  // The folder the session works in (claim receipts: edits outside it are not the work).
+  if (!st.cwd && typeof o.cwd === 'string' && o.cwd) st.cwd = o.cwd;
   if (o.type === 'cost-state') {
     st.costState = {
       total: Number.isFinite(o.totalCostUSD) ? o.totalCostUSD : null,

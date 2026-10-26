@@ -1,7 +1,15 @@
 {
   "version": 1,
-  "about": "Claim receipts (1.6): English phrases that claim work is finished, read from the last 600 characters of an agent's final message, one sentence at a time, lower-cased. Conservative on purpose: a miss means no label, never a wrong one. Steps: idioms rewrite positive phrasings and the objects of fix verbs; a claim pattern must match; exclude_any words anywhere in the sentence cancel it; exclude_before words cancel it only when they come before the claim. Every pattern is a JavaScript RegExp source (flags 'u'). Tested in test/unit/claims.test.js.",
+  "about": "Claim receipts (1.6): English phrases that claim work is finished, read from the last 600 characters of an agent's final message, one sentence at a time, lower-cased. Conservative on purpose: a miss means no label, never a wrong one. Steps: idioms rewrite positive phrasings and the objects of fix verbs; a claim pattern must match; exclude_any words anywhere in the sentence cancel it; exclude_before words cancel it only when they come before the claim. A message that makes a claim and also admits a failure keeps its claim: the record decides the label (\"Done. One test fails.\" after a failing check is Contradicted). Every pattern is a JavaScript RegExp source (flags 'u'). Tested in test/unit/claims.test.js.",
   "idioms": [
+    {
+      "re": "(?:\\bnone|\\bnothing|\\bno|\\bzero|\\b0)\\s+(?:tests?\\s+|more\\s+|of them\\s+)?(?:are\\s+|were\\s+|is\\s+|was\\s+)?(?:fail\\w*|error\\w*|broken|crash\\w*)\\b",
+      "with": "clean"
+    },
+    {
+      "re": "(?:\\bnot|n't|\\bnever)\\s+(?:be\\s+|been\\s+|anymore\\s+)?(?:fail\\w*|error\\w*|broken|crash\\w*)\\b",
+      "with": "clean"
+    },
     {
       "re": "\\b(without|with no) (any )?(errors?|warnings?|failures?|issues?|problems?|regressions?)\\b",
       "with": "cleanly"
@@ -37,10 +45,6 @@
     "words": "\\b(failing|failed|broken|flaky|erroring|crashing|red|errors?|failures?|crash(?:es)?|bugs?|warnings?|regressions?)\\b",
     "clause_end": "[,;:]|\\b(but|though|although|however|yet)\\b"
   },
-  "message_cancel": {
-    "about": "A sentence anywhere in the window that admits a current failure cancels the whole message's claim (\"Fixed the bug. One test still fails.\").",
-    "re": "\\b(fail(s|ed|ing|ure|ures)?|broken|break(s|ing)?|error(s|ed)?|flaky|crash(es|ed|ing)?)\\b"
-  },
   "tests": [
     {
       "need": "test",
@@ -57,6 +61,10 @@
     {
       "need": "test",
       "re": "\\ball (the )?(checks |tests )?(are |is )?(now )?green\\b"
+    },
+    {
+      "need": "test",
+      "re": "\\ball (the )?(ci |required )?checks (are |have )?(now )?(pass(es|ed|ing)?|green)\\b"
     },
     {
       "need": "test",
@@ -132,7 +140,7 @@
   "exclude_any": [
     "\\b(not|n't|no longer|never|nothing|none|neither|nor|cannot)\\b",
     "\\b(should|would|could|might|may|will|shall|must|can|going to|gonna|about to|plan to|want to|need to|needs to|have to|has to|try to|trying to|let me|let's|i'?ll|we'?ll|you'?ll|i'?d|i'?m going)\\b",
-    "\\b(fail(s|ed|ing|ure|ures)?|broken|break(s|ing)?|error(s|ed)?|flaky|skipp(ed|ing)|todo|pending|partially|partial|almost|nearly|mostly|some of|except|apart from|aside from|but (one|two|\\d+))\\b",
+    "\\b(fail(s|ed|ing|ure|ures)?|broken|break(s|ing)?|error(s|ed)?|flaky|todo|pending|partially|partial|almost|nearly|mostly|some of|except|apart from|aside from|but (one|two|\\d+))\\b",
     "\\b(to be done|left to|remaining|remains|next step|still to)\\b",
     "\\b(was|were) (done|fixed|finished|complete|completed|working|passing) (before|earlier|previously|already)\\b",
     "\\b(previously|earlier|before this|originally)\\b",
@@ -141,5 +149,6 @@
   ],
   "exclude_before": [
     "\\b(if|once|when|whenever|until|unless|after|before|as soon as|whether|so that|in order to|to make sure|to ensure|to verify|to check)\\b"
-  ]
+  ],
+  "clause_split": "\\s*,\\s*but\\b|\\s+but\\s+|\\s*;\\s*|\\s+however\\b|\\s*,\\s*(?:although|though|except that)\\b"
 }
