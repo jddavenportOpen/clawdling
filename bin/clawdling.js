@@ -14,6 +14,7 @@ import { DEFAULT_PORT, PKG_ROOT, VERSION, childEnv, resolveHome, runtimePaths, s
 import { claudeInstallCommand, commandFor, findGitBash, installCommand, packageManager, spawnOptions } from '../server/platform.js';
 import { DeviceStore, RemoteStore, onlyCockpit, parseRemoteUrl, redactServePaths, serveArgs, statusText, tailscaleBin, webHandlers } from '../server/remote.js';
 import { oneLine, readJson, shq } from '../server/util.js';
+import { LedgerReader, summarize } from '../server/ledger.js';
 
 class CliError extends Error {}
 
@@ -48,6 +49,9 @@ Usage:
                                             make a project agent per project (prints the plan
                                             until you add --yes; never writes into your repos)
   clawdling ls [--all] [--json]             list sessions
+  clawdling report [agent] [--window today|7d|30d] [--json]
+                                            the report card: what got done, what needs you, what it
+                                            used (a list-price equivalent, not a bill), what is next
   clawdling spawn <agent> ["first message"] [--model M] [--effort E] [--account A] [--title T] [--cols N --rows N] [--json]
   clawdling send <sid> "text" [--no-enter]  type into a live session
   clawdling attach <sid|tmux-name>          attach this terminal to a session (detach: Ctrl-b d with
@@ -591,6 +595,51 @@ async function cmdLs(args) {
   for (const s of list) {
     console.log(`${pad(s.sid.slice(0, 8), 10)}${pad(s.agent, 14)}${pad(s.status, 11)}${pad(s.title || 'new session', 40)}${rel(s.last_activity_at)}`);
   }
+}
+
+const WINDOW_LABEL = { today: 'today', '7d': 'the last 7 days', '30d': 'the last 30 days' };
+const usd = (x) => (x === null || x === undefined || !Number.isFinite(x) ? 'unknown' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
+const NEED_WORD = { question: 'a question', plan: 'a plan to approve', permission: 'a permission', error: 'a failed turn', sign_in: 'a sign-in', startup: 'a question before it starts', reply: 'your reply' };
+
+async function cmdReport(args) {
+  const ctx = context(args.flags);
+  const win = args.flags.window || '7d';
+  const id = args._[1];
+  const q = `?window=${encodeURIComponent(win)}`;
+  if (!id) {
+    const o = await api(ctx, 'GET', `/api/org/report${q}`);
+    if (args.flags.json) return console.log(JSON.stringify(o, null, 2));
+    console.log(`Your org, ${WINDOW_LABEL[win] || win}`);
+    console.log(`Usage today: ${usd(o.totals.today_usd)} · last 7 days: ${usd(o.totals.week_usd)}${o.totals.complete ? '' : ' (some usage has an unknown cost)'}`);
+    console.log(`(${o.label})\n`);
+    console.log(`${pad('AGENT', 18)}${pad('DONE', 6)}${pad('NEEDS YOU', 11)}${pad('USAGE', 18)}LAST DONE`);
+    for (const a of o.agents) console.log(`${pad(a.name, 18)}${pad(a.done, 6)}${pad(a.needs, 11)}${pad(usd(a.cost_usd) + (a.cost_complete ? '' : '+'), 18)}${a.last_done_at ? rel(a.last_done_at) : '-'}`);
+    return undefined;
+  }
+  const r = await api(ctx, 'GET', `/api/agents/${encodeURIComponent(id)}/report${q}`);
+  if (args.flags.json) return console.log(JSON.stringify(r, null, 2));
+  const out = [`${r.agent.name}: report card, ${WINDOW_LABEL[win] || win}`, '', 'Done'];
+  if (!r.done.length) out.push('  Nothing yet. Each session that does some work shows up here, with its last words and its commits.');
+  for (const d of r.done) {
+    out.push(`  - ${d.title || 'Untitled session'} (${d.live ? 'still running' : `ended ${rel(d.when)}`})`);
+    if (d.line) out.push(`    ${d.line}`);
+    const bits = [`${d.files_changed} file${d.files_changed === 1 ? '' : 's'} changed`];
+    if (d.commits && d.commits.length) bits.push(`${d.commits.length} commit${d.commits.length === 1 ? '' : 's'}: ${d.commits.slice(0, 3).map((c) => `"${c.subject}"`).join(', ')}`);
+    if (d.transcript === 'gone') bits.push('transcript gone, kept summary only');
+    out.push(`    ${bits.join(' · ')}`);
+  }
+  out.push('', 'Needs you');
+  if (!r.needs.length) out.push('  Nothing is waiting on you.');
+  for (const n of r.needs) out.push(`  - ${n.title || 'Untitled session'}: ${NEED_WORD[n.kind] || n.kind}${n.text ? ` (${n.text})` : ''}`);
+  const c = r.cost;
+  out.push('', `Cost: ${usd(c.total_usd)} of usage${c.complete ? '' : ` plus some with an unknown cost${c.unknown_models.length ? ` (${c.unknown_models.join(', ')})` : ''}`}`);
+  out.push(`  ${c.label}`);
+  if (c.by_model.length) out.push(`  By model: ${c.by_model.map((m) => `${m.model} ${usd(m.usd)}`).join(', ')}`);
+  if (c.top_sessions.length) out.push(`  Top sessions: ${c.top_sessions.map((t) => `${t.title || 'Untitled'} ${usd(t.usd)}`).join(', ')}`);
+  out.push('', `Next${r.next.updated_at ? ` (from memory/NOW.md, updated ${rel(r.next.updated_at)}${r.next.stale ? ', over a week old' : ''})` : ''}`);
+  out.push(r.next.empty ? '  Nothing written yet. The agent writes its next steps in memory/NOW.md when it hands off.' : r.next.text.split('\n').map((l) => `  ${l}`).join('\n'));
+  console.log(out.join('\n'));
+  return undefined;
 }
 
 async function cmdSpawn(args) {
@@ -1171,6 +1220,21 @@ async function cmdRemote(args) {
   throw new CliError(REMOTE_HELP);
 }
 
+/** {ok: true|false|null, detail}: the newest session's transcript, parsed the way the report card does. */
+export function transcriptFormat(paths) {
+  const list = (readJson(paths.sessions, null)?.sessions || []).filter((r) => r && typeof r.transcript_path === 'string' && /\.jsonl$/.test(r.transcript_path));
+  list.sort((a, b) => String(b.last_activity_at || b.created_at || '').localeCompare(String(a.last_activity_at || a.created_at || '')));
+  const rec = list.find((r) => fs.existsSync(r.transcript_path));
+  if (!rec) return { ok: null, detail: 'no session transcript to check yet' };
+  try {
+    const s = summarize(new LedgerReader().session(rec.transcript_path));
+    if (s.format.ok) return { ok: true, detail: `${s.turns} turn${s.turns === 1 ? '' : 's'}, ${s.tools} tool call${s.tools === 1 ? '' : 's'} in the newest session` };
+    return { ok: false, detail: s.format.issues.join('; ') };
+  } catch (err) {
+    return { ok: false, detail: `could not read it (${err.message})` };
+  }
+}
+
 async function cmdDoctor(args) {
   const ctx = context(args.flags);
   let bad = 0;
@@ -1236,6 +1300,13 @@ async function cmdDoctor(args) {
     ok(`org at ${ctx.home} (${n} agents)`);
   } else fail(`no org at ${ctx.home}: run \`${cliCmd(ctx.home, 'init')}\` (or set CLAWDLING_HOME)`);
 
+  // The report card reads Claude Code's transcripts, whose format is undocumented: say when the
+  // newest one is in a shape this version has not seen, never report a silent zero.
+  const tf = transcriptFormat(ctx.paths);
+  if (tf.ok === true) ok(`transcript format: ok (${tf.detail})`);
+  else if (tf.ok === false) warn(`transcript format: this Claude Code version writes a format Clawdling has not seen (report card may be incomplete): ${tf.detail}`);
+  else warn(`transcript format: ${tf.detail}`);
+
   const h = await serverUp(ctx);
   if (h && h.home === ctx.home) {
     const sessions = h.backend ? `, sessions: ${h.backend.kind}` : '';
@@ -1283,6 +1354,7 @@ export async function main(argv = process.argv.slice(2)) {
     discover: cmdDiscover,
     import: cmdImport,
     ls: cmdLs,
+    report: cmdReport,
     spawn: cmdSpawn,
     send: cmdSend,
     attach: cmdAttach,
