@@ -145,6 +145,7 @@ export async function gradeLlm(g, run, judge, { votes = VOTES } = {}) {
     try {
       results.push(await judge({ criteria: g.criteria, text: judgeText(text), focus: label }));
     } catch (err) {
+      if (err && err.cap) throw err; // the cost cap: skipped, never a FAIL vote
       results.push({ pass: false, reason: `judge call failed: ${err.message}`, cost_usd: 0, error: true });
     }
   }
@@ -182,6 +183,7 @@ export async function grade(g, run, judge) {
         return fail(g, `unsupported grader type ${g.type}`);
     }
   } catch (err) {
+    if (err && err.cap) throw err;
     return fail(g, `grader threw: ${err.message}`);
   }
 }

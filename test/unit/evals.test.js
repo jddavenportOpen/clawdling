@@ -192,6 +192,9 @@ test('graders: llm passes on more than half of three votes; a failed vote counts
   assert.ok(judgeText('a'.repeat(200000)).includes('chars elided'));
   const skipped = await grade(g, { ...run(), skipPaid: true }, judge);
   assert.match(skipped.explanation, /cost cap/);
+  // The cap reached between votes: the grader is skipped by the runner, never failed by a vote.
+  const capped = async () => { const e = new Error('cost cap reached'); e.cap = true; throw e; };
+  await assert.rejects(grade(g, run({ last_message: 'x' }), capped), (e) => e.cap === true);
 });
 
 test('caseScore: the weighted share of graders passed; 0 for a run error', () => {

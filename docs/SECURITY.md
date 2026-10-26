@@ -359,6 +359,110 @@ turned off).
   nothing else, and an approved arbitrary command can do far more than that already (see Not in
   scope).
 
+## Verified done (1.6)
+
+Three parts, cheapest first. The first uses no model and runs nothing; the second runs commands
+you approved; the third spends your plan, capped.
+
+### Claim receipts: read-only, no model
+
+When an agent's final message says it is done ("fixed", "tests pass", "builds"), Clawdling reads
+the session's own transcript and labels the claim **Verified** (a check ran after the last file
+change and passed), **Contradicted** (one ran and failed), **Not verified** (none ran: the default)
+or **No changes made**. The claim patterns are a tested list of English phrases
+(`server/claims-patterns.json`); the checks are the project's approved ship-check commands, the
+commands found in its manifests, and a short generic list (`npm test`, `pytest`, `go test`...).
+Nothing is executed and no model is called: a model deciding "is this really done" would be one
+more claim. A declined or hook-blocked command is not a check; a command whose exit code a pipe
+hides (`npm test | tail`) counts only when its output says it passed or failed. Receipts keep the
+command line and the first error line of a check, never its output. "Ask the agent to fix it" sends
+one fixed message, shown first, and the server checks that what it sends is still the text shown.
+
+### The ship check: commands you approve, in a scratch copy
+
+**What it runs.** The commands you ticked in the Check-up tab, for one project repo, through the
+platform shell (`/bin/sh -c` on macOS and Linux, PowerShell on Windows), one after the other, each
+with a timeout that ends its whole process tree. Optional setup commands (`npm ci`, `pip install`)
+run first, but only when you ticked them: they usually download code from the internet, and the
+cockpit says so next to them.
+
+**It runs your project's own scripts, as you.** `npm test` runs whatever the repo's `package.json`
+says `test` is, today. A script's contents can change without the command line changing, so
+approve ship checks only for projects you trust; the cockpit says this next to the approve button.
+To limit the damage a hostile script could do:
+
+- **The approval model.** Nothing runs until you approve the list. The cockpit proposes commands
+  detected from the repo, each shown exactly with what it does (the script's own text, from
+  `package.json`, or the target's recipe lines). The approve request must echo the exact command
+  strings shown, or it is refused. The list is written to `<agent folder>/checks.yaml`, and a
+  fingerprint of it (commands, names and timeouts) to `.clawdling/checks/<agent>/approved.json`,
+  which agents' file tools are denied. Agents can edit their own folder, so a run starts only when
+  `checks.yaml` still matches that fingerprint: any change, by anyone, needs your approval again.
+- **Never the live repo.** `git stash create` snapshots the tracked files, uncommitted changes
+  included, as a commit object without touching the working tree or the index; `git worktree add
+  --detach` puts that snapshot in a scratch folder under the system temp folder; the checks run
+  there; the worktree is removed with `git worktree remove --force` and `git worktree prune`.
+  Untracked files are not copied (they can be secrets or build junk); the cockpit says so. Every
+  git call carries `core.hooksPath` pointed at an empty folder, `core.fsmonitor=false`, LFS filters
+  off, `protocol.allow=never` and `GIT_NO_LAZY_FETCH=1`, so the repo's own config cannot make git
+  run a program or fetch.
+- **A scrubbed environment.** The checks get Clawdling's child environment without the variables a
+  parent Claude Code session sets, without anything that looks like a credential (names with
+  `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AUTH`...; `ANTHROPIC_*`, `AWS_*`, `GH_*`, `GITHUB_*`,
+  `SSH_AUTH_SOCK`, `CLAUDE_CONFIG_DIR` and similar), without any variable named in the org's `.env`,
+  and with `CI=true` so test runners run once instead of watching.
+- **Bounded.** One ship check per org at a time; output capped at 256 KB per command, of which the
+  last 40 lines are kept, for 90 days, in `.clawdling/checks/<agent>/`. Scratch worktrees in use are
+  listed in `.clawdling/checks/active.json`, and Clawdling removes any a crash left behind when it
+  starts.
+- **Never automatic.** A ship check runs only when you press Run (or run `clawdling check`); it never
+  runs on its own when a session ends.
+
+### Agent check-ups: your plan, a scratch copy, a cap
+
+- **Only the official CLI.** Drafting the cases, each run and each judge vote are `claude -p` calls
+  to the `claude` you are signed into, on your plan (Anthropic's support article allows `claude -p`
+  on a subscription). Clawdling never calls the Anthropic API and never reads a credential. Every
+  call passes `--no-session-persistence`, `--strict-mcp-config` (no MCP server starts) and a
+  `--settings` file with `disableAllHooks`, so your own hooks and MCP servers do not run inside a
+  check-up.
+- **Drafting** is one call with no tools (`--tools ""`), a JSON schema and `--max-budget-usd 0.50`,
+  given the agent's CLAUDE.md, NOW.md, the end of LOG.md and the org's me.md. It writes the cases
+  unapproved; nothing runs until you have read them.
+- **The cases you approved, as written.** Like `checks.yaml`, each case's files are fingerprinted
+  in `.clawdling/evals/<agent>/approved.json` when you approve or save them in the cockpit; a case
+  changed on disk (by the agent, say) does not run until you approve it again.
+- **The sandbox.** Each run copies the agent folder into a scratch folder under the temp folder,
+  without `evals/` (so the agent cannot read its own test), `.env` files, links,
+  `node_modules` and `.git` (a project agent also gets a detached worktree of its repo at HEAD).
+  The run gets the same context a real session gets (the org rules, the agent's CLAUDE.md and
+  NOW.md) and runs in that copy with `--permission-mode default`. Its tools are read-only by default
+  (Read, Glob, Grep); Bash appears only as listed commands (`Bash(npm test:*)`), never bare, never a
+  shell or a network tool, and write tools are not offered. In print mode anything not allowed is
+  denied, not asked. Reading outside the copy is denied by Claude Code's own rules, and the live
+  agent's `evals/` folder and Clawdling's `.clawdling/` are denied even by absolute path. The copy
+  is removed after each run, and on start if a crash left one.
+- **The judge** has no tools, gets only the criterion and the answer (between two random markers,
+  with an instruction to treat the answer as data), answers through a JSON schema, and votes three
+  times; a case passes on two of three. A steered judge can only mis-score, never act. Before any
+  agent run, the judge also grades an empty answer (it must fail) and each case's `reference.md`
+  (it must pass); if either goes wrong the suite shows "judge unreliable" and no agent run is spent.
+- **Plan burn.** The cost is estimated and shown before every run ("This starts N Claude Code runs on
+  your plan, about $X, capped at $Y"); the cap (default $2.00, list-price equivalent) is checked
+  before each launch, and each run carries `--max-budget-usd` with what is left. One run per case
+  by default, one check-up per org at a time, never scheduled.
+- **Try a cheaper model** runs the same cases with other `--model` and `--effort` values. "Use this"
+  writes the agent's default model and effort to its own `agent.json` (Clawdling's config); it never
+  touches your Claude Code settings.
+
+### Who can start them
+
+Approving commands, running a ship check, drafting, editing and approving cases, running a
+check-up and "Use this" work only from the computer Clawdling runs on (`403` through a remote
+address, like turning on the detailed timeline). A paired phone can read the results and use "Ask
+the agent to fix it", which only sends the shown message into a session it could already type into.
+Donna's text-message turns cannot run `clawdling check` or `clawdling checkup`.
+
 ## Agents
 
 Agent sessions are ordinary interactive Claude Code sessions: Claude Code's permission system
@@ -433,7 +537,10 @@ agents is your call. Her replies go to your phone like any other reply.
 `.clawdling/` is mode 700: token, session registry, events log (includes Donna's message text),
 `remote.json` and `remote-devices.json` (hashes only),
 hook spool, launcher scripts (include first prompts), generated context files, `notify.json`,
-and since 1.5 `ledger/` (session summaries), `digest.json`, `otel.json` and `traces/` (see above).
+and since 1.5 `ledger/` (session summaries), `digest.json`, `otel.json` and `traces/`, and since 1.6
+`checks/` (approval fingerprints, ship-check results, the scratch worktrees in use) and `evals/`
+(case approvals, the scratch copies in use) (see above). An agent's `checks.yaml` and `evals/`
+(cases and results) live in its own folder.
 Transcripts are Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view,
 question cards and Watching, and never writes them. For a plan card (since 1.5.1) it also reads
 Claude Code's plan file, `<config folder>/plans/<name>.md`, the one the session wrote: only a `.md`
