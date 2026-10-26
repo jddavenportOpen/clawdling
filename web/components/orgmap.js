@@ -466,10 +466,16 @@ export function usageLine(rep, now = Date.now()) {
   const cost = rep.cost_usd > 0 ? (rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`) : !rep.cost_complete ? 'cost unknown' : null;
   const ago = rep.last_done_at ? relTime(rep.last_done_at, now) : null;
   const when = ago ? (ago === 'now' ? 'just now' : /^\d/.test(ago) ? `${ago} ago` : ago) : null;
-  if (!cost && !when) return { short: 'nothing done in 7 days', long: 'nothing done in the last 7 days' };
+  // The last check-up (1.6): its score on the node, its age and cost per run in the long form.
+  const up = rep.checkup;
+  const upScore = up ? (up.judge_unreliable ? 'judge unreliable' : up.score === null || up.score === undefined ? null : `${Math.round(up.score * 100)}%`) : null;
+  const upShort = upScore ? `check-up ${upScore}` : null;
+  const upAgo = up ? relTime(up.at, now) : null;
+  const upLong = upScore ? `last check-up ${upScore}${upAgo ? `, ${upAgo === 'now' ? 'just now' : /^\d/.test(upAgo) ? `${upAgo} ago` : upAgo}` : ''}${Number.isFinite(up.cost_per_run) ? `, ${usd(up.cost_per_run)} a run` : ''}` : null;
+  if (!cost && !when) return { short: ['nothing done in 7 days', upShort].filter(Boolean).join(' · '), long: ['nothing done in the last 7 days', upLong].filter(Boolean).join(', ') };
   return {
-    short: [cost ? `${cost}${rep.cost_complete || cost === 'cost unknown' ? '' : '+'}` : null, when].filter(Boolean).join(' · '),
-    long: [cost === 'cost unknown' ? 'usage with an unknown cost in 7 days' : cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price${rep.cost_complete ? '' : ', plus some with an unknown cost'}` : null, when ? `last finished work ${when}` : null].filter(Boolean).join(', '),
+    short: [cost ? `${cost}${rep.cost_complete || cost === 'cost unknown' ? '' : '+'}` : null, when, upShort].filter(Boolean).join(' · '),
+    long: [cost === 'cost unknown' ? 'usage with an unknown cost in 7 days' : cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price${rep.cost_complete ? '' : ', plus some with an unknown cost'}` : null, when ? `last finished work ${when}` : null, upLong].filter(Boolean).join(', '),
   };
 }
 
@@ -550,7 +556,8 @@ function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, set
       ${a && a.mission ? html`<p class="panel-mission">${a.mission}</p>` : null}
       ${rep ? html`<dl class="panel-facts" data-testid="panel-usage"><div><dt>Done, 7 days</dt><dd>${rep.done}</dd></div>
         <div><dt>Usage, 7 days</dt><dd title="List-price equivalent, not a bill">${!rep.cost_complete && !(rep.cost_usd > 0) ? 'Unknown' : `${rep.cost_usd > 0 && rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`}${rep.cost_complete ? '' : '+'}`}</dd></div>
-        <div><dt>Last done</dt><dd>${rep.last_done_at ? relTime(rep.last_done_at, now) : '–'}</dd></div></dl>
+        <div><dt>Last done</dt><dd>${rep.last_done_at ? relTime(rep.last_done_at, now) : '–'}</dd></div>
+        <div data-testid="panel-checkup"><dt>Last check-up</dt><dd>${rep.checkup ? `${rep.checkup.judge_unreliable ? 'judge unreliable' : rep.checkup.score === null || rep.checkup.score === undefined ? 'no score' : `${Math.round(rep.checkup.score * 100)}%`} · ${relTime(rep.checkup.at, now)}${Number.isFinite(rep.checkup.cost_per_run) ? ` · ${rep.checkup.cost_per_run < 0.005 ? '<$0.01' : `$${rep.checkup.cost_per_run.toFixed(2)}`} a run` : ''}` : '–'}</dd></div></dl>
         <p class="panel-quiet panel-usage-note">Usage is a list-price equivalent, not a bill. On Pro and Max it is included in your plan.</p>` : null}
       <div class="panel-actions">
         <button class="btn btn-quiet" onClick=${() => startSession(n.id).catch(() => {})} data-testid="panel-new-session"

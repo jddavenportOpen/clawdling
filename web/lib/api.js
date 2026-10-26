@@ -141,6 +141,25 @@ export const api = {
   // The detailed timeline (beta, OpenTelemetry): {enabled, blocked, reason, ...}.
   otel: () => request('GET', '/api/otel'),
   setOtel: (enabled) => request('POST', '/api/otel', { enabled: !!enabled }),
+  // 1.6, Verified done. Claim receipts for one session's chat, and the one "fix it" message (the
+  // exact text shown, which the server checks again before sending).
+  sessionClaims: (sid) => request('GET', `/api/sessions/${enc(sid)}/claims`),
+  sendFix: (sid, text) => request('POST', `/api/sessions/${enc(sid)}/fix`, { text }),
+  // The ship check: {available, proposals, config, approved, last, running, notes}. Approving needs
+  // `shown`, the exact command strings on screen; approving and running work only on the computer itself.
+  checks: (id) => request('GET', `/api/agents/${enc(id)}/checks`),
+  approveChecks: (id, body) => request('PUT', `/api/agents/${enc(id)}/checks`, body),
+  runChecks: (id) => request('POST', `/api/agents/${enc(id)}/checks/run`, {}),
+  // Agent check-ups: {cases, settings, estimate, matrix, active, history, notes}.
+  evals: (id) => request('GET', `/api/agents/${enc(id)}/evals`),
+  draftEvals: (id) => request('POST', `/api/agents/${enc(id)}/evals/draft`, {}),
+  saveCase: (id, caseId, body) => request('PUT', `/api/agents/${enc(id)}/evals/${enc(caseId)}`, body),
+  removeCase: (id, caseId) => request('DELETE', `/api/agents/${enc(id)}/evals/${enc(caseId)}`),
+  approveCases: (id, body) => request('POST', `/api/agents/${enc(id)}/evals/approve`, body),
+  saveEvalSettings: (id, body) => request('POST', `/api/agents/${enc(id)}/evals/settings`, body),
+  evalEstimate: (id, { k = 1, models = '' } = {}) => request('GET', `/api/agents/${enc(id)}/evals/estimate?k=${enc(String(k))}${models ? `&models=${enc(models)}` : ''}`),
+  runEvals: (id, body) => request('POST', `/api/agents/${enc(id)}/evals/run`, body),
+  applyModel: (id, body) => request('POST', `/api/agents/${enc(id)}/evals/apply`, body),
   channels: () => request('GET', '/api/channels'),
   notify: () => request('GET', '/api/notify'),
   setNotify: (needsYou) => request('POST', '/api/notify', { needs_you: !!needsYou }),

@@ -14,6 +14,7 @@ import { load, save } from '../lib/prefs.js';
 import { renderBlock } from './chat-view.js';
 import { StatusGlyph } from './status.js';
 import { Icon } from './icons.js';
+import { ClaimPill, FixDialog, LABEL as CLAIM_LABEL, evidenceText } from './claims.js';
 
 export const WINDOWS = [['today', 'Today'], ['7d', '7 days'], ['30d', '30 days']];
 const IN_WINDOW = { today: 'today', '7d': 'in the last 7 days', '30d': 'in the last 30 days' };
@@ -127,7 +128,8 @@ export function ReportCard({ id, agent }) {
       <div class="report-grid">
         <${DoneBlock} r=${fresh} win=${win} name=${name} now=${now} agentsById=${agentsById} />
         <div class="report-side">
-          <${NeedsBlock} needs=${needs} name=${name} now=${now} agentsById=${agentsById} />
+          <${NeedsBlock} needs=${needs} name=${name} now=${now} agentsById=${agentsById} server=${fresh.needs} contradicted=${fresh.contradicted || []} onSent=${() => setTick((x) => x + 1)} />
+          <${VerifiedBlock} v=${fresh.verified} id=${id} name=${name} now=${now} kind=${fresh.agent.kind} />
           <${CostBlock} c=${fresh.cost} win=${win} name=${name} />
           <${NextBlock} n=${fresh.next} id=${id} name=${name} now=${now} />
         </div>
@@ -158,6 +160,7 @@ function DoneBlock({ r, win, name, now, agentsById }) {
           <span>${plural(d.files_changed, 'file')} changed</span>
           ${d.commits && (d.commits.length || !d.live) ? html`<span>${plural(d.commits.length, 'commit')}</span>` : null}
           ${d.tool_errors ? html`<span class="tone-amber-text">${plural(d.tool_errors, 'step')} hit an error along the way</span>` : null}
+          ${d.claim ? html`<${ClaimPill} claim=${d.claim} />` : null}
           ${d.transcript === 'gone' ? html`<span class="rc-gone" title="Claude Code deleted this session's transcript (its retention cleanup). Clawdling kept its summary.">Transcript gone, kept summary only</span>` : null}
         </span>
       </button>
@@ -171,16 +174,66 @@ function DoneBlock({ r, win, name, now, agentsById }) {
   </${Block}>`;
 }
 
-function NeedsBlock({ needs, name, now, agentsById }) {
-  return html`<${Block} id="rc-needs" title="Needs you" count=${needs.length} tone=${needs.length ? 'amber' : ''} testid="rc-needs">
-    ${needs.length ? html`<ul class="rc-list">${needs.map((s) => html`<li key=${s.sid}>
+function NeedsBlock({ needs, name, now, agentsById, server = [], contradicted = [], onSent }) {
+  const [fixing, setFixing] = useState(null); // {sid, text, ended}
+  // A finished turn whose claim a check contradicted (1.6): the same row, saying so, with the fix.
+  const bad = (sid) => server.find((x) => x.sid === sid && x.kind === 'contradicted');
+  // The count is the rail's (1.5); ended sessions a check contradicted are listed under their own heading.
+  return html`<${Block} id="rc-needs" title="Needs you" count=${needs.length} tone=${needs.length || contradicted.length ? 'amber' : ''} testid="rc-needs">
+    ${needs.length ? html`<ul class="rc-list">${needs.map((s) => {
+      const c = !isBlocked(s) && bad(s.sid);
+      return html`<li key=${s.sid}>
       <button type="button" class="rc-item rc-need" onClick=${() => focusSession(s.sid)} data-sid=${s.sid} title="Open this session">
         <span class="rc-item-top"><${StatusGlyph} status=${s.status} label=${false} />
-          <span class="rc-item-title">${needLabel(s)}</span><span class="rc-when">${relTime(s.last_activity_at, now)}</span>
+          <span class="rc-item-title">${c ? 'Said done, but a check failed' : needLabel(s)}</span><span class="rc-when">${relTime(s.last_activity_at, now)}</span>
           <span class="rc-open" aria-hidden="true">${isBlocked(s) ? 'Answer' : 'Open'} <${Icon} name="chevron-right" size=${12} /></span></span>
-        <span class="rc-line">${sessionName(s, agentsById)}${isBlocked(s) && s.notification ? `: ${s.notification}` : !isBlocked(s) && s.last_message ? `: ${String(s.last_message).replace(/`|\*\*/g, '')}` : ''}</span>
-      </button></li>`)}</ul>`
-      : html`<p class="rc-empty">Nothing is waiting on you. When ${name} asks a question, wants permission, or a turn fails, it shows up here.</p>`}
+        <span class="rc-line">${sessionName(s, agentsById)}${c ? `: ${evidenceText(c.claim).replace(/`/g, '')}` : isBlocked(s) && s.notification ? `: ${s.notification}` : !isBlocked(s) && s.last_message ? `: ${String(s.last_message).replace(/`|\*\*/g, '')}` : ''}</span>
+      </button>
+      ${c ? html`<button type="button" class="btn btn-quiet btn-sm rc-fix" onClick=${() => setFixing({ sid: s.sid, text: c.fix, ended: false })} data-testid="rc-fix">Ask the agent to fix it</button>` : null}</li>`;
+    })}</ul>` : null}
+    ${contradicted.length ? html`<h3 class="rc-sub-h">Said done, but a check failed <span class="rc-h-sub">${plural(contradicted.length, 'session')} that ended</span></h3>
+      <ul class="rc-list">${contradicted.map((x) => html`<li key=${x.sid}>
+        <button type="button" class="rc-item rc-need" onClick=${() => focusSession(x.sid)} data-sid=${x.sid} title="Open this session">
+          <span class="rc-item-top"><${ClaimPill} claim=${x.claim} /><span class="rc-item-title">${x.title || 'Untitled session'}</span><span class="rc-when">${agoText(x.since, now)}</span>
+            <span class="rc-open" aria-hidden="true">Open <${Icon} name="chevron-right" size=${12} /></span></span>
+          <span class="rc-line">${evidenceText(x.claim).replace(/`/g, '')}</span>
+        </button>
+        <button type="button" class="btn btn-quiet btn-sm rc-fix" onClick=${() => setFixing({ sid: x.sid, text: x.fix, ended: true })} data-testid="rc-fix">Ask the agent to fix it</button></li>`)}</ul>` : null}
+    ${!needs.length && !contradicted.length ? html`<p class="rc-empty">Nothing is waiting on you. When ${name} asks a question, wants permission, a turn fails, or a check fails after it said done, it shows up here.</p>` : null}
+    ${fixing ? html`<${FixDialog} sid=${fixing.sid} text=${fixing.text} ended=${fixing.ended} onClose=${() => setFixing(null)} onSent=${onSent} />` : null}
+  </${Block}>`;
+}
+
+/**
+ * Verified (1.6): what the record shows about this agent's "done" claims over the last 7 days, the
+ * project's last ship check and the agent's last check-up. Each links to the Check-up tab.
+ */
+function VerifiedBlock({ v, id, name, now, kind }) {
+  if (!v) return null;
+  const c = v.claims_7d || {};
+  const total = (c.verified || 0) + (c.not_verified || 0) + (c.contradicted || 0) + (c.no_changes || 0);
+  const tab = () => navigate(`#/agent/${encodeURIComponent(id)}/checkup`);
+  const ship = v.ship;
+  const up = v.checkup;
+  return html`<${Block} id="rc-verified" title="Verified" sub="claims in the last 7 days" testid="rc-verified">
+    ${total ? html`<ul class="rc-claims" aria-label="Claims by label">
+      ${['verified', 'not_verified', 'contradicted'].map((l) => html`<li key=${l} class=${`rc-claim tone-${CLAIM_LABEL[l].tone}`} data-claim=${l}>
+        <span class="rc-claim-n">${c[l] || 0}</span><span class="rc-claim-l"><${Icon} name=${CLAIM_LABEL[l].icon} size=${11} /> ${CLAIM_LABEL[l].text}</span></li>`)}
+    </ul>${c.no_changes ? html`<p class="rc-note">And ${plural(c.no_changes, 'claim')} from sessions that changed no file.</p>` : null}`
+      : html`<p class="rc-empty">No "done" claims in the last 7 days. When ${name} says it finished, Clawdling checks the session's record and labels it here.</p>`}
+    <p class="rc-label">Verified: a check passed after the agent's last edit. Not verified: no check ran after it (not an accusation). Contradicted: a check after it failed.</p>
+    ${kind === 'project' ? html`<h3 class="rc-sub-h">Ship check</h3>
+      ${!ship || !ship.available ? html`<p class="rc-note">A ship check needs the project's repo on this computer.</p>`
+        : !ship.configured ? html`<p class="rc-note">Not set up yet. <button type="button" class="link-btn" onClick=${tab}>Set up a ship check</button>: a few commands you approve once (tests, build), run in a scratch copy.</p>`
+        : !ship.approved ? html`<p class="rc-note tone-amber-text">checks.yaml changed since you approved it. <button type="button" class="link-btn" onClick=${tab}>Review it</button></p>`
+        : ship.last ? html`<p class=${`rc-ship ${ship.last.ok ? 'tone-ok' : 'tone-bad'}`} data-testid="rc-ship"><${Icon} name=${ship.last.ok ? 'check' : 'alert'} size=${12} /> ${ship.last.ok ? `Passed ${plural(ship.last.results.filter((r) => !r.setup).length, 'check')}` : `Failed${ship.last.error ? `: ${ship.last.error}` : `: ${ship.last.results.filter((r) => !r.ok).map((r) => r.name).join(', ')}`}`} <span class="rc-when">${agoText(ship.last.at, now)}</span></p>
+          <button type="button" class="link-btn" onClick=${tab}>Run it again</button>`
+        : html`<p class="rc-note">Approved, not run yet. <button type="button" class="link-btn" onClick=${tab}>Run it</button></p>`}` : null}
+    <h3 class="rc-sub-h">Check-up</h3>
+    ${up ? html`<p class="rc-checkup" data-testid="rc-checkup">${up.judge_unreliable ? html`<span class="tone-amber-text">Judge unreliable: no score</span>` : up.score === null || up.score === undefined ? html`<span class="tone-amber-text">${up.capped ? 'Stopped at the cost cap' : 'No score'}</span>` : html`<strong>${Math.round(up.score * 100)}%</strong> of the cases passed`}
+        <span class="rc-when">${agoText(up.at, now)}</span>${Number.isFinite(up.cost_per_run) ? html` · ${usd(up.cost_per_run)} a run` : null}</p>
+      <button type="button" class="link-btn" onClick=${tab}>Open the check-up</button>`
+      : html`<p class="rc-note">No check-up yet. <button type="button" class="link-btn" onClick=${tab}>Give ${name} a check-up</button>: five questions drafted from its own instructions, run on your plan with a cost cap.</p>`}
   </${Block}>`;
 }
 
