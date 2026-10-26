@@ -860,7 +860,7 @@ export class Evals {
       // An agent folder kept inside its own repository has its committed evals/ (answers included)
       // in the worktree too: remove it from the scratch copy, never through a link.
       const rel = path.relative(realPathOf(await this.checks.repoTop(agent.repo)), realPathOf(agent.dir));
-      if (!rel.startsWith('..') && !path.isAbsolute(rel)) removeInside(wt, path.join(rel, 'evals'));
+      if (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel)) removeInside(wt, path.join(rel, 'evals'));
       cwd = path.join(wt, prefix);
       // Through real folders only: a link committed in place of apps/web would lead the run outside.
       if (!realPathInside(wt, cwd)) throw new Error(`${path.basename(agent.repo)} is not committed to git yet (or is a link in the commit), so the check-up's copy of the repo has no such folder`);

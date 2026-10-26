@@ -531,8 +531,41 @@ test('canonical runs: one command, the project\'s check or a standard runner, ha
 
 test('more than 200 commands after the last edit: the older ones could hold a failure, so no Verified from the session alone', () => {
   const head = [prompt('x'), edit()]; // timestamps come from the order of the calls
-  const noise = Array.from({ length: 205 }, (_, i) => bash(`git status ${i}`, 'clean'));
+  const noise = Array.from({ length: 205 }, (_, i) => bash(`node scripts/step${i}.js`, 'ok'));
   const [a] = claimsOf([...head, ...noise, bash('npm test'), say('Done.')]);
   assert.equal(a.cmds_dropped, true);
+  const head2 = [prompt('y'), edit()];
+  const looks = Array.from({ length: 205 }, (_, i) => bash(i % 2 ? `git status ${i}` : 'ls src', 'clean'));
+  const [b] = claimsOf([...head2, ...looks, bash('npm test'), say('Done.')]);
+  assert.equal(b.cmds_dropped, undefined, 'commands that only look are not kept');
+  assert.equal(b.cmds.length, 1);
   assert.equal(labelClaim(a).label, 'not_verified');
+});
+
+test('review 8: a canonical run\'s exit code decides; a ship run settles only the kinds it ran; -v is a version flag outside pytest/go; scope is identity', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npx eslint .', '/repo/a.js\n  3:1  warning  no-console\n\n✖ 2 problems (0 errors, 2 warnings)'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'verified', 'warnings: exit 0');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done.')]);
+  const at = new Date(Date.parse(b.at) + 60000).toISOString();
+  const lintOnly = { at, results: [{ name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: true }, { name: 'build', cmd: 'npm run build', kind: 'build', ok: true }] };
+  assert.equal(labelClaim(b, { shipRuns: [lintOnly] }).label, 'contradicted', 'a lint-and-build run does not settle a failed test');
+  const withTests = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: true }] };
+  assert.equal(labelClaim(b, { shipRuns: [withTests] }).label, 'verified');
+  for (const cmd of ['npx tsc -v', 'npx eslint -v', 'npx jest -v', 'npm test -v', 'make test -q', 'make test -i', 'go test', 'go test .']) assert.equal(canonical(cmd), null, cmd);
+  for (const cmd of ['pytest -v', 'go test -v ./...', 'cargo test --workspace']) assert.ok(canonical(cmd), cmd);
+  assert.notEqual(canonical('cd packages/api && npm test').id, canonical('cd ../web && npm test').id);
+  assert.notEqual(canonical('cargo test --workspace').id, canonical('cargo test').id);
+  const [c] = claimsOf([prompt('x'), edit(), bash('cd packages/api && npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), bash('cd ../web && npm test'), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'contradicted', 'another package passing does not settle it');
+});
+
+test('review 8: wrappers are seen through; a failure whose owner cannot be told counts against every claim', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('timeout 600 npm test', 'Exit code 1\nFAIL src/cart.test.js', true), bash('npm run lint', 'All checks passed'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'contradicted', 'timeout is seen through: it is a plain run of the tests');
+  const [a2] = claimsOf([prompt('x'), edit(), bash('./scripts/ci.sh', 'Exit code 1\nFAIL src/cart.test.js', true), bash('npm run lint', 'All checks passed'), say('Done.')]);
+  assert.equal(labelClaim(a2).label, 'not_verified', 'an unknown script that failed with a runner\'s marks');
+  assert.match(badgeText(labelClaim(a2)), /cannot tie/);
+  for (const cmd of ['timeout 600 npm test', 'cross-env CI=1 npm test', 'xvfb-run npm test', 'dotenv -- npm test', 'npm exec -- jest']) assert.ok(checkOf(cmd), cmd);
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm run build && npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done. All tests pass.')]);
+  assert.equal(labelClaim(b).label, 'not_verified', 'the failure may be the tests\'');
 });

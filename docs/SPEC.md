@@ -490,7 +490,8 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   that writes files (an output redirection to a file, `sed -i`, `mv`, `cp`, `rm`, `tee`, a formatter
   with `--write` or `--fix`, `git apply`/`checkout`/`restore`/`merge`, a package install: the 1.6
   real run saw an agent add a line with `printf >> README.md`); how many there were, and the shell
-  commands (Bash, PowerShell) that finished between that edit and the claim (up to 30), each with
+  commands (Bash, PowerShell) that finished between that edit and the claim (the newest 200 that
+  can matter, not a passing `ls` or `git status`; `cmds_dropped` when there were more), each with
   what its result said: exit code (`Exit code N`), the first error line, and pass/fail marks from
   the output's end. Declined, hook-blocked and background calls are left out. No output is kept.
 - **Labels** (`labelClaim`, at read time, so approvals and ship checks made later count):
