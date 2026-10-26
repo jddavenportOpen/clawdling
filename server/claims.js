@@ -718,7 +718,7 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
     let ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later, k.behind);
     if (ok === true && k.partial) ok = null;
     if (ok === null) continue;
-    checks.push({ kind: k.kind, id: k.id, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
+    checks.push({ kind: k.kind, id: k.id, partial: k.partial, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
   }
   for (const r of Array.isArray(shipRuns) ? shipRuns : []) {
     const t = Date.parse(r.at || r.started_at || '');
@@ -735,22 +735,23 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   };
   const needs = c.kind === 'tests' && Array.isArray(c.needs) && c.needs.length ? c.needs : null;
   const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: x.first_error_line || null, ...(x.ship ? { ship: true } : {}) } : null);
-  // A failure stands unless the same check (the same command, whatever extra flags) passed after it:
-  // a lint that passed never cancels a failed typecheck, nor a later ship-check step a failed one.
-  const lasts = (pred) => [...new Set(checks.filter(pred).map((x) => x.id))].map((id) => latest((x) => x.id === id && pred(x)));
-  const failedOf = (list) => list.filter((x) => !x.ok).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).pop();
+  // A failure stands unless the same check passed after it: the same command (whatever extra flags),
+  // or the whole suite it was a part of (`npm test` after a failed `npm test tests/a.test.js`). A lint
+  // that passed never cancels a failed typecheck, nor a later ship-check step a failed one.
+  const covers = (p, f) => p.id === f.id || (!p.partial && f.id.startsWith(`${p.id} `));
+  const standing = (pred) => checks.filter((f, i) => pred(f) && !f.ok && !checks.some((p, j) => j > i && p.ok && covers(p, f)));
+  const lastOf = (list) => (list.length ? list[list.length - 1] : null);
   if (!needs) {
-    const all = lasts(() => true);
-    if (!all.length) return { label: 'not_verified', check: null };
-    const bad = failedOf(all);
+    const l = latest(() => true);
+    if (!l) return { label: 'not_verified', check: null };
+    const bad = lastOf(standing(() => true));
     if (bad) return { label: 'contradicted', check: strip(bad) };
-    return { label: 'verified', check: strip(latest(() => true)) };
+    return { label: 'verified', check: strip(l) };
   }
-  // A tests claim names what passed: each one needs a check of that kind, every one of them passing.
-  const per = needs.map((n) => lasts((x) => x.kind === n));
-  const bad = failedOf(per.flat());
+  // A tests claim names what passed: each one needs a check of that kind, and no failure standing.
+  const bad = lastOf(standing((x) => needs.includes(x.kind)));
   if (bad) return { label: 'contradicted', check: strip(bad) };
-  if (per.every((list) => list.length)) return { label: 'verified', check: strip(latest((x) => needs.includes(x.kind))) };
+  if (needs.every((n) => checks.some((x) => x.kind === n && x.ok))) return { label: 'verified', check: strip(latest((x) => needs.includes(x.kind))) };
   return { label: 'not_verified', check: null };
 }
 

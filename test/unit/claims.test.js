@@ -508,3 +508,10 @@ test('review 6: an older failure is kept even after 30 other commands', () => {
   const [a] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), ...noise, bash('npm run lint', 'All checks passed'), say('Done.')]);
   assert.equal(labelClaim(a).label, 'contradicted');
 });
+
+test('a whole-suite pass covers an earlier failure of part of it', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npx jest src/cart.test.js', 'Exit code 1\nFAIL src/cart.test.js', true), bash('npx jest', 'Tests: 12 passed, 12 total'), say('Done. All tests pass.')]);
+  assert.equal(labelClaim(a).label, 'verified');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npx jest', 'Exit code 1\nFAIL src/cart.test.js\nTests: 1 failed, 11 passed', true), bash('npx jest src/cart.test.js', 'Tests: 3 passed, 3 total'), say('Done. All tests pass.')]);
+  assert.equal(labelClaim(b).label, 'contradicted', 'a part passing never covers the whole suite failing');
+});
