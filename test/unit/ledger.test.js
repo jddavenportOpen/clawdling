@@ -351,3 +351,20 @@ test("/resume of another session inside a pane: that transcript is counted under
   assert.notEqual(rep.summary(ra).cost.usd, 1, 'not counted twice');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('two sessions holding one conversation id: its cost is counted once, under the most recent', () => {
+  const root = tmp();
+  const proj = path.join(root, 'projects', '-x');
+  fs.mkdirSync(proj, { recursive: true });
+  const x = '99999999-9999-4999-8999-99999999999a';
+  const fx = path.join(proj, `${x}.jsonl`);
+  fs.writeFileSync(fx, `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: 'r', message: { id: 'm', model: 'claude-sonnet-5', usage: { input_tokens: 5e5 }, content: [{ type: 'text', text: 'x' }] } })}\n`);
+  const a = { sid: '99999999-9999-4999-8999-99999999999b', agent: 'demo', status: 'ended', created_at: '2026-10-20T00:00:00.000Z', last_activity_at: '2026-10-20T01:00:00.000Z', claude_session_id: x };
+  const b = { sid: '99999999-9999-4999-8999-99999999999c', agent: 'demo', status: 'ready', created_at: '2026-10-21T00:00:00.000Z', last_activity_at: '2026-10-21T01:00:00.000Z', claude_session_id: x };
+  const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[a.sid, a], [b.sid, b]]), transcriptFile: () => fx } });
+  const all = rep.summaries();
+  const total = all.reduce((n, s) => n + (Number.isFinite(s.cost?.usd) ? s.cost.usd : 0), 0);
+  assert.equal(total, 1, 'once');
+  assert.equal(all.find((s) => s.sid === b.sid).cost.usd, 1, 'under the most recently active');
+  fs.rmSync(root, { recursive: true, force: true });
+});

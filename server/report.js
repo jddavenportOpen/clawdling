@@ -256,16 +256,31 @@ export class Reports {
    * changed (the main file or any subagent file) and kept as it was once the file is gone. The
    * session's figures are the parts added up.
    */
-  summary(rec, { force = false, lazy = false, also = null } = {}) {
+  /**
+   * Who owns each conversation id: the session whose own id it is, else the most recently active
+   * session holding it as its Claude Code id (after a /clear or a /resume). One owner each, so a
+   * transcript is never counted under two sessions.
+   */
+  owners() {
+    const map = new Map();
+    const recs = [...this.sessions.records.values()];
+    const sids = new Set(recs.map((r) => r.sid));
+    for (const r of recs) map.set(r.sid, r.sid);
+    for (const r of [...recs].sort((a, b) => String(a.last_activity_at || '').localeCompare(String(b.last_activity_at || '')))) {
+      const id = r.claude_session_id;
+      if (id && id !== r.sid && !sids.has(id)) map.set(id, r.sid);
+    }
+    return map;
+  }
+
+  summary(rec, { force = false, lazy = false, also = null, owners = null } = {}) {
     const prev = this.store.read(rec.sid);
-    // A transcript that is another Clawdling session's own (`/resume <it>` typed inside this pane)
-    // is counted under that session, never twice.
+    const own = owners || this.owners();
+    // A transcript whose conversation another Clawdling session owns (a `/resume <it>` typed inside
+    // this pane) is counted under that session only.
     const foreign = (f) => {
-      const id = path.basename(String(f), '.jsonl');
-      if (id === rec.sid) return false; // its own file
-      const others = [...this.sessions.records.values()].filter((r) => r.sid !== rec.sid);
-      if (others.some((r) => r.sid === id)) return true; // another session's own file
-      return rec.claude_session_id !== id && others.some((r) => r.claude_session_id === id);
+      const owner = own.get(path.basename(String(f), '.jsonl'));
+      return !!owner && owner !== rec.sid;
     };
     const mine = this.transcriptOf(rec);
     const file = mine && !foreign(mine) ? mine : null;
@@ -393,10 +408,11 @@ export class Reports {
   /** Summaries of every session (registry first, then receipts the registry has forgotten). */
   summaries({ agent } = {}) {
     const out = new Map();
+    const owners = this.owners(); // once per report
     for (const rec of this.sessions.records.values()) {
       if (agent && rec.agent !== agent) continue;
       if (rec.purpose === 'signin') continue; // a sign-in session is not work
-      out.set(rec.sid, this.summary(rec, { lazy: true }));
+      out.set(rec.sid, this.summary(rec, { lazy: true, owners }));
     }
     for (const r of this.store.list({ agent })) {
       if (!out.has(r.sid)) out.set(r.sid, { ...r, transcript: r.transcript_path && fs.existsSync(r.transcript_path) ? 'ok' : 'gone' });
@@ -607,7 +623,10 @@ export class Reports {
   timeline(sid, { after = -1, limit = 500, enrich = null, enrichStamp = null } = {}) {
     if (!isUuid(sid)) throw badRequest('invalid session id');
     const rec = this.sessions.require(sid);
-    const file = this.transcriptOf(rec);
+    const found = this.transcriptOf(rec);
+    const owner = found ? this.owners().get(path.basename(found, '.jsonl')) : null;
+    // Another session's conversation (resumed in this pane): shown under that session, like the card.
+    const file = found && (!owner || owner === rec.sid) ? found : null;
     if (!file) {
       const kept = this.store.read(sid);
       return { entries: [], next: after, more: false, total: 0, transcript: kept && rec.status === 'ended' ? 'gone' : 'missing', summary: kept ? { turns: kept.turns, tools: kept.tools, last_line: kept.last_line, cost: kept.cost } : null, status: rec.status };
