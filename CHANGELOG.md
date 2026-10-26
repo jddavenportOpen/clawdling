@@ -7,8 +7,8 @@
 - **The plan card shows the plan again** (issue #21). Claude Code 2.1.308 calls `ExitPlanMode` with
   an empty input and keeps the plan in its own plan file, `<config folder>/plans/<name>.md`, which it
   writes (and rewrites) just before. The card now reads the plan from there: the session's last write
-  to that file, read only inside that `plans` folder (a `.md` file whose real path is in it, never
-  through a link). The 2.1.283 shape, with the plan in the input, works as before. New contract
+  to that file, read only inside that `plans` folder (a `.md` file whose real path is in it; a link
+  that leads out of it is not followed). The 2.1.283 shape, with the plan in the input, works as before. New contract
   fixtures: a real 2.1.308 plan session (scrubbed) and the empty-input shape; the live check
   `test/live/questions-live.mjs` now also fails on an empty plan card.
 - **Donna answers "what got done today, and what needs me?" from the report card.** Her text-message

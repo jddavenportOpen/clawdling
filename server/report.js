@@ -453,7 +453,7 @@ export class Reports {
     return [...out.values()];
   }
 
-  async agentReport(agentId, { window = '7d' } = {}) {
+  async agentReport(agentId, { window = '7d', git: withGit = true } = {}) {
     const agent = this.org.require(agentId);
     const w = windowRange(window, this.now());
     const all = this.summaries({ agent: agentId });
@@ -465,7 +465,8 @@ export class Reports {
     // Repos: commits by time, one git log per repo for the window.
     const repos = [agent.repo, ...(Array.isArray(agent.repos) ? agent.repos : [])].filter((r, i, a) => typeof r === 'string' && r && a.indexOf(r) === i);
     const git = [];
-    for (const repo of repos.slice(0, 8)) git.push({ repo, ...(await gitCommits(repo, w.start, { exec: this.exec, env: this.env })) });
+    // Donna's "today so far" needs no commits: { git: false } skips git log.
+    for (const repo of withGit ? repos.slice(0, 8) : []) git.push({ repo, ...(await gitCommits(repo, w.start, { exec: this.exec, env: this.env })) });
     const pool = git.flatMap((g) => g.commits.map((c) => ({ ...c, repo: g.repo })));
     const used = new Set();
     const done = [];

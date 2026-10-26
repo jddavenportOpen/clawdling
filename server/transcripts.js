@@ -106,23 +106,30 @@ export function readPlanFile(configDir, file) {
  * plan: `state` is {path, text}; returns it updated for one record.
  */
 export function trackPlanFile(state, o, configDir) {
+  // 2.1.308 puts the plan's name on every line (`slug`): <config>/plans/<slug>.md.
+  if (o && typeof o.slug === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/.test(o.slug)) state = { ...(state || {}), slug: o.slug };
   if (!o || o.type !== 'assistant' || o.isSidechain || !Array.isArray(o.message?.content)) return state;
   for (const b of o.message.content) {
     if (b?.type !== 'tool_use' || !b.input || typeof b.input !== 'object') continue;
     const f = b.input.file_path;
-    if (typeof f !== 'string' || !PLAN_FILE_RE.test(f)) continue;
-    if (b.name === 'Write' && typeof b.input.content === 'string') state = { path: f, text: b.input.content };
+    // Only Claude Code's own plans folder for this transcript (never a repo's docs/plans/x.md).
+    if (typeof f !== 'string' || !PLAN_FILE_RE.test(f) || !configDir || path.resolve(path.dirname(f)) !== path.resolve(configDir, 'plans')) continue;
+    if (b.name === 'Write' && typeof b.input.content === 'string') state = { ...(state || {}), path: f, text: b.input.content };
     else if (b.name === 'Edit' || b.name === 'MultiEdit') {
-      // The edit's result is on disk: read the file (inside the plans folder only).
+      // The edit's result is on disk: read the file (inside the plans folder only), at this line.
       const text = readPlanFile(configDir, f);
-      state = { path: f, text: text ?? (state && state.path === f ? state.text : null) };
+      state = { ...(state || {}), path: f, text: text ?? (state && state.path === f ? state.text : null) };
     }
   }
   return state;
 }
 
-/** A plan card's text: the input's plan, else the plan file the transcript last wrote. */
-export function planText(input, state, configDir) {
+/**
+ * A plan card's text: the input's plan, else the plan file the transcript last wrote. `live` (the
+ * hook, as the plan is shown): the file as it is now; otherwise (reading a transcript, perhaps much
+ * later) the text the file had at that line, so an old card never shows a newer plan.
+ */
+export function planText(input, state, configDir, { live = false } = {}) {
   const own = input && typeof input.plan === 'string' ? input.plan : '';
   if (own.trim()) return own;
   // A plan-file path in the input (a possible future shape) is read the same confined way.
@@ -131,9 +138,14 @@ export function planText(input, state, configDir) {
     if (t && t.trim()) return t;
   }
   if (state && state.path) {
-    const disk = readPlanFile(configDir, state.path);
+    const disk = live ? readPlanFile(configDir, state.path) : null;
     if (disk && disk.trim()) return disk;
     if (state.text && state.text.trim()) return state.text;
+  }
+  // The hook can arrive before the Write is in the transcript: the file its slug names.
+  if (state && state.slug && configDir) {
+    const t = readPlanFile(configDir, path.join(configDir, 'plans', `${state.slug}.md`));
+    if (t && t.trim()) return t;
   }
   return '';
 }
@@ -281,7 +293,7 @@ export class TranscriptReader {
   planFor(file, input = {}) {
     this.read(file);
     const c = this.cache.get(file);
-    return clipText(planText(input, c ? c.plan : null, configDirOfTranscript(file)), ASK_LIMITS.plan);
+    return clipText(planText(input, c ? c.plan : null, configDirOfTranscript(file), { live: true }), ASK_LIMITS.plan);
   }
 
   /** A tool_result answering a question or plan seen earlier in the file: an `answer` chat entry. */

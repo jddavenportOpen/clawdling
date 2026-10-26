@@ -435,7 +435,9 @@ agents is your call. Her replies go to your phone like any other reply.
 hook spool, launcher scripts (include first prompts), generated context files, `notify.json`,
 and since 1.5 `ledger/` (session summaries), `digest.json`, `otel.json` and `traces/` (see above).
 Transcripts are Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view,
-question cards and Watching, and never writes them. For Watching it also reads Claude Code's
+question cards and Watching, and never writes them. For a plan card (since 1.5.1) it also reads
+Claude Code's plan file, `<config folder>/plans/<name>.md`, the one the session wrote: only a `.md`
+file whose real path is in that `plans` folder. For Watching it also reads Claude Code's
 per-process records, `~/.claude/sessions/<pid>.json`: only files with that name, only five fields
 (`sessionId`, `startedAt`, `status`, `statusUpdatedAt`, `version`); never anything else in that
 folder. Hooks: besides the lifecycle events, PreToolUse and PostToolUse are registered for

@@ -44,6 +44,13 @@ async function session(title) {
 const send = (sid, text) => request(srv, 'POST', `/api/sessions/${sid}/send`, { text });
 const answer = (sid, body) => request(srv, 'POST', `/api/sessions/${sid}/answer`, body);
 
+function findJsonl(dir) {
+  const out = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name); if (e.isDirectory()) walk(p); else if (p.endsWith('.jsonl')) out.push(p); } };
+  walk(path.join(dir, 'projects'));
+  return out;
+}
+
 test('a question: the card has it (question, options, descriptions) and answering picks the option', async () => {
   const s = await session('question');
   await send(s.sid, 'ask? pick one');
@@ -131,6 +138,10 @@ test('Claude Code 2.1.308 (issue #21): an empty ExitPlanMode still shows the pla
   await until(s.sid, (x) => x.status === 'ready', 'turn done');
   const t = (await messages(s.sid)).flatMap((m) => m.tools || []).find((x) => x.name === 'ExitPlanMode');
   assert.match(t.ask.plan, /Write hi into it/, 'the chat card (from the transcript) shows it too');
+  // It really was the 2.1.308 shape: the ExitPlanMode in the transcript has an empty input.
+  const lines = findJsonl(path.join(home, 'claude-config')).flatMap((f) => fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+  const exit = lines.flatMap((o) => o.message?.content || []).filter((b) => b?.name === 'ExitPlanMode').pop();
+  assert.deepEqual(exit.input, {});
 });
 
 test('a plan sent back, then a tool permission in the same turn: no card for it, and the plan card cannot press it', async () => {

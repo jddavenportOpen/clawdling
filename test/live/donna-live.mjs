@@ -25,6 +25,11 @@ if ((process.env.CLAWDLING_CLAUDE_BIN || '').includes('fake-claude') || process.
   process.exit(2);
 }
 
+// Its checks read this run's Claude Code transcripts under ~/.claude: never with a real HOME.
+if (![os.tmpdir(), '/tmp/', '/private/tmp/'].some((d) => os.homedir().startsWith(d))) {
+  console.error('[donna] refusing: run me with a throwaway HOME (I read ~/.claude/projects)');
+  process.exit(2);
+}
 const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-donna-')));
 const repo = path.join(home, 'code', 'garden-notes');
 const socket = `clawdling-donna-${process.pid}`;
@@ -107,7 +112,9 @@ async function main() {
   const projects = path.join(os.homedir(), '.claude', 'projects');
   let denied = 0;
   let ranReport = false;
-  for (const d of fs.existsSync(projects) ? fs.readdirSync(projects).filter((x) => /donna$/.test(x)) : []) {
+  // Only this run's Donna folder (Claude Code names it after her working folder).
+  const mine = fs.realpathSync(path.join(env.CLAWDLING_HOME, 'donna')).replace(/[^a-zA-Z0-9]/g, '-');
+  for (const d of fs.existsSync(projects) ? fs.readdirSync(projects).filter((x) => x === mine) : []) {
     for (const f of fs.readdirSync(path.join(projects, d)).filter((x) => x.endsWith('.jsonl'))) {
       for (const line of fs.readFileSync(path.join(projects, d, f), 'utf8').split('\n')) {
         if (!line.trim()) continue;

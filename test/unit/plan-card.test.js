@@ -54,7 +54,9 @@ test('a plan file is read only inside <config>/plans, as a .md file, never throu
   const outside = path.join(config, 'secret.md');
   fs.writeFileSync(outside, 'not a plan');
   assert.equal(readPlanFile(config, outside), null, 'outside the plans folder');
-  assert.equal(readPlanFile(config, path.join(config, 'plans', '..', 'secret.md')), null, 'dot-dot out of it');
+  fs.mkdirSync(path.join(config, 'elsewhere', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(config, 'elsewhere', 'plans', 'x.md'), 'not this one');
+  assert.equal(readPlanFile(config, `${path.join(config, 'plans')}${path.sep}..${path.sep}elsewhere${path.sep}plans${path.sep}x.md`), null, 'dot-dot out of it, past the name check');
   assert.equal(readPlanFile(config, path.join(config, 'plans', 'x.txt')), null, 'not .md');
   try {
     fs.symlinkSync(outside, path.join(config, 'plans', 'link.md'));
@@ -66,7 +68,7 @@ test('a plan file is read only inside <config>/plans, as a .md file, never throu
   fs.rmSync(config, { recursive: true, force: true });
 });
 
-test('a Write to a plans folder elsewhere is never read from disk (only its own content is used)', () => {
+test('a Write to a plans folder elsewhere (a repo\'s docs/plans) is never the plan', () => {
   const { config, transcript } = install();
   const other = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-plan-other-'));
   fs.mkdirSync(path.join(other, 'plans'));
@@ -77,7 +79,7 @@ test('a Write to a plans folder elsewhere is never read from disk (only its own 
   fs.writeFileSync(transcript, moved.map((o) => JSON.stringify(o)).join('\n') + '\n');
   const t = planEntry(new TranscriptReader().read(transcript));
   assert.ok(!/FROM DISK ELSEWHERE/.test(t.ask.plan), 'never read outside this config folder');
-  assert.match(t.ask.plan, /Write `hello\.txt`/, 'the Write content from the transcript itself');
+  assert.equal(t.ask.plan, '', 'and its written text is not taken for the plan either');
   fs.rmSync(config, { recursive: true, force: true });
   fs.rmSync(other, { recursive: true, force: true });
 });
@@ -99,5 +101,25 @@ test('real 2.1.308 records with the input emptied (what the hook sends): the pla
   const plans = new TranscriptReader().read(transcript).flatMap((e) => e.tools || []).filter((t) => t.ask && t.ask.kind === 'plan');
   assert.ok(plans.length === 2 && plans.every((t) => /^# Plan: create hello\.txt/.test(t.ask.plan)));
   assert.match(new TranscriptReader().planFor(transcript, {}), /Print the file's contents/);
+  fs.rmSync(config, { recursive: true, force: true });
+});
+
+test('the hook before the Write reaches the transcript: the plan file named by the line\'s slug', () => {
+  const { config, transcript } = install();
+  // Only the prompt line so far, carrying the slug, as 2.1.308 writes it.
+  fs.writeFileSync(transcript, `${JSON.stringify({ type: 'user', slug: 'zesty-hopping-hartmanis', timestamp: '2026-10-26T13:00:00.000Z', message: { role: 'user', content: 'plan it' } })}\n`);
+  assert.match(new TranscriptReader().planFor(transcript, {}), /^# Create hello\.txt/);
+  fs.rmSync(config, { recursive: true, force: true });
+});
+
+test('an old card keeps its own plan: a re-read never shows a newer plan on an earlier card', () => {
+  const { config, transcript } = install();
+  const P = path.join(config, 'plans', 'zesty-hopping-hartmanis.md');
+  const w = (id, content) => ({ type: 'assistant', message: { role: 'assistant', model: 'm', content: [{ type: 'tool_use', id, name: 'Write', input: { file_path: P, content } }] } });
+  const x = (id) => ({ type: 'assistant', message: { role: 'assistant', model: 'm', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input: {} }] } });
+  fs.writeFileSync(transcript, [w('t1', '# Plan one'), x('t2'), w('t3', '# Plan two'), x('t4')].map((o) => JSON.stringify(o)).join('\n') + '\n');
+  fs.writeFileSync(P, '# Plan two');
+  const plans = new TranscriptReader().read(transcript).flatMap((e) => e.tools || []).filter((t) => t.ask && t.ask.kind === 'plan').map((t) => t.ask.plan);
+  assert.deepEqual(plans, ['# Plan one', '# Plan two']);
   fs.rmSync(config, { recursive: true, force: true });
 });
