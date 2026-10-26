@@ -120,7 +120,7 @@ test('phone card at 390: loopback shows the fix, not a QR that cannot work (P0-2
 test.describe('report card on a 375 px phone', () => {
   test.use({ viewport: { width: 375, height: 812 } });
 
-  test('US-60: the Overview fits 375 px, with all four blocks and 44 px window buttons', async ({ page }) => {
+  test('US-65: the Overview fits 375 px, with all four blocks and 44 px window buttons', async ({ page }) => {
     await reset(isMock() ? 'report' : 'empty');
     const id = isMock() ? 'site' : 'work';
     await login(page, `#/agent/${id}`);

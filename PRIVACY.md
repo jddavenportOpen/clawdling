@@ -7,7 +7,7 @@ Clawdling server and cockpit (this repository) and the Clawdling iPhone app.
 
 ## What we collect
 
-Nothing. Clawdling has no accounts, no analytics, no telemetry, no advertising identifiers and
+Nothing. Clawdling has no accounts, no analytics, no telemetry of its own, no advertising identifiers and
 no servers of its own. The author never receives any of your data.
 
 ## Where your data lives
@@ -39,6 +39,14 @@ no servers of its own. The author never receives any of your data.
   To check an address it runs `tailscale serve status --json` and makes signed-out requests to your own
   address; for Cloudflare it fetches your Access team's public signing keys. Nothing goes to the
   author.
+- **The report card** (1.5) is worked out on your computer from Claude Code's own transcripts,
+  your repos' `git log` and your agents' memory; it calls no model and sends nothing anywhere. It
+  keeps a small summary per session in `.clawdling/ledger/` (counts, times, the cost and the
+  agent's last line, never your prompts), for 180 days. The **Monday report** (off by default)
+  sends your paired chat counts, agent names and dollar figures, never a session title or a prompt.
+  The **detailed timeline** (beta, off by default) has Claude Code send its own telemetry to
+  Clawdling on `127.0.0.1` only; Clawdling drops your account identifiers and any prompt or
+  response field from it and keeps the rest on your computer for 14 days.
 - **Telegram or iMessage** (optional, only if you turn on Donna's text channel): messages pass
   through Telegram's or Apple's own services under their terms. Clawdling answers only the one
   chat you pair it with. If you also turn on "Message me when an agent needs me" (off by default),

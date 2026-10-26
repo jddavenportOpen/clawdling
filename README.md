@@ -20,6 +20,36 @@ limits, and your machine, are the limit.
 <!-- Hero: docs/img/demo.gif (keep this path; swap the file for a newer demo GIF any time). -->
 ![Clawdling: the org map and the cockpit, with live sessions and what needs you](docs/img/demo.gif)
 
+## The report card
+
+**Every project gets a report card: what got done, what it cost, what needs you. In plain words,
+on your own machine.** Open any agent and its Overview answers four questions, for the last day,
+7 days or 30 days, from your phone too:
+
+![An agent's report card: Done, Needs you, Cost and Next](docs/img/report-card.png)
+
+- **Done.** Each session that did some work, with the agent's own closing words, how many files
+  it changed and the commits it made in the project's repo. No AI summary on top: just what the
+  agent said and what git recorded.
+- **Needs you.** Every question, permission, failed turn and finished turn waiting on your reply,
+  the same ones the rail counts. One tap opens that session.
+- **Cost.** Usage as a list-price equivalent, by day, by model, and the top sessions. It is not
+  a bill: on Pro and Max your usage is included in your plan. Clawdling prefers Claude Code's own
+  number, and never calls a model to work it out.
+- **Next.** What the agent wrote it will do next, from its `memory/NOW.md`, and how fresh that is.
+
+Every session also gets a **Timeline** tab beside Chat and Raw: each prompt, each tool call with
+how long it took and whether it worked, subagents under the call that started them, and what each
+turn used. The org map shows each agent's last 7 days and when it last finished work. `clawdling
+report [agent] --json` prints the same card for scripts. Optional, and off until you turn them on:
+a **Monday report** to the Telegram or iMessage chat you paired with Donna (counts, agent names and
+dollar figures only), and a **detailed timeline** (beta) that also shows who approved each tool,
+from Claude Code's own telemetry, sent only to Clawdling on `127.0.0.1`.
+
+Everything comes from files already on your computer: Claude Code's own session transcripts, your
+repo's `git log` and the agent's memory. When Claude Code cleans up an old transcript, Clawdling
+keeps a small summary, so the card stays honest ("transcript gone, kept summary only").
+
 ## What you need
 
 - **A Mac, Windows PC or Linux computer.** Clawdling runs on your computer, not on a phone or in a
@@ -256,6 +286,7 @@ clawdling server (Node, 127.0.0.1:4747, token-protected)
     in tmux, or in a pseudo-terminal of its own (node-pty) where there is no tmux
   • streams sessions to the browser (tmux control mode, or a server-side screen model)
   • learns status from Claude Code hooks: working, needs you, your turn, ended
+  • reads Claude Code's own transcripts for the chat view, the Timeline and the report card
   • Donna's gateway: Telegram long-poll or iMessage, routes requests to agents
         │
         ▼
@@ -295,6 +326,12 @@ and use its Code tab, as in [Start here](docs/START-HERE.md).
 **Is it unlimited?** Clawdling adds no caps and no fees. Every session uses your Claude plan,
 so your plan's usage limits are the real limit. Run as many agents as your plan and your
 machine allow.
+
+**Is the report card's dollar figure what I pay?** No. It is what the same usage would cost at
+Anthropic's list prices, worked out on your computer from Claude Code's own transcripts (Claude
+Code's own number when it wrote one). On Pro and Max your usage is included in your plan; the
+figure helps you compare projects and spot a runaway session. For one session's live numbers,
+type `/usage` in Claude Code.
 
 **Where does my data go?** Nowhere. The cockpit binds to 127.0.0.1 and requires a local token.
 Your org is files in `~/clawdling`.

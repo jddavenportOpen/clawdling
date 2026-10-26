@@ -20,7 +20,8 @@ server can type into those sessions, so the server is built to be reachable only
   it wraps, and only an unrecognised `.cmd` goes through `cmd.exe /d /s /c` with every argument
   caret-escaped (no variable expansion, no `&`, `|` or redirection). Donna's replies to iMessage are
   an argv item of `osascript`, never part of the AppleScript source.
-- No telemetry, no cloud service, no database server.
+- No telemetry of its own, no cloud service, no database server. (The opt-in detailed timeline,
+  below, receives Claude Code's own telemetry, on `127.0.0.1` only, and keeps it on your computer.)
 
 ## Who can reach the server
 
@@ -267,6 +268,73 @@ turned off).
 - The browser notification (also off until turned on) uses the same fixed words and approved
   names, so a lock screen never shows what was asked.
 
+## The report card (1.5)
+
+- **Read-only, local, no model call.** The report card and the Timeline are built from Claude Code's
+  own transcripts (the session file and its `subagents/` files under `projects/`), the session
+  registry, the agent's `memory/NOW.md` and `git log`. Nothing is summarized by a model and nothing
+  leaves the computer. The cost is a list-price equivalent: Claude Code's own `cost-state` number
+  when it is current, else the de-duplicated usage repriced with `server/prices.json`, which is
+  bundled and dated (CI fails when it is more than 120 days old) and never fetched at runtime.
+- **`git log` only, hardened.** One `git log --since=<window> --format=%H%x1f%s%x1f%aI -n 200` per
+  repo of the agent (paths from OrgStore), arguments as an array through `execFile` (no shell), a
+  5-second timeout, and `-c log.showSignature=false -c core.fsmonitor=false -c core.pager=cat`,
+  `--no-show-signature`, `GIT_OPTIONAL_LOCKS=0`: a repo's own config cannot make it start a
+  signature checker, a pager or an fsmonitor. No diffs are read. Domain agents (no repo) run nothing.
+- **Receipts.** `.clawdling/ledger/<sid>.json` (mode 600) keeps one small summary per session so the
+  card stays honest after Claude Code deletes old transcripts: title, agent, times, counts of turns,
+  tools, errors and files changed, the cost and its split by model and day, the agent's last line
+  (160 characters) and the transcript path. No prompt, no file content, no file paths changed. 180
+  days, 20 MB at most, oldest first.
+- **API**: `GET /api/agents/:id/report`, `GET /api/org/report`, `GET /api/sessions/:sid/timeline`,
+  with the same token, Host and remote-device rules as every route. `clawdling report` (read-only)
+  is on the agents' allow-list, so the 1.7 CTO seat can read it.
+
+## The Monday report (1.5)
+
+- **Off by default**, turned on in Settings, which shows the exact text first. `POST /api/digest`
+  takes `{enabled, day, hour}` only. Once per ISO week (counted before sending, so a failed send is
+  not retried in a loop), at the chosen day and hour, or at the next start that week.
+- **Counts, names and dollars only**: per agent, how many sessions got work done, how many need
+  the owner and the usage over 7 days, plus the most and least used agents. **No session titles**
+  (they are made from first prompts), no prompts, no file names. Agent names are the ones shown when
+  it was turned on, cleaned like the needs-you ping's (an agent that renames itself, or a new one,
+  reads "Another agent").
+- **Same sender and rules as the needs-you ping**: only the Telegram chat that sent the pairing
+  code or the proven iMessage handle (server-only state in `.clawdling/`), never decided by
+  org.json; refused where agents cannot be kept out of `.clawdling/`. State: `.clawdling/digest.json`.
+
+## The detailed timeline: `/otlp` (1.5, beta)
+
+- **Off by default.** `POST /api/otel {enabled}` works only from the computer itself (refused
+  through Use from anywhere). Turning it on writes OpenTelemetry settings into Clawdling's own
+  `--settings` file (`.clawdling/hooks-settings.json`), never into your Claude Code settings; turning
+  it off removes them. Sessions pick the change up at their next start. The remote-access setup chat
+  never gets them.
+- **Never where you already have telemetry settings.** A preflight reads key **names** only, never
+  values, from: Clawdling's own launch environment, your Claude Code `settings.json` (and each extra
+  login's), the `.claude/settings.json` and `settings.local.json` of the org folder and of every
+  agent's repo (a `--settings` env block would override those too), and the managed settings for
+  your OS (with their `managed-settings.d/` folder; on macOS, a device-management profile for
+  Claude Code keeps it off too). Any of `CLAUDE_CODE_ENABLE_TELEMETRY`, `OTEL_*`, `DISABLE_TELEMETRY`,
+  `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA` or `otelHeadersHelper` keeps it off, so it never redirects
+  your organization's telemetry or turns on what you turned off. Not checked: Windows registry
+  policies (Clawdling does not read the registry).
+- **The ingest** (`POST /otlp/v1/logs|metrics|traces` on the same server): loopback peer and
+  loopback `Host` only; refused through every remote address (Tailscale, Cloudflare, paired
+  devices), through a proxy, with a browser `Origin`, and while the switch is off. It needs the
+  `x-clawdling-otlp` secret (32 random bytes made when you turn it on, compared in constant time,
+  forgotten when you turn it off; kept in `.clawdling/otel.json`, mode 600). JSON only, 1 MB, at
+  most 50 requests a second. Records are kept only for sessions Clawdling started.
+- **What is kept**: `.clawdling/traces/<sid>.jsonl` (mode 600), 14 days, 50 MB in all. The content
+  gates (`OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_TOOL_CONTENT`) stay unset, so
+  Claude Code sends prompts and responses as "<REDACTED>"; Clawdling drops those attributes anyway,
+  with `user.id`, `user.email`, `user.account_uuid`, `organization.id` and any `*.prompt`,
+  `*.content` or `*.response`.
+- **Known limit**: the secret is in the environment of the sessions started while it is on, so a
+  command an agent runs can read it and post made-up telemetry to `/otlp`. That can only change what
+  your own Timeline shows for that session (a wrong "approved by" label); it reaches nothing else.
+
 ## Agents
 
 Agent sessions are ordinary interactive Claude Code sessions: Claude Code's permission system
@@ -340,7 +408,8 @@ agents is your call. Her replies go to your phone like any other reply.
 
 `.clawdling/` is mode 700: token, session registry, events log (includes Donna's message text),
 `remote.json` and `remote-devices.json` (hashes only),
-hook spool, launcher scripts (include first prompts), generated context files, `notify.json`.
+hook spool, launcher scripts (include first prompts), generated context files, `notify.json`,
+and since 1.5 `ledger/` (session summaries), `digest.json`, `otel.json` and `traces/` (see above).
 Transcripts are Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view,
 question cards and Watching, and never writes them. For Watching it also reads Claude Code's
 per-process records, `~/.claude/sessions/<pid>.json`: only files with that name, only five fields

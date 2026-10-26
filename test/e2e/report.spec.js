@@ -13,7 +13,7 @@ async function freshDomain(name) {
 }
 
 test.describe('report card: the Overview tab', () => {
-  test('US-60: Overview is the default tab, with four blocks and an empty state in each', async ({ page }) => {
+  test('US-65: Overview is the default tab, with four blocks and an empty state in each', async ({ page }) => {
     await reset('empty');
     const id = await freshDomain('Garden');
     await login(page, `#/agent/${id}`);
@@ -34,7 +34,7 @@ test.describe('report card: the Overview tab', () => {
     await expect(page).toHaveURL(new RegExp(`#/agent/${id}$`));
   });
 
-  test('US-62: Needs you lists exactly the rail\'s needs-you sessions for this agent, and each opens its session', async ({ page }) => {
+  test('US-67: Needs you lists exactly the rail\'s needs-you sessions for this agent, and each opens its session', async ({ page }) => {
     await reset('empty');
     const t = tag();
     const asked = await spawn({ agent: 'work', title: `Draft the Q4 roadmap${t}`, status: 'needs_you', notification: 'Claude needs your permission to use Bash' });
@@ -52,7 +52,7 @@ test.describe('report card: the Overview tab', () => {
     await expect(pane(page, asked)).toHaveAttribute('data-focused', 'true');
   });
 
-  test('US-61, US-63, US-64: Done with commits, Cost by day and model with its label, Next from NOW.md (mock)', async ({ page }) => {
+  test('US-66, US-68, US-69: Done with commits, Cost by day and model with its label, Next from NOW.md (mock)', async ({ page }) => {
     test.skip(!isMock(), 'uses the mock "report" fixture');
     await reset('report');
     await login(page, '#/agent/site');
@@ -92,7 +92,7 @@ test.describe('report card: the Overview tab', () => {
     expect(text).not.toMatch(/\b(spend|spent|charged)\b/i);
   });
 
-  test('US-64: a NOW.md over 7 days old says so (mock)', async ({ page }) => {
+  test('US-69: a NOW.md over 7 days old says so (mock)', async ({ page }) => {
     test.skip(!isMock(), 'uses the mock fixture ages');
     await reset('report');
     await login(page, '#/agent/work');
@@ -111,7 +111,7 @@ test.describe('report card: the Overview tab', () => {
 });
 
 test.describe('report card: the session Timeline tab', () => {
-  test('US-65: an ended session\'s Timeline shows prompts, tools with results and durations, and turn costs', async ({ page }) => {
+  test('US-70: an ended session\'s Timeline shows prompts, tools with results and durations, and turn costs', async ({ page }) => {
     await reset('empty');
     const t = tag();
     const sid = await spawn({ agent: 'home', title: `Fix the leaking tap${t}`, status: 'working', prompt: 'please do some work? now' });
@@ -139,7 +139,7 @@ test.describe('report card: the session Timeline tab', () => {
     await expect(pane(page, sid)).toHaveAttribute('data-view', 'timeline');
   });
 
-  test('US-65: a 2,000-turn Timeline renders its first page in under a second (mock)', async ({ page }) => {
+  test('US-70: a 2,000-turn Timeline renders its first page in under a second (mock)', async ({ page }) => {
     test.skip(!isMock(), 'uses the mock "report" fixture');
     await reset('report');
     const all = await sessions();
@@ -157,7 +157,7 @@ test.describe('report card: the session Timeline tab', () => {
     await expect(tl.locator('.tl-row')).toHaveCount(1000);
   });
 
-  test('US-69: a session whose transcript Claude Code deleted says so and keeps its summary (mock)', async ({ page }) => {
+  test('US-74: a session whose transcript Claude Code deleted says so and keeps its summary (mock)', async ({ page }) => {
     test.skip(!isMock(), 'uses the mock "report" fixture');
     await reset('report');
     const gone = (await sessions()).find((s) => s.title === 'Write the launch checklist');
@@ -168,7 +168,7 @@ test.describe('report card: the session Timeline tab', () => {
     await expect(pane(page, gone.sid).getByTestId('timeline-gone')).toContainText('6 turns');
   });
 
-  test('US-68: with the detailed timeline on, tools say who approved them and turns show their API time (mock)', async ({ page }) => {
+  test('US-73: with the detailed timeline on, tools say who approved them and turns show their API time (mock)', async ({ page }) => {
     test.skip(!isMock(), 'uses the mock "report" fixture');
     await reset('report');
     await api('POST', '/api/otel', { enabled: true });
@@ -183,7 +183,7 @@ test.describe('report card: the session Timeline tab', () => {
 });
 
 test.describe('report card: org map and Settings', () => {
-  test('US-66: the org map shows each agent\'s 7-day usage and last-done age, and the org totals (mock)', async ({ page }) => {
+  test('US-71: the org map shows each agent\'s 7-day usage and last-done age, and the org totals (mock)', async ({ page }) => {
     test.skip(!isMock(), 'uses the mock "report" fixture');
     await reset('report');
     await login(page, '#/map');
@@ -198,7 +198,7 @@ test.describe('report card: org map and Settings', () => {
     await expect(page.getByTestId('map-panel')).toContainText('list-price equivalent, not a bill');
   });
 
-  test('US-67: the Monday report is off by default, shows its exact text, and turns on once Donna is paired', async ({ page }) => {
+  test('US-72: the Monday report is off by default, shows its exact text, and turns on once Donna is paired', async ({ page }) => {
     test.skip(!isMock(), 'pairing a channel is mock-only');
     await reset('report');
     await login(page, '#/settings');
@@ -222,7 +222,7 @@ test.describe('report card: org map and Settings', () => {
     await expect.poll(async () => (await api('GET', '/api/digest')).day).toBe(5);
   });
 
-  test('US-68: the detailed timeline is off by default, and stays off where Claude Code already has telemetry settings (mock)', async ({ page }) => {
+  test('US-73: the detailed timeline is off by default, and stays off where Claude Code already has telemetry settings (mock)', async ({ page }) => {
     test.skip(!isMock(), 'the preflight result is mocked');
     await reset('report');
     await login(page, '#/settings');

@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.5.0 (2026-10-25)
+
+**The report card: what got done, what it cost, what needs you. In plain words, on your own machine.**
+
+- **Overview, the new first tab of every agent.** Four blocks, for today, 7 days or 30 days:
+  **Done** (each session that did some work, in the agent's own closing words, with the files it
+  changed and the commits it made in the repo), **Needs you** (exactly what the rail counts; one tap
+  opens the session), **Cost** (a list-price equivalent by day and by model, with the top sessions,
+  always labelled "not a bill", and a note for Pro) and **Next** (the agent's next steps from its
+  `memory/NOW.md`, and how fresh they are). It works on a 375 px phone. No model is called: it is
+  read from Claude Code's own transcripts, `git log` and the agent's memory.
+- **Timeline**, a tab beside Chat and Raw on every session: each prompt, each tool call with how
+  long it took and whether it worked, subagents indented under the call that started them, and
+  what each turn used. Works for ended sessions; a 2,000-turn session shows its first page at once.
+- **The org map** shows each agent's last 7 days and when it last finished work, and the org's
+  usage today and over 7 days.
+- **Honest numbers.** Usage is counted once per API message (one message is often split over
+  several transcript records). Claude Code's own `cost-state` total wins when it is current;
+  otherwise the usage is repriced with a dated price table bundled in `server/prices.json` (checked
+  against the CLI's own figures; CI fails when it is over 120 days old). A model the table does not
+  know is "cost unknown", never 0. When Claude Code deletes an old transcript, a small summary in
+  `.clawdling/ledger/` keeps the card true ("transcript gone, kept summary only").
+- **`clawdling report [agent] [--window today|7d|30d] [--json]`**: the same card in the terminal;
+  its JSON is versioned (`"schema": 1`) for scripts and the coming CTO seat. Agents may run it
+  without a prompt. `clawdling doctor` gains a "transcript format" line.
+- **Monday report** (off by default): Settings shows the exact message first; once a week it goes
+  to the Telegram chat or iMessage handle you paired with Donna, through the same sender and rules
+  as the needs-you ping. Counts, approved agent names and dollar figures only: never a session
+  title (titles come from first prompts), a prompt or a file.
+- **Detailed timeline** (beta, off by default): Claude Code's own OpenTelemetry, sent only to
+  Clawdling on `127.0.0.1`, adds who approved each tool and each turn's request times to the
+  Timeline. It never turns on where your Claude Code (or your organization) already has telemetry
+  settings: a preflight reads setting names, never values. The ingest takes only this computer,
+  with a secret made when you turn it on, and drops account identifiers and prompt or response
+  fields (see SECURITY.md).
+- **Tests.** New unit suites `ledger`, `contract` (synthetic transcripts with hand-worked totals),
+  `otel` (a real 2.1.308 telemetry capture, scrubbed) and `digest`; integration `report` and `otel`
+  on both backends (the `/otlp` rules: no secret, wrong secret, remote address, proxy, Origin, too
+  large, too fast); e2e `report.spec.js` (desktop) and a 375 px phone check, against the mock and the
+  real server. The e2e real server now runs with its own `CLAUDE_CONFIG_DIR`.
+- **Real run.** A throwaway home, a leased plan and the real Claude Code 2.1.308 on a public repo
+  (golang/example): the folder-trust question answered, only `go test` approved; the card showed
+  the session in Done with its file change, and a cost equal to Claude Code's own `cost-state`
+  total; with the detailed timeline on, the records arrived under Clawdling's session id and the
+  Timeline said "you allowed it once".
+
 ## 1.4.0 (2026-10-25)
 
 **Answer Claude in the chat, know when "Ready" really means done, and hear when an agent needs you.**

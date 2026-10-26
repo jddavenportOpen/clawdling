@@ -1,4 +1,4 @@
-# Clawdling 1.0 / 1.1 / 1.2 / 1.3 - test users and user stories
+# Clawdling 1.0 to 1.5 - test users and user stories
 
 Every story below is an acceptance test. The release gate is: every P0 story passes
 for every persona it names, run from a clean home directory with no prior state.
@@ -19,6 +19,7 @@ socket (`CLAWDLING_TMUX_SOCKET`) when tmux is used, its own port. No persona can
 | **Priya - MBA student, desktop app only** (1.1) | Uses Claude only through the Claude desktop app on her Mac; has never opened a terminal. Pro or Max plan. | Fresh Mac user, Claude desktop app signed in, no `claude` command, no Node, no tmux, no Homebrew. | "Can I do this from the app I already use? Will it ask for my Mac password? What do I click?" |
 | **Tom - small-business owner on Pro** (1.1) | Runs a small shop; pays for Claude Pro; uses Claude Code a little. | `--defaults`, one or two domains, Pro plan, desktop app or terminal. | "Is Pro enough? What happens when I hit my limit? Does Clawdling cost anything extra?" |
 | **Lena - claude.ai chat only** (1.1) | Uses Claude in a browser tab and on her phone; has never installed Claude Code. | No desktop app, no `claude`; arrives with only the GitHub link. | "Can I use this from claude.ai? If not, what is the shortest path?" |
+| **Lou - the owner** (1.5) | Runs a small company; three software projects that Claude Code agents build for him. A contractor set up his Clawdling; he never opens a terminal. Max plan. Checks in from his phone twice a day. | An org with project agents imported from his repos; the cockpit on his phone. | "Is it moving? Does it work? What is it costing me? What do they need from me?" |
 | **Hal - the builder dad** (1.2) | Retired engineer. About ten repos on GitHub from side projects over the years, some cloned locally, some not. `gh` installed and signed in. | Fresh home, `node`, `claude`, `git`, `gh`; 10 repos on GitHub. | "Can I get an agent per project, linked to my GitHub, without doing it ten times by hand?" |
 
 ## User stories
@@ -358,3 +359,50 @@ The core stories every cockpit on this spec shares are in [CORE-STORIES.md](CORE
     folder path where agents cannot be kept out of `.clawdling/`, it stays off and says why;
     agent names in messages are the ones shown when it was turned on.
 
+
+## New in 1.5: the report card
+
+The build brief numbered these US-60 to US-69; 1.4 already uses those numbers, so here they are
+US-65 to US-74, in the same order (brief US-60 = US-65 ... US-69 = US-74).
+
+- **US-65 (P0, Lou; 1.5)** Opening a project agent lands on an **Overview** tab with four blocks:
+  Done, Needs you, Cost, Next. The Sessions, Context and Memory tabs stay.
+  - Accept: Overview is the default tab; each block has an empty state that says what will appear
+    there; the page works at 375 px wide; every number has a plain-language label ("about $4.10 of
+    usage at list price").
+- **US-66 (P0, Lou; 1.5)** **Done** lists, newest first, what each session got done in the chosen
+  window (today, 7 days, 30 days): its title, one line of what it did (the agent's own final
+  message, trimmed), the files changed, the commits made in the agent's repo, and when it ended.
+  - Accept: built from the transcript plus `git log` only; no model call.
+- **US-67 (P0, Lou; 1.5)** **Needs you** shows every open question, permission prompt, failed turn
+  and finished turn waiting on a reply for this agent, and each opens that session.
+  - Accept: the count matches the rail's needs-you badges for this agent.
+- **US-68 (P0, Lou, Tom; 1.5)** **Cost** shows the agent's usage in the window as a list-price
+  equivalent, by day, with the model split and the top three sessions.
+  - Accept: the label always reads "List-price equivalent, not a bill. On Pro and Max, usage is
+    included in your plan."; a one-line note says Pro's limits are smaller (shown to everyone:
+    Clawdling cannot know your plan without reading your account); the numbers match a
+    hand-computed fixture to the cent.
+- **US-69 (P1, Lou; 1.5)** **Next** shows the "Next" section of the agent's `memory/NOW.md` (or its
+  first five lines), with when it was last updated; a note over 7 days old says so.
+- **US-70 (P0, Maya; 1.5)** Every session has a **Timeline** tab beside Chat and Raw: each prompt,
+  each tool call (name, one line, duration, worked or failed), subagents nested under their parent,
+  and the cost of each turn.
+  - Accept: built from the transcript alone; works for a session that has ended; a 2,000-turn
+    transcript renders in under a second.
+- **US-71 (P1, Dev; 1.5)** The **org map** shows each agent's usage over 7 days and when it last
+  finished work, and the org's usage today and over 7 days.
+- **US-72 (P1, Maya; 1.5)** **Monday report** (opt-in): one message a week, Monday 08:00 local by
+  default, to the Telegram chat or iMessage handle paired with Donna: per agent, sessions done,
+  needs-you count and usage over 7 days, plus the most and least used agents.
+  - Accept: off by default; turned on in Settings with a preview of the exact text; one a week; no
+    file content, prompt text or session title is sent, only counts, approved agent names and
+    dollar figures.
+- **US-73 (P2, Rin; 1.5)** **Detailed timeline** (beta, off by default): Clawdling also collects
+  Claude Code's own OpenTelemetry, and the Timeline shows who approved each tool and API request
+  times.
+  - Accept: never turned on when the user (or their organization) already has telemetry settings;
+    never sends anything off the computer; the report card works the same with it off.
+- **US-74 (P0, Sam; 1.5)** **Honest gaps:** when Claude Code deleted a transcript, the report card
+  keeps what Clawdling recorded and marks the session "Transcript gone, kept summary only"; a format
+  Clawdling has not seen is reported by `clawdling doctor`, never shown as zero.

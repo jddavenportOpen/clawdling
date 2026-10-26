@@ -385,3 +385,77 @@ terminal client over the server's own WebSocket instead of `tmux attach`. The We
 HTTP contracts are unchanged; `/api/health`, `server.json` and `sessions.json` gain `backend`.
 `clawdling stop` (`POST /api/shutdown`) stops a server cleanly on every OS. Design and the screen
 model: ARCHITECTURE.md, "Session backends".
+
+## 1.5 addendum: the report card
+
+**Goal.** Make the agent page the product for owners who do not read code: four blocks per agent
+(Done, Needs you, Cost, Next), a Timeline per session, usage on the org map, an opt-in Monday report
+and an opt-in detailed timeline. Strategy and evidence: the 1.5 build brief (SPEC-1.5).
+
+### The ledger (`server/ledger.js`)
+
+It reads the transcript records `transcripts.js` drops, incrementally (offset, inode, partial last
+line), from the session's file and every file under `<session>/subagents/` (workflow agents under
+`subagents/workflows/` too). It never changes the chat view.
+
+| Field | Source (Claude Code 2.1.283 and 2.1.308) |
+|---|---|
+| turns | user records with prompt text (the chat view's own filter: slash-command plumbing and meta lines are not prompts) |
+| tool calls | assistant `tool_use` blocks, paired by `tool_use_id` with a user `tool_result`; `is_error: true` is a failure; duration = the two records' timestamps |
+| subagents | `subagents/agent-*.jsonl`, nested under the call named by `agent-*.meta.json` `toolUseId`; inline `isSidechain` records (older versions) under the newest open Task/Agent call; workflow agents (no parent on record) by start time |
+| usage | assistant `message.usage`, keyed by `message.id` + `requestId` and counted once (one API message is often split over several records) |
+| CLI cost | `cost-state` records: cumulative, written when a session exits or resumes, no timestamp of its own |
+| files changed | Edit, Write, MultiEdit and NotebookEdit `file_path`s whose call succeeded (counted, never sent) |
+
+**Cost rules.** (1) De-duplicate. (2) Use the newest `cost-state` total when it is current (no usage
+newer than the record before it) and `hasUnknownModelCost` is false; else reprice with
+`server/prices.json` (list prices per model, its date and source; cache writes at 1.25x (5 min) or
+2x (1 h) the input price; a model id matches an entry exactly or with a date or @version suffix
+only). A model not in the table makes the cost "unknown for model X", never 0. (3) Per-turn costs
+in the Timeline are always repriced; by-day figures scale each message's repriced share to the
+session total, so the days add up. Where the CLI's total and the repriced one differ by more than
+2%, the CLI's number is shown and a debug counter (`costGaps`) is bumped. (4) Every figure is
+labelled "list-price equivalent, not a bill".
+
+**Receipts.** `.clawdling/ledger/<sid>.json`, written when a session ends and at most once a minute
+while it runs; reused while the transcript's size and mtime are unchanged; kept when the transcript
+is deleted (`transcript: "gone"`). 180 days, 20 MB.
+
+### Report data (`server/report.js`) and API
+
+- `GET /api/agents/:id/report?window=today|7d|30d` returns `{schema: 1, window, agent, done[],
+  repo_commits, needs[], cost{total_usd, label, complete, unknown_models, by_day, by_model,
+  by_account, top_sessions}, next{text, heading, updated_at, stale}}`. Windows start at local
+  midnight (today, the last 7 days, the last 30 days). Done = sessions with turns or tool calls whose
+  end (or, live, last activity) falls in the window, with the last assistant text trimmed to 160
+  characters at a sentence end, and the repo's commits made while the session ran (a minute of slack
+  each side); other commits in the window are listed apart. Needs = exactly the rail's needs-you rule
+  (`needsYouView`, tested against `web/lib/model.js`). Next = the section under a heading starting
+  with "Next" in `memory/NOW.md`, else its first five lines; stale after 7 days.
+- `GET /api/org/report?window=7d`: per agent `{cost_usd, cost_complete, done, needs, last_done_at}`
+  and `totals{today_usd, week_usd}`.
+- `GET /api/sessions/:sid/timeline?after=<n>&limit<=500`: `{entries[{n, kind: prompt|say|tool|
+  subagent, depth, ...}], next, more, total, transcript, cost}`.
+- `clawdling report [agent] [--window] [--json]` prints the same; its JSON is the contract (schema 1).
+- `clawdling doctor` adds a "transcript format" line from the newest session's transcript.
+
+### The Monday report (`server/digest.js`)
+
+`GET/POST /api/digest`; `.clawdling/digest.json` `{enabled, day, hour, labels, last_sent_week}`;
+checked every 10 minutes; once per ISO week; delivered through `NeedsYouPinger.deliver` (the
+needs-you ping's channel rules; no new sender). Text: counts, approved agent names, dollars.
+
+### The detailed timeline (`server/otel.js`, beta)
+
+Preflight by key name (see SECURITY.md); when clear and on, an `env` block in Clawdling's own
+`--settings` file: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, the logs, metrics and traces exporters set to
+`otlp`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, `http/json` to `http://127.0.0.1:<port>/otlp` with
+the `x-clawdling-otlp` header. Records are attributed by `session.id` (the `--session-id` Clawdling
+passes), normalized, filtered and stored per session. The Timeline adds who approved each tool
+(`tool_decision.source`, matched by `tool_use_id`) and each turn's API requests (`api_request`
+count and `duration_ms`).
+
+### Contract fixtures
+
+`test/fixtures/transcripts/` (synthetic, every record shape above, hand-worked totals) and
+`test/fixtures/otlp/` (a real 2.1.308 capture, scrubbed); `test/unit/contract.test.js` checks them.
