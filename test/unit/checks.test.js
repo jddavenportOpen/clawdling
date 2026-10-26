@@ -202,3 +202,39 @@ test('review 5: scratch worktrees live in a private folder; a link in place of t
   assert.equal(realPathInside(root, path.join(root, 'apps', 'web')), false);
   assert.equal(realPathInside(root, path.join(root, 'apps')), true);
 });
+
+test('review 6: a check-up copy keeps no committed link; a ship check whose temp folder cannot be made frees its slot', { skip: !hasGit && 'no git' }, async () => {
+  const repo = tmp();
+  const secret = path.join(tmp(), 'credentials');
+  fs.writeFileSync(secret, 'SECRET');
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  fs.writeFileSync(path.join(repo, 'check.js'), 'process.exit(0)\n');
+  let linked = true;
+  try {
+    fs.symlinkSync(secret, path.join(repo, 'env.md'));
+  } catch {
+    linked = false;
+  }
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  const dir = tmp();
+  const agent = { id: 'web', name: 'Web', kind: 'project', dir, repo };
+  const checks = new Checks({ paths: { rt: tmp(), env: path.join(dir, '.env') }, org: { require: () => agent } });
+  const wt = path.join(tmp(), 'wt');
+  await checks.addWorktree(repo, wt, 'HEAD');
+  if (linked) {
+    assert.equal(fs.lstatSync(path.join(wt, 'env.md')).isSymbolicLink(), true);
+    assert.equal(await checks.removeLinks(wt), 1);
+    assert.equal(fs.existsSync(path.join(wt, 'env.md')), false);
+    assert.ok(fs.existsSync(secret), 'the target is untouched');
+  }
+  await checks.removeWorktreeAt(repo, wt);
+  checks.approve('web', { checks: [{ name: 'tests', run: 'node check.js', timeout: 60 }], shown: ['node check.js'] });
+  checks.tmpdir = path.join(tmp(), 'missing', 'deeper');
+  const r = await checks.run('web');
+  assert.match(r.error, /ENOENT|no such file/i);
+  assert.equal(checks.running, null, 'the slot is free again');
+});

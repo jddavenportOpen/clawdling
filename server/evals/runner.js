@@ -182,14 +182,17 @@ export function holds(cell, current, { k, judgeOk }) {
 }
 
 /** The cheapest holding cell by measured cost per run, with what it saves against the current one. */
-export function recommend(cells, { k, judgeOk }) {
+export function recommend(cells, { k, judgeOk, total = null }) {
   const current = cells.find((c) => c.current) || cells[0];
   if (!current || !judgeOk) return null;
+  // Only complete cells compare: every case, every run, scored (a cell a failure or the cap cut short
+  // never holds by default).
+  const caseCount = total ?? (current.cases || []).length;
+  const complete = (c) => (c.cases || []).length === caseCount && c.runs_total === caseCount * k && c.score !== null;
   // Too little to go on: fewer than 3 cases, or the current setting passes under half of them. A
   // setting that passed no case is never recommended.
-  const caseCount = (current.cases || []).length;
-  if (caseCount < 3 || current.passes < caseCount / 2) return null;
-  const ok = cells.filter((c) => !c.error && c.runs_total > 0 && c.passes >= 1 && c.score !== null && holds(c, current, { k, judgeOk }) && Number.isFinite(c.cost_per_run));
+  if (!complete(current) || caseCount < 3 || current.passes < caseCount / 2) return null;
+  const ok = cells.filter((c) => !c.error && complete(c) && c.passes >= 1 && holds(c, current, { k, judgeOk }) && Number.isFinite(c.cost_per_run));
   if (!ok.length) return null;
   ok.sort((a, b) => a.cost_per_run - b.cost_per_run);
   const best = ok[0];
@@ -851,6 +854,8 @@ export class Evals {
       entry.worktree = wt;
       this.register(entry);
       await this.checks.addWorktree(agent.repo, wt, 'HEAD');
+      // A check-up reads; it builds nothing: no committed link stays in its copy to lead a Read outside.
+      await this.checks.removeLinks(wt);
       const prefix = await this.checks.repoPrefix(agent.repo);
       // An agent folder kept inside its own repository has its committed evals/ (answers included)
       // in the worktree too: remove it from the scratch copy, never through a link.
@@ -1118,7 +1123,7 @@ export class Evals {
       cases_skipped: suiteSkipped,
       score: judgeUnreliable || !current || !complete ? null : current.score,
       cells: outCells,
-      recommendation: outCells.length > 1 && !capped ? recommend(outCells, { k, judgeOk }) : null,
+      recommendation: outCells.length > 1 && !capped && !error ? recommend(outCells, { k, judgeOk, total: cases.length }) : null,
       label: COST_NOTE,
     };
     const dir = this.resultsDir(agent);

@@ -336,8 +336,10 @@ test('review: in an && chain with other commands, only a pass counts (a failure 
   assert.equal(labelClaim(e).label, 'not_verified', 'the build\'s errors are not the tests\'');
   const [f] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test', '# pass 5\n# fail 0'), say('Done.')]);
   assert.equal(labelClaim(f).label, 'verified', 'the whole line passed');
-  const [d] = claimsOf([prompt('x'), edit(), bash('cd app && npm test', 'Exit code 1\nnot ok', true), say('Done.')]);
-  assert.equal(labelClaim(d).label, 'contradicted', 'cd is not another command');
+  const [d] = claimsOf([prompt('x'), edit(), bash('cd app && npm test', 'Exit code 1\nnot ok 1 - adds\n# fail 1', true), say('Done.')]);
+  assert.equal(labelClaim(d).label, 'contradicted', 'cd is not another command, and the failure marks are the test\'s');
+  const [e2] = claimsOf([prompt('x'), edit(), bash('cd nope && npm test', 'Exit code 1\ncd: no such file or directory: nope', true), say('Done.')]);
+  assert.equal(labelClaim(e2).label, 'not_verified', 'the cd failed: the test never ran');
 });
 
 test('review: a ship check speaks for a claim only within a day after it, and not after the session changed again', () => {
@@ -462,4 +464,47 @@ test('a run of only some tests can contradict a claim, never verify it', () => {
     const [b] = claimsOf([prompt('x'), edit(), bash(cmd, 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done. All tests pass.')]);
     assert.equal(labelClaim(b).label, 'contradicted', cmd);
   }
+});
+
+test('review 6: a failure stands unless the same check passed after it; ship steps never cancel each other', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npx eslint .', 'Exit code 1\n  3:1  error  no-unused-vars\n✖ 1 problem (1 error)', true), bash('npx tsc --noEmit', ''), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'contradicted', 'a typecheck pass does not cancel a failed lint');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), bash('npm test -- --ci', '# pass 3\n# fail 0'), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'verified', 'the same check, re-run, passed');
+  const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
+  const at = new Date(Date.parse(c.at) + 60000).toISOString();
+  const run = { at, results: [{ name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: false, err1: 'error' }, { name: 'typecheck', cmd: 'npm run typecheck', kind: 'lint', ok: true }] };
+  assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'contradicted');
+  const run2 = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL' }, { name: 'e2e', cmd: 'npm run e2e', kind: 'test', ok: true }] };
+  assert.equal(labelClaim({ ...c, kind: 'tests', needs: ['test'] }, { shipRuns: [run2] }).label, 'contradicted');
+});
+
+test('review 6: set -e does not make a check behind && count; selection by position, attached flags; skip flags on every path', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('set -e; npm run build && npm test; echo "All done"', 'error TS2304\nAll done'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified', 'the build failed, the tests never ran, the line exited 0');
+  for (const cmd of ['npx jest src/cart.test.js', 'pytest tests/test_cart.py', 'pytest --lf', 'npx vitest run cart', 'cargo test cart', 'go test ./internal/cart', 'mvn test -Dtest=CartTest', './gradlew test --tests CartTest', 'npx jest -o', 'pytest -kcart', 'pytest -k=cart']) {
+    const [x] = claimsOf([prompt('x'), edit(), bash(cmd, '# pass 3\n# fail 0'), say('Done. All tests pass.')]);
+    assert.equal(labelClaim(x).label, 'not_verified', cmd);
+  }
+  for (const cmd of ['go test ./...', 'pytest', 'pytest -q', 'npm test', 'cargo test']) {
+    const [x] = claimsOf([prompt('x'), edit(), bash(cmd, '# pass 3\n# fail 0'), say('Done. All tests pass.')]);
+    assert.equal(labelClaim(x).label, 'verified', cmd);
+  }
+  const approved = [{ name: 'tests', run: 'pytest -m "not slow"' }];
+  const [y] = claimsOf([prompt('x'), edit(), bash('pytest -m "not slow"', '5 passed in 0.2s'), say('Done. All tests pass.')]);
+  assert.equal(labelClaim(y, { approved }).label, 'verified', 'the command you approved is your definition of the check');
+  assert.equal(checkOf('npm test -- --passWithNoTests', { detected: [{ kind: 'test', cmd: 'npm test' }] }), null, 'no generic fallback past a skip flag');
+  for (const cmd of ['go test -c ./...', 'pytest --fixtures', 'cargo nextest list']) assert.equal(checkOf(cmd), null, cmd);
+});
+
+test('review 6: a cut command and PowerShell writes are changes', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test'), bash(`printf '%s' '${'x'.repeat(1100)}' > /repo/a.js`, ''), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified', 'the cut command may have written past the cut');
+  for (const cmd of ["Set-Content -Path /repo/a.js -Value 'broken'", "sc /repo/a.js 'x'", "'x' | Out-File /repo/a.js", '[IO.File]::WriteAllText("/repo/a.js", "x")', 'Remove-Item /repo/a.js']) assert.equal(writesFiles(cmd).writes, true, cmd);
+});
+
+test('review 6: an older failure is kept even after 30 other commands', () => {
+  const noise = Array.from({ length: 35 }, (_, i) => bash(`git status ${i}`, 'clean'));
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), ...noise, bash('npm run lint', 'All checks passed'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'contradicted');
 });

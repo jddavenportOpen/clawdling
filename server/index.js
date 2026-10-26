@@ -1602,8 +1602,9 @@ export async function startServer(opts = {}) {
           if (!tokenEquals(extractToken(req, url), token)) return sendJson(res, 401, { error: 'missing or wrong token: open the link printed by `clawdling start`' });
         }
         if (req.method !== 'GET' && req.method !== 'HEAD' && !originAllowed(req)) return sendJson(res, 403, { error: 'cross-origin request refused' });
-        // Served on a LAN address (--host 0.0.0.0), the token alone is not "this computer".
-        if (meta?.local && !loopbackPeer(req.socket.remoteAddress)) return sendJson(res, 403, { error: 'Only the computer Clawdling runs on can do this. Open Settings there.' });
+        // Served on a LAN address (--host), the token alone is not "this computer": the request must come
+        // from the computer itself (loopback, or a connection to one of its own addresses).
+        if (meta?.local && !loopbackPeer(req.socket.remoteAddress) && req.socket.remoteAddress !== req.socket.localAddress) return sendJson(res, 403, { error: 'Only the computer Clawdling runs on can do this. Open Settings there.' });
       }
       const out = await fn(req, url.pathname.match(re), res, url);
       if (out === null) return; // handler streamed its own response

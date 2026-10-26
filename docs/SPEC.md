@@ -495,14 +495,25 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   the output's end. Declined, hook-blocked and background calls are left out. No output is kept.
 - **Labels** (`labelClaim`, at read time, so approvals and ship checks made later count):
   a command is a check when it matches the project's approved `checks.yaml` commands (exact, or
-  exact plus extra flags; `--help`, `--version`, listing and dry-run flags never count), the stack's detected test/build/lint commands, or the generic list
-  (`npm test`, `pnpm test`, `yarn test`, `pytest`, `go test`, `cargo test`, `make test`, `make
-  check`, `npm run build`, `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`,
-  `python -m`, `cd x &&`). A check whose exit code cannot reach the result (piped, `|| true`, `;`
-  without `set -e`) counts only when its output says pass or fail. Each ship-check run after the
-  last edit adds its checks. The latest check decides: **verified** when it passed, **contradicted**
-  when it failed; **not_verified** when there is none (the default); a `tests` claim needs a check
-  of each kind it names; a completion claim with no edit is **no_changes**.
+  exact plus extra flags; `--help`, `--version`, listing, dry-run and skip-tests flags never count),
+  the stack's detected test/build/lint commands, or the generic list (`npm test`, `pnpm test`,
+  `yarn test`, `pytest`, `go test`, `cargo test`, `make test`, `make check`, `npm run build`,
+  `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`, `python -m`, `cd x &&`).
+  The rules lean to **not_verified** whenever the record cannot tell (added in review, after six
+  rounds of edge cases): a check whose exit code cannot reach the result (piped, `|| true`, `;`
+  without `set -e`, behind `&&`) counts only from its output's totals, and not at all when the
+  output is filtered (anything down the pipe but `tail`, `cat`, `tee`) or a later command could
+  have printed them; in a line with other commands a failure counts only when it is clearly the
+  check's; a run of only some tests (selection flags, or a file or name argument on a generic
+  command) can contradict a claim but never verify it (the flags added to an approved command are
+  the only selection for it: the command you approve is your definition of the check); a command
+  cut at 1,000 characters is no check and counts as a change. Each ship-check run after the claim
+  (and before the session's next change, within 24 hours) adds its steps. A failure stands unless
+  the same check (the same command, whatever extra flags) passed after it: **contradicted** when
+  one stands, **verified** when every check passed, **not_verified** when there is none (the
+  default); a `tests` claim needs a check of each kind it names; a completion claim with no edit
+  is **no_changes**. Ship-check runs that left anything out (new files git does not track,
+  submodules, filtered files) are not evidence.
 - `GET /api/sessions/:sid/claims` → `{claims[{at, kind, needs, phrase, label, check{cmd, at, ok,
   first_error_line, ship?}, badge, fix?}]}`; `fix` (the last claim, when contradicted) is the one
   message "Ask the agent to fix it" sends: ``Your last check failed: `<command>` → `<first error
@@ -524,8 +535,10 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
 - Proposals: `detectStack(repo).commands` of kind test, build, lint, typecheck or check, plus the
   install command as an optional setup step (`npm ci` when there is a `package-lock.json`), each
   with `what` (the `package.json` script's text, or a Makefile/justfile target's recipe lines).
-- Run: `git stash create` (else `HEAD`), `git worktree add --detach <tmp>/clawdling-check-<agent>-
-  <time>-<random> <snap>`, registered in `.clawdling/checks/active.json`; setup steps then checks,
+- Run: `git stash create` (else `HEAD`), `git worktree add --detach --no-checkout
+  <tmp>/clawdling-check-<agent>-<time>-XXXXXX/wt <snap>` (a 0700 folder), then `reset --hard` with
+  every filter from the repo's and the worktree's config switched off, registered in
+  `.clawdling/checks/active.json`; setup steps then checks,
   each through `/bin/sh -c` or `powershell.exe -NoProfile -NonInteractive -Command`, with `cwd` the
   agent's repo folder inside the worktree (`git rev-parse --show-prefix`: a monorepo's `apps/web`),
   the scrubbed environment (`checkEnv`) and a timeout that kills the process tree; a failed setup

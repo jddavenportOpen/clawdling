@@ -229,9 +229,9 @@ test('the default matrix: current; one effort lower; one cheaper family at mediu
 
 test('the noise rule: k=1 within one case; k=3 within the Wilson interval; the judge controls must pass', () => {
   const five = [1, 2, 3, 4, 5].map((i) => ({ id: `c${i}` }));
-  const cur = { current: true, passes: 5, runs_total: 5, runs_passed: 5, cost_per_run: 0.1, cases: five };
-  const a = { passes: 4, runs_total: 5, runs_passed: 4, cost_per_run: 0.02, label: 'haiku' };
-  const b = { passes: 3, runs_total: 5, runs_passed: 3, cost_per_run: 0.01, label: 'tiny' };
+  const cur = { current: true, passes: 5, runs_total: 5, runs_passed: 5, cost_per_run: 0.1, cases: five, score: 1 };
+  const a = { passes: 4, runs_total: 5, runs_passed: 4, cost_per_run: 0.02, label: 'haiku', cases: five, score: 0.8 };
+  const b = { passes: 3, runs_total: 5, runs_passed: 3, cost_per_run: 0.01, label: 'tiny', cases: five, score: 0.6 };
   assert.equal(holds(a, cur, { k: 1, judgeOk: true }), true);
   assert.equal(holds(b, cur, { k: 1, judgeOk: true }), false);
   assert.equal(holds(a, cur, { k: 1, judgeOk: false }), false);
@@ -239,6 +239,8 @@ test('the noise rule: k=1 within one case; k=3 within the Wilson interval; the j
   assert.equal(rec.label, 'haiku');
   assert.equal(rec.saves_pct, 80);
   assert.equal(recommend([cur, a], { k: 1, judgeOk: false }), null);
+  // A cell that did not finish every case never holds by default.
+  assert.equal(recommend([cur, { ...a, cases: five.slice(0, 2), runs_total: 2, passes: 2 }], { k: 1, judgeOk: true, total: 5 }).current, true);
   // Too little to go on: under 3 cases, or the current setting passes under half of them.
   assert.equal(recommend([{ ...cur, cases: five.slice(0, 2), passes: 2 }, a], { k: 1, judgeOk: true }), null);
   assert.equal(recommend([{ ...cur, passes: 2 }, { ...a, passes: 1 }], { k: 1, judgeOk: true }), null);

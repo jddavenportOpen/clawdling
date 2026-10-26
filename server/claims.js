@@ -311,17 +311,45 @@ export function wordsKind(w) {
   return null;
 }
 
-const NO_RUN = /^(--version|-V|--help|-h|--collect-only|--co|--list|--list-.*|--listTests|--list-tests|--showConfig|--dry-run|--no-run|--print-config)$/;
+const NO_RUN = /^(--version|-V|--help|-h|--collect-only|--co|--list|--list-.*|--listTests|--list-tests|--showConfig|--dry-run|--no-run|--print-config|--fixtures|--fixtures-per-test|--markers|--setup-plan|--setup-only)$/;
 // `-n` is a dry run only for these (`pytest -n auto` is pytest-xdist's worker count, a real run).
 const DRY_N = new Set(['make', 'gmake', 'just', 'go']);
 const runsNothing = (w) => {
   const a = unwrap(w) || w; // `time make -n test`, `/usr/bin/make -n` are make
+  if (a[0] === 'go' && a[1] === 'test' && a.includes('-c')) return true; // compiles the test binary, runs nothing
+  if (a[0] === 'cargo' && a[1] === 'nextest' && a[2] === 'list') return true;
   return w.some((x) => NO_RUN.test(x)) || (DRY_N.has(a[0]) && a.some((x) => x === '-n' || x === '--just-print' || x === '--recon'));
 };
 /** The approved command itself, or it with extra flags (`npm test -- --ci`), never another script. */
-const TEST_SELECT = /^(-k|-t|-g|-m|--grep(=.*)?|--testNamePattern(=.*)?|--test-name-pattern(=.*)?|--testPathPattern(=.*)?|--test-path-pattern(=.*)?|--filter(=.*)?|--only|-run=(?!['"]?\^\$).*|--test-only)$/;
-// Extra flags that turn a test run into one that runs none (`mvn test -DskipTests`, `go test ./... -run=^$`).
+// Flags that select only some tests (`pytest -k cart`, `-kcart`, `jest -t adds`, `--lf`, `-Dtest=X`):
+// a pass then says nothing about the rest. Attached values (`-k=cart`, `--grep=x`) included.
+const TEST_SELECT = /^(-[ktgmoR](=|$|[^-\s].*)|--(grep|testNamePattern|test-name-pattern|testPathPattern|test-path-pattern|filter|tests|only|test-only|lf|last-failed|sw|stepwise|onlyChanged|only-changed|onlyFailures|only-failures|next-failure|changed|findRelatedTests|related|bail-on-first)(=.*)?|-Dtest=.*|-run=(?!['"]?\^\$).*)$/;
+// Flags that make a test run run none (`mvn test -DskipTests`, `go test ./... -run=^$`, `jest
+// --passWithNoTests`): never a test check, on any matching path.
 const SKIP_EXTRA = /^(-DskipTests(=true)?|-Dmaven\.test\.skip(=true)?|-run=['"]?\^\$['"]?|-list(=.*)?|-N|--show-only(=.*)?|-x|--passWithNoTests)$/;
+// Whole-suite positional arguments (`go test ./...`, `pytest .`): not a selection.
+const WHOLE = new Set(['./...', '...', '.', './']);
+/** How many leading words name the runner (and its subcommand) of a test command; the rest select. */
+function runnerWords(a) {
+  const [h, b] = a;
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(h)) return b === 'run' || b === 'run-script' ? 3 : 2;
+  if (['go', 'cargo', 'dotnet', 'swift', 'mix', 'flutter', 'dart', 'deno', 'make', 'gmake', 'just', 'rake', 'composer', 'mvn', 'mvnw', 'gradle', 'gradlew', 'bazel', 'buck2', 'zig', 'playwright', 'cypress', 'task', 'mage'].includes(h)) return 2;
+  if (h === 'vitest' && b === 'run') return 2;
+  if (/manage\.py$/.test(h)) return 2;
+  if (/^python[\d.]*$/.test(h) && /manage\.py$/.test(b || '')) return 3;
+  if (h === 'node') return a.indexOf('--test') + 1 || 1;
+  return 1;
+}
+/** Does this test command run only some tests? `extra`: the words after an approved or detected command. */
+function selects(a, { extra = null } = {}) {
+  const rest = extra || a.slice(runnerWords(a));
+  return rest.some((x, j) => TEST_SELECT.test(x) || (x === '-run' && !/^['"]?\^\$['"]?$/.test(rest[j + 1] || '')) || (!extra && !x.startsWith('-') && !WHOLE.has(x) && x !== '--' && !/^-/.test(rest[j - 1] || '')));
+}
+/** The same check, whatever extra flags it ran with: its words without flags, past wrappers. */
+export function checkId(cmd) {
+  const a = unwrap(words(String(cmd || '').trim())) || [];
+  return a.filter((x) => !x.startsWith('-')).join(' ');
+}
 function sameOrFlags(cmd, base) {
   const a = words(String(cmd || '').trim());
   const b = words(String(base || '').trim());
@@ -374,11 +402,13 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     // Listing, help and version flags run nothing: never a check (`npx tsc --version`, `jest --listTests`).
     if (runsNothing(w)) continue;
     let kind = null;
+    let base = null; // the approved or detected command it matched: the owner's definition of the check
     const trimmed = s.raw.trim();
     for (const ap of approved) {
       if (!ap || typeof ap.run !== 'string') continue;
       if (sameOrFlags(trimmed, ap.run)) {
         kind = NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(words(ap.run)) || 'check';
+        base = ap.run;
         break;
       }
     }
@@ -386,12 +416,17 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
       for (const d of detected) {
         if (d && typeof d.cmd === 'string' && sameOrFlags(trimmed, d.cmd)) {
           kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' || d.kind === 'format' ? 'lint' : d.kind === 'check' ? 'check' : null;
-          if (kind) break;
+          if (kind) {
+            base = d.cmd;
+            break;
+          }
         }
       }
     }
     if (!kind) kind = wordsKind(w);
     if (!kind) continue;
+    // A flag that runs no tests keeps a test command from being a test check, on every path.
+    if (kind === 'test' && w.some((x) => SKIP_EXTRA.test(x))) continue;
     // The exit code that reaches the tool result: the last command's, unless a failure stops the chain.
     // Any later `||`, `;` (without set -e), `&` or pipe (without pipefail) can hide the check's own
     // exit (`npm test && npm run build || true`), not only the operator right after it.
@@ -399,21 +434,27 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     const ops = rest.map((x) => x.op).filter((op, j) => op && !(op === ';' && j === rest.length - 1)); // a trailing `;` hides nothing
     // set -e stops the line at a failed check only when the check is not followed by && or || before
     // that `;` (in `npm test && true; echo done` it does not stop).
-    const masked = ops.some((op, j) => (op === '|' && !pipefail) || op === '||' || op === '&' || (op === ';' && (!errexit || ops.slice(0, j).some((o) => o === '&&' || o === '||'))));
+    // Behind && or || itself, it may never have run, and set -e does not stop the line at the command
+    // before it (`set -e; npm run build && npm test; echo done`): a later `;` then hides everything.
+    const behind = i > 0 && (segs[i - 1].op === '&&' || segs[i - 1].op === '||');
+    const masked = ops.some((op, j) => (op === '|' && !pipefail) || op === '||' || op === '&' || (op === ';' && (!errexit || behind || ops.slice(0, j).some((o) => o === '&&' || o === '||'))));
     // Other commands ran before it in the line: failure marks in the output may be theirs.
     const preceded = segs.slice(0, i).some((sg) => !trivial(words(sg.raw)));
     // Piped into a program that keeps only some lines: the failure (or the totals) can be cut off.
+    // Only tail, cat and tee keep the end of the output whole; anything else down the pipe can drop it.
     let cut = false;
     for (let j = i; j < segs.length - 1 && segs[j].op === '|'; j++) {
-      if (/^(head|grep|egrep|fgrep|rg|sed|awk|cut|less|more|jq|perl|python[\d.]*|node)$/.test((unwrap(words(segs[j + 1].raw)) || [''])[0])) cut = true;
+      if (!/^(tail|cat|tee)$/.test((unwrap(words(segs[j + 1].raw)) || [''])[0])) cut = true;
     }
     // A later part of the line that can print (after ;, || or &&) could supply a pass of its own.
     const quiet = (w2) => !w2.length || ['true', ':', 'false', 'exit', 'return'].includes(w2[0]) || w2.every((y) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(y));
     const later = rest.slice(0, -1).some((x, j) => (x.op === ';' || x.op === '||' || x.op === '&&') && rest[j + 1] && !quiet(words(rest[j + 1].raw)));
     // Only some tests selected (`pytest -k cart`, `jest -t adds`, `go test -run TestCart`): a pass
     // says nothing about the rest, a failure still counts.
-    const partial = kind === 'test' && (unwrap(w) || w).some((x, j, arr) => TEST_SELECT.test(x) || (x === '-run' && !/^['"]?\^\$['"]?$/.test(arr[j + 1] || '')));
-    found = { kind, masked, chained: !masked && meaningful > 1, preceded, cut, later, partial, cmd: trimmed };
+    // (An approved or detected command is the owner's definition of the check: only the flags added to
+    // it can select. Otherwise any argument after the runner does: `jest src/a.test.js`, `cargo test cart`.)
+    const partial = kind === 'test' && selects(unwrap(w) || w, { extra: base ? words(trimmed).slice(words(base).length) : null });
+    found = { kind, masked, chained: !masked && meaningful > 1, preceded, behind, cut, later, partial, id: checkId(base || trimmed), cmd: trimmed };
     if (!masked) break; // an unmasked check decides
   }
   return found;
@@ -423,6 +464,7 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
 // redirection to a file, or a program that writes (sed -i, mv, a formatter with --write, git apply...).
 const WRITE_PROGRAMS = new Set(['mv', 'cp', 'rm', 'rmdir', 'touch', 'mkdir', 'ln', 'truncate', 'patch', 'rsync', 'install', 'unzip', 'tar']);
 const GIT_WRITES = new Set(['apply', 'checkout', 'restore', 'reset', 'merge', 'rebase', 'cherry-pick', 'pull', 'am', 'mv', 'rm', 'revert', 'switch']);
+const PS_WRITES = new Set(['set-content', 'add-content', 'out-file', 'new-item', 'remove-item', 'move-item', 'copy-item', 'rename-item', 'clear-content', 'expand-archive', 'compress-archive', 'tee-object', 'sc', 'ac', 'ni', 'ri', 'mi', 'cpi', 'rni', 'del', 'erase', 'rd', 'move', 'copy', 'ren', 'md', 'mkdir', 'rm', 'mv', 'cp']);
 const PKG_WRITES = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'version', 'dedupe', 'prune']);
 
 function segmentWrites(raw) {
@@ -437,6 +479,8 @@ function segmentWrites(raw) {
   if (w[0] === 'npx' || w[0] === 'bunx') w = w.slice(1);
   const [h, b] = [String(w[0] || '').replace(/^.*[\\/]/, ''), w[1]];
   if (WRITE_PROGRAMS.has(h)) return true;
+  // PowerShell's writing cmdlets and their aliases (any case), and .NET file writes.
+  if (PS_WRITES.has(h.toLowerCase()) || /\[(System\.)?IO\.File\]::(Write|Append|Copy|Move|Delete|Create)/i.test(raw)) return true;
   if ((h === 'sed' || h === 'perl') && w.some((x) => /^-[a-z]*i/.test(x) || x.startsWith('--in-place'))) return true;
   if (h === 'tee' && w.slice(1).some((x) => !x.startsWith('-'))) return true;
   if (h === 'git' && GIT_WRITES.has(b) || (h === 'git' && b === 'stash' && /^(pop|apply)$/.test(w[2] || ''))) return true;
@@ -482,7 +526,8 @@ export function isWorkEdit(t, roots) {
   // A shell command that writes and then fails (`sed -i ... && npm test`) still changed the files: for
   // shell tools an error is a non-zero exit, not "nothing was written". Only a call that never ran
   // (declined, blocked) changed nothing.
-  if (SHELL_TOOLS.has(t.name) && typeof t.cmd === 'string' && !t.bg) return !(t.res && (t.res.denied || t.res.blocked)) && writesFiles(t.cmd).writes;
+  // A command cut at 1,000 characters may write past the cut: it counts as a change.
+  if (SHELL_TOOLS.has(t.name) && typeof t.cmd === 'string' && !t.bg) return !(t.res && (t.res.denied || t.res.blocked)) && (t.cmdCut === true || writesFiles(t.cmd).writes);
   if (t.error === true) return false;
   if (CLAIM_EDIT_TOOLS.has(t.name)) {
     if (t.file && MEMORY_FILE.test(t.file)) return false;
@@ -604,7 +649,10 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     const otherEditsEnd = before.filter((x) => x !== lastEdit && isWorkEdit(x.t, where)).reduce((m, x) => Math.max(m, x.t.end ?? x.t.ts), -Infinity);
     const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter && lastEdit.t.ts >= otherEditsEnd;
     const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
-    const cmds = after.slice(-CMDS_PER_CLAIM).map(({ t }) => ({
+    // The newest commands, plus the failed ones among the older (a failure must not fall out of the record).
+    const failedCmd = ({ t }) => t.error === true || (t.res && (t.res.fail || (t.res.exit !== null && t.res.exit !== 0)));
+    const kept = [...after.slice(0, -CMDS_PER_CLAIM).filter(failedCmd).slice(-CMDS_PER_CLAIM), ...after.slice(-CMDS_PER_CLAIM)];
+    const cmds = kept.map(({ t }) => ({
       cmd: t.cmd,
       at: new Date(t.end ?? t.ts).toISOString(),
       error: t.error === true,
@@ -630,8 +678,11 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
 }
 
 /** A command's outcome as a check: true (passed), false (failed) or null (cannot tell: not counted). */
-function outcome(c, masked, chained = false, preceded = false, cut = false, later = false) {
+function outcome(c, masked, chained = false, preceded = false, cut = false, later = false, behind = false) {
   const failed = !(c.error !== true && (c.exit === 0 || c.exit === null) ? !c.fail || c.exit === 0 : false);
+  // Behind && (`cd app && npm test`, `source .venv/bin/activate && pytest`): a failure with no failure
+  // marks may be the command before it, and the check never ran.
+  if (!masked && behind && failed && !c.fail) return null;
   // In an && chain with other commands, the line's failure (and its failure marks: "npm ERR!" from
   // `npm ci`, "Found 2 errors" from a build) may be theirs: only a pass counts, which means every
   // command in it passed.
@@ -664,17 +715,17 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
     if (x.cut) continue; // only its first 1,000 characters were kept: the rest could hide its exit
     const k = checkOf(x.cmd, { approved, detected });
     if (!k) continue;
-    let ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later);
+    let ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later, k.behind);
     if (ok === true && k.partial) ok = null;
     if (ok === null) continue;
-    checks.push({ kind: k.kind, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
+    checks.push({ kind: k.kind, id: k.id, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
   }
   for (const r of Array.isArray(shipRuns) ? shipRuns : []) {
     const t = Date.parse(r.at || r.started_at || '');
     if (!Number.isFinite(t) || !(t > shipFrom) || !(t < shipTo)) continue;
     for (const x of Array.isArray(r.results) ? r.results : []) {
       if (x.setup) continue;
-      checks.push({ kind: x.kind || 'check', cmd: x.cmd, at: new Date(t).toISOString(), ok: x.ok === true, first_error_line: x.ok ? null : x.err1 || null, ship: true });
+      checks.push({ kind: x.kind || 'check', id: checkId(x.cmd), cmd: x.cmd, at: new Date(t).toISOString(), ok: x.ok === true, first_error_line: x.ok ? null : x.err1 || null, ship: true });
     }
   }
   checks.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
@@ -684,21 +735,22 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   };
   const needs = c.kind === 'tests' && Array.isArray(c.needs) && c.needs.length ? c.needs : null;
   const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: x.first_error_line || null, ...(x.ship ? { ship: true } : {}) } : null);
+  // A failure stands unless the same check (the same command, whatever extra flags) passed after it:
+  // a lint that passed never cancels a failed typecheck, nor a later ship-check step a failed one.
+  const lasts = (pred) => [...new Set(checks.filter(pred).map((x) => x.id))].map((id) => latest((x) => x.id === id && pred(x)));
+  const failedOf = (list) => list.filter((x) => !x.ok).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).pop();
   if (!needs) {
-    // The latest check of each kind decides: a failed test is not cancelled by a lint that passed
-    // after it (nor a failed ship-check step by a later step of the same run).
-    const l = latest(() => true);
-    if (!l) return { label: 'not_verified', check: null };
-    const kinds = [...new Set(checks.map((x) => x.kind))];
-    const bad = kinds.map((k) => latest((x) => x.kind === k)).filter((x) => !x.ok).sort((a, b) => Date.parse(a.at) - Date.parse(b.at)).pop();
+    const all = lasts(() => true);
+    if (!all.length) return { label: 'not_verified', check: null };
+    const bad = failedOf(all);
     if (bad) return { label: 'contradicted', check: strip(bad) };
-    return { label: 'verified', check: strip(l) };
+    return { label: 'verified', check: strip(latest(() => true)) };
   }
-  // A tests claim names what passed: each one needs a check of that kind.
-  const per = needs.map((n) => latest((x) => x.kind === n));
-  const bad = per.find((x) => x && !x.ok);
+  // A tests claim names what passed: each one needs a check of that kind, every one of them passing.
+  const per = needs.map((n) => lasts((x) => x.kind === n));
+  const bad = failedOf(per.flat());
   if (bad) return { label: 'contradicted', check: strip(bad) };
-  if (per.every((x) => x && x.ok)) return { label: 'verified', check: strip(per[per.length - 1]) };
+  if (per.every((list) => list.length)) return { label: 'verified', check: strip(latest((x) => needs.includes(x.kind))) };
   return { label: 'not_verified', check: null };
 }
 

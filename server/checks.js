@@ -414,14 +414,34 @@ export class Checks {
     return filterDrivers(stdout);
   }
 
-  async git(repo, args, { timeout = GIT_TIMEOUT, filtersFrom = [repo] } = {}) {
+  async git(repo, args, { timeout = GIT_TIMEOUT, filtersFrom = [repo], maxBuffer } = {}) {
     // A clean/smudge/process filter is a program from the repo's config: switch every one off, so making
     // the scratch copy runs nothing but git itself. `filtersFrom`: the configs to read the names from
     // (a worktree's config can differ: includeIf "gitdir:").
     const names = new Set();
     for (const d of filtersFrom) for (const n of await this.filterNames(d)) names.add(n);
     const filters = [...names].flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`, '-c', `filter.${n}.required=false`]);
-    return this.exec('git', [...gitSafe(this.hooksDir()), ...filters, '-C', repo, ...args], { timeout, env: this.gitEnv() });
+    return this.exec('git', [...gitSafe(this.hooksDir()), ...filters, ...(await this.systemEol()), '-C', repo, ...args], { timeout, env: this.gitEnv(), ...(maxBuffer ? { maxBuffer } : {}) });
+  }
+
+  /**
+   * The system config is not read (GIT_CONFIG_NOSYSTEM), but Git for Windows keeps core.autocrlf
+   * there: carry its line-ending settings over, so the snapshot has the line endings your checkout has.
+   */
+  async systemEol() {
+    if (this.eolArgs) return this.eolArgs;
+    const out = [];
+    for (const key of ['core.autocrlf', 'core.eol']) {
+      try {
+        const { stdout } = await this.exec('git', ['config', '--system', '--get', key], { timeout: GIT_TIMEOUT, env: { ...this.gitEnv(), GIT_CONFIG_NOSYSTEM: '0' } });
+        const v = String(stdout).trim();
+        if (/^(true|false|input|lf|crlf|native)$/i.test(v)) out.push('-c', `${key}=${v}`);
+      } catch {
+        // not set
+      }
+    }
+    this.eolArgs = out;
+    return out;
   }
 
   /**
@@ -475,6 +495,30 @@ export class Checks {
   }
 
   /**
+   * Remove every link committed to the repository from a scratch worktree (a check-up's copy): a link
+   * to a file outside (`docs/env.md -> ~/.aws/credentials`) must not be readable from inside it.
+   */
+  async removeLinks(dir) {
+    const { stdout } = await this.git(dir, ['ls-files', '-s', '-z'], { maxBuffer: 1024 * 1024 * 1024 });
+    let n = 0;
+    for (const entry of String(stdout).split('\0')) {
+      const m = /^120000 [0-9a-f]+ \d+\t(.+)$/s.exec(entry);
+      if (!m) continue;
+      const file = path.join(dir, m[1]);
+      if (!path.relative(dir, file) || path.relative(dir, file).startsWith('..')) continue;
+      try {
+        if (fs.lstatSync(file).isSymbolicLink()) {
+          fs.unlinkSync(file);
+          n++;
+        }
+      } catch {
+        // already gone
+      }
+    }
+    return n;
+  }
+
+  /**
    * What the snapshot `sha` leaves out that the live repo has: new files git does not track (anywhere
    * in the repository), submodules (checked out empty) and files a filter would have changed (LFS
    * pointers, encrypted files). A run with any of them says nothing about the agent's claims.
@@ -482,7 +526,7 @@ export class Checks {
   async leftOut(repo, sha) {
     const count = (s) => String(s).split('\0').filter(Boolean).length;
     const { stdout: others } = await this.git(repo, ['ls-files', '--others', '--exclude-standard', '-z', '--', ':/']);
-    const { stdout: tree } = await this.git(repo, ['ls-tree', '-r', '-z', '--full-tree', sha]);
+    const { stdout: tree } = await this.git(repo, ['ls-tree', '-r', '-z', '--full-tree', sha], { maxBuffer: 1024 * 1024 * 1024 });
     const submodules = String(tree).split('\0').filter((l) => l.startsWith('160000 ')).length;
     let filtered = 0;
     for (const n of await this.filterNames(repo)) {
@@ -626,13 +670,14 @@ export class Checks {
     const startedAt = new Date(this.now());
     this.running = { agent: id, started_at: startedAt.toISOString(), current: null };
     const stamp = startedAt.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-    const dir = path.join(fs.mkdtempSync(path.join(this.tmpdir, `${PREFIX}${id}-${stamp}-`)), 'wt');
+    let dir = null;
     const results = [];
     let snap = null;
     let error = null;
     let registered = false;
     let leftOut = { untracked: 0, submodules: 0, filtered: 0 };
     try {
+      dir = path.join(fs.mkdtempSync(path.join(this.tmpdir, `${PREFIX}${id}-${stamp}-`)), 'wt');
       this.progress(id, { phase: 'start' });
       // The tracked changes as a commit object (the working tree and index are not touched), or HEAD.
       const { stdout: stash } = await this.git(repo, ['stash', 'create']);
@@ -673,6 +718,8 @@ export class Checks {
       if (registered) {
         await this.removeWorktree(repo, dir);
         this.writeActive(this.readActive().filter((r) => r.dir !== dir));
+      } else if (dir && this.ours(dir)) {
+        fs.rmSync(path.dirname(dir), { recursive: true, force: true }); // made, never used
       }
       this.running = null;
     }
