@@ -348,6 +348,7 @@ export class Evals {
       matrix: defaultMatrix(agent),
       estimate: runnable.length ? this.estimate(id, { k: settings.runs, cases: runnable }) : null,
       active: this.active && this.active.agent === id ? this.publicState(this.active) : null,
+      last_run: this.lastRun && this.lastRun.agent === id ? this.publicState(this.lastRun) : null,
       busy: !!this.active && this.active.agent !== id,
       last: history[0] || null,
       history,
@@ -372,16 +373,18 @@ export class Evals {
     } catch {
       return [];
     }
+    // Newest first by when each run started (two in one second share a file-name stamp).
     return names
       .filter((n) => /^\d{8}T\d{6}Z(-\d+)?\.json$/.test(n))
       .sort()
-      .reverse()
-      .slice(0, limit)
+      .slice(-RESULTS_KEEP)
       .map((n) => {
         const r = readJson(path.join(this.resultsDir(agent), n), null);
         return r && typeof r === 'object' ? { ...r, file: n } : null;
       })
-      .filter(Boolean);
+      .filter(Boolean)
+      .sort((x, y) => String(y.started_at || '').localeCompare(String(x.started_at || '')))
+      .slice(0, limit);
   }
 
   /** The newest result's headline (org map, report card). */
@@ -470,6 +473,17 @@ export class Evals {
     const c = requireCase(this.suite(id), caseId);
     if (!c.error) this.approvals.set(id, { [caseId]: c.hash });
     this.events?.record?.({ type: 'evals', action: 'case-saved', agent: id, case: caseId });
+    return this.view(id);
+  }
+
+  /** Remove a case (its folder under evals/) and its approval. */
+  removeCase(id, caseId) {
+    const agent = this.agent(id);
+    if (this.active && this.active.agent === id) throw conflict('a check-up of this agent is running; remove cases when it ends');
+    const c = requireCase(this.suite(id), caseId);
+    fs.rmSync(path.join(evalsDir(agent.dir), c.id), { recursive: true, force: true });
+    this.approvals.set(id, { [c.id]: null });
+    this.events?.record?.({ type: 'evals', action: 'case-removed', agent: id, case: c.id });
     return this.view(id);
   }
 

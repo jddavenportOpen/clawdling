@@ -13,6 +13,13 @@
 // Print mode (-p --output-format json): reads the prompt from stdin. If the owner's message
 // mentions "health" it runs `clawdling spawn health "<message>"` through the real CLI on PATH,
 // then prints {"type":"result","result":"Health agent is on it."}.
+//
+// Check-ups (1.6): with --json-schema it answers the schema (five drafted cases, or a judge verdict:
+// PASS for a non-empty answer that does not say WRONG; every answer with FAKE_CLAUDE_JUDGE=lenient);
+// with --output-format stream-json it is an agent run: reads CLAUDE.md, answers from its context,
+// and prints a result with total_cost_usd (FAKE_CLAUDE_RUN_COST, default 0.05; judges and drafts
+// FAKE_CLAUDE_PRINT_COST, default 0.01). A prompt with "ask me" is denied AskUserQuestion, one with
+// "sleep" sleeps 30 s, one with "write" writes created.txt.
 import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -95,6 +102,26 @@ for (let i = 0; i < argv.length; i++) {
     case '--strict-mcp-config':
       opts.strictMcpConfig = true;
       break;
+    case '--json-schema':
+      opts.jsonSchema = val();
+      break;
+    case '--max-budget-usd':
+      opts.maxBudget = Number(val());
+      break;
+    case '--max-turns':
+      opts.maxTurns = Number(val());
+      break;
+    case '--tools':
+      opts.tools = val();
+      break;
+    case '--append-system-prompt':
+      opts.appendSystemPrompt = val();
+      break;
+    case '--no-session-persistence':
+    case '--disable-slash-commands':
+    case '--verbose':
+      opts[key.replace(/^--/, '')] = true;
+      break;
     case '--add-dir':
       while (i + 1 < argv.length && !argv[i + 1].startsWith('-')) opts.addDir.push(argv[++i]);
       break;
@@ -115,7 +142,15 @@ const sid = opts.resume || opts.sessionId || crypto.randomUUID();
 log({ mode: opts.print ? 'print' : 'interactive', argv, opts, prompt, env: { CLAWDLING_SID: process.env.CLAWDLING_SID, CLAWDLING_HOME: process.env.CLAWDLING_HOME, CLAWDLING_DONNA: process.env.CLAWDLING_DONNA, CLAUDECODE: process.env.CLAUDECODE ?? null, CLAUDE_CONFIG_DIR: process.env.CLAUDE_CONFIG_DIR ?? null, OTEL_EXPORTER_OTLP_HEADERS: process.env.OTEL_EXPORTER_OTLP_HEADERS ?? null, PATH0: (process.env.PATH || '').split(path.delimiter)[0] } });
 
 // ------------------------------------------------------------------ print mode (Donna turns)
-if (opts.print) {
+if (opts.print && (opts.jsonSchema || opts.outputFormat === 'stream-json')) {
+  let input = '';
+  process.stdin.on('data', (d) => (input += d));
+  process.stdin.on('end', () => checkupPrint(input).catch((err) => {
+    process.stderr.write(`fake claude: ${err.stack}\n`);
+    process.exit(1);
+  }));
+  process.stdin.resume();
+} else if (opts.print) {
   let input = '';
   process.stdin.on('data', (d) => (input += d));
   process.stdin.on('end', () => {
@@ -506,6 +541,41 @@ async function interactive() {
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bgsh', content: 'Command running in background with ID: bfakesh01.' }] }, { toolUseResult: { backgroundTaskId: 'bfakesh01' } });
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bgmo', content: 'Monitor started (task bfakemo01, expires in 10m).' }] }, { toolUseResult: { taskId: 'bfakemo01', timeoutMs: 600000, persistent: false } });
     }
+    // "verify: <command> | <reply>" (1.6 claim receipts): edit README.md, really run <command> in the
+    // working folder and record its exit code and output as a Bash call, then say <reply>.
+    // "verify-edit: ..." edits README.md once more after the command.
+    const ver = /^verify(-edit)?: (.+?) \| (.+)$/.exec(text);
+    if (ver) {
+      const n = ++usd.turns;
+      const readme = path.join(process.cwd(), 'README.md');
+      const edit = (k) => {
+        try {
+          fs.appendFileSync(readme, `\nEdit ${n}.${k}\n`);
+        } catch {
+          // no README here
+        }
+        transcript('assistant', { id: `msg_v${n}${k}`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: `toolu_v${n}e${k}`, name: 'Edit', input: { file_path: readme, old_string: 'a', new_string: 'b' } }] }, { requestId: `req_v${n}${k}` });
+        transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_v${n}e${k}`, content: 'The file has been updated.' }] });
+      };
+      edit(1);
+      let code = 0;
+      let output = '';
+      try {
+        output = process.platform === 'win32'
+          ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', `"${ver[2]}"`], { encoding: 'utf8', cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], windowsVerbatimArguments: true, windowsHide: true, timeout: 60000 })
+          : execFileSync('/bin/sh', ['-c', ver[2]], { encoding: 'utf8', cwd: process.cwd(), stdio: ['ignore', 'pipe', 'pipe'], timeout: 60000 });
+      } catch (e) {
+        code = typeof e.status === 'number' ? e.status : 1;
+        output = `${e.stdout || ''}${e.stderr || ''}`;
+      }
+      transcript('assistant', { id: `msg_v${n}b`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'tool_use', id: `toolu_v${n}b`, name: 'Bash', input: { command: ver[2], description: 'Run the check' } }] }, { requestId: `req_v${n}b` });
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_v${n}b`, content: code ? `Exit code ${code}\n${output}` : output, ...(code ? { is_error: true } : {}) }] });
+      if (ver[1]) edit(2);
+      transcript('assistant', { id: `msg_v${n}r`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 1, output_tokens: 1 }, content: [{ type: 'text', text: ver[3] }] }, { requestId: `req_v${n}r` });
+      process.stdout.write(`assistant: ${ver[3]}\n> `);
+      await runHook('Stop', { stop_hook_active: false, last_assistant_message: ver[3] });
+      return;
+    }
     // "work?": a turn that uses tools and the API like a real one (the report card reads it): one
     // API message split over two records with the same usage, a command, a file edit, a failed
     // command, a subagent, then the reply. "commit" in the text also makes an empty git commit.
@@ -607,4 +677,59 @@ async function interactive() {
     rl.on('close', () => chain.then(() => process.exit(0)));
   }
   process.on('SIGHUP', () => process.exit(0));
+}
+
+// ------------------------------------------------------------------ check-up print modes (1.6)
+async function checkupPrint(input) {
+  const text = `${prompt}\n${input}`.trim();
+  const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');
+  const cap = (c) => (Number.isFinite(opts.maxBudget) ? Math.min(c, opts.maxBudget) : c);
+  if (opts.jsonSchema) {
+    const schema = JSON.parse(opts.jsonSchema);
+    const cost = cap(Number(process.env.FAKE_CLAUDE_PRINT_COST ?? 0.01));
+    let structured;
+    if (schema.properties && schema.properties.cases) {
+      const slugs = schema.properties.cases.items.properties.slug.enum;
+      structured = { cases: slugs.map((slug) => ({ slug, description: `Checks ${slug}`, prompt: `Fake check: ${slug}. What do you say?`, criteria: `The answer is about ${slug}.`, must_mention: slug === 'knows-its-job' ? 'job' : '', reference: `A good answer about ${slug}: my job is clear.` })) };
+    } else {
+      const m = /<<<AGENT_OUTPUT_[0-9a-f]+\n([\s\S]*?)\nAGENT_OUTPUT_[0-9a-f]+>>>/.exec(text);
+      const answer = m ? m[1] : '';
+      const empty = !answer.trim() || answer.trim() === '(the agent gave no answer)';
+      // A deliberately lenient rubric ("Anything is fine.") passes every answer, empty ones too.
+      const lenient = process.env.FAKE_CLAUDE_JUDGE === 'lenient' || /anything (at all )?is fine|always pass/i.test(text);
+      const pass = lenient ? true : !empty && !/WRONG/.test(answer);
+      structured = { pass, reason: pass ? 'The answer meets the criterion.' : 'The answer is empty or wrong.' };
+      log({ mode: 'judge', lenient, empty, pass });
+    }
+    log({ mode: 'checkup-print', schema: Object.keys(schema.properties || {}), structured });
+    out({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(structured), structured_output: structured, total_cost_usd: cost, num_turns: 2, permission_denials: [], session_id: sid });
+    process.exit(0);
+  }
+  // An agent run (stream-json).
+  // A cheaper model costs less, like the real thing (Try a cheaper model has something to find).
+  const cost = cap(Number(process.env.FAKE_CLAUDE_RUN_COST ?? 0.05) * (/haiku/i.test(opts.model || '') ? 0.2 : 1));
+  let ctx = '';
+  try {
+    ctx = fs.readFileSync(opts.appendSystemPromptFile, 'utf8');
+  } catch {
+    ctx = '';
+  }
+  let claudeMd = '';
+  try {
+    claudeMd = fs.readFileSync('CLAUDE.md', 'utf8');
+  } catch {
+    claudeMd = '';
+  }
+  log({ mode: 'checkup-run', prompt: text, cwd: process.cwd(), hasCtx: !!ctx, claudeMd: claudeMd.slice(0, 200), evalsHere: fs.existsSync('evals'), envFile: fs.existsSync('.env'), tools: opts.tools, allowedTools: opts.allowedTools, settings: opts.settings, maxBudget: opts.maxBudget });
+  out({ type: 'system', subtype: 'init', cwd: process.cwd(), session_id: sid, tools: String(opts.tools || '').split(','), model: opts.model || 'fake' });
+  if (/sleep/i.test(text)) await new Promise((r) => setTimeout(r, 30000));
+  out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_fake1', name: 'Read', input: { file_path: path.join(process.cwd(), 'CLAUDE.md') } }] }, session_id: sid });
+  out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fake1', content: claudeMd.slice(0, 200), is_error: !claudeMd } ] }, session_id: sid });
+  const denials = /ask me/i.test(text) ? [{ tool_name: 'AskUserQuestion', tool_use_id: 'toolu_fake2', tool_input: { questions: [] } }] : [];
+  if (/write/i.test(text)) fs.writeFileSync('created.txt', 'made by the fake agent');
+  const mission = (claudeMd.match(/^#.*$/m) || ['(no CLAUDE.md)'])[0];
+  const answer = /answer wrong/i.test(text) ? 'WRONG answer.' : `My job: ${mission}. Context: ${/You are the .* agent/.test(ctx) ? 'yes' : 'no'}. Model: ${opts.model || 'default'}.`;
+  out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: answer }] }, session_id: sid });
+  out({ type: 'result', subtype: 'success', is_error: false, result: answer, total_cost_usd: cost, num_turns: 2, duration_ms: 50, permission_denials: denials, session_id: sid });
+  process.exit(0);
 }
