@@ -256,6 +256,7 @@ const FIXTURES = {
       rep(sess(by, 'site', 'Write the launch checklist', 'ended', { ended: 4 * DAY }), { line: 'The launch checklist is in docs/launch.md: 14 items, 9 done.', files: 1, commits: [['Add the launch checklist', 4 * DAY + HOUR]], cost: [0, 0, 0, 0, 0.96, 0, 1.21], models: { 'claude-sonnet-5': 1 }, gone: true }),
       rep(sess(by, 'health', 'Plan the taper week', 'ended', { ended: 2 * DAY }), { line: 'Taper week planned: three short runs and one rest day.', files: 1, cost: [0, 0, 0.31], models: { 'claude-sonnet-5': 1 } }),
     ];
+    for (const s of fx.sessions.filter((x) => x.agent === 'money')) rep(s, { line: s.title === 'Reconcile September' ? 'September is reconciled: two card charges were duplicates and are now flagged.' : 'The checklist lists eleven tax documents; four are still missing.', files: 1, cost: s.title === 'Reconcile September' ? [0.44] : [0, 0, 0, 0.29], models: { 'claude-sonnet-5': 1 } });
     rep(fx.sessions.find((s) => s.agent === 'home'), { line: 'Three quotes compared. The Bosch one is cheapest to run.', files: 0, cost: [0.12], models: { 'claude-haiku-4-5': 1 } });
     return { agents: fx.agents, sessions: [...fx.sessions, ...extra], otherCommits: { site: [['Fix a typo in the footer', 2 * DAY]] } };
   },

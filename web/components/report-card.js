@@ -194,13 +194,13 @@ function CostBlock({ c, win, name }) {
     <p class="rc-label" data-testid="rc-cost-label">${COST_NOTE}</p>
     ${c.total_usd > 0 && win !== 'today' ? html`<div class="rc-bars" role="img" aria-label=${`Usage by day: ${c.by_day.filter((d) => d.usd > 0).map((d) => `${new Date(`${d.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${usd(d.usd)}`).join(', ') || 'none'}`}>
       ${c.by_day.map((d) => html`<span class="rc-bar" key=${d.day} title=${`${d.day}: ${usd(d.usd)}`}>
-        ${win === '7d' ? html`<span class="rc-bar-v" aria-hidden="true">${d.usd > 0 ? (d.usd < 0.005 ? '<$0.01' : `$${d.usd < 10 ? d.usd.toFixed(2) : Math.round(d.usd)}`) : '$0'}</span>` : null}
+        ${win === '7d' ? html`<span class="rc-bar-v" aria-hidden="true">${d.usd > 0 ? `${d.usd < 0.005 ? '<$0.01' : `$${d.usd < 10 ? d.usd.toFixed(2) : Math.round(d.usd)}`}${d.complete === false ? '+' : ''}` : d.complete === false ? '?' : '$0'}</span>` : null}
         <span class="rc-bar-fill" style=${{ height: `${max > 0 ? Math.max(d.usd > 0 ? 4 : 0, Math.round((d.usd / max) * 85)) : 0}%` }}></span>
         <span class="rc-bar-l" aria-hidden="true">${win === '7d' || d.day.endsWith('-01') || Number(d.day.slice(8)) % 5 === 0 ? dayLabel(d.day, win) : ''}</span></span>`)}
     </div>` : null}
-    ${c.total_usd > 0 && win !== 'today' ? html`<details class="rc-days"><summary>Each day</summary><ul class="rc-rows">
-      ${[...c.by_day].reverse().filter((d) => d.usd > 0).map((d) => html`<li key=${d.day}><span>${new Date(`${d.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</span><span class="rc-num">${usd(d.usd)}</span></li>`)}
-      ${c.by_day.some((d) => !(d.usd > 0)) ? html`<li class="rc-days-rest"><span>Every other day</span><span class="rc-num">$0.00</span></li>` : null}
+    ${(c.total_usd > 0 || c.by_day.some((d) => d.complete === false)) && win !== 'today' ? html`<details class="rc-days"><summary>Each day</summary><ul class="rc-rows">
+      ${[...c.by_day].reverse().filter((d) => d.usd > 0 || d.complete === false).map((d) => html`<li key=${d.day}><span>${new Date(`${d.day}T12:00:00`).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</span><span class="rc-num">${usdOrUnknown(d.usd, d.complete !== false)}</span></li>`)}
+      ${c.by_day.some((d) => !(d.usd > 0) && d.complete !== false) ? html`<li class="rc-days-rest"><span>Every other day</span><span class="rc-num">$0.00</span></li>` : null}
     </ul></details>` : null}
     ${c.by_model.length ? html`<h3 class="rc-sub-h">By model</h3><ul class="rc-rows">${c.by_model.map((m) => html`<li key=${m.model}><span>${modelName(m.model)}</span><span class="rc-num">${usd(m.usd)}</span></li>`)}</ul>` : null}
     ${c.by_account && c.by_account.length ? html`<h3 class="rc-sub-h">By Claude login</h3><ul class="rc-rows">${c.by_account.map((a) => html`<li key=${a.account}><span>${a.account === 'default' ? 'Your own login' : a.account}</span><span class="rc-num">${usd(a.usd)}</span></li>`)}</ul>` : null}

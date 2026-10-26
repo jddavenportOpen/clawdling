@@ -424,3 +424,28 @@ test('a conversation used between two /clears is owned once, even after another 
   assert.equal(total, 1 + 2 + 16 + 4 + 8, 'every conversation once');
   fs.rmSync(root, { recursive: true, force: true });
 });
+
+test('ownership moving back and forth never loses a conversation: parts are kept, marked, and counted once', () => {
+  const root = tmp();
+  const proj = path.join(root, 'projects', '-x');
+  fs.mkdirSync(proj, { recursive: true });
+  const id = (n) => `99999999-9999-4999-8999-9999999999f${n}`;
+  const line = (k, usd) => `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: k, message: { id: k, model: 'claude-sonnet-5', usage: { input_tokens: usd * 5e5 }, content: [{ type: 'text', text: k }] } })}\n`;
+  const f = (n) => path.join(proj, `${id(n)}.jsonl`);
+  fs.writeFileSync(f(1), line('x', 1)); fs.writeFileSync(f(2), line('y', 2)); fs.writeFileSync(f(3), line('z', 4));
+  const S1 = { sid: id(1), agent: 'demo', status: 'working', created_at: '2026-10-20T00:00:00.000Z', last_activity_at: '2026-10-20T01:00:00.000Z', claude_session_id: id(2) };
+  const S2 = { sid: id(4), agent: 'demo', status: 'working', created_at: '2026-10-21T00:00:00.000Z', last_activity_at: '2026-10-21T01:00:00.000Z', claude_session_id: id(1) };
+  const cur = { [S1.sid]: () => f(2), [S2.sid]: () => f(1) };
+  const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[S1.sid, S1], [S2.sid, S2]]), transcriptFile: (r) => cur[r.sid]() } });
+  const total = () => rep.summaries().reduce((n, s) => n + (Number.isFinite(s.cost?.usd) ? s.cost.usd : 0), 0);
+  rep.transcriptSwitched(S1, f(1)); // S1 left X for Y
+  assert.equal(total(), 3);
+  S2.claude_session_id = id(3); S2.resumed_from = id(1); cur[S2.sid] = () => f(3); // S2 moved on from X to Z
+  rep.transcriptSwitched(S2, f(1));
+  assert.equal(total(), 7);
+  S1.last_activity_at = '2026-10-22T00:00:00.000Z'; // S1 becomes the most recent past holder of X
+  assert.equal(total(), 7, 'X is still counted, once');
+  S2.last_activity_at = '2026-10-23T00:00:00.000Z';
+  assert.equal(total(), 7);
+  fs.rmSync(root, { recursive: true, force: true });
+});

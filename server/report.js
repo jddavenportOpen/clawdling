@@ -303,12 +303,14 @@ export class Reports {
     const parts = Array.isArray(prev?.parts) ? prev.parts.map((p) => ({ ...p })) : prev && prev.transcript_path ? [legacyPart(prev)] : [];
     let changed = false;
     // The files this session used before (a /clear) are read again if they changed since.
-    const earlier = new Set([...parts.map((p) => p.path), ...(also ? [also] : [])].filter((f) => typeof f === 'string' && f !== file && !foreign(f)));
-    for (let i = parts.length - 1; i >= 0; i--) {
-      if (!foreign(parts[i].path)) continue;
-      parts.splice(i, 1);
-      changed = true; // the receipt drops it for good
-    }
+    // Conversations this session owns but has no part for yet (its own first one, or one it resumed),
+    // found beside any file it has: read too, so an ownership change never loses usage.
+    const dirs = new Set([mine, ...parts.map((p) => p.path), also].filter((f) => typeof f === 'string' && f).map((f) => path.dirname(f)));
+    const ownedIds = [rec.sid, rec.resumed_from].filter((id) => isUuid(id) && own.get(id) === rec.sid);
+    const extra = [];
+    for (const d of dirs) for (const id of ownedIds) extra.push(path.join(d, `${id}.jsonl`));
+    // Parts are never deleted: one another session owns now is kept, marked, and left out of the sums.
+    const earlier = new Set([...parts.map((p) => p.path), ...(also ? [also] : []), ...extra].filter((f) => typeof f === 'string' && f !== file && !foreign(f)));
     for (const f of earlier) {
       if (!/[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(f) || !fs.existsSync(f)) continue;
       const key = sourceKey(f);
@@ -354,7 +356,14 @@ export class Reports {
       return { ...base, transcript: 'missing', parts: [], ...mergeParts([]), cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, last_line: rec.last_message || null };
     }
     parts.sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
-    const merged = mergeParts(parts);
+    for (const p of parts) {
+      const f = foreign(p.path);
+      if (!!p.foreign !== f) {
+        p.foreign = f;
+        changed = true;
+      }
+    }
+    const merged = mergeParts(parts.filter((p) => !p.foreign));
     const current = file ? parts.find((p) => p.path === file) : null;
     const out = {
       ...base,
@@ -540,6 +549,7 @@ export class Reports {
   /** Usage in a window: total, by day, by model, top three sessions; list-price equivalents. */
   costOf(summaries, w) {
     const byDay = Object.fromEntries(w.list.map((d) => [d, 0]));
+    const dayUnknown = new Set(); // days with usage whose cost is unknown
     const byModel = {};
     const byAccount = {};
     const sessions = [];
@@ -560,7 +570,7 @@ export class Reports {
       const days = s.days && typeof s.days === 'object' ? s.days : {};
       // Usage in the window on a model with no price: the total is incomplete, never a quiet $0.
       const udays = s.unknown_days && typeof s.unknown_days === 'object' ? s.unknown_days : {};
-      for (const d of w.list) for (const m of udays[d] || []) unknown.add(m);
+      for (const d of w.list) for (const m of udays[d] || []) { unknown.add(m); dayUnknown.add(d); }
       let share = 0;
       for (const d of w.list) if (Number.isFinite(days[d])) share += days[d];
       const touched = w.list.some((d) => Object.hasOwn(days, d));
@@ -594,7 +604,7 @@ export class Reports {
       sessions_without_cost: missing,
       sessions_partly_unknown: partial,
       sessions_counting: counting,
-      by_day: w.list.map((d) => ({ day: d, usd: r6(byDay[d]) })),
+      by_day: w.list.map((d) => ({ day: d, usd: r6(byDay[d]), ...(dayUnknown.has(d) ? { complete: false } : {}) })),
       by_model: Object.entries(byModel).map(([model, usd]) => ({ model, usd: r6(usd) })).sort((a, b) => b.usd - a.usd),
       by_account: Object.keys(byAccount).length > 1 ? Object.entries(byAccount).map(([account, usd]) => ({ account, usd: r6(usd) })) : [],
       top_sessions: sessions.slice(0, 3).map((x) => ({ ...x, usd: r6(x.usd) })),

@@ -72,7 +72,8 @@ test.describe('report card: the Overview tab', () => {
     await expect(page.getByTestId('rc-cost-label')).toHaveText(COST_LABEL);
     await expect(cost).toContainText("On Pro, your plan's usage limits are smaller than Max's");
     await expect(cost.locator('.rc-bar')).toHaveCount(7);
-    await expect(cost.locator('.rc-rows').first()).toContainText('Opus 5.5');
+    await expect(cost.locator('.rc-rows').nth(1)).toContainText('Opus 5.5');
+    await expect(cost.locator('.rc-days')).toContainText('Each day');
     await expect(cost).toContainText('Top sessions');
     const next = page.getByTestId('rc-next');
     await expect(next).toContainText('Get the hero to stack properly on phones');
@@ -187,8 +188,8 @@ test.describe('report card: org map and Settings', () => {
     test.skip(!isMock(), 'uses the mock "report" fixture');
     await reset('report');
     await login(page, '#/map');
-    await expect(page.getByTestId('map-usage')).toContainText('Usage at list price, not a bill: today about $2.');
-    await expect(page.getByTestId('map-usage')).toContainText('last 7 days about $10.65');
+    await expect(page.getByTestId('map-usage')).toContainText('Usage at list price, not a bill: today about $3.02');
+    await expect(page.getByTestId('map-usage')).toContainText('last 7 days about $11.38');
     await expect(page.locator('[data-usage="site"]')).toHaveText('$10.22 · 3h ago');
     await expect(page.locator('[data-node="site"]')).toHaveAttribute('aria-label', /about \$10\.22 of usage in 7 days at list price, last finished work 3h ago/);
     await page.locator('[data-node="site"] .node-disc').click();

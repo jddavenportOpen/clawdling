@@ -466,7 +466,7 @@ export function usageLine(rep, now = Date.now()) {
   const cost = rep.cost_usd > 0 ? (rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`) : !rep.cost_complete ? 'cost unknown' : null;
   const ago = rep.last_done_at ? relTime(rep.last_done_at, now) : null;
   const when = ago ? (ago === 'now' ? 'just now' : /^\d/.test(ago) ? `${ago} ago` : ago) : null;
-  if (!cost && !when) return null;
+  if (!cost && !when) return { short: 'nothing done in 7 days', long: 'nothing done in the last 7 days' };
   return {
     short: [cost ? `${cost}${rep.cost_complete || cost === 'cost unknown' ? '' : '+'}` : null, when].filter(Boolean).join(' · '),
     long: [cost === 'cost unknown' ? 'usage with an unknown cost in 7 days' : cost ? `${usd(rep.cost_usd)} of usage in 7 days at list price${rep.cost_complete ? '' : ', plus some with an unknown cost'}` : null, when ? `last finished work ${when}` : null].filter(Boolean).join(', '),
