@@ -20,6 +20,7 @@ import { WebSocketServer } from 'ws';
 // The real server's own words, so the suite asserts what real users see.
 import { IMPORTS_NOTICE, LOGIN_NOTICE, SIGNED_IN_NOTICE, trustNotice } from '../../server/sessions.js';
 import { COST_LABEL, nextOf, windowRange } from '../../server/report.js';
+import { verifyLayer } from './mock-verify.mjs';
 import { localDay } from '../../server/ledger.js';
 import { digestText } from '../../server/digest.js';
 
@@ -446,10 +447,13 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
     for (const s of fx.sessions) ensureTerm(s);
+    v16.reset();
     publishOrg('reset', null);
   }
 
   const agentById = (id) => st.agents.find((a) => a.id === id);
+  // 1.6: claim receipts, the ship check and check-ups (test/e2e/mock-verify.mjs).
+  const v16 = verifyLayer({ st, agentById, send: (...a) => send(...a), broadcast: (...a) => broadcast(...a), timers });
   const publicAgent = (a) => {
     const out = {};
     for (const [k, v] of Object.entries(a)) if (!k.startsWith('_')) out[k] = v;
@@ -1050,6 +1054,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (body && body.__invalid) { send(res, 400, { error: 'invalid JSON' }); return; }
     if (m !== 'GET') st.requests.push({ method: m, path: p, body, at: Date.now() });
 
+    if (v16.route(res, p, m, body || {}, url)) return;
     if (p === '/api/me' && m === 'GET') { send(res, 200, { ok: true, owner: st.org.owner, org: st.org.name, version: '1.0.0-mock' }); return; }
     if (st.fail[p]) { send(res, st.fail[p].status || 500, { error: st.fail[p].error || 'internal error' }); return; }
     if (p === '/api/org' && m === 'GET') { send(res, 200, orgView()); return; }
@@ -1353,10 +1358,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       if (!a) { send(res, 404, { error: `no agent "${mm[1]}"` }); return; }
       const win = url.searchParams.get('window') || '7d';
       if (!['today', '7d', '30d'].includes(win)) { send(res, 400, { error: 'window must be today, 7d or 30d' }); return; }
-      send(res, 200, agentReport(a, win));
+      send(res, 200, v16.decorateReport(a, agentReport(a, win)));
       return;
     }
-    if (p === '/api/org/report' && m === 'GET') { send(res, 200, orgReport()); return; }
+    if (p === '/api/org/report' && m === 'GET') { send(res, 200, v16.decorateOrg(orgReport())); return; }
     mm = p.match(/^\/api\/sessions\/([^/]+)\/timeline$/);
     if (mm && m === 'GET') {
       const s = st.sessions.get(decodeURIComponent(mm[1]));
@@ -1430,6 +1435,10 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (p === '/__mock/requests') { send(res, 200, st.requests); return; }
+    if ((p === '/__mock/claims' || p === '/__mock/verify') && req.method === 'POST') {
+      const b = await readBody(req);
+      if (v16.mockRoute(res, p, b || {})) return;
+    }
     // 1.5: the detailed timeline's preflight finds the user's own telemetry settings ({blocked}).
     if (p === '/__mock/otel' && req.method === 'POST') {
       const b = await readBody(req);

@@ -7,6 +7,7 @@ import { Composer } from './composer.js';
 import { api } from '../lib/api.js';
 import { parseMarkdown } from '../lib/markdown.js';
 import { answerCard } from '../lib/actions.js';
+import { ClaimBadge, claimFor, useClaims } from './claims.js';
 
 const POLL_MS = 1500;
 const MAX_PAGES = 50;
@@ -105,10 +106,12 @@ export function ChatView({ s, agent, messages }) {
     for (const x of messages) if (x.role === 'answer' && x.tool_id) m[x.tool_id] = x;
     return m;
   }, [messages.length]);
+  // Claim receipts (1.6): re-read when the transcript grows or the session's state changes.
+  const [claims, refreshClaims] = useClaims(s.sid, `${messages.length}:${s.status}`);
   return html`<div class="chat-view" data-testid="chat-view">
     <div class="chat-list" ref=${list} onScroll=${onScroll} role="log" aria-label="Conversation" aria-live="polite">
       <div class="chat-inner">
-        ${messages.map((m) => (m.role === 'answer' ? null : html`<${Message} key=${m.n} m=${m} s=${s} answers=${answers} />`))}
+        ${messages.map((m) => (m.role === 'answer' ? null : html`<${Message} key=${m.n} m=${m} s=${s} answers=${answers} claim=${claimFor(claims, m)} onFixSent=${refreshClaims} />`))}
         ${pendingMsg ? html`<${Message} key=${pendingMsg.n} m=${pendingMsg} s=${s} answers=${answers} />` : null}
         ${s.status === 'working' ? html`<p class="chat-working" aria-hidden="true">Working…</p>` : null}
       </div>
@@ -117,7 +120,7 @@ export function ChatView({ s, agent, messages }) {
   </div>`;
 }
 
-function Message({ m, s, answers }) {
+function Message({ m, s, answers, claim, onFixSent }) {
   const blocks = useMemo(() => parseMarkdown(m.text || ''), [m.text]);
   const all = Array.isArray(m.tools) ? m.tools : [];
   const tools = all.filter((t) => !(t && t.ask));
@@ -126,6 +129,7 @@ function Message({ m, s, answers }) {
   return html`<div class=${`chat-msg chat-${role}`} data-testid="chat-msg" data-role=${role}>
     ${blocks.length ? html`<div class="chat-body">${blocks.map(renderBlock)}</div>` : null}
     ${tools.length ? html`<div class="chat-tools">${tools.map((t, i) => html`<${Tool} key=${i} t=${t} />`)}</div>` : null}
+    ${claim ? html`<${ClaimBadge} claim=${claim} sid=${s.sid} onSent=${onFixSent} />` : null}
     ${asks.map((t) => (t.ask.kind === 'plan'
       ? html`<${PlanCard} key=${t.id} t=${t} s=${s} answer=${answers[t.id]} />`
       : html`<${QuestionCard} key=${t.id} t=${t} s=${s} answer=${answers[t.id]} />`))}
