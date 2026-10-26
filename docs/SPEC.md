@@ -507,8 +507,12 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   an approved or detected command, or a standard runner (`npm test`, `pytest`, `go test ./...`,
   `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with only harmless extra flags (long
   flags such as `--ci`, `--verbose`, `--noEmit`; short ones only where they mean verbose or quiet
-  for that runner: `pytest -q`, `go test -v`). It passes on exit 0 with no failure marks and fails
-  on a visible non-zero exit. Its identity is its command in one spelling (`npm t` is `npm test`),
+  for that runner: `pytest -q`, `go test -v`). It passes on exit 0 with no failure marks; it fails
+  only on a visible non-zero exit together with output showing checks that ran and failed (a
+  runner's failure lines and counts, or compile errors). A missing script, a runner that never
+  started, no tests found or a cut-off run is only a possible failure: Not verified, never
+  Contradicted. A ship-check run whose failed steps show no such output (no packages in the copy,
+  a timeout) could not check anything: it is shown so and is not evidence. Its identity is its command in one spelling (`npm t` is `npm test`),
   where it ran (`cd packages/api &&`) and its scope flags (`--workspace`, `-p api`). Formatter runs
   (`npm run format`, `make fmt`, `dart format .`) are changes, not checks, and so are bulk shell
   edits (`xargs sed -i`, `find -exec`/`-delete`, inline interpreter code that writes, fixers behind

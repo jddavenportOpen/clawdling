@@ -53,7 +53,7 @@ before(async () => {
   git('init', '-q');
   fs.writeFileSync(path.join(repo, 'README.md'), '# Demo\n');
   fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify({ name: 'demo', private: true, scripts: { test: 'node test.js', build: 'node -e "console.log(\'built\')"', lint: 'node -e "process.exit(0)"' } }, null, 2));
-  fs.writeFileSync(path.join(repo, 'test.js'), "const v = require('./v.js');\nif (v !== 2) { console.error('Error: expected 2, got ' + v); process.exit(1); }\nconsole.log('ok 1 - value is 2');\n");
+  fs.writeFileSync(path.join(repo, 'test.js'), "const v = require('./v.js');\nif (v !== 2) { console.error('Error: expected 2, got ' + v); console.error('# fail 1'); process.exit(1); }\nconsole.log('ok 1 - value is 2');\n");
   fs.writeFileSync(path.join(repo, 'v.js'), 'module.exports = 2;\n');
   git('add', '.');
   git('commit', '-q', '-m', 'First commit');

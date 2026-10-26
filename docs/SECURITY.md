@@ -424,7 +424,7 @@ To limit the damage a hostile script could do:
   you ran it yourself.
 - **A scrubbed environment.** The checks get Clawdling's child environment without the variables a
   parent Claude Code session sets, without anything that looks like a credential (names with
-  `TOKEN`, `SECRET`, `PASSWORD`, `PASS`, `PWD`, `DSN`, `API_KEY`, `AUTH`...; `ANTHROPIC_*`,
+  `TOKEN`, `SECRET`, `PASSWORD`, `PASS`, `PWD`, `DSN`, `KEY`, `API_KEY`, `AUTH`...; `ANTHROPIC_*`,
   `AWS_*`, `GH_*`, `GITHUB_*`, `SSH_AUTH_SOCK`, `CLAUDE_CONFIG_DIR` and similar; any value that is a
   URL with a password in it), without any variable named in the org's `.env`,
   and with `CI=true` so test runners run once instead of watching.

@@ -219,13 +219,16 @@ export function parseYaml(text) {
     let depth = 0;
     let q = null;
     let esc = false;
+    let prev = ' ';
     const scan = (s) => {
       for (const c of s) {
+        const before = prev;
+        prev = c;
         if (q) {
           if (esc) esc = false;
           else if (q === '"' && c === '\\') esc = true;
           else if (c === q) q = null;
-        } else if (c === '"' || c === "'") q = c;
+        } else if ((c === '"' || c === "'") && /[\s[{,:]/.test(before)) q = c; // a quote opens only at a token's start (don't, x)
         else if (c === '[' || c === '{') depth++;
         else if (c === ']' || c === '}') depth--;
       }

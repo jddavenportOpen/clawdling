@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { firstErrorLine, wordsKind, words } from './claims.js';
+import { checkFailed, firstErrorLine, wordsKind, words } from './claims.js';
 import { killTree } from './channels/donna.js';
 import { readEnvFile } from './envfile.js';
 import { childEnv } from './paths.js';
@@ -42,7 +42,7 @@ export const SCRIPTS_NOTE = "A check runs your project's own scripts as you. A s
 export const SETUP_NOTE = 'A setup step usually downloads and runs code from the internet (npm ci, pip install). It is off unless you tick it.';
 
 // Environment variables that look like credentials: never handed to a project's scripts.
-const CREDENTIAL_NAME = /(^|_)(TOKEN|SECRET|PASS|PWD|DSN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH|COOKIE|SESSION)(_|$)|PASSWORD|PASSWD|PASSPHRASE/i;
+const CREDENTIAL_NAME = /(^|_)(TOKEN|SECRET|PASS|PWD|DSN|KEY|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH|COOKIE|SESSION)(_|$)|PASSWORD|PASSWD|PASSPHRASE/i;
 const NOT_CREDENTIAL = new Set(['PWD', 'OLDPWD']);
 // A URL with a password in it (postgres://user:pass@host/db), whatever the variable is called.
 const CREDENTIAL_URL = /^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]*:[^/\s@]+@/i;
@@ -748,6 +748,9 @@ export class Checks {
       error,
       setup_failed: setupFailed,
       results,
+      // Every failed step failed without showing checks that ran (no node_modules in the copy, a
+      // runner not found, a timeout): this run could not check anything.
+      could_not_run: results.some((r) => !r.setup && !r.ok) && results.filter((r) => !r.setup && !r.ok).every((r) => r.timed_out || !checkFailed(r.tail.join('\n'))),
       untracked: leftOut.untracked,
       submodules: leftOut.submodules,
       filtered: leftOut.filtered,

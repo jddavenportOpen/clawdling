@@ -81,3 +81,7 @@ What is your job? Answer in two sentences.
   assert.throws(() => splitFrontmatter('---\ntype: llm\nno closing line'), YamlError);
   assert.deepEqual(splitFrontmatter('---\nfocus: {source: file, path: out.md}\n---\nx').fm, { focus: { source: 'file', path: 'out.md' } });
 });
+
+test('a plain flow value with an apostrophe does not open a quote', () => {
+  assert.deepEqual(parseYaml("tags: [don't, x]\nruns: 1\n"), { tags: ["don't", 'x'], runs: 1 });
+});

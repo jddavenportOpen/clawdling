@@ -618,6 +618,14 @@ const ERROR_LINE = /(\berror\b|\berr!|\bfail(ed|ure|ing|s)?\b|✗|✕|×|\basser
 // Failure marks: the capitals test runners print (FAIL, ERROR:), and counts above zero.
 const FAIL_UPPER = /(^|\s)(FAIL|FAILED|FAILURES?)\b|npm ERR!|^npm error\b|^not ok \d|^\s*\u2716|^\u2139 fail [1-9]|\btest result: FAILED|\bERROR:|\bBUILD FAILED\b/m;
 const FAIL_COUNT = /\b([1-9]\d*) (tests? )?(failed|failing|failures?|errors?)\b|\bTests?:\s+[1-9]\d* failed|^# fail [1-9]|\bexit (code|status) [1-9]/im;
+// Evidence that checks ran and failed: a runner's failure lines and counts, or compile errors. Not
+// npm's own lines ("npm error Missing script"), not "command not found", not "No tests found":
+// those say the check could not run, which is no contradiction.
+const CHECK_FAILED = /(^|\s)(FAIL|FAILED|FAILURES?)\b|^not ok \d|^\s*\u2716|^\u2139 fail [1-9]|\btest result: FAILED|\bBUILD FAILED\b|\berror TS\d+|\berror\[E\d+\]|\bFailed to compile\b|\bBuild failed\b|\berror during build\b|^ERROR in |\[ERROR\]/m;
+export const checkFailed = (t) => {
+  const s = String(t).replace(/^\s*\u2716 \d+ problems? \(0 errors?, \d+ warnings?\)\s*$/gm, '');
+  return CHECK_FAILED.test(s) || FAIL_COUNT.test(s.replace(/\bexit (code|status) [1-9]\d*/gi, ''));
+};
 // ESLint ends a warnings-only run with "✖ 2 problems (0 errors, 2 warnings)": not a failure.
 const failMark = (t) => {
   const s = String(t).replace(/^\s*\u2716 \d+ problems? \(0 errors?, \d+ warnings?\)\s*$/gm, '');
@@ -665,6 +673,7 @@ export function resultInfo(content, isError) {
     exit,
     err1: isError === true || failMark(tail) ? firstErrorLine(text) : null,
     fail: failMark(tail),
+    tfail: checkFailed(tail),
     pass: PASS_MARK.test(tail) && !failMark(tail),
     summary: PASS_SUMMARY.test(tail) && !failMark(tail),
   };
@@ -675,6 +684,8 @@ export function resultInfo(content, isError) {
 const CLAIMS_MAX = 50;
 const SHIP_WINDOW_MS = 24 * 3600 * 1000;
 const CMDS_PER_CLAIM = 200;
+// MCP tools whose names say they change something (filesystem write_file, serena replace_symbol...).
+const WRITE_TOOL = /^mcp__.*(write|edit|create|update|delete|move|rename|replace|insert|apply|patch|save|put|remove|upload|modify|append|refactor)/i;
 // Commands that only look (a single one, no redirection): never a check and never a change.
 const LOOK = new Set(['ls', 'cat', 'grep', 'rg', 'find', 'head', 'tail', 'wc', 'pwd', 'which', 'file', 'stat', 'tree', 'du', 'df', 'date', 'whoami', 'type', 'echo', 'printf', 'less', 'more', 'diff']);
 const GIT_LOOK = new Set(['status', 'log', 'diff', 'show', 'branch', 'rev-parse', 'ls-files', 'remote', 'describe', 'blame', 'config']);
@@ -682,7 +693,9 @@ function readOnly(cmd) {
   const segs = segments(String(cmd || ''));
   if (segs.length !== 1 || /[<>]/.test(segs[0].raw.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ''))) return false;
   const w = words(segs[0].raw);
-  return LOOK.has(w[0]) || (w[0] === 'git' && GIT_LOOK.has(w[1]) && !(w[1] === 'config' && w.length > 3));
+  const looks = LOOK.has(w[0]) || (w[0] === 'git' && GIT_LOOK.has(w[1]) && !(w[1] === 'config' && w.length > 3));
+  // (Only as sure as knownSafe: `find src -exec python3 fix.py {} +` is not a look.)
+  return looks && knownSafe(cmd) && !checkOf(cmd);
 }
 
 /**
@@ -730,13 +743,17 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     const nextEdit = all.find((x) => cmp(x.key, at) > 0 && isWorkEdit(x.t, where));
     const otherEditsEnd = before.filter((x) => x !== lastEdit && isWorkEdit(x.t, where)).reduce((m, x) => Math.max(m, x.t.end ?? x.t.ts), -Infinity);
     const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter && lastEdit.t.ts >= otherEditsEnd;
-    const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
+    const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && x.t.res && !x.t.res.denied && !x.t.res.blocked);
+    // A tool that may change files and that Clawdling cannot read (an MCP server's write or edit
+    // tool): it ends what the checks before it say, like an unknown shell command.
+    const toolsAfter = before.filter((x) => (!lastEdit || cmp(x.key, lastEdit.key) > 0) && WRITE_TOOL.test(String(x.t.name || '')));
+    const toolFence = toolsAfter.length ? new Date(Math.max(...toolsAfter.map((x) => x.t.end ?? x.t.ts))).toISOString() : null;
     // The commands that can matter to a label (not a passing `git status` or `ls`), newest 200; when
     // there were more, the claim says so (an older failure could be among them).
     const matters = after.filter(({ t }) => t.error === true || !(t.res && t.res.exit === 0 && !t.res.fail) || !readOnly(t.cmd));
     // Shell commands not known to leave files alone, before the claim: a completion claim with no
     // edit is "No changes made" only when there are none.
-    const maybe = edits ? 0 : before.filter((x) => SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && !(x.t.res && (x.t.res.denied || x.t.res.blocked)) && !knownSafe(x.t.cmd)).length;
+    const maybe = edits ? 0 : before.filter((x) => (SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && !(x.t.res && (x.t.res.denied || x.t.res.blocked)) && !knownSafe(x.t.cmd)) || WRITE_TOOL.test(String(x.t.name || ''))).length;
     // A completion claim with no edit is No changes made: its commands are never read.
     const kept = claim.kind === 'completion' && !edits && !maybe ? [] : matters.slice(-CMDS_PER_CLAIM);
     const cmds = kept.map(({ t }) => ({
@@ -748,7 +765,9 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       fail: t.res.fail,
       pass: t.res.pass,
       summary: t.res.summary,
+      tfail: t.res.tfail === true,
       ...(t.cmdCut ? { cut: true } : {}),
+      ...(t.bg ? { bg: true } : {}),
     }));
     out.push({
       at: new Date(f.ts ?? 0).toISOString(),
@@ -761,6 +780,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       cmds,
       ...(kept.length && matters.length > CMDS_PER_CLAIM ? { cmds_dropped: true } : {}),
       ...(maybe ? { maybe_changes: maybe } : {}),
+      ...(toolFence ? { tool_fence_at: toolFence } : {}),
     });
   }
   return out.slice(-CLAIMS_MAX);
@@ -805,12 +825,13 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   // keeps the claim at Not verified: the record cannot tell whose failure it is, or what it covered.
   // Any command after a check that is not known to leave files alone (a script, a codegen, `cargo
   // clippy --fix`) may have changed the work: checks before it no longer speak for the claim.
-  let fence = -Infinity;
+  let fence = c.tool_fence_at ? Date.parse(c.tool_fence_at) || -Infinity : -Infinity;
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) if (!x.cut && !knownSafe(x.cmd, { approved, detected })) fence = Math.max(fence, Date.parse(x.at) || 0);
   const checks = [];
   if (c.cmds_dropped) checks.push({ kinds: ['check'], id: null, canonical: false, ok: false, at: c.last_edit_at || c.at, cmd: '(older commands)', first_error_line: null });
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
     if (x.cut) continue; // only its first 1,000 characters were kept (and it counts as a change)
+    if (x.bg) continue; // run in the background: its result is not in the record (it only fences)
     const k = checkOf(x.cmd, { approved, detected });
     const failedExit = x.error === true || (x.exit !== null && x.exit !== undefined && x.exit !== 0);
     // Not a recognized check, but it failed with a runner's failure marks (`timeout 600 npm test`, a
@@ -819,12 +840,6 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
       if (failedExit && x.fail === true) checks.push({ kinds: ['check'], id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: x.err1 || null });
       continue;
     }
-    // npm's placeholder (`echo "Error: no test specified" && exit 1`) and pytest's exit 5 (no tests
-    // ran): the project has no tests yet. A runner that never started (exit 126/127, "command not
-    // found", "No module named pytest") ran nothing either.
-    if (/no test specified/i.test(x.err1 || '')) continue;
-    if (x.exit === 126 || x.exit === 127 || NOT_STARTED.test(x.err1 || '')) continue;
-    if (x.exit === 5 && /pytest/.test(x.cmd)) continue;
     const canon = canonical(x.cmd, { approved, detected });
     const first = x.err1 || (x.exit ? `Exit code ${x.exit}` : null);
     if ((Date.parse(x.at) || 0) <= fence) {
@@ -838,8 +853,9 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
       const exitShown = typeof x.exit === 'number' && !timedOut;
       // A canonical pass: exit 0 and no failure marks (a script that hides its own exit code prints them).
       if (!failedExit && !x.fail) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, rid: canon.rid, canonical: true, ok: true, cmd: x.cmd, at: x.at });
-      // A canonical failure: a visible non-zero exit, and not one a `cd x &&` before it could explain.
-      else if (failedExit && exitShown && x.exit !== 0 && (!canon.setupFirst || x.fail === true)) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, rid: canon.rid, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
+      // A canonical failure: a visible non-zero exit AND output showing checks that ran and failed
+      // (a missing script, a runner that never started, no tests found, a cut-off run: only possible).
+      else if (failedExit && exitShown && x.exit !== 0 && (x.tfail === true || (x.tfail === undefined && x.fail === true))) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, rid: canon.rid, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
       // Anything else (exit 0 with marks, an error with no exit code: a timeout) is a possible failure.
       else checks.push({ kinds: [canon.kind], id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
     } else if (failedExit || x.fail === true) {
@@ -854,8 +870,13 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
     if (!Number.isFinite(t) || !(t > shipFrom) || !(t < shipTo)) continue;
     const steps = (Array.isArray(r.results) ? r.results : []).filter((x) => !x.setup);
     if (!steps.length) continue;
-    const bad = steps.find((x) => x.ok !== true);
-    checks.push({ ship: true, kinds: steps.map((x) => x.kind || 'check'), failedKinds: steps.filter((x) => x.ok !== true).map((x) => x.kind || 'check'), canonical: true, ok: !bad, cmd: bad ? bad.cmd : steps[steps.length - 1].cmd, at: new Date(t).toISOString(), first_error_line: bad ? bad.err1 || null : null });
+    // A failed step counts only when its output shows checks that ran and failed: a step that could
+    // not start in the copy (no node_modules, no venv) or timed out says nothing about the work.
+    const failed = steps.filter((x) => x.ok !== true);
+    const evidenced = failed.filter((x) => !x.timed_out && checkFailed((Array.isArray(x.tail) ? x.tail : []).join('\n')));
+    if (failed.length && !evidenced.length) continue;
+    const bad = evidenced[0];
+    checks.push({ ship: true, kinds: steps.map((x) => x.kind || 'check'), failedKinds: evidenced.map((x) => x.kind || 'check'), canonical: true, ok: !bad, cmd: bad ? bad.cmd : steps[steps.length - 1].cmd, at: new Date(t).toISOString(), first_error_line: bad ? bad.err1 || null : null });
   }
   checks.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const needs = c.kind === 'tests' && Array.isArray(c.needs) && c.needs.length ? c.needs : null;
@@ -946,7 +967,8 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   // means the failure may have been the spelling's (a missing venv), not the code's.
   const scope = (extra) => extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x));
   const rkey = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, (unwrap(words(String(what))) || []).join(' '), ...scope(extra)].filter(Boolean).join(' ');
-  const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, normId(what), ...extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x))].filter(Boolean).join(' ');
+  const bare = (what) => normId(what).split(' ').filter((x) => !HARMLESS.test(x) && !Object.values(SHORT_HARMLESS).some((l) => l.includes(x))).join(' ');
+  const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, bare(what), ...extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x))].filter(Boolean).join(' ');
   // Only variables known not to change what runs (`CI=1`, `NO_COLOR=1`); any other (`PYTEST_ADDOPTS`,
   // `GOFLAGS`, `TEST=...` for rake, `TESTS=...` for make) may select tests: not the whole run.
   for (const v of assignedVars(cmd)) if (!SAFE_VARS.has(v)) return null;
@@ -983,7 +1005,6 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   return { kind, id: ident(w.slice(0, w.length - extra.length).join(' '), extra), rid: rkey(a.slice(0, n).join(' '), extra), setupFirst: i > 0 };
 }
 
-const NOT_STARTED = /command not found|: not found|is not recognized as an internal or external command|No module named|cannot find module ['"]?(jest|vitest|mocha|eslint|typescript)|ENOENT.*spawn/i;
 const SAFE_VARS = new Set(['CI', 'FORCE_COLOR', 'NO_COLOR', 'TERM', 'NODE_ENV', 'RUST_BACKTRACE', 'CARGO_TERM_COLOR', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'LANG', 'LC_ALL', 'TZ', 'COLUMNS', 'NPM_CONFIG_COLOR', 'npm_config_color']);
 /** The variables a line sets: `X=1 cmd`, `export X=1`, `env X=1`, `cross-env X=1`. */
 function assignedVars(cmd) {
@@ -1044,7 +1065,10 @@ export function knownSafe(cmd, { approved = [], detected = [] } = {}) {
     if (h === 'find' && !u.some((x) => /^-(delete|exec|execdir|ok|okdir|fprint)/.test(x))) continue;
     if (SAFE_PROGRAMS.has(h) && h !== 'find') continue;
     if (runsNothing(w)) continue;
-    if (checkOf(sg.raw, { approved, detected })) continue;
+    // A check is safe only when nothing says it fixes: its name (`lint:fix`, `make lint-fix`), its
+    // flags (`ktlint -F`, `swiftlint autocorrect`), or its detected script (`"lint": "eslint . --fix"`).
+    const fixes = u.some((x) => /(^|[:_-])(fix|autofix|format|fmt|write|autocorrect)([:_-]|$)/i.test(x) || x === '-F' || /^--auto-?correct/.test(x)) || detected.some((d) => d && d.kind === 'format' && sg.raw.trim().startsWith(String(d.cmd || '\0')));
+    if (!fixes && checkOf(sg.raw, { approved, detected })) continue;
     return false;
   }
   return true;

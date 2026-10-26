@@ -260,7 +260,9 @@ export function detectStack(dir) {
     for (const [name, kind] of SCRIPT_KINDS) {
       const body = scripts[name];
       if (typeof body !== 'string' || (name === 'test' && placeholderTest(body))) continue;
-      cmd(kind, runScript(name), 'package.json');
+      // A lint script that fixes (`eslint . --fix`) rewrites files: a formatter, not a check.
+      const fixes = (kind === 'lint' || kind === 'check' || kind === 'typecheck') && /(^|\s)(--fix|--write|-w|--apply|--autocorrect)(\s|$)|prettier(?![^&;|]*--check)/.test(body);
+      cmd(fixes ? 'format' : kind, runScript(name), 'package.json');
     }
     // Other test scripts (test:smoke, test:e2e, e2e:ci...): the ones a newcomer most often needs.
     let extra = 0;

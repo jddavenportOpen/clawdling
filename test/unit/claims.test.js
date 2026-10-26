@@ -213,7 +213,7 @@ test('labels: a tests claim needs a test check; a build check does not verify it
   assert.equal(labelClaim(t).label, 'not_verified');
   const [c] = claimsOf([prompt('x'), edit(), bash('npm run build', 'built in 2s'), say('Done.')]);
   assert.equal(labelClaim(c).label, 'verified');
-  const [b] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm run build', 'Exit code 2\nERROR: missing export', true), say('The build succeeds and all tests pass.')]);
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm run build', 'Exit code 2\n\u2718 [ERROR] No matching export in "src/a.js" for import "b"', true), say('The build succeeds and all tests pass.')]);
   assert.equal(labelClaim(b).label, 'contradicted', 'each thing it names must have passed');
 });
 
@@ -249,7 +249,7 @@ test('labels: a ship check after the last edit counts, and can turn Not verified
   const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
   const after = new Date(Date.parse(c.last_edit_at) + 60000).toISOString();
   const before = new Date(Date.parse(c.last_edit_at) - 60000).toISOString();
-  const run = (at, ok) => ({ at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok, err1: ok ? null : 'FAIL a' }] });
+  const run = (at, ok) => ({ at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok, err1: ok ? null : 'FAIL a', tail: ok ? [] : ['FAIL src/a.test.js'] }] });
   assert.equal(labelClaim(c, { shipRuns: [run(before, true)] }).label, 'not_verified', 'a ship check before the edit says nothing about it');
   const v = labelClaim(c, { shipRuns: [run(after, true)] });
   assert.equal(v.label, 'verified');
@@ -310,8 +310,10 @@ test('review: a test whose own output says "permission denied" failed; it is not
   const info = resultInfo('Exit code 1\nError: EACCES: permission denied, open \'/etc/x\'', true);
   assert.equal(info.denied, false);
   assert.equal(info.blocked, false);
-  const [c] = claimsOf([prompt('x'), edit(), bash('npm run lint', 'clean'), bash('npm test', "Exit code 1\nError: EACCES: permission denied, open '/etc/x'", true), say('Done.')]);
+  const [c] = claimsOf([prompt('x'), edit(), bash('npm run lint', 'clean'), bash('npm test', "Exit code 1\nFAIL src/a.test.js\n  Error: EACCES: permission denied, open '/etc/x'", true), say('Done.')]);
   assert.equal(labelClaim(c).label, 'contradicted');
+  const [d] = claimsOf([prompt('x'), edit(), bash('npm run lint', 'clean'), bash('npm test', "Exit code 1\nError: EACCES: permission denied, open '/etc/x'", true), say('Done.')]);
+  assert.equal(labelClaim(d).label, 'not_verified', 'no sign that checks ran: a possible failure, never Verified');
 });
 
 test('review: an approved command matches exactly or with flags, never another script; help and list flags are not checks', () => {
@@ -345,7 +347,7 @@ test('review: in an && chain with other commands, only a pass counts (a failure 
 test('review: a ship check speaks for a claim only within a day after it, and not after the session changed again', () => {
   const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
   const at = (ms) => new Date(Date.parse(c.at) + ms).toISOString();
-  const run = (when, ok) => ({ at: when, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok, err1: ok ? null : 'FAIL a' }] });
+  const run = (when, ok) => ({ at: when, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok, err1: ok ? null : 'FAIL a', tail: ok ? [] : ['FAIL src/a.test.js'] }] });
   assert.equal(labelClaim(c, { shipRuns: [run(at(2 * 86400000), false)] }).label, 'not_verified', 'two days later: not about this claim');
   assert.equal(labelClaim({ ...c, until: at(60000) }, { shipRuns: [run(at(120000), false)] }).label, 'not_verified', 'after the next edit');
   assert.equal(labelClaim(c, { shipRuns: [run(at(3600000), true)] }).label, 'verified');
@@ -353,7 +355,7 @@ test('review: a ship check speaks for a claim only within a day after it, and no
   // The window ends at the session's first change after the claim, even with no later claim.
   const [d] = claimsOf([prompt('x'), edit(), say('Done.'), edit('/repo/b.js')]);
   assert.ok(d.next_edit_at && d.next_edit_at > d.at);
-  const run2 = (when) => ({ at: when, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL b' }] });
+  const run2 = (when) => ({ at: when, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL b', tail: ['FAIL src/b.test.js'] }] });
   assert.equal(labelClaim({ ...d, until: d.next_edit_at }, { shipRuns: [run2(new Date(Date.parse(d.next_edit_at) + 60000).toISOString())] }).label, 'not_verified');
 });
 
@@ -442,7 +444,7 @@ test('review 5: a shell edit that fails is still a change; the latest check of e
   assert.equal(labelClaim(b).label, 'contradicted', 'a lint that passed after it does not cancel a failed test');
   const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
   const at = new Date(Date.parse(c.at) + 60000).toISOString();
-  const run = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL a' }, { name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: true }] };
+  const run = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL a', tail: ['FAIL src/a.test.js'] }, { name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: true }] };
   assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'contradicted', 'a failed ship check never reads Verified');
 });
 
@@ -473,9 +475,9 @@ test('review 6: a failure stands unless the same check passed after it; ship ste
   assert.equal(labelClaim(b).label, 'verified', 'the same check, re-run, passed');
   const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
   const at = new Date(Date.parse(c.at) + 60000).toISOString();
-  const run = { at, results: [{ name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: false, err1: 'error' }, { name: 'typecheck', cmd: 'npm run typecheck', kind: 'lint', ok: true }] };
+  const run = { at, results: [{ name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: false, err1: 'error', tail: ['\u2716 2 problems (2 errors, 0 warnings)'] }, { name: 'typecheck', cmd: 'npm run typecheck', kind: 'lint', ok: true }] };
   assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'contradicted');
-  const run2 = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL' }, { name: 'e2e', cmd: 'npm run e2e', kind: 'test', ok: true }] };
+  const run2 = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL', tail: ['FAIL src/a.test.js'] }, { name: 'e2e', cmd: 'npm run e2e', kind: 'test', ok: true }] };
   assert.equal(labelClaim({ ...c, kind: 'tests', needs: ['test'] }, { shipRuns: [run2] }).label, 'contradicted');
 });
 
@@ -673,4 +675,38 @@ test('review 11: timeout behind variables or wrappers; make sub-targets; node se
   assert.equal(labelClaim(a).label, 'not_verified');
   for (const cmd of ['make test-unit', 'just test-fast', 'task test:unit', 'make unit', 'node --test-name-pattern=cart --test']) assert.equal(canonical(cmd), null, cmd);
   for (const cmd of ['make test', 'make check', 'node --test']) assert.ok(canonical(cmd), cmd);
+});
+
+test('review 12: a failure contradicts only when the output shows checks that ran and failed', () => {
+  // A test failure that names a missing module is a real failure, not a runner that never started.
+  const [a] = claimsOf([prompt('x'), edit(), bash('ruff check .', 'All checks passed!'), bash('pytest', "Exit code 1\nFAILED tests/test_cart.py::test_total - ModuleNotFoundError: No module named 'app.pricing'\n1 failed, 1 passed in 0.2s", true), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'contradicted');
+  for (const out of ['npm error Missing script: "test"', 'ERR_PNPM_NO_SCRIPT Missing script: test', 'error Command "test" not found.', 'No tests found, exiting with code 1', 'No test files found, exiting with code 1', 'sh: jest: command not found']) {
+    const [c] = claimsOf([prompt('x'), edit(), bash('npm run build', 'built in 1s'), bash('npm test', `Exit code 1\n${out}`, true), say('Done.')]);
+    assert.equal(labelClaim(c).label, 'not_verified', out);
+  }
+  const [s] = claimsOf([prompt('x'), edit(), say('Done.')]);
+  const at = new Date(Date.parse(s.at) + 60000).toISOString();
+  const noDeps = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, exit: 127, err1: 'sh: jest: command not found', tail: ['sh: jest: command not found'] }] };
+  assert.equal(labelClaim(s, { shipRuns: [noDeps] }).label, 'not_verified', 'a ship step that could not start is no evidence');
+  const timedOut = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, timed_out: true, tail: ['FAIL a'] }] };
+  assert.equal(labelClaim(s, { shipRuns: [timedOut] }).label, 'not_verified');
+});
+
+test('review 12: background scripts, find -exec, fixing checks and MCP edits end what a check says', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('python3 scripts/regen.py', 'Command running in background with ID: b1', false, { run_in_background: true }), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified');
+  for (const cmd of ['find src -exec python3 fix.py {} +', 'npm run lint:js:fix', 'make lint-fix', 'ktlint -F', 'rubocop --auto-correct']) {
+    const [c] = claimsOf([prompt('x'), edit(), bash('npm test'), bash(cmd, ''), say('Done.')]);
+    assert.equal(labelClaim(c).label, 'not_verified', cmd);
+  }
+  const [d] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm run lint', 'fixed 2 files'), say('Done.')]);
+  assert.equal(labelClaim(d, { detected: [{ kind: 'format', cmd: 'npm run lint' }] }).label, 'not_verified', 'a lint script that fixes');
+  const [m] = claimsOf([prompt('x'), edit(), bash('npm test'), call('mcp__filesystem__write_file', { path: '/repo/a.js', content: 'x' }, 'ok'), say('Done.')]);
+  assert.equal(labelClaim(m).label, 'not_verified', 'an MCP write');
+  const [n] = claimsOf([prompt('x'), call('mcp__serena__replace_symbol_body', { name: 'f' }, 'ok'), say('Done.')]);
+  assert.equal(labelClaim(n).label, 'not_verified', 'not "No changes made"');
+  const approved = [{ name: 'tests', run: 'pytest -q' }];
+  const [p] = claimsOf([prompt('x'), edit(), bash('pytest', 'Exit code 1\n1 failed', true), bash('pytest -q', '5 passed'), say('Done.')]);
+  assert.equal(labelClaim(p, { approved }).label, 'verified', 'the approved command\'s own harmless flags are not its identity');
 });

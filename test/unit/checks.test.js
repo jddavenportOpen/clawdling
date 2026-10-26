@@ -257,3 +257,9 @@ test('review 10: a ship check cut short by stopping Clawdling is saved with an e
   assert.match(r.error, /stopped/);
   assert.deepEqual(checks.evidence('web'), []);
 });
+
+test('review 12: *_KEY names are scrubbed', () => {
+  const env = checkEnv({ PATH: '/bin', SUPABASE_SERVICE_ROLE_KEY: 'x', STRIPE_KEY: 'y', ENCRYPTION_KEY: 'z', KEYBOARD: 'us' });
+  for (const k of ['SUPABASE_SERVICE_ROLE_KEY', 'STRIPE_KEY', 'ENCRYPTION_KEY']) assert.equal(env[k], undefined, k);
+  assert.equal(env.KEYBOARD, 'us');
+});
