@@ -138,7 +138,7 @@
     }
   ],
   "exclude_any": [
-    "\\b(not|n't|no longer|never|nothing|none|neither|nor|cannot)\\b",
+    "\\b(not|n't|no|no longer|never|nothing|none|neither|nor|cannot)\\b",
     "\\b(should|would|could|might|may|will|shall|must|can|going to|gonna|about to|plan to|want to|need to|needs to|have to|has to|try to|trying to|let me|let's|i'?ll|we'?ll|you'?ll|i'?d|i'?m going)\\b",
     "\\b(fail(s|ed|ing|ure|ures)?|broken|break(s|ing)?|error(s|ed)?|flaky|todo|pending|partially|partial|almost|nearly|mostly|some of|except|apart from|aside from|but (one|two|\\d+))\\b",
     "\\b(to be done|left to|remaining|remains|next step|still to)\\b",
@@ -148,7 +148,11 @@
     "\\b(most|many|several|some|a few|half|majority|nearly all)\\b"
   ],
   "exclude_before": [
-    "\\b(if|once|when|whenever|until|unless|after|before|as soon as|whether|so that|in order to|to make sure|to ensure|to verify|to check)\\b"
+    "\\b(if|once|when|whenever|until|unless|after|before|as soon as|whether|so that|in order to|to make sure|to ensure|to verify|to check|confirm|make sure|check that|verify that)\\b"
   ],
-  "clause_split": "\\s*,\\s*but\\b|\\s+but\\s+|\\s*;\\s*|\\s+however\\b|\\s*,\\s*(?:although|though|except that)\\b"
+  "clause_split": "\\s*,\\s*but\\b|\\s+but\\s+|\\s*;\\s*|\\s+however\\b|\\s*,\\s*(?:although|though|except that)\\b",
+  "progress": {
+    "about": "A message that says the agent is still working (\"now fanning out four lanes\", \"I'm running the tests\") is a progress update: no claim.",
+    "re": "(?:^|\\s)(?:now|next|then) (?:\\w+ing)\\b|\\b(?:i'?m|i am|we'?re|we are) (?:now |still )?(?:\\w+ing)\\b"
+  }
 }
