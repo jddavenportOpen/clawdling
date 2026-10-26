@@ -34,7 +34,7 @@ export function useTimeline(sid, ended, enabled) {
     const r = ref.current;
     r.entries = entries;
     r.more = !!(res && res.more);
-    setSt({ entries, loaded: true, more: r.more, total: (res && res.total) || entries.length, transcript: res ? res.transcript : null, summary: res ? res.summary || null : null, cost: res ? res.cost || null : null, error: '' });
+    setSt({ entries, loaded: true, more: r.more, total: (res && res.total) || entries.length, transcript: res ? res.transcript : null, owner_title: res ? res.owner_title || null : null, summary: res ? res.summary || null : null, cost: res ? res.cost || null : null, error: '' });
   };
   const fail = (e) => setSt((x) => ({ ...x, loaded: true, error: e.message || 'Could not load the Timeline.' }));
 
@@ -102,6 +102,7 @@ export function TimelineView({ s, ended }) {
     </header>
     ${!t.loaded ? html`<div class="panel-skel" aria-label="Loading the Timeline"></div>`
       : t.transcript === 'gone' ? html`<p class="tl-empty" data-testid="timeline-gone">Claude Code deleted this session's transcript (its own clean-up of old sessions). Clawdling kept its summary${t.summary ? `: ${t.summary.turns} ${t.summary.turns === 1 ? 'turn' : 'turns'}, ${t.summary.tools} tool calls${t.summary.cost && Number.isFinite(t.summary.cost.usd) ? `, ${usd(t.summary.cost.usd)} of usage` : ''}` : ''}.</p>`
+      : t.transcript === 'elsewhere' ? html`<p class="tl-empty" data-testid="timeline-elsewhere">This conversation was continued in another session${t.owner_title ? ` (“${t.owner_title}”)` : ''}, so its steps are shown there.</p>`
       : t.transcript !== 'ok' ? html`<p class="tl-empty">The Timeline appears once Claude Code starts and writes its transcript.</p>`
       : !t.entries.length ? html`<p class="tl-empty">Nothing yet. Each prompt and tool call shows up here as it happens.</p>`
       : html`<ol class="tl-list">${t.entries.map((e) => html`<${Entry} key=${e.n} e=${e} />`)}</ol>`}

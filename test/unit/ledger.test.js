@@ -345,10 +345,14 @@ test("/resume of another session inside a pane: that transcript is counted under
   fs.writeFileSync(fb, `${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: 'r', message: { id: 'm', model: 'claude-sonnet-5', usage: { input_tokens: 5e5 }, content: [{ type: 'text', text: 'b' }] } })}\n`);
   const now = new Date().toISOString();
   const ra = { sid: a, agent: 'demo', status: 'ready', created_at: now, last_activity_at: now, claude_session_id: b };
-  const rb = { sid: b, agent: 'demo', status: 'ended', created_at: now, last_activity_at: now, ended_at: now };
+  const rb = { sid: b, agent: 'demo', status: 'ended', created_at: '2026-10-01T00:00:00.000Z', last_activity_at: '2026-10-01T00:00:00.000Z', ended_at: '2026-10-01T00:00:00.000Z' };
   const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[a, ra], [b, rb]]), transcriptFile: () => fb } });
-  assert.equal(rep.summary(rb).cost.usd, 1);
-  assert.notEqual(rep.summary(ra).cost.usd, 1, 'not counted twice');
+  // A is the session that used B's conversation most recently (it resumed it): it is counted there.
+  const all = rep.summaries();
+  assert.equal(all.reduce((n, s) => n + (Number.isFinite(s.cost?.usd) ? s.cost.usd : 0), 0), 1, 'counted once');
+  const other = all.find((s) => s.cost?.usd !== 1);
+  assert.equal(other.transcript, 'elsewhere');
+  assert.equal(other.cost.complete, true, 'nothing unknown about it');
   fs.rmSync(root, { recursive: true, force: true });
 });
 

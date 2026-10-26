@@ -257,18 +257,24 @@ export class Reports {
    * session's figures are the parts added up.
    */
   /**
-   * Who owns each conversation id: the session whose own id it is, else the most recently active
-   * session holding it as its Claude Code id (after a /clear or a /resume). One owner each, so a
-   * transcript is never counted under two sessions.
+   * Who owns each conversation id: of the sessions that use it (as their own id, or as their Claude
+   * Code id after a /clear or a /resume), the one active most recently. One owner each, so a
+   * transcript is never counted twice, and work resumed today shows under today's session.
    */
   owners() {
     const map = new Map();
-    const recs = [...this.sessions.records.values()];
-    const sids = new Set(recs.map((r) => r.sid));
-    for (const r of recs) map.set(r.sid, r.sid);
-    for (const r of [...recs].sort((a, b) => String(a.last_activity_at || '').localeCompare(String(b.last_activity_at || '')))) {
-      const id = r.claude_session_id;
-      if (id && id !== r.sid && !sids.has(id)) map.set(id, r.sid);
+    const when = new Map();
+    const claim = (id, r) => {
+      if (!id) return;
+      const t = String(r.last_activity_at || r.created_at || '');
+      if (!map.has(id) || t > when.get(id)) {
+        map.set(id, r.sid);
+        when.set(id, t);
+      }
+    };
+    for (const r of this.sessions.records.values()) {
+      claim(r.sid, r);
+      if (r.claude_session_id && r.claude_session_id !== r.sid) claim(r.claude_session_id, r);
     }
     return map;
   }
@@ -328,7 +334,10 @@ export class Reports {
         if (rec.status === 'ended') this.reader.forget(file); // its totals now live in the receipt
       }
     }
+    const elsewhere = mine && !file ? own.get(path.basename(mine, '.jsonl')) : null;
     if (!parts.length) {
+      // Its conversation is counted under the session that used it last: nothing here, nothing unknown.
+      if (elsewhere) return { ...base, transcript: 'elsewhere', owner_sid: elsewhere, parts: [], ...mergeParts([]), cost: { usd: 0, source: 'none', complete: true, unknown_models: [], models: {} }, last_line: null };
       return { ...base, transcript: 'missing', parts: [], ...mergeParts([]), cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, last_line: rec.last_message || null };
     }
     parts.sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')));
@@ -339,7 +348,8 @@ export class Reports {
       ...merged,
       parts,
       // A live session whose new transcript is not written yet (just after /clear) is not "gone".
-      transcript: !file ? (rec.status === 'ended' ? 'gone' : 'waiting') : current?.unreadable ? 'unreadable' : 'ok',
+      transcript: elsewhere ? 'elsewhere' : !file ? (rec.status === 'ended' ? 'gone' : 'waiting') : current?.unreadable ? 'unreadable' : 'ok',
+      ...(elsewhere ? { owner_sid: elsewhere } : {}),
       transcript_path: file || parts[parts.length - 1].path,
       last_line: merged.last_line || rec.last_message || null,
       updated_at: changed ? new Date(this.now()).toISOString() : prev?.updated_at || null,
@@ -366,6 +376,7 @@ export class Reports {
    */
   backfill() {
     const recs = [...this.sessions.records.values()].filter((r) => r.purpose !== 'signin');
+    const owners = this.owners();
     let i = 0;
     this.backfilling = recs.length > 0;
     const step = () => {
@@ -374,7 +385,7 @@ export class Reports {
         return;
       }
       try {
-        this.summary(recs[i++]);
+        this.summary(recs[i++], { owners });
       } catch (err) {
         this.logger?.warn?.(`report: ${err.message}`);
       }
@@ -625,8 +636,9 @@ export class Reports {
     const rec = this.sessions.require(sid);
     const found = this.transcriptOf(rec);
     const owner = found ? this.owners().get(path.basename(found, '.jsonl')) : null;
-    // Another session's conversation (resumed in this pane): shown under that session, like the card.
-    const file = found && (!owner || owner === rec.sid) ? found : null;
+    // A conversation another session used more recently: its steps are shown there, like the card.
+    if (found && owner && owner !== rec.sid) return { entries: [], next: after, more: false, total: 0, transcript: 'elsewhere', owner_sid: owner, owner_title: this.sessions.get(owner)?.title || null, status: rec.status };
+    const file = found;
     if (!file) {
       const kept = this.store.read(sid);
       return { entries: [], next: after, more: false, total: 0, transcript: kept && rec.status === 'ended' ? 'gone' : 'missing', summary: kept ? { turns: kept.turns, tools: kept.tools, last_line: kept.last_line, cost: kept.cost } : null, status: rec.status };
