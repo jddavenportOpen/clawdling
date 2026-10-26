@@ -122,6 +122,17 @@ test('a plan: approve, or send it back with what to change', async () => {
   assert.equal((await messages(s.sid)).filter((m) => m.role === 'answer').pop().approved, true);
 });
 
+test('Claude Code 2.1.308 (issue #21): an empty ExitPlanMode still shows the plan, from the plan file', async () => {
+  const s = await session('plan from its file');
+  await send(s.sid, 'planfile? go');
+  const v = await until(s.sid, (x) => x.asking && x.asking.kind === 'plan' && x.choices, 'plan asking');
+  assert.match(v.asking.card.plan, /Write hi into it/, 'the card (from the hook) shows the plan file');
+  assert.equal((await answer(s.sid, { option: 2 })).status, 200);
+  await until(s.sid, (x) => x.status === 'ready', 'turn done');
+  const t = (await messages(s.sid)).flatMap((m) => m.tools || []).find((x) => x.name === 'ExitPlanMode');
+  assert.match(t.ask.plan, /Write hi into it/, 'the chat card (from the transcript) shows it too');
+});
+
 test('a plan sent back, then a tool permission in the same turn: no card for it, and the plan card cannot press it', async () => {
   const s = await session('plan then bash');
   await send(s.sid, 'planperm? go');

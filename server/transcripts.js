@@ -75,6 +75,69 @@ export function askOf(name, input) {
   return { kind, questions };
 }
 
+// Claude Code 2.1.308 calls ExitPlanMode with an empty input and keeps the plan in its plan file,
+// <config dir>/plans/<slug>.md, written (Write) and revised (Edit) just before. The plan card reads
+// it from there (issue #21): only a .md file whose real path is inside that plans folder.
+const PLAN_FILE_RE = /[\\/]plans[\\/][^\\/]+\.md$/i;
+const PLAN_FILE_MAX = 1024 * 1024;
+
+/** The Claude Code config folder a transcript lives in: <config>/projects/<project>/<sid>.jsonl. */
+export function configDirOfTranscript(file) {
+  return typeof file === 'string' && file ? path.resolve(path.dirname(file), '..', '..') : null;
+}
+
+/** The text of a plan file, if it is a .md file inside <configDir>/plans (by real path), else null. */
+export function readPlanFile(configDir, file) {
+  if (!configDir || typeof file !== 'string' || !PLAN_FILE_RE.test(file)) return null;
+  try {
+    const dir = fs.realpathSync(path.join(configDir, 'plans'));
+    const real = fs.realpathSync(file);
+    if (path.dirname(real) !== dir || !real.toLowerCase().endsWith('.md')) return null;
+    const st = fs.statSync(real);
+    if (!st.isFile() || st.size > PLAN_FILE_MAX) return null;
+    return fs.readFileSync(real, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Follow a transcript's writes to its plan file, so an ExitPlanMode with an empty input still has a
+ * plan: `state` is {path, text}; returns it updated for one record.
+ */
+export function trackPlanFile(state, o, configDir) {
+  if (!o || o.type !== 'assistant' || o.isSidechain || !Array.isArray(o.message?.content)) return state;
+  for (const b of o.message.content) {
+    if (b?.type !== 'tool_use' || !b.input || typeof b.input !== 'object') continue;
+    const f = b.input.file_path;
+    if (typeof f !== 'string' || !PLAN_FILE_RE.test(f)) continue;
+    if (b.name === 'Write' && typeof b.input.content === 'string') state = { path: f, text: b.input.content };
+    else if (b.name === 'Edit' || b.name === 'MultiEdit') {
+      // The edit's result is on disk: read the file (inside the plans folder only).
+      const text = readPlanFile(configDir, f);
+      state = { path: f, text: text ?? (state && state.path === f ? state.text : null) };
+    }
+  }
+  return state;
+}
+
+/** A plan card's text: the input's plan, else the plan file the transcript last wrote. */
+export function planText(input, state, configDir) {
+  const own = input && typeof input.plan === 'string' ? input.plan : '';
+  if (own.trim()) return own;
+  // A plan-file path in the input (a possible future shape) is read the same confined way.
+  for (const k of ['planFilePath', 'plan_file_path', 'planFile', 'plan_path']) {
+    const t = input && typeof input[k] === 'string' ? readPlanFile(configDir, input[k]) : null;
+    if (t && t.trim()) return t;
+  }
+  if (state && state.path) {
+    const disk = readPlanFile(configDir, state.path);
+    if (disk && disk.trim()) return disk;
+    if (state.text && state.text.trim()) return state.text;
+  }
+  return '';
+}
+
 /**
  * The answer a person gave a question or plan, from the tool_result line: {answers} for a
  * question ({question text: answer}), {approved: true} or {feedback} for a plan, {declined: true}.
@@ -172,7 +235,8 @@ export class TranscriptReader {
       return [];
     }
     let c = this.cache.get(file);
-    if (!c || st.size < c.offset || st.ino !== c.ino) c = { offset: 0, ino: st.ino, rest: Buffer.alloc(0), entries: [], asks: new Map() };
+    if (!c || st.size < c.offset || st.ino !== c.ino) c = { offset: 0, ino: st.ino, rest: Buffer.alloc(0), entries: [], asks: new Map(), plan: null };
+    const configDir = configDirOfTranscript(file);
     if (st.size > c.offset) {
       const fd = fs.openSync(file, 'r');
       try {
@@ -191,7 +255,10 @@ export class TranscriptReader {
           } catch {
             continue;
           }
+          c.plan = trackPlanFile(c.plan, o, configDir);
           const e = transcriptEntry(o);
+          // An empty ExitPlanMode (2.1.308): the plan from the plan file the session just wrote.
+          if (e) for (const t of e.tools || []) if (t.ask && t.ask.kind === 'plan' && !t.ask.plan) t.ask.plan = clipText(planText({}, c.plan, configDir), ASK_LIMITS.plan);
           if (e) {
             c.entries.push({ n: c.entries.length, ...e });
             for (const t of e.tools || []) if (t.ask) c.asks.set(t.id, { kind: t.ask.kind, answered: false });
@@ -208,6 +275,13 @@ export class TranscriptReader {
     this.cache.set(file, c);
     while (this.cache.size > this.maxFiles) this.cache.delete(this.cache.keys().next().value);
     return c.entries;
+  }
+
+  /** The plan a transcript's ExitPlanMode would show now (its plan file), for the hook path. */
+  planFor(file, input = {}) {
+    this.read(file);
+    const c = this.cache.get(file);
+    return clipText(planText(input, c ? c.plan : null, configDirOfTranscript(file)), ASK_LIMITS.plan);
   }
 
   /** A tool_result answering a question or plan seen earlier in the file: an `answer` chat entry. */

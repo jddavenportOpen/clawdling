@@ -76,10 +76,19 @@ async function main() {
   /** Wait for `pred(session)`, answering only the folder-trust question on the way. */
   async function until(sid, pred, label) {
     const t0 = Date.now();
+    let lastSeen = null;
     for (;;) {
-      if (Date.now() - t0 > TIMEOUT_MS) throw new Error(`timed out waiting for ${label}`);
+      if (Date.now() - t0 > TIMEOUT_MS && lastSeen && lastSeen.tmux_name) {
+        try {
+          log(`screen:\n${execFileSync('tmux', ['-L', socket, 'capture-pane', '-p', '-t', `=${lastSeen.tmux_name}:`], { encoding: 'utf8' })}`);
+        } catch {
+          // no tmux pane
+        }
+      }
+      if (Date.now() - t0 > TIMEOUT_MS) throw new Error(`timed out waiting for ${label} (last: ${JSON.stringify(lastSeen && { status: lastSeen.status, waiting_on: lastSeen.waiting_on, notification: lastSeen.notification, last_message: String(lastSeen.last_message || '').slice(0, 200), asking: lastSeen.asking })})`);
       await sleep(1000);
       const s = await api('GET', `/api/sessions/${sid}`);
+      lastSeen = s;
       if (pred(s)) return s;
       if (s.status === 'ended') throw new Error(`session ended while waiting for ${label}: ${s.notification || ''}`);
       if (s.status === 'needs_you' && s.waiting_on === 'trust') {
@@ -136,6 +145,11 @@ async function main() {
   const p = await api('POST', '/api/sessions', { agent: 'planner', model: MODEL, prompt: 'Write a two-step plan to create hello.txt containing the word hi. Do not research or read anything; call ExitPlanMode with the plan right away.' });
   s = await until(p.sid, (x) => x.asking && x.asking.kind === 'plan' && Array.isArray(x.choices) && x.choices.length, 'a plan');
   log(`plan choices: ${JSON.stringify(s.choices.map((c) => c.label))}`);
+  // The card has the plan itself: from the session (its hook) and from the transcript. With 2.1.308
+  // the ExitPlanMode input is empty and the plan is Claude Code's plan file (issue #21).
+  const cardPlan = (s.asking.card && s.asking.card.plan) || '';
+  log(`plan card (from the session): ${cardPlan.replace(/\n/g, ' ').slice(0, 160)}`);
+  results.push({ check: 'the plan card shows the plan (not empty)', ok: /hello\.txt/i.test(cardPlan) });
   const fb = s.choices.find((c) => /tell claude what to change/i.test(c.label));
   const first = s.asking.tool_id;
   await api('POST', `/api/sessions/${p.sid}/answer`, { option: fb.option, text: 'Add a third step that prints the file.', tool_id: first });
@@ -144,11 +158,24 @@ async function main() {
   const fbEntry = (await api('GET', `/api/sessions/${p.sid}/messages`)).messages.find((m) => m.role === 'answer' && m.tool_id === first);
   log(`feedback entry: ${JSON.stringify(fbEntry && fbEntry.feedback)}; revised plan: ${revised.ask.plan.replace(/\n/g, ' ').slice(0, 200)}`);
   const ok2 = !!fbEntry && /third step/i.test(fbEntry.feedback || '') && /print|cat|display|show/i.test(revised.ask.plan);
+  if (!ok2) log(`revised plan in full:\n${revised.ask.plan}`);
   results.push({ check: 'plan sent back from the card and revised', ok: ok2 });
   await api('DELETE', `/api/sessions/${p.sid}`);
 }
 
 async function cleanup() {
+  // CLAWDLING_LIVE_KEEP=<dir>: keep the run's transcripts and plan files (for a contract fixture),
+  // only when HOME is a throwaway folder, never a real one.
+  const keep = process.env.CLAWDLING_LIVE_KEEP;
+  const throwaway = [os.tmpdir(), '/tmp/', '/private/tmp/'].some((d) => os.homedir().startsWith(d));
+  if (keep && throwaway) {
+    try {
+      fs.cpSync(path.join(os.homedir(), '.claude', 'projects'), path.join(keep, 'projects'), { recursive: true });
+      fs.cpSync(path.join(os.homedir(), '.claude', 'plans'), path.join(keep, 'plans'), { recursive: true });
+    } catch (err) {
+      log(`could not keep the transcripts: ${err.message}`);
+    }
+  }
   if (server && server.exitCode === null) {
     server.kill('SIGTERM');
     await Promise.race([new Promise((r) => server.once('exit', r)), sleep(6000)]);

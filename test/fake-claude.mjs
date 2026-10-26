@@ -120,6 +120,7 @@ if (opts.print) {
   process.stdin.on('data', (d) => (input += d));
   process.stdin.on('end', () => {
     const text = `${prompt}\n${input}`;
+    log({ mode: 'print-input', input: input.slice(0, 20000) });
     const m = text.match(/<message>\n?([\s\S]*?)\n?<\/message>/);
     const message = (m ? m[1] : text).trim();
     if (/explode/i.test(message)) {
@@ -372,9 +373,21 @@ async function askUserQuestion(questions) {
 
 const PLAN_CHOICES = ['Yes, auto-accept edits', 'Yes, manually approve edits', 'Tell Claude what to change'];
 
-async function planApproval(plan) {
+async function planApproval(plan, { file = false } = {}) {
   const id = `toolu_plan${crypto.randomBytes(5).toString('hex')}`;
-  await runHook('PreToolUse', { tool_name: 'ExitPlanMode', tool_input: { plan }, tool_use_id: id });
+  // "planfile?": Claude Code 2.1.308's shape (issue #21): the plan goes to its plan file,
+  // <config dir>/plans/<slug>.md, with a Write, and ExitPlanMode is called with an empty input.
+  let input = { plan };
+  if (file && process.env.CLAUDE_CONFIG_DIR) {
+    const planFile = path.join(process.env.CLAUDE_CONFIG_DIR, 'plans', 'fake-hopping-plan.md');
+    fs.mkdirSync(path.dirname(planFile), { recursive: true });
+    fs.writeFileSync(planFile, plan);
+    const wid = `toolu_w${crypto.randomBytes(5).toString('hex')}`;
+    transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id: wid, name: 'Write', input: { file_path: planFile, content: plan } }] });
+    transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: wid, content: `File created successfully at: ${planFile}` }] });
+    input = {};
+  }
+  await runHook('PreToolUse', { tool_name: 'ExitPlanMode', tool_input: input, tool_use_id: id });
   process.stdout.write('\x1b[2J\x1b[H');
   const notified = runHook('Notification', { message: 'Claude Code needs your approval for the plan', notification_type: 'permission_prompt' });
   const view = (st) => [`  ${RULE}`, '   Ready to code?', "   Here is Claude's plan:", `  ${DOTS}`, ...plan.split('\n').filter(Boolean).map((l) => `   ${l.replace(/^#+\s*/, '')}`), `  ${DOTS}`,
@@ -392,7 +405,7 @@ async function planApproval(plan) {
     return undefined;
   });
   await notified;
-  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input: { plan } }] });
+  transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id, name: 'ExitPlanMode', input }] });
   // A plan sent back is a rejected tool call: Claude Code runs no PostToolUse for it (only for a
   // tool that went through).
   if (r.feedback === undefined) await runHook('PostToolUse', { tool_name: 'ExitPlanMode', tool_use_id: id });
@@ -470,11 +483,11 @@ async function interactive() {
       return;
     }
     // "ask?" / "ask2?": AskUserQuestion (one question; or two, the second multiSelect). "plan?": ExitPlanMode.
-    if (text.includes('ask?') || text.includes('ask2?') || text.includes('plan?') || text.includes('planperm?')) {
+    if (text.includes('ask?') || text.includes('ask2?') || text.includes('plan?') || text.includes('planperm?') || text.includes('planfile?')) {
       inSelect = true;
       let said;
-      if (text.includes('plan?') || text.includes('planperm?')) {
-        const r = await planApproval('# Make hello.txt\n\n## Plan\n1. Create hello.txt.\n2. Write hi into it.');
+      if (text.includes('plan?') || text.includes('planperm?') || text.includes('planfile?')) {
+        const r = await planApproval('# Make hello.txt\n\n## Plan\n1. Create hello.txt.\n2. Write hi into it.', { file: text.includes('planfile?') });
         said = r.feedback !== undefined ? `plan feedback: ${r.feedback}` : `plan approved (${r.approved})`;
         // "planperm?": sent back, Claude carries on in the same turn and asks to run a command.
         if (text.includes('planperm?') && r.feedback !== undefined) {

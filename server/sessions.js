@@ -1111,6 +1111,11 @@ export class SessionManager {
     // A question or a plan about to be shown: keep it (its transcript line can come much later).
     if (event === 'PreToolUse') {
       const card = ASK_TOOLS[p.tool_name] ? askOf(p.tool_name, p.tool_input) : null;
+      // 2.1.308: an empty ExitPlanMode input; the plan is in the plan file the session just wrote.
+      if (card && card.kind === 'plan' && !card.plan) {
+        const file = this.transcriptFile(rec);
+        if (file) card.plan = this.transcripts.planFor(file, p.tool_input || {});
+      }
       if (card && typeof p.tool_use_id === 'string' && p.tool_use_id) rec.pending_ask = { tool_id: p.tool_use_id.slice(0, 100), ...card };
     } else if (event !== 'Notification') {
       rec.pending_ask = null;
