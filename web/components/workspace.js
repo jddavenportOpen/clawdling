@@ -66,7 +66,7 @@ export function Workspace({ hidden }) {
       ${mobile ? html`<button class="icon-btn" aria-label="Back to sessions" onClick=${() => setState({ mobileView: 'list' })}><${Icon} name="arrow-left" /></button>` : null}
       <h1 class="ws-title">Cockpit</h1>
       <span class="ws-sub" aria-live="polite">${open.length ? `${plural(open.length, 'pane')} open` : 'No panes open'}${needsCount ? html` · <span class="tone-amber-text">${needsCount} need you</span>` : null}</span>
-      ${orgRep && orgRep.totals ? html`<a class="ws-usage" href="#/map" data-testid="ws-usage" title="Usage at list price, not a bill. On Pro and Max, usage is included in your plan.">Usage at list price: today ${usd(orgRep.totals.today_usd)} · 7 days ${usd(orgRep.totals.week_usd)}${orgRep.totals.complete ? '' : '+'}</a>` : null}
+      ${orgRep && orgRep.totals ? html`<a class="ws-usage" href="#/map" data-testid="ws-usage" title="Usage at list price, not a bill. On Pro and Max, usage is included in your plan.">Usage at list price: today ${usd(orgRep.totals.today_usd)} · 7 days ${!orgRep.totals.complete && !(orgRep.totals.week_usd > 0) ? 'unknown' : `${usd(orgRep.totals.week_usd)}${orgRep.totals.complete ? '' : '+'}`}</a>` : null}
       <span class="ws-spacer"></span>
       ${mobile ? null : html`<div class="seg" role="radiogroup" aria-label="Layout">
         ${LAYOUT_OPTS.map((o) => html`<button role="radio" aria-checked=${layout0 === o.id ? 'true' : 'false'} class=${`seg-btn ${layout0 === o.id ? 'is-on' : ''}`}

@@ -342,7 +342,7 @@ export function OrgMap() {
       <div class="page-bar-main">
         <h1 class="page-title">Org map</h1>
         <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}${agents.length && !orgError ? ` · ${mobile ? 'Tap' : 'Click'} an agent to see what it knows` : ''}</p>
-        ${orgRep && orgRep.totals ? html`<p class="map-usage" data-testid="map-usage">Usage at list price, not a bill: today ${usd(orgRep.totals.today_usd)}, last 7 days ${usd(orgRep.totals.week_usd)}${orgRep.totals.complete ? '' : ' (plus some with an unknown cost)'}. <span class="map-usage-note">Under each agent: its last 7 days, and when it last finished work.</span></p>` : null}
+        ${orgRep && orgRep.totals ? html`<p class="map-usage" data-testid="map-usage">Usage at list price, not a bill: today ${usd(orgRep.totals.today_usd)}, last 7 days ${!orgRep.totals.complete && !(orgRep.totals.week_usd > 0) ? 'unknown' : usd(orgRep.totals.week_usd)}${orgRep.totals.complete || !(orgRep.totals.week_usd > 0) ? '' : ' (plus some with an unknown cost)'}. <span class="map-usage-note">Under each agent: its last 7 days, and when it last finished work.</span></p>` : null}
       </div>
       <ul class="legend" aria-label="Legend">
         <li><span class="legend-ring ring-working" aria-hidden="true"></span> Working</li>
@@ -549,7 +549,7 @@ function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, set
     body = html`
       ${a && a.mission ? html`<p class="panel-mission">${a.mission}</p>` : null}
       ${rep ? html`<dl class="panel-facts" data-testid="panel-usage"><div><dt>Done, 7 days</dt><dd>${rep.done}</dd></div>
-        <div><dt>Usage, 7 days</dt><dd title="List-price equivalent, not a bill">${rep.cost_usd > 0 && rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`}${rep.cost_complete ? '' : '+'}</dd></div>
+        <div><dt>Usage, 7 days</dt><dd title="List-price equivalent, not a bill">${!rep.cost_complete && !(rep.cost_usd > 0) ? 'Unknown' : `${rep.cost_usd > 0 && rep.cost_usd < 0.005 ? '<$0.01' : `$${rep.cost_usd.toFixed(2)}`}${rep.cost_complete ? '' : '+'}`}</dd></div>
         <div><dt>Last done</dt><dd>${rep.last_done_at ? relTime(rep.last_done_at, now) : '–'}</dd></div></dl>
         <p class="panel-quiet panel-usage-note">Usage is a list-price equivalent, not a bill. On Pro and Max it is included in your plan.</p>` : null}
       <div class="panel-actions">

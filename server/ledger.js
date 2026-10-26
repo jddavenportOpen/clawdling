@@ -265,18 +265,16 @@ export function subagentFiles(mainFile) {
       return;
     }
     for (const e of list) {
-      if (out.length >= SUB_FILES_MAX) {
-        out.truncated = true;
-        return;
-      }
+      if (out.length > SUB_FILES_MAX) return; // one past the cap is enough to know there are more
       const f = path.join(dir, e.name);
       if (e.isDirectory()) walk(f, depth + 1);
       else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(f);
     }
   };
   walk(root, 0);
-  const truncated = !!out.truncated;
   const sorted = out.sort();
+  const truncated = sorted.length > SUB_FILES_MAX;
+  if (truncated) sorted.length = SUB_FILES_MAX;
   sorted.truncated = truncated;
   return sorted;
 }

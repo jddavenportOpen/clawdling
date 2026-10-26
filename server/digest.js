@@ -33,7 +33,7 @@ export function weekSendTime(ms, { day = 1, hour = 8 } = {}) {
   return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + offset, hour, 0, 0, 0).getTime();
 }
 
-const money = (x) => (!Number.isFinite(x) ? 'unknown' : x === 0 ? '$0' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
+const money = (x, complete = true) => (!Number.isFinite(x) || (!complete && !(x > 0)) ? 'cost unknown' : x === 0 ? '$0' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
 
 /**
  * The message, exactly as sent. `org` is Reports.orgReport({window: '7d'}); `labels` maps agent id
@@ -46,7 +46,7 @@ export function digestText(org, { labels = {} } = {}) {
   const lines = ['Clawdling: your week, the last 7 days.'];
   if (!active.length) lines.push('No agent did any work this week.');
   for (const a of active.slice(0, MAX_LINES)) {
-    lines.push(`- ${name(a)}: ${a.done} done, ${a.needs} need${a.needs === 1 ? 's' : ''} you, ${money(a.cost_usd)}${a.cost_complete ? '' : ' (part unknown)'}`);
+    lines.push(`- ${name(a)}: ${a.done} done, ${a.needs} need${a.needs === 1 ? 's' : ''} you, ${money(a.cost_usd, a.cost_complete)}${a.cost_complete || !(a.cost_usd > 0) ? '' : ' (part unknown)'}`);
   }
   if (active.length > MAX_LINES) lines.push(`- and ${active.length - MAX_LINES} more`);
   const quiet = (org.agents || []).length - active.length;
@@ -57,7 +57,8 @@ export function digestText(org, { labels = {} } = {}) {
     const low = used[used.length - 1];
     lines.push(`Most usage: ${name(top)} (${money(top.cost_usd)}). Least: ${name(low)} (${money(low.cost_usd)}).`);
   }
-  lines.push(`Total: ${money(org.totals?.week_usd ?? 0)}${org.totals && org.totals.complete === false ? ' (part unknown)' : ''}. Usage is a list-price equivalent, not a bill: on Pro and Max it is included in your plan. Open the cockpit for the details.`);
+  const complete = !(org.totals && org.totals.complete === false);
+  lines.push(`Total: ${money(org.totals?.week_usd ?? 0, complete)}${complete || !(org.totals?.week_usd > 0) ? '' : ' (part unknown)'}. Usage is a list-price equivalent, not a bill: on Pro and Max it is included in your plan. Open the cockpit for the details.`);
   return lines.join('\n');
 }
 

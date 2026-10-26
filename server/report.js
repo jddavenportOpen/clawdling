@@ -148,6 +148,12 @@ export function dollars(usd) {
 }
 export const COST_LABEL = 'list-price equivalent, not a bill. On Pro and Max, usage is included in your plan.';
 
+/** Every surface's one rule: an amount with nothing known behind it is "unknown", never $0. */
+export function costText(usd, complete = true) {
+  if (!complete && !(usd > 0)) return 'cost unknown';
+  return `${dollars(usd)}${complete ? '' : ' plus some unknown'}`;
+}
+
 /** What decides whether a transcript changed: the main file and its subagent files. */
 export function sourceKey(file) {
   const key = { size: null, mtime_ms: null, subs: 0, subs_size: 0, subs_mtime: 0 };
@@ -490,13 +496,15 @@ export class Reports {
     let total = 0;
     let missing = 0;
     let counting = 0;
+    let partial = 0;
     for (const s of summaries) {
       if (s.counting) {
         const t = Date.parse(s.ended_at || s.last_activity_at || '');
         if (Number.isFinite(t) && t >= w.start) counting++;
         continue;
       }
-      // A cost Clawdling could not read (no model to blame): that session's usage is unknown.
+      // A cost Clawdling could not read (no model to blame): that session's usage is unknown, or
+      // part of it is (an earlier transcript, or files past the subagent cap).
       const unreadable = s.cost && s.cost.complete === false && !(s.cost.unknown_models || []).length;
       const days = s.days && typeof s.days === 'object' ? s.days : {};
       // Usage in the window on a model with no price: the total is incomplete, never a quiet $0.
@@ -509,12 +517,13 @@ export class Reports {
         // No priced usage in the window. A session active in it whose cost is unknown is counted.
         const t = Date.parse(s.last_activity_at || s.last_at || '');
         const active = Number.isFinite(t) && t >= w.start && (s.turns > 0 || s.prompted);
-        if (active && s.cost && (s.cost.usd === null || unreadable)) missing++;
+        if (active && s.cost && s.cost.usd === null) missing++;
+        else if (active && unreadable) partial++;
         else if (active && s.cost && s.cost.complete === false && !w.list.some((d) => (udays[d] || []).length)) for (const m of s.cost.unknown_models || []) unknown.add(m);
         continue;
       }
       for (const d of w.list) if (Number.isFinite(days[d])) byDay[d] += days[d];
-      if (unreadable) missing++;
+      if (unreadable) partial++;
       total += share;
       const sessionTotal = Object.values(days).reduce((a, b) => a + (Number.isFinite(b) ? b : 0), 0);
       const k = sessionTotal > 0 ? share / sessionTotal : 0;
@@ -529,9 +538,10 @@ export class Reports {
     return {
       total_usd: r6(total),
       label: COST_LABEL,
-      complete: unknown.size === 0 && missing === 0 && counting === 0,
+      complete: unknown.size === 0 && missing === 0 && counting === 0 && partial === 0,
       unknown_models: [...unknown].sort(),
       sessions_without_cost: missing,
+      sessions_partly_unknown: partial,
       sessions_counting: counting,
       by_day: w.list.map((d) => ({ day: d, usd: r6(byDay[d]) })),
       by_model: Object.entries(byModel).map(([model, usd]) => ({ model, usd: r6(usd) })).sort((a, b) => b.usd - a.usd),

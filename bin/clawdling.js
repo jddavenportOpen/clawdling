@@ -610,10 +610,10 @@ async function cmdReport(args) {
     const o = await api(ctx, 'GET', `/api/org/report${q}`);
     if (args.flags.json) return console.log(JSON.stringify(o, null, 2));
     console.log(`Your org, ${WINDOW_LABEL[win] || win}`);
-    console.log(`Usage today: ${usd(o.totals.today_usd)} · last 7 days: ${usd(o.totals.week_usd)}${o.totals.complete ? '' : ' (some usage has an unknown cost)'}`);
+    console.log(`Usage today: ${usd(o.totals.today_usd)} · last 7 days: ${o.totals.complete || o.totals.week_usd > 0 ? usd(o.totals.week_usd) : 'cost unknown'}${o.totals.complete ? '' : ' (some usage has an unknown cost)'}`);
     console.log(`(${o.label})\n`);
     console.log(`${pad('AGENT', 18)}${pad('DONE', 6)}${pad('NEEDS YOU', 11)}${pad('USAGE', 18)}LAST DONE`);
-    for (const a of o.agents) console.log(`${pad(a.name, 18)}${pad(a.done, 6)}${pad(a.needs, 11)}${pad(usd(a.cost_usd) + (a.cost_complete ? '' : '+'), 18)}${a.last_done_at ? rel(a.last_done_at) : '-'}`);
+    for (const a of o.agents) console.log(`${pad(a.name, 18)}${pad(a.done, 6)}${pad(a.needs, 11)}${pad(!a.cost_complete && !(a.cost_usd > 0) ? 'cost unknown' : usd(a.cost_usd) + (a.cost_complete ? '' : '+'), 18)}${a.last_done_at ? rel(a.last_done_at) : '-'}`);
     return undefined;
   }
   const r = await api(ctx, 'GET', `/api/agents/${encodeURIComponent(id)}/report${q}`);
@@ -632,7 +632,7 @@ async function cmdReport(args) {
   if (!r.needs.length) out.push('  Nothing is waiting on you.');
   for (const n of r.needs) out.push(`  - ${n.title || 'Untitled session'}: ${NEED_WORD[n.kind] || n.kind}${n.text ? ` (${n.text})` : ''}`);
   const c = r.cost;
-  out.push('', `Cost: ${usd(c.total_usd)} of usage${c.complete ? '' : ` plus some with an unknown cost${c.unknown_models.length ? ` (${c.unknown_models.join(', ')})` : ''}`}`);
+  out.push('', `Cost: ${!c.complete && !(c.total_usd > 0) ? 'unknown' : `${usd(c.total_usd)} of usage`}${c.complete || !(c.total_usd > 0) ? '' : ` plus some with an unknown cost${c.unknown_models.length ? ` (${c.unknown_models.join(', ')})` : ''}`}`);
   out.push(`  ${c.label}`);
   if (c.by_model.length) out.push(`  By model: ${c.by_model.map((m) => `${m.model} ${usd(m.usd)}`).join(', ')}`);
   if (c.top_sessions.length) out.push(`  Top sessions: ${c.top_sessions.map((t) => `${t.title || 'Untitled'} ${usd(t.usd)}`).join(', ')}`);

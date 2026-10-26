@@ -168,18 +168,20 @@ export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsP
 
 // Telemetry variables a long-lived tmux server may still carry from when it started: cleared in a
 // session that gets the detailed timeline, so its environment is the one the preflight checked.
-const TELEMETRY_UNSET = 'for v in $(env | sed -n \'s/^\\(OTEL_[A-Za-z0-9_]*\\)=.*/\\1/p\'); do unset "$v"; done; unset CLAUDE_CODE_ENABLE_TELEMETRY DISABLE_TELEMETRY CLAUDE_CODE_ENHANCED_TELEMETRY_BETA';
+// Only /usr/bin/env (an absolute path) and shell builtins, and before the cd into the agent's
+// folder: a repo can never put its own `env` or `sed` in the way.
+const TELEMETRY_UNSET = 'for v in $(/usr/bin/env | while IFS== read -r k _; do case "$k" in (OTEL_*) printf \'%s\\n\' "$k";; esac; done); do unset "$v" 2>/dev/null; done; unset CLAUDE_CODE_ENABLE_TELEMETRY DISABLE_TELEMETRY CLAUDE_CODE_ENHANCED_TELEMETRY_BETA';
 
 /** A /bin/sh launcher: cd, export env, exec argv. Every value is single-quoted. */
 export function buildLauncherScript({ cwd, env = {}, argv, comment = 'Clawdling session launcher', clearTelemetry = false }) {
   const lines = ['#!/bin/sh', `# ${oneLine(comment, 200)}`];
-  lines.push(`cd ${shq(cwd)} || exit 1`);
   if (clearTelemetry) {
     lines.push(TELEMETRY_UNSET);
     // And the Claude Code folder the preflight checked: an old CLAUDE_CONFIG_DIR from the tmux server
     // goes (set again below when this session uses one).
     if (!Object.hasOwn(env, 'CLAUDE_CONFIG_DIR')) lines.push('unset CLAUDE_CONFIG_DIR');
   }
+  lines.push(`cd ${shq(cwd)} || exit 1`);
   for (const [k, v] of Object.entries(env)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`invalid environment variable name ${k}`);
     lines.push(`${k}=${shq(v)}; export ${k}`);
