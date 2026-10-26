@@ -708,7 +708,19 @@ export class SessionManager {
       lines.push('', `## Your agent file (${path.join(target.dir, 'CLAUDE.md')})`, '', agentMd.trim());
       lines.push('', '## Current state (memory/NOW.md)', '', read(path.join(target.dir, 'memory', 'NOW.md')).trim());
     } else if (orgRules) {
+      // A check-up loads no CLAUDE.md by folder (it runs with the user's settings only), so the
+      // agent's own file and state come in here, as text: no @import in them is followed.
+      const agentMd = read(path.join(target.dir, 'CLAUDE.md')).replace(/^@memory\/NOW\.md\s*$/m, '(see "Current state" below)');
       lines.push('', '## Org rules (the org CLAUDE.md)', '', read(this.paths.orgClaudeMd).trim());
+      lines.push('', `## Your agent file (${path.join(target.dir, 'CLAUDE.md')})`, '', agentMd.trim());
+      lines.push('', '## Current state (memory/NOW.md)', '', read(path.join(target.dir, 'memory', 'NOW.md')).trim());
+    }
+    if (orgRules && target.cwd && target.cwd !== target.dir) {
+      // The repo's own instructions, which a live session in the repo loads by folder.
+      for (const f of ['CLAUDE.md', 'AGENTS.md']) {
+        const t = read(path.join(target.cwd, f)).trim();
+        if (t) lines.push('', `## The repo's ${f}`, '', t);
+      }
     }
     return lines.join('\n') + '\n';
   }

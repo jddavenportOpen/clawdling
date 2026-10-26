@@ -494,8 +494,8 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   what its result said: exit code (`Exit code N`), the first error line, and pass/fail marks from
   the output's end. Declined, hook-blocked and background calls are left out. No output is kept.
 - **Labels** (`labelClaim`, at read time, so approvals and ship checks made later count):
-  a command is a check when it matches the project's approved `checks.yaml` commands (exact, or the
-  same first two words), the stack's detected test/build/lint commands, or the generic list
+  a command is a check when it matches the project's approved `checks.yaml` commands (exact, or
+  exact plus extra flags; `--help`, `--version`, listing and dry-run flags never count), the stack's detected test/build/lint commands, or the generic list
   (`npm test`, `pnpm test`, `yarn test`, `pytest`, `go test`, `cargo test`, `make test`, `make
   check`, `npm run build`, `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`,
   `python -m`, `cd x &&`). A check whose exit code cannot reach the result (piped, `|| true`, `;`
@@ -527,9 +527,10 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
 - Run: `git stash create` (else `HEAD`), `git worktree add --detach <tmp>/clawdling-check-<agent>-
   <time>-<random> <snap>`, registered in `.clawdling/checks/active.json`; setup steps then checks,
   each through `/bin/sh -c` or `powershell.exe -NoProfile -NonInteractive -Command`, with `cwd` the
-  worktree, the scrubbed environment (`checkEnv`) and a timeout that kills the process tree;
-  a failed setup step stops the run; then `git worktree remove --force`, the folder removed,
-  `git worktree prune`. Result `.clawdling/checks/<agent>/<time>.json`: `{started_at, ms, snap, ok,
+  agent's repo folder inside the worktree (`git rev-parse --show-prefix`: a monorepo's `apps/web`),
+  the scrubbed environment (`checkEnv`) and a timeout that kills the process tree; a failed setup
+  step stops the run; then `git worktree remove --force` and the folder removed (never `git worktree
+  prune`, which would touch the owner's other worktrees). Result `.clawdling/checks/<agent>/<time>.json`: `{started_at, ms, snap, ok,
   error, setup_failed, results[{name, cmd, kind, setup, ok, exit, ms, timed_out, tail (last 40 lines),
   err1}]}`, 90 days. Start-up sweeper. One run per org at a time.
 - `GET /api/agents/:id/checks` (`{available, why, proposals, exists, config, approved, running, last,
@@ -565,10 +566,11 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   `.clawdling/evals/active.json`; the context `sessions.contextText(target, {orgRules: true})` plus a
   short "check-up run" note (answer directly; no questions); then
   `claude -p --output-format stream-json --verbose [--model m] [--effort e] --max-budget-usd
-  <what is left of the cap> --max-turns <max_turns> --tools <tool names> [--allowedTools
-  <Bash(...) patterns>] --permission-mode default --no-session-persistence --settings
-  <disableAllHooks + deny: the live evals/ folder, .clawdling> --strict-mcp-config
-  --append-system-prompt-file <context>`, the prompt on stdin, `OTEL_RESOURCE_ATTRIBUTES=
+  <what is left of the cap, rounded down> --max-turns <max_turns> --tools <read-only tool names>
+  --permission-mode default --no-session-persistence --settings <disableAllHooks + deny: the live
+  evals/ folder, .clawdling> --setting-sources user --strict-mcp-config
+  --append-system-prompt-file <context>` (no Bash in 1.6; no project settings, so the context
+  carries the agent's CLAUDE.md, NOW.md and the repo's CLAUDE.md/AGENTS.md as text), the prompt on stdin, `OTEL_RESOURCE_ATTRIBUTES=
   clawdling.eval_run=<id>`. From the stream: the final `result` (`total_cost_usd`, `num_turns`,
   `duration_ms`, `permission_denials`, `result`) and the tool calls; the files the run created (a
   listing before and after). A timeout, an error result or an AskUserQuestion/ExitPlanMode denial is

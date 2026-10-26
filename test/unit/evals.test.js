@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { caseScore, fileTexts, globRegex, grade, gradeFileExists, gradeLlm, gradeRegex, gradeToolOrder, gradeToolUsed, judgeText, runRegex } from '../../server/evals/graders.js';
-import { cheaperFamily, copyAgentFolder, defaultMatrix, denyRules, holds, lowerEffort, parseCells, parseStream, recommend, wilsonLow, Evals } from '../../server/evals/runner.js';
+import { cheaperFamily, copyAgentFolder, defaultMatrix, denyRules, readPlain, removeInside, holds, lowerEffort, parseCells, parseStream, recommend, wilsonLow, Evals } from '../../server/evals/runner.js';
 import { GRADER_KEYS, PLUGIN_EVAL_GRADER_KEYS, PLUGIN_EVAL_PROMPT_KEYS, PROMPT_KEYS, caseDir, graderFile, loadSuite, parseGrader, parsePrompt, parseSettings, promptFile, toolProblem, writeCase } from '../../server/evals/suite.js';
 import { splitFrontmatter } from '../../server/yaml-lite.js';
 import { absPathRule } from '../../server/hooks.js';
@@ -428,4 +428,53 @@ test('deny rules: by path and real path; a folder a rule cannot name stops the c
   assert.ok(rules.includes(absPathRule('Edit', path.join(real, 'evals'))), 'the real path, though evals/ does not exist yet');
   if (absPathRule('Read', path.join(dir, 'evals'))) assert.ok(rules.includes(absPathRule('Read', path.join(dir, 'evals'))), 'and the path as given');
   assert.throws(() => denyRules(['/home/x~y/evals'], 'linux'), /cannot name the folder/);
+});
+
+// ------------------------------------------------------------------------- review fixes (round 3)
+
+test('readPlain: the draft reads only plain files through real folders, the first or last bytes', () => {
+  const dir = tmp();
+  const secret = path.join(tmp(), 'credentials.json');
+  fs.writeFileSync(secret, '{"token":"sk-secret"}');
+  fs.mkdirSync(path.join(dir, 'memory'));
+  fs.writeFileSync(path.join(dir, 'memory', 'LOG.md'), `${'old line\n'.repeat(5000)}newest line\n`);
+  let linked = true;
+  try {
+    fs.symlinkSync(secret, path.join(dir, 'CLAUDE.md'));
+  } catch {
+    linked = false;
+  }
+  if (linked) assert.equal(readPlain(dir, path.join(dir, 'CLAUDE.md')), '', 'a link the agent made is not followed');
+  assert.match(readPlain(dir, path.join(dir, 'memory', 'LOG.md'), 100, { tail: true }), /newest line\n$/);
+  assert.equal(readPlain(dir, path.join(dir, 'memory', 'LOG.md'), 20).endsWith('[truncated]'), true);
+  assert.equal(readPlain(dir, secret), '', 'outside the folder');
+  const d2 = tmp();
+  fs.symlinkSync(path.dirname(secret), path.join(d2, 'memory'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(readPlain(d2, path.join(d2, 'memory', 'credentials.json')), '', 'nor through a linked folder');
+});
+
+test('removeInside: the committed evals/ goes from the scratch worktree, never through a link', () => {
+  const wt = tmp();
+  const outside = tmp();
+  fs.mkdirSync(path.join(outside, 'evals'));
+  fs.writeFileSync(path.join(outside, 'evals', 'keep.md'), 'x');
+  fs.mkdirSync(path.join(wt, 'projects'));
+  fs.symlinkSync(outside, path.join(wt, 'projects', 'web'), process.platform === 'win32' ? 'junction' : 'dir');
+  assert.equal(removeInside(wt, path.join('projects', 'web', 'evals')), false);
+  assert.ok(fs.existsSync(path.join(outside, 'evals', 'keep.md')), 'nothing outside was deleted');
+  fs.mkdirSync(path.join(wt, 'evals', 'a'), { recursive: true });
+  assert.equal(removeInside(wt, path.join('', 'evals')), true, 'an agent folder at the repo top');
+  assert.equal(fs.existsSync(path.join(wt, 'evals')), false);
+  assert.equal(removeInside(wt, ''), false, 'never the root itself');
+});
+
+test('budgets: a run or vote never gets more than is left; under a cent left, nothing launches', async () => {
+  const dir = tmp();
+  const result = { type: 'result', subtype: 'success', is_error: false, result: 'ok', total_cost_usd: 0.001, num_turns: 1 };
+  const { ev, agent, calls } = stubEvals(dir, { spawn: async () => ({ code: 0, stdout: `${JSON.stringify(result)}\n`, stderr: '', timedOut: false, truncated: false }) });
+  await ev.runCase(agent, caseOf(), { model: null }, { id: 'a', cap: 0.016, spent: 0, judgeCost: 0 }, 1);
+  assert.equal(calls[0].args[calls[0].args.indexOf('--max-budget-usd') + 1], '0.01', 'rounded down, not up to 0.02');
+  await assert.rejects(ev.runCase(agent, caseOf(), { model: null }, { id: 'b', cap: 0.006, spent: 0, judgeCost: 0 }, 2), (e) => e.cap === true);
+  await assert.rejects(ev.judgeVote({ cap: 1, spent: 0.997, judgeCost: 0, judgeModel: 'haiku' }, { criteria: 'c', text: 't', focus: 'last_message' }), (e) => e.cap === true);
+  assert.equal(calls.length, 1, 'neither of the last two launched');
 });

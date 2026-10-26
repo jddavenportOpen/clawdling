@@ -103,3 +103,24 @@ test('checks.yaml is read only as a plain small file: a link to a secret is refu
   fs.writeFileSync(path.join(dir, 'checks.yaml'), `# ${'x'.repeat(70 * 1024)}\n`);
   assert.match(checks.config('web').error, /64 KB/);
 });
+
+test('a repo folder inside a monorepo: the ship check runs in that folder of the worktree, not at the top', { skip: !hasGit && 'no git' }, async () => {
+  const top = tmp();
+  const web = path.join(top, 'apps', 'web');
+  fs.mkdirSync(web, { recursive: true });
+  fs.writeFileSync(path.join(web, 'check.js'), "process.exit(require('fs').existsSync('web-only.txt') ? 0 : 3)\n");
+  fs.writeFileSync(path.join(web, 'web-only.txt'), 'x');
+  const git = (...a) => execFileSync('git', ['-C', top, ...a], { stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  const dir = tmp();
+  const agent = { id: 'web', name: 'Web', kind: 'project', dir, repo: web };
+  const checks = new Checks({ paths: { rt: tmp(), env: path.join(dir, '.env') }, org: { require: () => agent } });
+  assert.equal(await checks.repoPrefix(web), 'apps/web/');
+  checks.approve('web', { checks: [{ name: 'tests', run: 'node check.js', timeout: 60 }], shown: ['node check.js'] });
+  const r = await checks.run('web');
+  assert.equal(r.results[0].ok, true, JSON.stringify(r.results[0]));
+});

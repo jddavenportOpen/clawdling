@@ -402,9 +402,10 @@ To limit the damage a hostile script could do:
   and so does pointing the agent at another repo.
 - **Never the live repo.** `git stash create` snapshots the tracked files, uncommitted changes
   included, as a commit object without changing your files or what is staged (git may refresh the
-  index's cached file times); `git worktree add --detach` puts that snapshot in a scratch folder under the system temp folder; the checks run
-  there; the worktree is removed with `git worktree remove --force` (never `git worktree prune`,
-  which would also drop records of your own worktrees on an unplugged drive).
+  index's cached file times); `git worktree add --detach` puts that snapshot in a scratch folder
+  under the system temp folder; the checks run there, in the agent's repo folder (a monorepo's
+  `apps/web`, not its top); the worktree is removed with `git worktree remove --force` (never `git
+  worktree prune`, which would also drop records of your own worktrees on an unplugged drive).
   Untracked files are not copied (they can be secrets or build junk); the cockpit says so. Every
   git call carries `core.hooksPath` pointed at an empty folder, `core.fsmonitor=false`, every
   clean/smudge/process filter named in the git config switched off (LFS included),
@@ -420,9 +421,9 @@ To limit the damage a hostile script could do:
   and with `CI=true` so test runners run once instead of watching.
 - **Bounded.** A step is over when its shell exits (a background child holding the output open
   gets half a second). On macOS and Linux anything the step left running in its process group is
-  then ended; on Windows a left-over process is ended only at the step's timeout. One ship
-  check per org at a time; output capped at 256 KB per command, of which the
-  last 40 lines are kept, for 90 days, in `.clawdling/checks/<agent>/`. Scratch worktrees in use are
+  then ended; on Windows a process the step started and left running is not ended (a known gap).
+  One ship check per org at a time; output capped at 256 KB per command, of which the last 40 lines
+  are kept, for 90 days, in `.clawdling/checks/<agent>/`. Scratch worktrees in use are
   listed in `.clawdling/checks/active.json`, and Clawdling removes any a crash left behind when it
   starts.
 - **Never automatic.** A ship check runs only when you press Run (or run `clawdling check`); it never
@@ -456,7 +457,8 @@ To limit the damage a hostile script could do:
   `Bash(npm test:*)` cannot be made safe here (allow rules merge from every settings layer, and
   `git`, `npx` or `/bin/sh` run anything). Your test commands run in the ship check instead. In
   print mode anything not allowed is denied, not asked. Reading outside the copy is denied by Claude
-  Code's own rules, and the live agent's `evals/` folder and Clawdling's `.clawdling/` are denied
+  Code's own rules, unless your own user settings allow it (as they would in a live session), and
+  the live agent's `evals/` folder and Clawdling's `.clawdling/` are denied
   even by absolute path, by path and by real path; if a rule cannot name one of those folders (a
   path with characters Claude Code rules cannot express), the check-up refuses to run. The copy is
   removed after each run, and on start if a crash left one.
@@ -473,9 +475,10 @@ To limit the damage a hostile script could do:
   deadline, so a pattern that backtracks badly fails its grader instead of stalling Clawdling.
 - **Plan burn.** The cost is estimated and shown before every run ("This starts N Claude Code runs on
   your plan, about $X, capped at $Y"); the cap (default $2.00, list-price equivalent) is checked
-  before each launch, and each run carries `--max-budget-usd` with what is left. A run or judge
-  vote that ends without reporting its cost (a timeout, a crash) counts as its whole budget, so the
-  cap holds even when costs are unknown. One run per case
+  before each launch, and each run carries `--max-budget-usd` with what is left (never more). A run
+  or judge vote that ends without reporting its cost (a timeout, a crash) counts as its whole
+  budget, so the cap holds even when costs are unknown. Claude Code stops a run after the model call
+  that crosses its budget, so the last run can end above the cap by part of one call. One run per case
   by default, one check-up per org at a time, never scheduled.
 - **Try a cheaper model** runs the same cases with other `--model` and `--effort` values. "Use this"
   writes the agent's default model and effort to its own `agent.json` (Clawdling's config); it never

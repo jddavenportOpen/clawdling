@@ -270,7 +270,7 @@ test('check-up: draft five cases, nothing runs until they are approved, then a r
   fs.rmSync(path.join(home, 'fake.log'), { force: true });
   const { result } = await runCheckup({});
   assert.equal(result.judge_unreliable, false);
-  assert.equal(result.capped, false);
+  assert.equal(result.capped, false, JSON.stringify({ cost: result.cost_usd, error: result.error, runs: result.cells?.map((c) => c.cases.map((x) => x.runs.map((r) => r.error))) }));
   assert.equal(result.score, 1, JSON.stringify(result.cells?.[0]?.cases?.map((c) => [c.id, c.runs.map((r) => r.graders.map((g) => `${g.name}:${g.passed}:${g.explanation}`))])));
   assert.ok(result.controls.length >= 10 && result.controls.every((x) => x.ok), 'an empty answer failed and every reference passed');
   // 30 control votes + 5 runs + 15 run votes, at the fake's prices.
@@ -291,6 +291,8 @@ test('check-up: draft five cases, nothing runs until they are approved, then a r
     assert.equal(r.tools, 'Read,Glob,Grep');
     assert.deepEqual(r.allowedTools, []);
     assert.match(r.claudeMd, /Health/);
+    assert.equal(r.settingSources, 'user', 'never the agent-editable project settings');
+    assert.equal(r.agentFileInCtx, true, 'its CLAUDE.md reaches it through the context, since no project CLAUDE.md loads');
   }
   const settings = runs[0].settings;
   assert.ok(settings && !fs.existsSync(settings), 'the run settings file went with the scratch copy');

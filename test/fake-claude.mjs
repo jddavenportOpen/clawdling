@@ -733,14 +733,18 @@ async function checkupPrint(input) {
   } catch {
     claudeMd = '';
   }
-  log({ mode: 'checkup-run', prompt: text, cwd: process.cwd(), hasCtx: !!ctx, claudeMd: claudeMd.slice(0, 200), evalsHere: fs.existsSync('evals'), envFile: fs.existsSync('.env'), tools: opts.tools, allowedTools: opts.allowedTools, settings: opts.settings, maxBudget: opts.maxBudget });
+  // Like the real CLI, a folder's CLAUDE.md loads only with the project setting source; otherwise the
+  // agent knows its mission only from the context Clawdling appends.
+  const loaded = !opts.settingSources || opts.settingSources.split(',').includes('project') ? claudeMd : '';
+  const agentFile = ctx.split(/^## Your agent file.*$/m)[1] || '';
+  log({ mode: 'checkup-run', prompt: text, cwd: process.cwd(), hasCtx: !!ctx, claudeMd: claudeMd.slice(0, 200), settingSources: opts.settingSources ?? null, agentFileInCtx: !!agentFile.trim(), evalsHere: fs.existsSync('evals'), envFile: fs.existsSync('.env'), tools: opts.tools, allowedTools: opts.allowedTools, settings: opts.settings, maxBudget: opts.maxBudget });
   out({ type: 'system', subtype: 'init', cwd: process.cwd(), session_id: sid, tools: String(opts.tools || '').split(','), model: opts.model || 'fake' });
   if (/sleep/i.test(text)) await new Promise((r) => setTimeout(r, 30000));
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_fake1', name: 'Read', input: { file_path: path.join(process.cwd(), 'CLAUDE.md') } }] }, session_id: sid });
   out({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_fake1', content: claudeMd.slice(0, 200), is_error: !claudeMd } ] }, session_id: sid });
   const denials = /ask me/i.test(text) ? [{ tool_name: 'AskUserQuestion', tool_use_id: 'toolu_fake2', tool_input: { questions: [] } }] : [];
   if (/write/i.test(text)) fs.writeFileSync('created.txt', 'made by the fake agent');
-  const mission = (claudeMd.match(/^#.*$/m) || ['(no CLAUDE.md)'])[0];
+  const mission = ((loaded || agentFile).match(/^#.*$/m) || ['(no CLAUDE.md)'])[0];
   const answer = /answer wrong/i.test(text) ? 'WRONG answer.' : `My job: ${mission}. Context: ${/You are the .* agent/.test(ctx) ? 'yes' : 'no'}. Model: ${opts.model || 'default'}.`;
   out({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: answer }] }, session_id: sid });
   out({ type: 'result', subtype: 'success', is_error: false, result: answer, total_cost_usd: cost, num_turns: 2, duration_ms: 50, permission_denials: denials, session_id: sid });

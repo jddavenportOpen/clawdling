@@ -234,7 +234,8 @@ function scriptKind(name) {
 }
 
 /** The kind of check one command's words run (test, build, lint or check), or null. */
-export function wordsKind(w) {
+/** The command a shell line really runs: the program's own name, past wrappers (time, env, npx, uv run...). */
+export function unwrap(w) {
   if (!w.length) return null;
   // The program's own name: ./node_modules/.bin/vitest is vitest, ./gradlew is gradlew.
   let a = [w[0].replace(/^.*[\\/]/, '').replace(/\.(cmd|exe|bat|ps1)$/i, ''), ...w.slice(1)];
@@ -250,6 +251,12 @@ export function wordsKind(w) {
     else break;
     if (!a.length) return null;
   }
+  return a;
+}
+
+export function wordsKind(w) {
+  const a = unwrap(w);
+  if (!a) return null;
   const [h, b, c] = a;
   const lc = (x) => String(x || '').toLowerCase();
   if (h === 'npm' || h === 'pnpm' || h === 'yarn' || h === 'bun') {
@@ -297,7 +304,10 @@ export function wordsKind(w) {
 const NO_RUN = /^(--version|-V|--help|-h|--collect-only|--co|--list|--list-.*|--listTests|--list-tests|--showConfig|--dry-run|--no-run|--print-config)$/;
 // `-n` is a dry run only for these (`pytest -n auto` is pytest-xdist's worker count, a real run).
 const DRY_N = new Set(['make', 'gmake', 'just', 'go']);
-const runsNothing = (w) => w.some((x) => NO_RUN.test(x)) || (DRY_N.has(w[0]) && w.some((x) => x === '-n' || x === '--just-print' || x === '--recon'));
+const runsNothing = (w) => {
+  const a = unwrap(w) || w; // `time make -n test`, `/usr/bin/make -n` are make
+  return w.some((x) => NO_RUN.test(x)) || (DRY_N.has(a[0]) && a.some((x) => x === '-n' || x === '--just-print' || x === '--recon'));
+};
 /** The approved command itself, or it with extra flags (`npm test -- --ci`), never another script. */
 function sameOrFlags(cmd, base) {
   const a = words(String(cmd || '').trim());
@@ -309,7 +319,7 @@ const NAME_KIND = { tests: 'test', test: 'test', unit: 'test', e2e: 'test', buil
 
 /**
  * Is this shell command a check, and of what kind? `approved`: the project's approved checks.yaml
- * commands [{name, run}] (exact, or the same first two words); `detected`: the stack's commands
+ * commands [{name, run}] (exact, or exact plus extra flags); `detected`: the stack's commands
  * [{kind, cmd}]; then the generic list. Returns {kind, masked} or null. `masked`: its exit code does
  * not reach the tool result (piped into another command, or followed by `|| ...` or `; ...`), so
  * pass or fail must come from its output.
@@ -353,10 +363,16 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     if (!kind) kind = wordsKind(w);
     if (!kind) continue;
     // The exit code that reaches the tool result: the last command's, unless a failure stops the chain.
+    // Any later `||`, `;` (without set -e), `&` or pipe (without pipefail) can hide the check's own
+    // exit (`npm test && npm run build || true`), not only the operator right after it.
     const rest = segs.slice(i);
-    const op = s.op;
-    const masked = (op === '|' && !pipefail) || op === '||' || op === '&' || (op === ';' && !errexit && rest.length > 1);
-    found = { kind, masked, chained: !masked && meaningful > 1, cmd: trimmed };
+    const ops = rest.map((x) => x.op).filter((op, j) => op && !(op === ';' && j === rest.length - 1)); // a trailing `;` hides nothing
+    const masked = ops.some((op) => (op === '|' && !pipefail) || op === '||' || op === '&' || (op === ';' && !errexit));
+    // Other commands ran before it in the line: failure marks in the output may be theirs.
+    const preceded = segs.slice(0, i).some((sg) => !trivial(words(sg.raw)));
+    // Piped into a program that keeps only some lines: the failure (or the totals) can be cut off.
+    const cut = s.op === '|' && !!segs[i + 1] && /^(head|grep|egrep|fgrep|rg|sed|awk|cut|less|more)$/.test((unwrap(words(segs[i + 1].raw)) || [''])[0]);
+    found = { kind, masked, chained: !masked && meaningful > 1, preceded, cut, cmd: trimmed };
     if (!masked) break; // an unmasked check decides
   }
   return found;
@@ -441,9 +457,12 @@ const BLOCKED = /^<tool_use_error>/;
 const BACKGROUNDED = /^Command running in background with ID:/m;
 const ERROR_LINE = /(\berror\b|\berr!|\bfail(ed|ure|ing|s)?\b|✗|✕|×|\bassert(ion)?\b|\bexception\b|\bpanic(ked)?\b|\bnot ok\b|\btraceback\b|\bcannot\b|\bundefined\b|\bexpected\b)/i;
 // Failure marks: the capitals test runners print (FAIL, ERROR:), and counts above zero.
-const FAIL_UPPER = /(^|\s)(FAIL|FAILED|FAILURES?)\b|npm ERR!|^not ok \d|\btest result: FAILED|\bERROR:|\bBUILD FAILED\b/m;
+const FAIL_UPPER = /(^|\s)(FAIL|FAILED|FAILURES?)\b|npm ERR!|^npm error\b|^not ok \d|^\s*\u2716|^\u2139 fail [1-9]|\btest result: FAILED|\bERROR:|\bBUILD FAILED\b/m;
 const FAIL_COUNT = /\b([1-9]\d*) (tests? )?(failed|failing|failures?|errors?)\b|\bTests?:\s+[1-9]\d* failed|^# fail [1-9]|\bexit (code|status) [1-9]/im;
 const failMark = (t) => FAIL_UPPER.test(t) || FAIL_COUNT.test(t);
+// The totals a runner prints at the end. With a hidden exit code only these count: a per-test line
+// (✔ adds, ok 1, PASS a.test.js) says nothing about the tests after it.
+const PASS_SUMMARY = /\b[1-9]\d* (tests? )?(passed|passing)\b|\bTests?:\s+\d+ passed\b|^# pass [1-9]|^\u2139 pass [1-9]|\btest result: ok\b|\bBUILD SUCCESS(FUL)?\b|\bCompiled successfully\b|\bbuilt in \d|\bAll checks passed\b|\bFound 0 errors\b|\b0 problems\b/im;
 const PASS_MARK = /\b([1-9]\d* )?(tests? )?(passed|passing)\b|\bTests?:\s+\d+ passed\b|^ok\s+\S+|^# pass [1-9]|\bPASS\b|\u2713|\u2714|\btest result: ok\b|\bBUILD SUCCESS(FUL)?\b|\bCompiled successfully\b|\bbuilt in \d|\bAll checks passed\b|\bFound 0 errors\b|\b0 problems\b/im;
 
 /** The text of a tool_result block's content (a string, or text blocks). */
@@ -484,6 +503,7 @@ export function resultInfo(content, isError) {
     err1: isError === true || failMark(tail) ? firstErrorLine(text) : null,
     fail: failMark(tail),
     pass: PASS_MARK.test(tail) && !failMark(tail),
+    summary: PASS_SUMMARY.test(tail) && !failMark(tail),
   };
 }
 
@@ -524,10 +544,12 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     const before = all.filter((x) => cmp(x.key, at) < 0);
     let lastEdit = null;
     let edits = 0;
+    let editsEnd = -Infinity; // when the last of them finished (edits and subagents can overlap)
     for (const x of before) {
       if (isWorkEdit(x.t, where)) {
         lastEdit = x;
         edits++;
+        editsEnd = Math.max(editsEnd, x.t.end ?? x.t.ts);
       }
     }
     // A command that writes and then runs a check (`... > f && npm test`) is the edit and, just after
@@ -535,7 +557,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     // The session's first change after the claim ends the time a ship check can speak for it.
     const nextEdit = all.find((x) => cmp(x.key, at) > 0 && isWorkEdit(x.t, where));
     const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter;
-    const after = before.filter((x) => (!lastEdit || cmp(x.key, lastEdit.key) > 0 || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
+    const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
     const cmds = after.slice(-CMDS_PER_CLAIM).map(({ t }) => ({
       cmd: t.cmd,
       at: new Date(t.end ?? t.ts).toISOString(),
@@ -544,6 +566,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       err1: t.res.err1,
       fail: t.res.fail,
       pass: t.res.pass,
+      summary: t.res.summary,
     }));
     out.push({
       at: new Date(f.ts ?? 0).toISOString(),
@@ -551,7 +574,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       needs: claim.needs,
       phrase: claim.phrase,
       edits,
-      last_edit_at: lastEdit ? new Date(lastEdit.t.end ?? lastEdit.t.ts).toISOString() : null,
+      last_edit_at: lastEdit ? new Date(editsEnd).toISOString() : null,
       next_edit_at: nextEdit ? new Date(nextEdit.t.ts).toISOString() : null,
       cmds,
     });
@@ -560,16 +583,18 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
 }
 
 /** A command's outcome as a check: true (passed), false (failed) or null (cannot tell: not counted). */
-function outcome(c, masked, chained = false) {
+function outcome(c, masked, chained = false, preceded = false, cut = false) {
   const failed = !(c.error !== true && (c.exit === 0 || c.exit === null) ? !c.fail || c.exit === 0 : false);
   // In an && chain with other commands, the line's failure (and its failure marks: "npm ERR!" from
   // `npm ci`, "Found 2 errors" from a build) may be theirs: only a pass counts, which means every
   // command in it passed.
   if (!masked && chained && failed) return null;
   if (!masked) return !failed;
-  // Masked exit code: only the output can say. A failure mark fails it; otherwise it must say it passed.
-  if (c.fail) return false;
-  if (c.pass) return true;
+  // Masked exit code: only the output can say. A failure mark fails it (unless another command ran
+  // before it in the line: then the mark may be that one's); otherwise it must say it passed.
+  if (c.fail) return preceded ? null : false;
+  if (cut) return null; // piped into head, grep, sed...: the output may be cut before the totals
+  if (c.summary) return true;
   return null;
 }
 
@@ -591,7 +616,7 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
     const k = checkOf(x.cmd, { approved, detected });
     if (!k) continue;
-    const ok = outcome(x, k.masked, k.chained);
+    const ok = outcome(x, k.masked, k.chained, k.preceded, k.cut);
     if (ok === null) continue;
     checks.push({ kind: k.kind, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
   }

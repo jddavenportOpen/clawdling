@@ -360,3 +360,36 @@ test('review: a group project agent\'s edits inside its repos are changes', () =
   assert.equal(labelClaim(withRepos).label, 'not_verified', 'the test ran before the edit');
   assert.ok(claimEvidence);
 });
+
+test('review 3: a later || or ; hides the check\'s exit; a per-test pass line is not enough when the exit is hidden', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test && npm run build || true', 'FAIL test/a.test.js\n  adds'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified', '`|| true` made the line pass');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -20', '✔ adds (1ms)\n✖ subtracts (2ms)\nℹ tests 2\nℹ pass 1\nℹ fail 1'), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'contradicted', 'node\'s spec format: ✖ and ℹ fail 1');
+  const [c] = claimsOf([prompt('x'), edit(), bash('npx jest 2>&1 | head -40', 'PASS src/a.test.js\n  ✓ adds (2 ms)'), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'not_verified', 'head may have cut the failure off');
+  const [d] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -5', 'ℹ tests 5\nℹ pass 5\nℹ fail 0'), say('Done.')]);
+  assert.equal(labelClaim(d).label, 'verified', 'the totals, with zero failures');
+  const [e] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -5', '✔ adds (1ms)'), say('Done.')]);
+  assert.equal(labelClaim(e).label, 'not_verified', 'one passing test line, no totals');
+  const [f] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test 2>&1 | tail', 'npm error code ERESOLVE'), say('Done.')]);
+  assert.equal(labelClaim(f).label, 'not_verified', 'npm ci\'s error, not the tests\'');
+  for (const cmd of ['time make -n test', '/usr/bin/make -n check', 'env CI=1 make -n test']) assert.equal(checkOf(cmd), null, cmd);
+});
+
+test('review 3: a check that started before an overlapping edit finished does not verify it', () => {
+  const t = (s) => new Date(Date.parse('2026-10-26T12:00:00Z') + s * 1000).toISOString();
+  const use = (at, id, name, input) => ({ type: 'assistant', timestamp: t(at), message: { id: `x${id}`, model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'tool_use', id, name, input }], usage: { input_tokens: 1, output_tokens: 1 } } });
+  const res = (at, id, content) => ({ type: 'user', timestamp: t(at), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: false }] } });
+  const recs = [
+    { type: 'user', timestamp: t(0), message: { role: 'user', content: 'x' } },
+    use(1, 'e1', 'Edit', { file_path: '/repo/a.js', old_string: 'a', new_string: 'b' }),
+    use(2, 'b1', 'Bash', { command: 'npm test' }),
+    res(2.5, 'b1', '# pass 3\n# fail 0'),
+    res(3, 'e1', 'The file was updated.'),
+    { type: 'assistant', timestamp: t(4), message: { id: 'x9', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'text', text: 'Done. All tests pass.' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  const [c] = claimsOf(recs);
+  assert.equal(c.last_edit_at, t(3), 'the edit finished at 3 s');
+  assert.equal(labelClaim(c).label, 'not_verified');
+});

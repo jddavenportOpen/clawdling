@@ -415,6 +415,20 @@ export class Checks {
     }
   }
 
+  /** `repo`'s path inside its repository ('' at the top, `apps/web/` in a monorepo). */
+  async repoPrefix(repo) {
+    const { stdout } = await this.git(repo, ['rev-parse', '--show-prefix']);
+    const prefix = String(stdout).trim();
+    if (prefix.split(/[\\/]/).includes('..') || path.isAbsolute(prefix)) throw new Error('the repo folder is not inside its git repository');
+    return prefix;
+  }
+
+  /** The top folder of `repo`'s git repository. */
+  async repoTop(repo) {
+    const { stdout } = await this.git(repo, ['rev-parse', '--show-toplevel']);
+    return path.resolve(String(stdout).trim());
+  }
+
   /** A detached worktree of `rev` (a check-up's scratch copy of a project repo, 1.6). */
   async addWorktree(repo, dir, rev = 'HEAD') {
     const { stdout } = await this.git(repo, ['rev-parse', '--verify', `${rev}^{commit}`]);
@@ -575,12 +589,15 @@ export class Checks {
       this.writeActive([...this.readActive(), { agent: id, repo, dir, started_at: startedAt.toISOString(), pid: process.pid }]);
       registered = true;
       await this.git(repo, ['worktree', 'add', '--detach', '--quiet', dir, snap], { timeout: 5 * 60000 });
+      // The worktree is the whole repository: the steps run in the agent's folder of it (a
+      // monorepo's apps/web), where the commands you approved were detected.
+      const cwd = path.join(dir, await this.repoPrefix(repo));
       const orgKeys = Object.keys(readEnvFile(this.paths.env));
       const env = checkEnv(this.env, orgKeys);
       const steps = [...c.config.setup.map((s, i) => ({ ...s, name: `setup${c.config.setup.length > 1 ? ` ${i + 1}` : ''}`, setup: true })), ...c.config.checks.map((x) => ({ ...x, setup: false }))];
       for (const step of steps) {
         this.progress(id, { phase: 'step', name: step.name, cmd: step.run });
-        const r = await this.runOne(step.run, { cwd: dir, env, timeout: step.timeout });
+        const r = await this.runOne(step.run, { cwd, env, timeout: step.timeout });
         const ok = r.exit === 0;
         const clean = stripAnsi(r.output).replace(/\r/g, '');
         const tail = clean.split('\n').slice(-TAIL_LINES).map((l) => (l.length > 500 ? `${l.slice(0, 499)}…` : l));

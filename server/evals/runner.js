@@ -220,6 +220,64 @@ function walk(root, { max = LIST_MAX } = {}) {
  * runtime folder), by path and by real path. Throws when a path cannot be written as a rule: running
  * without the rule would hand the agent its own answers.
  */
+/**
+ * The first `max` characters of `file`, a plain file under `root` reached through real folders only
+ * (lstat on every part; no link, FIFO or device), or '' when it is anything else.
+ */
+export function readPlain(root, file, max = 20000, { tail = false } = {}) {
+  const rel = path.relative(root, file);
+  if (!rel || rel.startsWith('..') || path.isAbsolute(rel)) return '';
+  let cur = root;
+  const parts = rel.split(path.sep);
+  for (let i = 0; i < parts.length; i++) {
+    cur = path.join(cur, parts[i]);
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      return '';
+    }
+    if (i < parts.length - 1 ? !st.isDirectory() : !st.isFile()) return '';
+  }
+  let fd;
+  try {
+    fd = fs.openSync(cur, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0));
+    if (!fs.fstatSync(fd).isFile()) return '';
+    const size = fs.fstatSync(fd).size;
+    const buf = Buffer.alloc(Math.min(size, max * 4 + 4));
+    const n = fs.readSync(fd, buf, 0, buf.length, tail ? Math.max(0, size - buf.length) : 0);
+    const t = buf.subarray(0, n).toString('utf8');
+    if (tail) return t.length > max ? t.slice(-max) : t;
+    return t.length > max ? `${t.slice(0, max)}\n[truncated]` : t;
+  } catch {
+    return '';
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+/**
+ * Remove `rel` under `root` (a scratch folder this module made) only when no part of the path is a
+ * link: a link committed to the repo must not lead the delete outside the scratch copy.
+ */
+export function removeInside(root, rel) {
+  let cur = root;
+  for (const part of rel.split(path.sep).filter(Boolean)) {
+    if (part === '..') return false;
+    cur = path.join(cur, part);
+    let st;
+    try {
+      st = fs.lstatSync(cur);
+    } catch {
+      return false; // not there: nothing to remove
+    }
+    if (st.isSymbolicLink()) return false;
+  }
+  if (cur === root) return false;
+  fs.rmSync(cur, { recursive: true, force: true });
+  return true;
+}
+
 /** The real path of `p`, through its nearest existing parent when it does not exist yet. */
 function realPathOf(p) {
   const rest = [];
@@ -588,18 +646,13 @@ export class Evals {
     if (this.active) throw conflict('a check-up is running; draft when it ends');
     // Before paying for a draft: every folder it will write into must be a real folder, not a link.
     for (const slug of DRAFT_SLUGS) caseDir(agent.dir, slug, { graders: true });
-    const read = (f, max = 20000) => {
-      try {
-        const t = fs.readFileSync(f, 'utf8');
-        return t.length > max ? `${t.slice(0, max)}\n[truncated]` : t;
-      } catch {
-        return '';
-      }
-    };
+    // The agent's files go into the draft prompt: only plain files in real folders of the agent
+    // folder, never a link the agent made to another file (a credential), and only their first bytes.
+    const read = (f, max = 20000, opts) => readPlain(agent.dir, f, max, opts);
     const claudeMd = read(path.join(agent.dir, 'CLAUDE.md'));
     const nowMd = read(path.join(agent.dir, 'memory', 'NOW.md'));
-    const logTail = read(path.join(agent.dir, 'memory', 'LOG.md'), 200000).split('\n').filter(Boolean).slice(-15).join('\n');
-    const meMd = read(this.paths.meMd, 6000);
+    const logTail = read(path.join(agent.dir, 'memory', 'LOG.md'), 20000, { tail: true }).split('\n').filter(Boolean).slice(-15).join('\n');
+    const meMd = readPlain(path.dirname(this.paths.meMd), this.paths.meMd, 6000);
     const prompt = [
       `Write a five-case check-up for an AI agent called "${agent.name}" (${agent.kind} agent). The owner will run these cases against the agent to see whether it knows its job.`,
       '',
@@ -748,7 +801,8 @@ export class Evals {
       '',
       'Does the output meet the criterion? Answer pass (true or false) and one short reason.',
     ].join('\n');
-    const budget = Math.max(0.01, Math.min(JUDGE_BUDGET, Math.floor((state.cap - state.spent) * 100) / 100));
+    const budget = Math.min(JUDGE_BUDGET, Math.floor((state.cap - state.spent) * 100 + 1e-9) / 100);
+    if (budget < 0.01) throw new CapReached('cost cap reached');
     const r = await this.print({ prompt, model: state.judgeModel, budget, schema: JUDGE_SCHEMA, system: JUDGE_SYSTEM, timeoutMs: 120000 });
     state.spent += r.cost;
     state.judgeCost += r.cost;
@@ -823,11 +877,12 @@ export class Evals {
       entry.worktree = wt;
       this.register(entry);
       await this.checks.addWorktree(agent.repo, wt, 'HEAD');
-      // An agent folder kept inside its own repo has its committed evals/ (answers included) in the
-      // worktree too: remove it from the scratch copy.
-      const rel = path.relative(realPathOf(agent.repo), realPathOf(agent.dir));
-      if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) fs.rmSync(path.join(wt, rel, 'evals'), { recursive: true, force: true });
-      cwd = wt;
+      const prefix = await this.checks.repoPrefix(agent.repo);
+      // An agent folder kept inside its own repository has its committed evals/ (answers included)
+      // in the worktree too: remove it from the scratch copy, never through a link.
+      const rel = path.relative(realPathOf(await this.checks.repoTop(agent.repo)), realPathOf(agent.dir));
+      if (!rel.startsWith('..') && !path.isAbsolute(rel)) removeInside(wt, path.join(rel, 'evals'));
+      cwd = path.join(wt, prefix);
     }
     const target = { ...agent, dir: notes, cwd };
     const ctx = `${this.sessions.contextText(target, { orgRules: true })}\n${RUN_INSTRUCTIONS}\n`;
@@ -893,14 +948,15 @@ export class Evals {
   /** One agent run of one case: scratch copy, claude -p, collect, clean up. */
   async runCase(agent, c, cell, state, n) {
     const remaining = state.cap - state.spent;
-    if (remaining <= 0.005) throw new CapReached('cost cap reached');
+    // Never hand a run more than is left (cents, rounded down); under a cent left, the cap is reached.
+    const budget = Math.floor(remaining * 100 + 1e-9) / 100;
+    if (budget < 0.01) throw new CapReached('cost cap reached');
     const sc = await this.scratch(agent, `${state.id}-${n}`);
     const started = Date.now();
     try {
       const before = new Set(walk(sc.cwd));
       const tools = c.fm.allowed_tools.length ? c.fm.allowed_tools : DEFAULT_TOOLS;
       const names = [...new Set(tools)];
-      const budget = Math.max(0.01, Math.round(remaining * 100) / 100);
       const model = cell.model || c.fm.model || null;
       const args = [
         '-p', '--output-format', 'stream-json', '--verbose',
