@@ -201,7 +201,11 @@ export function applyRecord(st, o, { sub = false } = {}) {
         t.error = b.is_error === true;
         // What a shell command's result said (exit code, first error line, pass/fail marks); the
         // output itself is not kept.
-        if (t.cmd !== undefined) t.res = resultInfo(b.content, b.is_error);
+        if (t.cmd !== undefined) {
+          t.res = resultInfo(b.content, b.is_error);
+          // Claude Code moved it to the background (a timeout, or Ctrl+B): it has not finished.
+          if (t.res.backgrounded || (o.toolUseResult && typeof o.toolUseResult === 'object' && o.toolUseResult.backgroundTaskId)) t.bg = true;
+        }
         const r = o.toolUseResult;
         if (r && typeof r === 'object' && typeof r.agentId === 'string') t.agentId = r.agentId.slice(0, 60);
         if (st.openAgent === t.id) st.openAgent = null;
@@ -369,7 +373,7 @@ export function subTurns({ main, subs }) {
   return { owner, turns: new Map(subs.map((s) => [s, turnOf(s)])) };
 }
 
-export function summarize({ main, subs }, { prices = PRICES } = {}) {
+export function summarize({ main, subs }, { prices = PRICES, claimRoots = null } = {}) {
   const { turns } = subTurns({ main, subs });
   const all = [];
   for (const u of main.usage.values()) all.push(u);
@@ -448,7 +452,7 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
     unknown_days,
     commit_times,
     last_line: main.lastText ? lastLine(main.lastText.text) : null,
-    claims: claimEvidence({ main, subs }),
+    claims: claimEvidence({ main, subs }, { roots: claimRoots }),
     last_line_at: main.lastText ? new Date(main.lastText.ts ?? main.lastTs ?? Date.now()).toISOString() : null,
     started_at: main.firstTs !== null ? new Date(main.firstTs).toISOString() : null,
     last_at: main.lastTs !== null ? new Date(main.lastTs).toISOString() : null,

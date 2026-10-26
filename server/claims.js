@@ -294,7 +294,14 @@ export function wordsKind(w) {
   return null;
 }
 
-const firstTwo = (cmd) => words(String(cmd || '').trim()).slice(0, 2).join(' ');
+const NO_RUN = /^(--version|-V|--help|-h|--collect-only|--co|--list|--list-.*|--listTests|--list-tests|--showConfig|--dry-run|-n|--no-run|--print-config)$/;
+/** The approved command itself, or it with extra flags (`npm test -- --ci`), never another script. */
+function sameOrFlags(cmd, base) {
+  const a = words(String(cmd || '').trim());
+  const b = words(String(base || '').trim());
+  if (!b.length || a.length < b.length || b.some((x, i) => a[i] !== x)) return false;
+  return a.slice(b.length).every((x) => x.startsWith('-'));
+}
 const NAME_KIND = { tests: 'test', test: 'test', unit: 'test', e2e: 'test', build: 'build', compile: 'build', lint: 'lint', typecheck: 'lint', types: 'lint', format: 'lint' };
 
 /**
@@ -309,6 +316,9 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
   let pipefail = false;
   let errexit = false;
   let found = null;
+  const trivial = (w) => ['set', 'cd', 'pushd', 'popd', 'export', 'source', '.', 'echo', 'true', ':'].includes(w[0]);
+  // The other commands of an && chain: a failure of the whole line may be theirs, not the check's.
+  const meaningful = segs.filter((sg) => !trivial(words(sg.raw))).length;
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
     const w = words(s.raw);
@@ -317,19 +327,21 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
       if (w.includes('pipefail')) pipefail = true;
       continue;
     }
-    if (w[0] === 'cd' || w[0] === 'pushd' || w[0] === 'popd' || w[0] === 'export' || w[0] === 'source' || w[0] === '.' || w[0] === 'echo') continue;
+    if (trivial(w)) continue;
+    // Listing, help and version flags run nothing: never a check (`npx tsc --version`, `jest --listTests`).
+    if (w.some((x) => NO_RUN.test(x))) continue;
     let kind = null;
     const trimmed = s.raw.trim();
     for (const ap of approved) {
       if (!ap || typeof ap.run !== 'string') continue;
-      if (trimmed === ap.run.trim() || (firstTwo(trimmed) && firstTwo(trimmed) === firstTwo(ap.run) && words(trimmed).length >= 2)) {
+      if (sameOrFlags(trimmed, ap.run)) {
         kind = NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(words(ap.run)) || 'check';
         break;
       }
     }
     if (!kind) {
       for (const d of detected) {
-        if (d && typeof d.cmd === 'string' && (trimmed === d.cmd || trimmed.startsWith(`${d.cmd} `))) {
+        if (d && typeof d.cmd === 'string' && sameOrFlags(trimmed, d.cmd)) {
           kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' || d.kind === 'format' ? 'lint' : d.kind === 'check' ? 'check' : null;
           if (kind) break;
         }
@@ -341,7 +353,7 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     const rest = segs.slice(i);
     const op = s.op;
     const masked = (op === '|' && !pipefail) || op === '||' || op === '&' || (op === ';' && !errexit && rest.length > 1);
-    found = { kind, masked, cmd: trimmed };
+    found = { kind, masked, chained: !masked && meaningful > 1, cmd: trimmed };
     if (!masked) break; // an unmasked check decides
   }
   return found;
@@ -404,12 +416,13 @@ function inside(dir, file) {
   return f === d || f.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
 }
 
-/** Is this tool call a change to the work (an edit), for "after the last edit"? */
-export function isWorkEdit(t, cwd) {
+/** Is this tool call a change to the work (an edit), for "after the last edit"? `roots`: where it counts. */
+export function isWorkEdit(t, roots) {
   if (t.end === null || t.end === undefined || t.error === true) return false;
   if (CLAIM_EDIT_TOOLS.has(t.name)) {
     if (t.file && MEMORY_FILE.test(t.file)) return false;
-    return inside(cwd, t.file);
+    const list = Array.isArray(roots) ? roots : [roots];
+    return !list.filter(Boolean).length || list.filter(Boolean).some((r) => inside(r, t.file));
   }
   if (SHELL_TOOLS.has(t.name) && typeof t.cmd === 'string' && !t.bg) return writesFiles(t.cmd).writes;
   return false;
@@ -417,8 +430,12 @@ export function isWorkEdit(t, cwd) {
 
 // ---------------------------------------------------------------------------------- tool results
 
-const DENIED = /doesn't want to proceed|does not want to proceed|tool use was rejected|user rejected|was denied|permission (to use .* )?(has been |was )?denied|requested permissions|interrupted by user|\[Request interrupted/i;
-const BLOCKED = /^\s*<tool_use_error>|^\s*Error: Blocked|hook (error|blocked)|blocked by (a )?hook/i;
+// Claude Code's own words for a call the person declined, or that was never run (exactly, at the
+// start of the result): not a check. A command's own output saying "permission denied" is a failure.
+const DENIED = /^(?:The user doesn't want to proceed with this tool use|\[Request interrupted by user|Permission to use \S+ (?:has been|was) denied|Claude requested permissions to )/;
+const BLOCKED = /^<tool_use_error>/;
+// A foreground command Claude Code moved to the background (a timeout, or Ctrl+B): not finished.
+const BACKGROUNDED = /^Command running in background with ID:/m;
 const ERROR_LINE = /(\berror\b|\berr!|\bfail(ed|ure|ing|s)?\b|✗|✕|×|\bassert(ion)?\b|\bexception\b|\bpanic(ked)?\b|\bnot ok\b|\btraceback\b|\bcannot\b|\bundefined\b|\bexpected\b)/i;
 // Failure marks: the capitals test runners print (FAIL, ERROR:), and counts above zero.
 const FAIL_UPPER = /(^|\s)(FAIL|FAILED|FAILURES?)\b|npm ERR!|^not ok \d|\btest result: FAILED|\bERROR:|\bBUILD FAILED\b/m;
@@ -446,15 +463,20 @@ export function firstErrorLine(text) {
  */
 export function resultInfo(content, isError) {
   const text = resultText(content).slice(0, 256 * 1024);
-  const denied = isError === true && DENIED.test(text.slice(0, 2000));
-  const blocked = !denied && BLOCKED.test(text.slice(0, 2000));
+  const head = text.trimStart().slice(0, 2000);
+  const ran = /^Exit code \d+/.test(head);
+  const denied = isError === true && !ran && DENIED.test(head);
+  const blocked = isError === true && !ran && !denied && BLOCKED.test(head);
+  const backgrounded = !ran && BACKGROUNDED.test(head);
   const m = /^Exit code (\d+)/.exec(text.trimStart());
   const exit = m ? Number(m[1]) : isError === true ? null : 0;
-  // Pass and fail marks are read from the end of the output, where test runners print their totals.
-  const tail = text.slice(-16 * 1024);
+  // Pass and fail marks are read from the end of the output, where test runners print their totals;
+  // never from Claude Code's own "Exit code N" header (that is the exit code, not the output).
+  const tail = text.replace(/^\s*Exit code \d+\s*\n?/, '').slice(-16 * 1024);
   return {
     denied,
     blocked,
+    backgrounded,
     exit,
     err1: isError === true || failMark(tail) ? firstErrorLine(text) : null,
     fail: failMark(tail),
@@ -465,6 +487,7 @@ export function resultInfo(content, isError) {
 // -------------------------------------------------------------------------------------- evidence
 
 const CLAIMS_MAX = 50;
+const SHIP_WINDOW_MS = 24 * 3600 * 1000;
 const CMDS_PER_CLAIM = 30;
 
 /**
@@ -474,7 +497,9 @@ const CMDS_PER_CLAIM = 30;
  * results said). Labels are given later (labelClaim), when the project's approved checks and its
  * ship checks are known.
  */
-export function claimEvidence({ main, subs = [] }) {
+export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
+  // Where a change counts: the session's folder, plus a group project agent's repos (--add-dir).
+  const where = (roots && roots.length ? roots : [main.cwd]).filter(Boolean);
   const finals = main.finals instanceof Map ? [...main.finals.values()] : [];
   if (!finals.length) return [];
   const all = [];
@@ -497,7 +522,7 @@ export function claimEvidence({ main, subs = [] }) {
     let lastEdit = null;
     let edits = 0;
     for (const x of before) {
-      if (isWorkEdit(x.t, main.cwd)) {
+      if (isWorkEdit(x.t, where)) {
         lastEdit = x;
         edits++;
       }
@@ -529,8 +554,12 @@ export function claimEvidence({ main, subs = [] }) {
 }
 
 /** A command's outcome as a check: true (passed), false (failed) or null (cannot tell: not counted). */
-function outcome(c, masked) {
-  if (!masked) return c.error !== true && (c.exit === 0 || c.exit === null) ? !c.fail || c.exit === 0 : false;
+function outcome(c, masked, chained = false) {
+  const failed = !(c.error !== true && (c.exit === 0 || c.exit === null) ? !c.fail || c.exit === 0 : false);
+  // In an && chain with other commands, the line's failure may be theirs: only the check's own
+  // failure marks pin it on the check. A pass means every command in it passed.
+  if (!masked && chained && failed) return c.fail ? false : null;
+  if (!masked) return !failed;
   // Masked exit code: only the output can say. A failure mark fails it; otherwise it must say it passed.
   if (c.fail) return false;
   if (c.pass) return true;
@@ -546,17 +575,22 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   if (!c || typeof c !== 'object') return { label: 'not_verified', check: null };
   if (c.kind === 'completion' && !(c.edits > 0)) return { label: 'no_changes', check: null };
   const since = c.last_edit_at ? Date.parse(c.last_edit_at) : -Infinity;
+  const said = Date.parse(c.at || '') || 0;
+  // A ship check speaks for this claim only soon after it (24 h) and before the session changed
+  // anything again (`until`, the next claim's last edit): one check never relabels a week.
+  const shipFrom = Math.max(since, said - 60000);
+  const shipTo = Math.min(said + SHIP_WINDOW_MS, c.until ? Date.parse(c.until) : Infinity);
   const checks = [];
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
     const k = checkOf(x.cmd, { approved, detected });
     if (!k) continue;
-    const ok = outcome(x, k.masked);
+    const ok = outcome(x, k.masked, k.chained);
     if (ok === null) continue;
     checks.push({ kind: k.kind, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
   }
   for (const r of Array.isArray(shipRuns) ? shipRuns : []) {
     const t = Date.parse(r.at || r.started_at || '');
-    if (!Number.isFinite(t) || !(t > since)) continue;
+    if (!Number.isFinite(t) || !(t > shipFrom) || !(t < shipTo)) continue;
     for (const x of Array.isArray(r.results) ? r.results : []) {
       if (x.setup) continue;
       checks.push({ kind: x.kind || 'check', cmd: x.cmd, at: new Date(t).toISOString(), ok: x.ok === true, first_error_line: x.ok ? null : x.err1 || null, ship: true });
@@ -590,7 +624,14 @@ export function fixMessage(check) {
 }
 
 /** The words a badge shows, e.g. "Verified: `npm test` passed at 14:02, after the last edit". */
-export function badgeText(l, { time = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) } = {}) {
+/** "14:02", or "Oct 3, 14:02" when it is not today: a month-old pass never reads like today's. */
+export function whenText(iso, now = Date.now()) {
+  const d = new Date(iso);
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date(now).toDateString() ? t : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${t}`;
+}
+
+export function badgeText(l, { time = (iso) => whenText(iso) } = {}) {
   if (!l) return '';
   if (l.label === 'verified') return `Verified: \`${l.check.cmd}\` passed at ${time(l.check.at)}, after the last edit${l.check.ship ? ' (ship check)' : ''}`;
   if (l.label === 'contradicted') return `Contradicted: \`${l.check.cmd}\` failed at ${time(l.check.at)}${l.check.first_error_line ? `: ${l.check.first_error_line}` : ''}`;

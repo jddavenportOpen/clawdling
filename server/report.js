@@ -321,7 +321,7 @@ export class Reports {
       // A part from before claim receipts (1.6) is read once more, while its transcript is there.
       if (i !== -1 && sameKey(parts[i].source, key) && Array.isArray(parts[i].claims)) continue;
       try {
-        const part = { path: f, ...partOf(summarize(this.reader.session(f))), source: key };
+        const part = { path: f, ...partOf(summarize(this.reader.session(f), { claimRoots: this.claimRoots(rec) })), source: key };
         if (i === -1) parts.push(part);
         else parts[i] = part;
         changed = true;
@@ -341,7 +341,7 @@ export class Reports {
       } else if (stale) {
         let part;
         try {
-          part = { path: file, ...partOf(summarize(this.reader.session(file))), source: key };
+          part = { path: file, ...partOf(summarize(this.reader.session(file), { claimRoots: this.claimRoots(rec) })), source: key };
         } catch (err) {
           this.logger?.warn?.(`report: could not read the transcript of ${rec.sid}: ${err.message}`);
           // Kept, so it is not parsed again on every request until the file changes.
@@ -579,10 +579,25 @@ export class Reports {
     };
   }
 
+  /** Where a session's changes count for claim receipts: its folder and its agent's repos. */
+  claimRoots(rec) {
+    let repos = [];
+    try {
+      const a = this.org.agent(rec.agent);
+      repos = a ? [a.repo, ...(Array.isArray(a.repos) ? a.repos : [])].filter(Boolean) : [];
+    } catch {
+      repos = [];
+    }
+    return [rec.cwd, ...repos].filter((x) => typeof x === 'string' && x);
+  }
+
   /** A summary's claims with their labels (1.6), given the agent's approved checks and ship checks. */
   labelled(s, ctx) {
-    return (Array.isArray(s.claims) ? s.claims : []).map((c) => {
-      const l = labelClaim(c, ctx);
+    const list = (Array.isArray(s.claims) ? s.claims : []).slice().sort((a, b) => String(a.at).localeCompare(String(b.at)));
+    return list.map((c, i) => {
+      // The session's next change after this claim: a ship check after it speaks for that, not this.
+      const next = list.slice(i + 1).map((x) => x.last_edit_at).find((t) => t && t > c.at);
+      const l = labelClaim(next ? { ...c, until: next } : c, ctx);
       return { at: c.at, kind: c.kind, needs: c.needs || [], phrase: c.phrase || null, label: l.label, check: l.check, badge: badgeText(l) };
     });
   }

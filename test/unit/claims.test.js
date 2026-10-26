@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { badgeText, checkOf, detectClaim, fixMessage, labelClaim, resultInfo, segments, sentences, writesFiles } from '../../server/claims.js';
+import { badgeText, checkOf, claimEvidence, detectClaim, fixMessage, labelClaim, resultInfo, segments, sentences, whenText, writesFiles } from '../../server/claims.js';
 import { LedgerReader, summarize } from '../../server/ledger.js';
 
 // ------------------------------------------------------------------------------- claim patterns
@@ -288,4 +288,65 @@ test('receipts keep the command and the first error line only, never the output'
   const json = JSON.stringify(c);
   assert.ok(json.length < 2000, `small: ${json.length}`);
   assert.ok(!json.includes('output output'));
+});
+
+// ------------------------------------------------------------- from the 1.6 top-tier review
+
+test('review: a command Claude Code moved to the background has not finished, so it verifies nothing', () => {
+  const [c] = claimsOf([prompt('x'), edit(), bash('npm test', 'Command running in background with ID: b7. Output is being written to /tmp/x.'), say('Done, all tests pass.')]);
+  assert.equal(labelClaim(c).label, 'not_verified');
+  assert.equal(resultInfo('Command running in background with ID: b7.', false).backgrounded, true);
+});
+
+test('review: a test whose own output says "permission denied" failed; it is not a declined call', () => {
+  const info = resultInfo('Exit code 1\nError: EACCES: permission denied, open \'/etc/x\'', true);
+  assert.equal(info.denied, false);
+  assert.equal(info.blocked, false);
+  const [c] = claimsOf([prompt('x'), edit(), bash('npm run lint', 'clean'), bash('npm test', "Exit code 1\nError: EACCES: permission denied, open '/etc/x'", true), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'contradicted');
+});
+
+test('review: an approved command matches exactly or with flags, never another script; help and list flags are not checks', () => {
+  const approved = [{ name: 'lint', run: 'npm run lint' }, { name: 'tests', run: 'npm run test:unit' }];
+  assert.equal(checkOf('npm run lint -- --max-warnings 0', { approved }).kind, 'lint');
+  assert.equal(checkOf('npm run format', { approved }), null);
+  assert.equal(checkOf('npm run --help', { approved }), null);
+  for (const c of ['npx tsc --version', 'pytest --collect-only', 'jest --listTests', 'eslint --version', 'cargo test --no-run']) assert.equal(checkOf(c), null, c);
+  assert.equal(checkOf('just qa --fast', { detected: [{ kind: 'test', cmd: 'just qa' }] }).kind, 'test');
+  assert.equal(checkOf('just qa-other', { detected: [{ kind: 'test', cmd: 'just qa' }] }), null);
+});
+
+test('review: in an && chain, a failure of the line is pinned on the check only when its output says so', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('false && npm test', 'Exit code 1', true), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified', 'the test never ran');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test && npm run deploy', 'Exit code 1\n# pass 5\n# fail 0\ndeploy: no credentials', true), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'not_verified', 'the tests passed; the deploy after them failed');
+  const [c] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test', 'Exit code 1\nnot ok 1 - adds\n# fail 1', true), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'contradicted', 'its own failure marks');
+  const [d] = claimsOf([prompt('x'), edit(), bash('cd app && npm test', 'Exit code 1\nnot ok', true), say('Done.')]);
+  assert.equal(labelClaim(d).label, 'contradicted', 'cd is not another command');
+});
+
+test('review: a ship check speaks for a claim only within a day after it, and not after the session changed again', () => {
+  const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
+  const at = (ms) => new Date(Date.parse(c.at) + ms).toISOString();
+  const run = (when, ok) => ({ at: when, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok, err1: ok ? null : 'FAIL a' }] });
+  assert.equal(labelClaim(c, { shipRuns: [run(at(2 * 86400000), false)] }).label, 'not_verified', 'two days later: not about this claim');
+  assert.equal(labelClaim({ ...c, until: at(60000) }, { shipRuns: [run(at(120000), false)] }).label, 'not_verified', 'after the next edit');
+  assert.equal(labelClaim(c, { shipRuns: [run(at(3600000), true)] }).label, 'verified');
+  assert.match(whenText('2020-01-02T03:04:00Z'), /Jan 2/, 'not today: the date is shown');
+});
+
+test('review: a group project agent\'s edits inside its repos are changes', () => {
+  const dir = tmp();
+  const f = path.join(dir, 'projects', 'p', '8a1d2c4e-1111-4222-8333-444455556666.jsonl');
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  const recs = [prompt('x'), bash('cd /code/api && npm test'), edit('/code/api/src/a.js'), say('All tests pass.')].flat().map((r) => ({ ...r, cwd: '/org/projects/web' }));
+  fs.writeFileSync(f, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const [own] = summarize(new LedgerReader().session(f)).claims;
+  assert.equal(own.edits, 0, 'outside the agent folder, without its repos');
+  const [withRepos] = summarize(new LedgerReader().session(f), { claimRoots: ['/org/projects/web', '/code/api'] }).claims;
+  assert.equal(withRepos.edits, 1);
+  assert.equal(labelClaim(withRepos).label, 'not_verified', 'the test ran before the edit');
+  assert.ok(claimEvidence);
 });

@@ -17,9 +17,12 @@ export const LABEL = {
   no_changes: { text: 'No changes made', icon: 'dot', tone: 'quiet' },
 };
 
+// "14:02", or "Oct 3, 14:02" when it is not today: a month-old pass never reads like today's.
 const time = (iso) => {
   const d = new Date(iso);
-  return Number.isFinite(d.getTime()) ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+  if (!Number.isFinite(d.getTime())) return '';
+  const t = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return d.toDateString() === new Date().toDateString() ? t : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${t}`;
 };
 
 /** The plain sentence under a label: what the record shows. */
