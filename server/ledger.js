@@ -12,6 +12,7 @@
 //              description}; workflow agents under subagents/workflows/<id>/ have no toolUseId
 import fs from 'node:fs';
 import path from 'node:path';
+import { SHELL_TOOLS, claimEvidence, resultInfo } from './claims.js';
 import { toolSummary, transcriptEntry } from './transcripts.js';
 import { isUuid, oneLine } from './util.js';
 
@@ -22,6 +23,10 @@ const AGENT_TOOLS = new Set(['Task', 'Agent']);
 // Record types this version knows (a transcript with none of them is a format it has not seen).
 const KNOWN_TYPES = new Set(['user', 'assistant', 'system', 'summary', 'cost-state', 'attachment', 'file-history-snapshot', 'queue-operation', 'last-prompt', 'permission-mode', 'mode', 'pr-link']);
 const TEXT_MAX = 300;
+// A turn's final message, kept for claim receipts (1.6): its end is what is read (claims.js).
+const FINAL_MAX = 4000;
+const FINALS_MAX = 200;
+const CMD_MAX = 1000;
 const PROMPT_MAX = 500;
 const SUB_FILES_MAX = 500;
 const CHUNK = 16 * 1024 * 1024;
@@ -94,6 +99,7 @@ function newState(file, ino) {
     tools: new Map(), // tool_use id -> {id, name, summary, file, ts, end, error, turn, depth}
     usage: new Map(), // message.id + requestId -> {model, usage, ts, turn}
     turn: 0, prompts: 0, lastText: null, costState: null, known: 0,
+    finals: new Map(), // turn -> {text, ts, seq}: the turn's last words (claim receipts, 1.6)
     firstTs: null, lastTs: null, records: 0, assistants: 0, issues: new Set(), meta: null,
   };
 }
@@ -154,12 +160,22 @@ export function applyRecord(st, o, { sub = false } = {}) {
     for (const b of blocks) {
       if (!b || typeof b !== 'object') continue;
       if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-        if (!side) st.lastText = { text: b.text, ts: at };
+        if (!side) {
+          st.lastText = { text: b.text, ts: at };
+          st.finals.delete(st.turn);
+          st.finals.set(st.turn, { text: b.text.length > FINAL_MAX ? b.text.slice(-FINAL_MAX) : b.text, ts: at, seq: st.seq });
+          if (st.finals.size > FINALS_MAX) st.finals.delete(st.finals.keys().next().value);
+        }
         st.items.push({ k: 'say', ts: at, text: cut(b.text, TEXT_MAX), side });
       } else if (b.type === 'tool_use' && typeof b.id === 'string') {
         const input = b.input && typeof b.input === 'object' ? b.input : {};
         const name = typeof b.name === 'string' ? b.name.slice(0, 80) : 'tool';
-        const t = { id: b.id.slice(0, 100), name, summary: toolSummary(input), commit: name === 'Bash' && typeof input.command === 'string' && /\bgit\b[^;&|\n]*\bcommit\b/.test(input.command), file: EDIT_TOOLS.has(name) && typeof input.file_path === 'string' ? input.file_path : EDIT_TOOLS.has(name) && typeof input.notebook_path === 'string' ? input.notebook_path : null, ts: at, end: null, error: null, turn: st.turn, side };
+        const t = { id: b.id.slice(0, 100), seq: st.seq, name, summary: toolSummary(input), commit: name === 'Bash' && typeof input.command === 'string' && /\bgit\b[^;&|\n]*\bcommit\b/.test(input.command), file: EDIT_TOOLS.has(name) && typeof input.file_path === 'string' ? input.file_path : EDIT_TOOLS.has(name) && typeof input.notebook_path === 'string' ? input.notebook_path : null, ts: at, end: null, error: null, turn: st.turn, side };
+        // A shell command, for claim receipts: the command line and whether it ran in the background.
+        if (SHELL_TOOLS.has(name) && typeof input.command === 'string') {
+          t.cmd = input.command.length > CMD_MAX ? input.command.slice(0, CMD_MAX) : input.command;
+          t.bg = input.run_in_background === true;
+        }
         // A subagent written into the main file (older versions): under the newest open Agent call.
         if (side && !sub) t.parent = st.openAgent || null;
         if (!st.tools.has(t.id)) {
@@ -181,6 +197,9 @@ export function applyRecord(st, o, { sub = false } = {}) {
         if (!t) continue;
         t.end = at;
         t.error = b.is_error === true;
+        // What a shell command's result said (exit code, first error line, pass/fail marks); the
+        // output itself is not kept.
+        if (t.cmd !== undefined) t.res = resultInfo(b.content, b.is_error);
         const r = o.toolUseResult;
         if (r && typeof r === 'object' && typeof r.agentId === 'string') t.agentId = r.agentId.slice(0, 60);
         if (st.openAgent === t.id) st.openAgent = null;
@@ -427,6 +446,7 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
     unknown_days,
     commit_times,
     last_line: main.lastText ? lastLine(main.lastText.text) : null,
+    claims: claimEvidence({ main, subs }),
     last_line_at: main.lastText ? new Date(main.lastText.ts ?? main.lastTs ?? Date.now()).toISOString() : null,
     started_at: main.firstTs !== null ? new Date(main.firstTs).toISOString() : null,
     last_at: main.lastTs !== null ? new Date(main.lastTs).toISOString() : null,
