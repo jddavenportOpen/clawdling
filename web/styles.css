@@ -1611,3 +1611,7 @@ h3.chat-h { font-size: 16.5px; }
   .cu-pick-label { padding: 12px 10px; }
   .claim-head { padding: 9px 10px; }
 }
+.claim-why code, .rc-line code { font-family: var(--font-mono); font-size: 0.95em; padding: 0 3px; border-radius: 4px; background: var(--surface-3); color: var(--text); }
+.cu-result-eval { margin-top: 4px; padding-top: 0; border-top: 0; }
+.cu-last-h { margin-top: 2px; }
+.cu-cases-h { margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--line); }

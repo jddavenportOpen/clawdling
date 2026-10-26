@@ -14,7 +14,7 @@ import { load, save } from '../lib/prefs.js';
 import { renderBlock } from './chat-view.js';
 import { StatusGlyph } from './status.js';
 import { Icon } from './icons.js';
-import { ClaimPill, FixDialog, LABEL as CLAIM_LABEL, evidenceText } from './claims.js';
+import { ClaimPill, Evidence, FixDialog, LABEL as CLAIM_LABEL, evidenceText } from './claims.js';
 
 export const WINDOWS = [['today', 'Today'], ['7d', '7 days'], ['30d', '30 days']];
 const IN_WINDOW = { today: 'today', '7d': 'in the last 7 days', '30d': 'in the last 30 days' };
@@ -196,7 +196,7 @@ function NeedsBlock({ needs, name, now, agentsById, server = [], contradicted = 
         <button type="button" class="rc-item rc-need" onClick=${() => focusSession(x.sid)} data-sid=${x.sid} title="Open this session">
           <span class="rc-item-top"><${ClaimPill} claim=${x.claim} /><span class="rc-item-title">${x.title || 'Untitled session'}</span><span class="rc-when">${agoText(x.since, now)}</span>
             <span class="rc-open" aria-hidden="true">Open <${Icon} name="chevron-right" size=${12} /></span></span>
-          <span class="rc-line">${evidenceText(x.claim).replace(/`/g, '')}</span>
+          <span class="rc-line"><${Evidence} text=${evidenceText(x.claim)} /></span>
         </button>
         <button type="button" class="btn btn-quiet btn-sm rc-fix" onClick=${() => setFixing({ sid: x.sid, text: x.fix, ended: true })} data-testid="rc-fix">Ask the agent to fix it</button></li>`)}</ul>` : null}
     ${!needs.length && !contradicted.length ? html`<p class="rc-empty">Nothing is waiting on you. When ${name} asks a question, wants permission, a turn fails, or a check fails after it said done, it shows up here.</p>` : null}
