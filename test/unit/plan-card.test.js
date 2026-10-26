@@ -75,7 +75,11 @@ test('a Write to a plans folder elsewhere (a repo\'s docs/plans) is never the pl
   fs.writeFileSync(path.join(other, 'plans', 'x.md'), 'FROM DISK ELSEWHERE');
   const lines = fs.readFileSync(transcript, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
   // Point every plan-file path at the other folder: its file must not be read.
-  const moved = lines.map((o) => JSON.parse(JSON.stringify(o).replaceAll(path.join(config, 'plans', 'zesty-hopping-hartmanis.md').replace(/\\/g, '\\\\'), path.join(other, 'plans', 'x.md').replace(/\\/g, '\\\\'))));
+  // (Compared as resolved paths: on Windows the fixture's paths mix / and \.)
+  const planPath = path.join(config, 'plans', 'zesty-hopping-hartmanis.md');
+  const move = (v) => (typeof v === 'string' ? (path.isAbsolute(v) && path.resolve(v) === planPath ? path.join(other, 'plans', 'x.md') : v) : Array.isArray(v) ? v.map(move) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, move(x)])) : v);
+  const moved = lines.map(move);
+  assert.notDeepEqual(moved, lines, 'the plan-file paths were moved');
   fs.writeFileSync(transcript, moved.map((o) => JSON.stringify(o)).join('\n') + '\n');
   const t = planEntry(new TranscriptReader().read(transcript));
   assert.ok(!/FROM DISK ELSEWHERE/.test(t.ask.plan), 'never read outside this config folder');

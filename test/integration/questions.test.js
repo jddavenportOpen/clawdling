@@ -139,7 +139,10 @@ test('Claude Code 2.1.308 (issue #21): an empty ExitPlanMode still shows the pla
   const t = (await messages(s.sid)).flatMap((m) => m.tools || []).find((x) => x.name === 'ExitPlanMode');
   assert.match(t.ask.plan, /Write hi into it/, 'the chat card (from the transcript) shows it too');
   // It really was the 2.1.308 shape: the ExitPlanMode in the transcript has an empty input.
-  const lines = findJsonl(path.join(home, 'claude-config')).flatMap((f) => fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l)));
+  // This session's transcript only (other tests' plans share the config folder).
+  const mine = findJsonl(path.join(home, 'claude-config')).map((f) => fs.readFileSync(f, 'utf8')).filter((t) => t.includes('planfile? go'));
+  assert.equal(mine.length, 1);
+  const lines = mine[0].trim().split('\n').map((l) => JSON.parse(l));
   const exit = lines.flatMap((o) => o.message?.content || []).filter((b) => b?.name === 'ExitPlanMode').pop();
   assert.deepEqual(exit.input, {});
 });
