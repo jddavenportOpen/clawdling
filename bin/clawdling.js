@@ -52,6 +52,12 @@ Usage:
   clawdling report [agent] [--window today|7d|30d] [--json]
                                             the report card: what got done, what needs you, what it
                                             used (a list-price equivalent, not a bill), what is next
+  clawdling check <agent> [--json]          run the project's approved ship check (set up in the
+                                            cockpit) in a scratch copy; exit 0 pass, 1 fail
+  clawdling checkup <agent> [--models a,b] [--k 1|3] [--max-cost 2] [--threshold 1] [--json]
+                                            run the agent's approved check-up on your plan (the
+                                            estimate is printed first); exit 0 pass, 1 fail, 2 the
+                                            cost cap was hit or the judge was unreliable
   clawdling spawn <agent> ["first message"] [--model M] [--effort E] [--account A] [--title T] [--cols N --rows N] [--json]
   clawdling send <sid> "text" [--no-enter]  type into a live session
   clawdling attach <sid|tmux-name>          attach this terminal to a session (detach: Ctrl-b d with
@@ -222,7 +228,8 @@ function openInBrowser(url) {
   }
 }
 
-const DONNA_FORBIDDEN = new Set(['init', 'start', 'stop', 'service', 'donna', 'attach', 'open', 'remote']);
+// check runs project scripts and checkup spends the plan: never from a text message.
+const DONNA_FORBIDDEN = new Set(['init', 'start', 'stop', 'service', 'donna', 'attach', 'open', 'remote', 'check', 'checkup']);
 
 // ------------------------------------------------------------------------------------- commands
 
@@ -641,6 +648,90 @@ async function cmdReport(args) {
   out.push(r.next.empty ? '  Nothing written yet. The agent writes its next steps in memory/NOW.md when it hands off.' : r.next.text.split('\n').map((l) => `  ${l}`).join('\n'));
   console.log(out.join('\n'));
   return undefined;
+}
+
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** `clawdling check <agent>`: the approved ship check, run now; exit 0 when every check passed. */
+async function cmdCheck(args) {
+  const ctx = context(args.flags);
+  const id = args._[1];
+  if (!id) throw new CliError('which agent? `clawdling check <agent>`');
+  const q = `/api/agents/${encodeURIComponent(id)}/checks`;
+  let v = await api(ctx, 'GET', q);
+  if (!v.available) throw new CliError(v.why || 'a ship check is for project agents with a repo');
+  if (!v.exists || !v.config) throw new CliError(v.error || `No ship check yet for ${id}. Set one up in the cockpit: open the agent, Check-up tab, "Set up a ship check".`);
+  if (!v.approved) throw new CliError('checks.yaml changed since it was approved. Review it in the cockpit (Check-up tab) before it runs.');
+  const started = await api(ctx, 'POST', `${q}/run`);
+  if (!args.flags.json) console.error(`Running the ship check for ${id} in a scratch copy of ${v.repo}…`);
+  for (;;) {
+    await sleepMs(500);
+    v = await api(ctx, 'GET', q);
+    if (!v.running && v.last && v.last.started_at >= started.started_at) break;
+  }
+  const r = v.last;
+  if (args.flags.json) console.log(JSON.stringify(r, null, 2));
+  else {
+    const lines = [`Ship check for ${id}: ${r.ok ? 'passed' : 'failed'} (${Math.round(r.ms / 100) / 10}s)`];
+    if (r.error) lines.push(`  ${r.error}`);
+    for (const x of r.results) {
+      lines.push(`  ${x.ok ? 'pass' : 'FAIL'}  ${x.setup ? 'setup' : x.name}: ${x.cmd} (${Math.round(x.ms / 100) / 10}s${x.exit !== null && x.exit !== 0 ? `, exit ${x.exit}` : ''})`);
+      if (!x.ok && x.err1) lines.push(`        ${x.err1}`);
+    }
+    lines.push(`  ${r.untracked_note}`);
+    console.log(lines.join('\n'));
+  }
+  process.exitCode = r.ok ? 0 : 1;
+}
+
+/** `clawdling checkup <agent>`: the approved check-up, on the user's plan, capped. */
+async function cmdCheckup(args) {
+  const ctx = context(args.flags);
+  const id = args._[1];
+  if (!id) throw new CliError('which agent? `clawdling checkup <agent>`');
+  const base = `/api/agents/${encodeURIComponent(id)}/evals`;
+  const view = await api(ctx, 'GET', base);
+  if (!view.runnable) throw new CliError(view.cases.length ? 'No approved case to run. Read the cases in the cockpit (Check-up tab) and approve them first.' : `${id} has no check-up yet. Draft one in the cockpit (Check-up tab) first.`);
+  const k = Number(args.flags.k || args.flags.runs || view.settings.runs || 1);
+  const cap = args.flags['max-cost'] !== undefined ? Number(args.flags['max-cost']) : view.settings.max_cost_usd;
+  const threshold = args.flags.threshold !== undefined ? Number(args.flags.threshold) : 1;
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new CliError('--threshold is from 0 to 1');
+  const models = args.flags.models || null;
+  const est = await api(ctx, 'GET', `${base}/estimate?k=${k}${models ? `&models=${encodeURIComponent(models)}` : ''}`);
+  console.error(`This starts ${est.runs} Claude Code run${est.runs === 1 ? '' : 's'} on your plan, about $${est.low_usd.toFixed(2)} to $${est.high_usd.toFixed(2)} list-price equivalent, capped at $${Number(cap).toFixed(2)}.`);
+  console.error(`(${est.label} ${view.notes.pro})`);
+  const started = await api(ctx, 'POST', `${base}/run`, { k, maxCostUsd: cap, ...(models ? { models } : {}) });
+  let last = '';
+  let v;
+  for (;;) {
+    await sleepMs(1000);
+    v = await api(ctx, 'GET', base);
+    const a = v.active;
+    if (a && !args.flags.json) {
+      const line = `  ${a.done}/${a.total} runs, $${a.spent_usd.toFixed(2)} so far${a.current ? `: ${a.current}` : ''}`;
+      if (line !== last) console.error(line);
+      last = line;
+    }
+    if (!a && v.last_run && v.last_run.id === started.id) break;
+  }
+  const r = v.history.find((h) => h.id === started.id);
+  if (!r) throw new CliError(`the check-up stopped before it wrote a result: ${v.last_run.error || 'unknown error'}`);
+  if (args.flags.json) console.log(JSON.stringify(r, null, 2));
+  else {
+    const out = [];
+    const pct = (x) => (x === null || x === undefined ? '-' : `${Math.round(x * 100)}%`);
+    if (r.judge_unreliable) out.push(`Check-up for ${id}: judge unreliable (it passed an empty answer or failed a good one), so there is no score. Tighten the criteria.`);
+    else out.push(`Check-up for ${id}: score ${pct(r.score)}${r.capped ? ' (stopped at the cost cap: not every run happened)' : ''}`);
+    for (const cell of r.cells) {
+      if (r.cells.length > 1) out.push(`  ${cell.label}${cell.current ? ' (current)' : ''}: ${pct(cell.score)}, $${(cell.cost_per_run ?? 0).toFixed(3)} a run`);
+      for (const c of cell.cases) out.push(`  ${r.cells.length > 1 ? '  ' : ''}${c.runs.every((x) => x.passed) ? 'pass' : 'FAIL'}  ${c.name}${c.runs.some((x) => x.error) ? ` (${c.runs.find((x) => x.error).error})` : ''}`);
+    }
+    if (r.recommendation) out.push(r.recommendation.current ? '  Recommendation: keep the current setting (no cheaper one holds).' : `  Recommendation: ${r.recommendation.label}, about ${r.recommendation.saves_pct}% cheaper a run. Apply it in the cockpit (Check-up tab, "Use this").`);
+    out.push(`  Cost: $${r.cost_usd.toFixed(2)} (${r.label})`);
+    console.log(out.join('\n'));
+  }
+  const current = r.cells.find((c) => c.current) || r.cells[0];
+  process.exitCode = r.judge_unreliable || r.capped ? 2 : current && current.score !== null && current.score >= threshold ? 0 : 1;
 }
 
 async function cmdSpawn(args) {
@@ -1356,6 +1447,8 @@ export async function main(argv = process.argv.slice(2)) {
     import: cmdImport,
     ls: cmdLs,
     report: cmdReport,
+    check: cmdCheck,
+    checkup: cmdCheckup,
     spawn: cmdSpawn,
     send: cmdSend,
     attach: cmdAttach,

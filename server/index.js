@@ -1446,6 +1446,7 @@ export async function startServer(opts = {}) {
         return [200, r];
       }, { local: true }],
       ['PUT', /^\/api\/agents\/([^/]+)\/evals\/([a-z0-9][a-z0-9-]{0,59})$/, async (req, m) => [200, evals.saveCase(agentParam(m), m[2], await jsonBody(req))], { local: true }],
+      ['DELETE', /^\/api\/agents\/([^/]+)\/evals\/([a-z0-9][a-z0-9-]{0,59})$/, (req, m) => [200, evals.removeCase(agentParam(m), m[2])], { local: true }],
       // Claim receipts for one session's chat, and "Ask the agent to fix it" (the exact text shown).
       ['GET', /^\/api\/sessions\/([^/]+)\/claims$/, (req, m) => [200, reports.sessionClaims(sessions.require(sidParam(m)))]],
       ['POST', /^\/api\/sessions\/([^/]+)\/fix$/, async (req, m) => {

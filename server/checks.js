@@ -282,13 +282,15 @@ export class Checks {
     } catch {
       return [];
     }
+    // Newest first by when each run started (two runs in one second share a file-name stamp).
     return names
       .filter((n) => /^\d{8}T\d{6}Z(-\d+)?\.json$/.test(n))
       .sort()
-      .reverse()
-      .slice(0, limit)
+      .slice(-200)
       .map((n) => readJson(path.join(this.agentDir(id), n), null))
-      .filter((r) => r && typeof r === 'object' && Array.isArray(r.results));
+      .filter((r) => r && typeof r === 'object' && Array.isArray(r.results))
+      .sort((x, y) => String(y.started_at || '').localeCompare(String(x.started_at || '')))
+      .slice(0, limit);
   }
 
   /** Ship-check runs as claim evidence ({at, results}), newest last. */
