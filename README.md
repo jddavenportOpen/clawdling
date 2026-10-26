@@ -13,9 +13,8 @@ staff you can text, an agent for each area of your life and work, and an agent f
 project. Then it gives you a cockpit where you see the whole thing and open any agent in one
 click, as a real Claude Code session that already knows its job, its history and its tools.
 
-No session caps and no per-agent fees. Every agent is the official `claude` CLI running on the
-Claude plan you already pay for. Clawdling adds no limits of its own: your Claude plan's usage
-limits, and your machine, are the limit.
+No per-agent fees. Every agent is the official `claude` CLI running on the Claude plan you
+already pay for, so your plan's usage limits apply as usual. Clawdling adds no limits of its own.
 
 <!-- Hero: docs/img/demo.gif (keep this path; swap the file for a newer demo GIF any time). -->
 ![Clawdling: the org map and the cockpit, with live sessions and what needs you](docs/img/demo.gif)
