@@ -166,10 +166,15 @@ export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsP
   return a;
 }
 
+// Telemetry variables a long-lived tmux server may still carry from when it started: cleared in a
+// session that gets the detailed timeline, so its environment is the one the preflight checked.
+const TELEMETRY_UNSET = 'for v in $(env | sed -n \'s/^\\(OTEL_[A-Za-z0-9_]*\\)=.*/\\1/p\'); do unset "$v"; done; unset CLAUDE_CODE_ENABLE_TELEMETRY DISABLE_TELEMETRY CLAUDE_CODE_ENHANCED_TELEMETRY_BETA';
+
 /** A /bin/sh launcher: cd, export env, exec argv. Every value is single-quoted. */
-export function buildLauncherScript({ cwd, env = {}, argv, comment = 'Clawdling session launcher' }) {
+export function buildLauncherScript({ cwd, env = {}, argv, comment = 'Clawdling session launcher', clearTelemetry = false }) {
   const lines = ['#!/bin/sh', `# ${oneLine(comment, 200)}`];
   lines.push(`cd ${shq(cwd)} || exit 1`);
+  if (clearTelemetry) lines.push(TELEMETRY_UNSET);
   for (const [k, v] of Object.entries(env)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`invalid environment variable name ${k}`);
     lines.push(`${k}=${shq(v)}; export ${k}`);
@@ -794,6 +799,7 @@ export class SessionManager {
         cwd: rec.cwd,
         env: { ...sessionEnv, PATH: `${this.shimDir}:${this.env.PATH || '/usr/bin:/bin'}` },
         argv: [claude, ...args],
+        clearTelemetry: !!sessionEnv.OTEL_EXPORTER_OTLP_HEADERS,
         comment: `Clawdling launcher for session ${rec.sid} (agent ${rec.agent}). Safe to delete after the session ends.`,
       });
       const scriptPath = path.join(this.paths.run, `${rec.sid}.sh`);
@@ -1067,7 +1073,10 @@ export class SessionManager {
     } else if (event !== 'Notification') {
       rec.pending_ask = null;
     }
+    const before = rec.transcript_path;
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);
+    // A new transcript for the same session (/clear): the report card keeps the one it leaves.
+    if (before && rec.transcript_path && before !== rec.transcript_path) this.onTranscriptSwitch?.(rec, before);
     if (event === 'Notification' && payload && payload.notification_type === 'auth_success') this.signedIn(rec);
     // Trust is saved per Claude login (its own config folder): only the default login's counts.
     if (event === 'SessionStart' && rec.cwd === this.home && !rec.account) this.markOrgTrusted(`session ${sid} started in the org folder`);

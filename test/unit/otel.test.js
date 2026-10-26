@@ -183,7 +183,10 @@ test('trace store: records older than 14 days are dropped from files still being
   const ts = new TraceStore(dir);
   const old = new Date(Date.now() - 20 * 86400000).toISOString();
   const now = new Date().toISOString();
-  ts.append([{ sid: SID, rec: { k: 'log', name: 'old', ts: old } }, { sid: SID, rec: { k: 'log', name: 'new', ts: now } }]);
+  // Retention goes by when this computer received a record, not by the time the sender claims.
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(ts.file(SID), `${JSON.stringify({ k: 'log', name: 'old', ts: now, at: Date.parse(old) })}\n${JSON.stringify({ k: 'log', name: 'no time' })}\n`);
+  ts.append([{ sid: SID, rec: { k: 'log', name: 'new', ts: '2099-01-01T00:00:00.000Z' } }]);
   ts.trim();
   assert.deepEqual(ts.read(SID).map((r) => r.name), ['new']);
   fs.rmSync(dir, { recursive: true, force: true });
@@ -226,4 +229,22 @@ test('rate limit is per session: one session cannot use up another\'s', () => {
   assert.ok(rl.allow('a') && rl.allow('a'));
   assert.equal(rl.allow('a'), false);
   assert.equal(rl.allow('b'), true);
+});
+
+test('preflight: a settings file that is a link, a device or over 1 MB keeps it off, unread', () => {
+  const root = tmp();
+  const repo = path.join(root, 'repo');
+  fs.mkdirSync(path.join(repo, '.claude'), { recursive: true });
+  const base = { env: {}, configDirs: [], projectDirs: [repo], managed: [], profiles: [] };
+  if (process.platform !== 'win32') {
+    fs.symlinkSync('/dev/zero', path.join(repo, '.claude', 'settings.json'));
+    const r = preflight(base);
+    assert.equal(r.clear, false);
+    assert.match(r.found[0].key, /could not read/);
+    fs.unlinkSync(path.join(repo, '.claude', 'settings.json'));
+  }
+  fs.writeFileSync(path.join(repo, '.claude', 'settings.json'), `{"x":"${'a'.repeat(1024 * 1024)}"}`);
+  assert.equal(preflight(base).clear, false);
+  assert.equal(preflight({ ...base, projectDirs: [42, null, repo] }).clear, false, 'a repo that is not a string is skipped, never a crash');
+  fs.rmSync(root, { recursive: true, force: true });
 });

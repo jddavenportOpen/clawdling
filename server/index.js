@@ -436,6 +436,7 @@ export async function startServer(opts = {}) {
     // The report card (1.5): receipts under .clawdling/ledger, written when a session ends.
     const reports = new Reports({ paths, org, sessions, env: cEnv, logger });
     sessions.onEnded = (rec) => setImmediate(() => reports.sessionEnded(rec));
+    sessions.onTranscriptSwitch = (rec, oldPath) => setImmediate(() => reports.transcriptSwitched(rec, oldPath));
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
 
@@ -477,7 +478,16 @@ export async function startServer(opts = {}) {
     // Before every launch and resume: the preflight runs again (settings may have changed since), and
     // a session started while it is on gets its own telemetry credential, never the org's secret.
     sessions.beforeLaunch = (rec) => {
-      writeHooks();
+      try {
+        writeHooks();
+      } catch (err) {
+        // The preflight could not run: the settings file loses its telemetry block, and this session
+        // gets no credential. Never a stale block from before.
+        otelActive = false;
+        logger.warn(`detailed timeline: preflight failed (${err.message}); off for this launch`);
+        writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, env: null }), 0o600);
+        return {};
+      }
       const st = otelState.read();
       if (!otelActive || !st.enabled || rec.guard === 'remote-access') return {};
       return { OTEL_EXPORTER_OTLP_HEADERS: sessionHeaders(st.secret, rec.sid) };

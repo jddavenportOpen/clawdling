@@ -250,12 +250,29 @@ export class Reports {
    * changed (the main file or any subagent file) and kept as it was once the file is gone. The
    * session's figures are the parts added up.
    */
-  summary(rec, { force = false, lazy = false } = {}) {
+  summary(rec, { force = false, lazy = false, also = null } = {}) {
     const prev = this.store.read(rec.sid);
     const file = this.transcriptOf(rec);
     const base = { v: 1, sid: rec.sid, agent: rec.agent, title: rec.title || null, status: rec.status, prompted: !!rec.prompted, account: rec.account || null, created_at: rec.created_at || null, ended_at: rec.ended_at || null, last_activity_at: rec.last_activity_at || null };
     const parts = Array.isArray(prev?.parts) ? prev.parts.map((p) => ({ ...p })) : prev && prev.transcript_path ? [legacyPart(prev)] : [];
     let changed = false;
+    // The files this session used before (a /clear) are read again if they changed since.
+    const earlier = new Set([...parts.map((p) => p.path), ...(also ? [also] : [])].filter((f) => typeof f === 'string' && f !== file));
+    for (const f of earlier) {
+      if (!/[\\/]projects[\\/][^\\/]+[\\/][0-9a-f-]{36}\.jsonl$/.test(f) || !fs.existsSync(f)) continue;
+      const key = sourceKey(f);
+      const i = parts.findIndex((p) => p.path === f);
+      if (i !== -1 && sameKey(parts[i].source, key)) continue;
+      try {
+        const part = { path: f, ...partOf(summarize(this.reader.session(f))), source: key };
+        if (i === -1) parts.push(part);
+        else parts[i] = part;
+        changed = true;
+        this.reader.forget(f);
+      } catch (err) {
+        this.logger?.warn?.(`report: could not read an earlier transcript of ${rec.sid}: ${err.message}`);
+      }
+    }
     if (file) {
       const key = sourceKey(file);
       const i = parts.findIndex((p) => p.path === file);
@@ -289,7 +306,8 @@ export class Reports {
       ...base,
       ...merged,
       parts,
-      transcript: !file ? 'gone' : current?.unreadable ? 'unreadable' : 'ok',
+      // A live session whose new transcript is not written yet (just after /clear) is not "gone".
+      transcript: !file ? (rec.status === 'ended' ? 'gone' : 'waiting') : current?.unreadable ? 'unreadable' : 'ok',
       transcript_path: file || parts[parts.length - 1].path,
       last_line: merged.last_line || rec.last_message || null,
       updated_at: changed ? new Date(this.now()).toISOString() : prev?.updated_at || null,
@@ -331,6 +349,15 @@ export class Reports {
       setImmediate(step).unref?.();
     };
     setImmediate(step).unref?.();
+  }
+
+  /** The session moved to a new transcript (/clear): keep the one it left in its receipt, now. */
+  transcriptSwitched(rec, oldPath) {
+    try {
+      this.summary(rec, { force: true, also: oldPath });
+    } catch (err) {
+      this.logger?.warn?.(`report: ${err.message}`);
+    }
   }
 
   /** A session ended (or was resumed): write its receipt now. */
@@ -562,7 +589,7 @@ export class Reports {
     const file = this.transcriptOf(rec);
     if (!file) {
       const kept = this.store.read(sid);
-      return { entries: [], next: after, more: false, total: 0, transcript: kept ? 'gone' : 'missing', summary: kept ? { turns: kept.turns, tools: kept.tools, last_line: kept.last_line, cost: kept.cost } : null, status: rec.status };
+      return { entries: [], next: after, more: false, total: 0, transcript: kept && rec.status === 'ended' ? 'gone' : 'missing', summary: kept ? { turns: kept.turns, tools: kept.tools, last_line: kept.last_line, cost: kept.cost } : null, status: rec.status };
     }
     const data = this.reader.session(file);
     // Built once per change (paging a live session reads the same list several times in a row).

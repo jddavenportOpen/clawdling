@@ -270,3 +270,40 @@ test('Claude Code\'s /compact summary and background-task notices are not prompt
   assert.equal(summarize(new LedgerReader().session(f)).turns, 1);
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('the tmux launcher clears telemetry variables a long-lived tmux server may carry, when the detailed timeline is on', { skip: process.platform === 'win32' }, async () => {
+  const { buildLauncherScript } = await import('../../server/sessions.js');
+  const { execFileSync } = await import('node:child_process');
+  const dir = tmp();
+  const script = path.join(dir, 'l.sh');
+  fs.writeFileSync(script, buildLauncherScript({ cwd: dir, env: { OTEL_EXPORTER_OTLP_HEADERS: 'x-clawdling-otlp=abc' }, argv: ['/usr/bin/env'], clearTelemetry: true }));
+  const out = execFileSync('/bin/sh', [script], { env: { PATH: '/usr/bin:/bin', OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'https://collector.example.com', OTEL_LOG_USER_PROMPTS: '1', DISABLE_TELEMETRY: '1' }, encoding: 'utf8' });
+  assert.match(out, /^OTEL_EXPORTER_OTLP_HEADERS=x-clawdling-otlp=abc$/m);
+  assert.doesNotMatch(out, /OTEL_EXPORTER_OTLP_LOGS_ENDPOINT|OTEL_LOG_USER_PROMPTS|DISABLE_TELEMETRY/);
+  fs.writeFileSync(script, buildLauncherScript({ cwd: dir, env: {}, argv: ['/usr/bin/env'] }));
+  assert.match(execFileSync('/bin/sh', [script], { env: { PATH: '/usr/bin:/bin', OTEL_LOG_USER_PROMPTS: '1' }, encoding: 'utf8' }), /OTEL_LOG_USER_PROMPTS=1/, 'off: the user\'s own environment is left alone');
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('/clear: the transcript a session leaves stays in its receipt, added up with the new one', () => {
+  const root = tmp();
+  const proj = path.join(root, 'projects', '-x');
+  fs.mkdirSync(proj, { recursive: true });
+  const sid = '66666666-6666-4666-8666-666666666666';
+  const f1 = path.join(proj, `${sid}.jsonl`);
+  const f2 = path.join(proj, '77777777-7777-4777-8777-777777777777.jsonl');
+  const line = (id, usd) => `${JSON.stringify({ type: 'user', timestamp: new Date().toISOString(), message: { role: 'user', content: 'go' } })}\n${JSON.stringify({ type: 'assistant', timestamp: new Date().toISOString(), requestId: id, message: { id, model: 'claude-sonnet-5', usage: { input_tokens: usd * 5e5 }, content: [{ type: 'text', text: `done ${id}` }] } })}\n`;
+  fs.writeFileSync(f1, line('a', 2));
+  const rec = { sid, agent: 'demo', status: 'working', created_at: new Date().toISOString(), last_activity_at: new Date().toISOString() };
+  let current = f1;
+  const rep = new Reports({ paths: { rt: root, ledger: path.join(root, 'ledger') }, org: {}, sessions: { records: new Map([[sid, rec]]), transcriptFile: () => current } });
+  fs.writeFileSync(f2, line('b', 1));
+  current = f2; // the session moved on (/clear) before any report read the first file
+  rep.transcriptSwitched(rec, f1);
+  const r = rep.summary(rec);
+  assert.equal(r.parts.length, 2);
+  assert.equal(r.cost.usd, 3);
+  assert.equal(r.turns, 2);
+  assert.equal(r.last_line, 'done b');
+  fs.rmSync(root, { recursive: true, force: true });
+});

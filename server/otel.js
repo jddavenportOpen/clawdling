@@ -62,11 +62,19 @@ export function managedProfiles(platform = process.platform) {
 
 /** The key names in a settings file's `env`, plus telemetry keys at its top level. Never values. */
 function settingsKeyNames(file) {
+  let st;
+  try {
+    st = fs.lstatSync(file);
+  } catch {
+    return null; // no file
+  }
+  // Never follow a link or read a device, and never more than 1 MB: anything else keeps it off.
+  if (!st.isFile() || st.size > 1024 * 1024) return ['(a settings file Clawdling could not read)'];
   let raw;
   try {
     raw = fs.readFileSync(file, 'utf8');
   } catch {
-    return null; // no file
+    return ['(a settings file Clawdling could not read)'];
   }
   let o;
   try {
@@ -87,7 +95,9 @@ function settingsKeyNames(file) {
  * settings of the org folder and of every agent's repo (a --settings env block overrides those
  * too), and the managed settings for this OS. {clear, found: [{where, key}]}.
  */
-export function preflight({ env = process.env, configDirs = [], projectDirs = [], managed = managedSettingsPaths(), profiles = managedProfiles() } = {}) {
+export function preflight({ env = process.env, configDirs: cd = [], projectDirs: pd = [], managed = managedSettingsPaths(), profiles = managedProfiles() } = {}) {
+  let configDirs = Array.isArray(cd) ? cd : [];
+  let projectDirs = Array.isArray(pd) ? pd : [];
   const found = [];
   for (const k of Object.keys(env || {})) if (telemetryKey(k)) found.push({ where: "Clawdling's own environment", key: k });
   const check = (file, where) => {
@@ -95,8 +105,10 @@ export function preflight({ env = process.env, configDirs = [], projectDirs = []
     if (!names) return;
     for (const k of names) if (telemetryKey(k) || SETTINGS_KEYS.has(k) || k.startsWith('(')) found.push({ where, key: k, file });
   };
-  for (const d of [...new Set(configDirs.filter(Boolean))]) check(path.join(d, 'settings.json'), 'your Claude Code settings');
-  for (const d of [...new Set(projectDirs.filter(Boolean))]) {
+  configDirs = configDirs.filter((d) => typeof d === 'string' && d);
+  projectDirs = projectDirs.filter((d) => typeof d === 'string' && d);
+  for (const d of [...new Set(configDirs)]) check(path.join(d, 'settings.json'), 'your Claude Code settings');
+  for (const d of [...new Set(projectDirs)]) {
     check(path.join(d, '.claude', 'settings.json'), 'a project\'s Claude Code settings');
     check(path.join(d, '.claude', 'settings.local.json'), 'a project\'s Claude Code settings');
   }
@@ -339,9 +351,10 @@ export class TraceStore {
     if (!items.length) return 0;
     fs.mkdirSync(this.dir, { recursive: true, mode: 0o700 });
     const by = new Map();
+    const at = Date.now(); // when this computer received it: what retention goes by
     for (const { sid, rec } of items) {
       if (!by.has(sid)) by.set(sid, []);
-      by.get(sid).push(JSON.stringify(rec));
+      by.get(sid).push(JSON.stringify({ ...rec, at }));
     }
     if (this.total === null) this.total = this.sizes().reduce((s, x) => s + x.size, 0);
     let wrote = 0;
@@ -369,8 +382,9 @@ export class TraceStore {
       const lines = text.split('\n').filter(Boolean);
       const keep = lines.filter((l) => {
         try {
-          const t = Date.parse(JSON.parse(l).ts || '');
-          return !Number.isFinite(t) || t >= cutoff;
+          const o = JSON.parse(l);
+          const t = Number.isFinite(o.at) ? o.at : Date.parse(o.ts || '');
+          return Number.isFinite(t) && t >= cutoff;
         } catch {
           return false;
         }
