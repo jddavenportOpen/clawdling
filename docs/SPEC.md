@@ -449,7 +449,7 @@ needs-you ping's channel rules; no new sender). Text: counts, approved agent nam
 
 Preflight by key name (see SECURITY.md), run again before every launch with that launch's own
 Claude Code folder; when clear and on, that session gets its own `--settings` file
-(`.clawdling/run/<sid>.settings.json`) with an `env` block: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, the logs,
+(`.clawdling/run/<sid>.<random>.settings.json`) with an `env` block: `CLAUDE_CODE_ENABLE_TELEMETRY=1`, the logs,
 metrics and traces exporters set to `otlp`, `CLAUDE_CODE_ENHANCED_TELEMETRY_BETA=1`, `http/json` to
 `http://127.0.0.1:<port>/otlp`; and in its own environment `OTEL_EXPORTER_OTLP_HEADERS` with its
 credential, `x-clawdling-otlp: <sid>.<HMAC-SHA256(secret, sid)>` (the settings block does not set that

@@ -486,7 +486,8 @@ export async function startServer(opts = {}) {
       }
       const st = otelState.read();
       if (!on || !st.enabled) return {}; // the shared file, with no telemetry block
-      const settingsPath = path.join(paths.run, `${rec.sid}.settings.json`);
+      // Named per launch: a late end event from an earlier run never deletes this one (sessions.js).
+      const settingsPath = path.join(paths.run, `${rec.sid}.${crypto.randomBytes(4).toString('hex')}.settings.json`);
       writeJson(settingsPath, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, env: envBlock({ port }) }), 0o600);
       return { settingsPath, env: { OTEL_EXPORTER_OTLP_HEADERS: sessionHeaders(st.secret, rec.sid) } };
     };

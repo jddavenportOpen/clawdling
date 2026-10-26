@@ -770,6 +770,8 @@ export class SessionManager {
       this.logger?.warn?.(`before launch: ${err.message}`);
     }
     const ownSettings = typeof extra.settingsPath === 'string' && rec.guard !== 'remote-access' ? extra.settingsPath : null;
+    // While this launch is starting, an end event from the previous run must not remove its file.
+    this.rt(rec.sid).launchingSettings = ownSettings;
     const args = buildClaudeArgs({
       sid: rec.sid,
       resume,
@@ -840,6 +842,7 @@ export class SessionManager {
     ]);
     const rt = this.rt(rec.sid);
     rt.gen++;
+    rt.launchingSettings = null; // started: an end from now on is this run's own
     rt.launchedAt = Date.now();
     rt.resumed = !!resume;
     if (!resume) rt.firstPrompt = prompt || ''; // in memory only, for "Start again" (restart())
@@ -1034,7 +1037,12 @@ export class SessionManager {
       // already gone
     }
     try {
-      fs.unlinkSync(path.join(this.paths.run, `${rec.sid}.settings.json`)); // this launch's own --settings
+      // The ended runs' own --settings files (never one a launch in progress has just written).
+      for (const n of fs.readdirSync(this.paths.run)) {
+        if (!n.startsWith(`${rec.sid}.`) || !n.endsWith('.settings.json')) continue;
+        if (rt.launchingSettings && path.join(this.paths.run, n) === rt.launchingSettings) continue;
+        fs.unlinkSync(path.join(this.paths.run, n));
+      }
     } catch {
       // already gone
     }

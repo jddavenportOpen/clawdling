@@ -58,7 +58,12 @@ function post(p, body, { host = `127.0.0.1:${srv.port}`, headers = {} } = {}) {
 const payload = (file, sid) => JSON.parse(fs.readFileSync(path.join(FIX, file), 'utf8').replaceAll(FIX_SID, sid));
 const secret = () => readJsonFile(path.join(home, '.clawdling', 'otel.json'))?.secret;
 const hooksEnv = () => readJsonFile(path.join(home, '.clawdling', 'hooks-settings.json'))?.env;
-const launchEnv = (sid) => readJsonFile(path.join(home, '.clawdling', 'run', `${sid}.settings.json`))?.env;
+const launchFile = (sid) => {
+  const run = path.join(home, '.clawdling', 'run');
+  const n = fs.existsSync(run) ? fs.readdirSync(run).find((f) => f.startsWith(`${sid}.`) && f.endsWith('.settings.json')) : null;
+  return n ? path.join(run, n) : null;
+};
+const launchEnv = (sid) => (launchFile(sid) ? readJsonFile(launchFile(sid))?.env : undefined);
 const launchedWith = (sid) => readLog(path.join(home, 'fake.log')).filter((e) => e.mode === 'interactive' && e.opts?.sessionId === sid).pop();
 
 test('off by default: no env block, and /otlp answers 404', async () => {
@@ -82,7 +87,7 @@ test('on: the env block lands in our own --settings file; the ingest rules; reco
   const env = launchEnv(s.sid);
   assert.equal(env.OTEL_EXPORTER_OTLP_ENDPOINT, `http://127.0.0.1:${srv.port}/otlp`);
   assert.equal(env.OTEL_EXPORTER_OTLP_HEADERS, undefined);
-  assert.ok(launchedWith(s.sid).argv.join(' ').includes(`${s.sid}.settings.json`), 'claude was given that file');
+  assert.ok(launchedWith(s.sid).argv.includes(launchFile(s.sid)), 'claude was given that file');
   const tl0 = (await request(srv, 'GET', `/api/sessions/${s.sid}/timeline`)).body;
   const editId = tl0.entries.find((e) => e.name === 'Edit').id;
   const logs = payload('logs-2.json', s.sid);

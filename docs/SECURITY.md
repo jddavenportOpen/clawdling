@@ -314,7 +314,7 @@ turned off).
 - **Off by default.** `POST /api/otel {enabled}` works only from the computer itself (refused
   through Use from anywhere, or from the Wi-Fi with `--host 0.0.0.0`). While it is on, each session
   that passes its own preflight at launch is started with its own `--settings` file
-  (`.clawdling/run/<sid>.settings.json`, mode 600, removed when the session ends) holding Clawdling's
+  (`.clawdling/run/<sid>.<random>.settings.json`, mode 600, removed when the session ends) holding Clawdling's
   hooks plus the OpenTelemetry block; the shared `.clawdling/hooks-settings.json` never carries it,
   and nothing is ever written into your Claude Code settings. Sessions pick a change up at their next
   start. The remote-access setup chat never gets it.
