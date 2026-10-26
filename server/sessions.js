@@ -1016,6 +1016,7 @@ export class SessionManager {
     }
     this.save();
     this.publish(rec);
+    if (first) this.onEnded?.(rec); // the report card's receipt (report.js)
   }
 
   onStatusChange(rec) {

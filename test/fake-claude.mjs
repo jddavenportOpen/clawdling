@@ -199,6 +199,9 @@ function runHook(event, extra = {}) {
   );
 }
 
+// What the "work?" turns used, for the cost-state record written at /exit.
+const usd = { total: 0, turns: 0, input: 0, output: 0, read: 0, write: 0 };
+
 function transcript(type, message, extra = {}) {
   try {
     fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
@@ -441,6 +444,8 @@ async function interactive() {
     const text = raw.replace(/\x1b\[20[01]~/g, '').trim();
     if (!text) return;
     if (text === '/exit') {
+      // Like Claude Code: the cumulative cost-state record when the session exits.
+      if (usd.total > 0) transcript('cost-state', undefined, { totalCostUSD: usd.total, hasUnknownModelCost: false, totalAPIDuration: 1200, totalToolDuration: 300, totalLinesAdded: 3, totalLinesRemoved: 0, totalDuration: 5000, startTime: Date.now() - 5000, modelUsage: { 'claude-sonnet-5': { inputTokens: usd.input, outputTokens: usd.output, cacheReadInputTokens: usd.read, cacheCreationInputTokens: usd.write, costUSD: usd.total } }, timestamp: undefined });
       await runHook('SessionEnd', { reason: 'prompt_input_exit' });
       process.exit(0);
     }
@@ -500,6 +505,53 @@ async function interactive() {
       transcript('assistant', { role: 'assistant', model: 'fake', content: [{ type: 'tool_use', id: 'toolu_bgsh', name: 'Bash', input: { command: 'sleep 600', description: 'Wait for the build', run_in_background: true } }, { type: 'tool_use', id: 'toolu_bgmo', name: 'Monitor', input: { description: 'Watch the deploy log' } }] });
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bgsh', content: 'Command running in background with ID: bfakesh01.' }] }, { toolUseResult: { backgroundTaskId: 'bfakesh01' } });
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_bgmo', content: 'Monitor started (task bfakemo01, expires in 10m).' }] }, { toolUseResult: { taskId: 'bfakemo01', timeoutMs: 600000, persistent: false } });
+    }
+    // "work?": a turn that uses tools and the API like a real one (the report card reads it): one
+    // API message split over two records with the same usage, a command, a file edit, a failed
+    // command, a subagent, then the reply. "commit" in the text also makes an empty git commit.
+    if (text.includes('work?')) {
+      const n = ++usd.turns;
+      const u1 = { input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 1000, cache_creation_input_tokens: 200, cache_creation: { ephemeral_5m_input_tokens: 200, ephemeral_1h_input_tokens: 0 } };
+      const u2 = { input_tokens: 10, output_tokens: 400, cache_read_input_tokens: 1500, cache_creation_input_tokens: 0 };
+      const sonnet = (u) => (u.input_tokens * 2 + u.output_tokens * 10 + (u.cache_creation_input_tokens || 0) * 2 * 1.25 + u.cache_read_input_tokens * 0.2) / 1e6;
+      const a = { requestId: `req_${n}a` };
+      transcript('assistant', { id: `msg_${n}a`, role: 'assistant', model: 'claude-sonnet-5', usage: u1, content: [{ type: 'text', text: 'Let me look, then edit the README.' }] }, a);
+      transcript('assistant', { id: `msg_${n}a`, role: 'assistant', model: 'claude-sonnet-5', usage: u1, content: [{ type: 'tool_use', id: `toolu_w${n}1`, name: 'Bash', input: { command: 'ls', description: 'List files' } }, { type: 'tool_use', id: `toolu_w${n}2`, name: 'Edit', input: { file_path: path.join(process.cwd(), 'README.md'), old_string: 'a', new_string: 'b' } }, { type: 'tool_use', id: `toolu_w${n}3`, name: 'Bash', input: { command: 'false', description: 'Run the tests' } }, { type: 'tool_use', id: `toolu_w${n}4`, name: 'Agent', input: { description: 'Check the docs', prompt: 'check', subagent_type: 'general-purpose' } }] }, a);
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_w${n}1`, content: 'README.md' }] }, { toolUseResult: { stdout: 'README.md', stderr: '', interrupted: false } });
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_w${n}2`, content: 'The file has been updated.' }] });
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_w${n}3`, is_error: true, content: 'Exit code 1' }] }, { toolUseResult: 'Error: Exit code 1' });
+      const agentId = `afake${n}${sid.slice(0, 6)}`;
+      const subDir = path.join(path.dirname(transcriptPath), sid, 'subagents');
+      try {
+        fs.mkdirSync(subDir, { recursive: true });
+        fs.writeFileSync(path.join(subDir, `agent-${agentId}.meta.json`), JSON.stringify({ agentType: 'general-purpose', description: 'Check the docs', toolUseId: `toolu_w${n}4` }));
+        const su = { input_tokens: 20, output_tokens: 30, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+        const lines = [
+          { type: 'user', isSidechain: true, agentId, message: { role: 'user', content: 'check' } },
+          { type: 'assistant', isSidechain: true, agentId, requestId: `req_${n}s`, message: { id: `msg_${n}s`, role: 'assistant', model: 'claude-sonnet-5', usage: su, content: [{ type: 'tool_use', id: `toolu_s${n}1`, name: 'Read', input: { file_path: path.join(process.cwd(), 'README.md') } }] } },
+          { type: 'user', isSidechain: true, agentId, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_s${n}1`, content: 'ok' }] } },
+        ];
+        fs.appendFileSync(path.join(subDir, `agent-${agentId}.jsonl`), lines.map((l) => JSON.stringify({ ...l, sessionId: sid, timestamp: new Date().toISOString() })).join('\n') + '\n');
+        usd.total += sonnet(su);
+        Object.assign(usd, { input: usd.input + su.input_tokens, output: usd.output + su.output_tokens });
+      } catch {
+        // ignore
+      }
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_w${n}4`, content: 'The docs look fine.' }] }, { toolUseResult: { status: 'completed', agentId } });
+      if (text.includes('commit')) {
+        try {
+          execFileSync('git', ['-c', 'user.name=Fake Claude', '-c', 'user.email=fake@example.invalid', 'commit', '--allow-empty', '-q', '-m', 'Add a README section'], { cwd: process.cwd(), stdio: 'ignore' });
+        } catch {
+          // not a repo
+        }
+      }
+      const reply = 'I added a README section. The test command failed, so the tests need a look.';
+      transcript('assistant', { id: `msg_${n}b`, role: 'assistant', model: 'claude-sonnet-5', usage: u2, content: [{ type: 'text', text: reply }] }, { requestId: `req_${n}b` });
+      usd.total += sonnet(u1) + sonnet(u2);
+      Object.assign(usd, { input: usd.input + u1.input_tokens + u2.input_tokens, output: usd.output + u1.output_tokens + u2.output_tokens, read: usd.read + u1.cache_read_input_tokens + u2.cache_read_input_tokens, write: usd.write + u1.cache_creation_input_tokens });
+      process.stdout.write(`assistant: ${reply}\n> `);
+      await runHook('Stop', { stop_hook_active: false, last_assistant_message: reply });
+      return;
     }
     // "fail: <error>" ends the turn the way an API error does in Claude Code 2.1.229+: StopFailure, no Stop.
     const failed = /^fail: (\w+)/.exec(text);

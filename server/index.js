@@ -77,6 +77,7 @@ import { importGroup, importProject, promoteSubagent } from './importer.js';
 import { SessionManager } from './sessions.js';
 import { claudeConfigDir, findTranscript } from './transcripts.js';
 import { NeedsYouPinger } from './needs-you.js';
+import { Reports } from './report.js';
 import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
 
@@ -430,6 +431,9 @@ export async function startServer(opts = {}) {
     const imessage = new IMessageGateway({ paths, org, donna, events, logger, env: testMode ? { ...env, CLAWDLING_TEST: '1' } : env });
     const pinger = new NeedsYouPinger({ paths, org, sessions, telegram, imessage, events, logger, delayMs: testMode && Number(env.CLAWDLING_PING_DELAY_MS) >= 0 && env.CLAWDLING_PING_DELAY_MS ? Number(env.CLAWDLING_PING_DELAY_MS) : 4000 });
     sessions.onNeedsYou = (rec) => pinger.onNeedsYou(rec);
+    // The report card (1.5): receipts under .clawdling/ledger, written when a session ends.
+    const reports = new Reports({ paths, org, sessions, env: cEnv, logger });
+    sessions.onEnded = (rec) => setImmediate(() => reports.sessionEnded(rec));
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
     // Orgs from before 1.2 get the /onboard-project skill (repo-rooted sessions find skills at the org root).
@@ -1287,6 +1291,17 @@ export async function startServer(opts = {}) {
         const next = page.length ? page[page.length - 1].n : after;
         return [200, { messages: page, next, more: all.length > 0 && all[all.length - 1].n > next, status: rec.status }];
       }],
+      // The report card (1.5), read-only: an agent's four blocks, the org's totals, a session's Timeline.
+      ['GET', /^\/api\/agents\/([^/]+)\/report$/, async (req, m, res, url) => [200, await reports.agentReport(agentParam(m), { window: url.searchParams.get('window') || '7d' })]],
+      ['GET', /^\/api\/org\/report$/, (req, m, res, url) => [200, reports.orgReport({ window: url.searchParams.get('window') || '7d' })]],
+      ['GET', /^\/api\/sessions\/([^/]+)\/timeline$/, (req, m, res, url) => {
+        const afterRaw = url.searchParams.get('after');
+        const after = afterRaw === null || afterRaw === '' ? -1 : Number(afterRaw);
+        if (!Number.isInteger(after) || after < -1) throw badRequest('after must be an integer >= -1');
+        const limitRaw = Number(url.searchParams.get('limit') || 500);
+        const limit = Number.isInteger(limitRaw) ? Math.max(1, Math.min(500, limitRaw)) : 500;
+        return [200, reports.timeline(sidParam(m), { after, limit })];
+      }],
       ['POST', /^\/api\/donna\/chat$/, async (req) => {
         const b = await jsonBody(req);
         const text = typeof b.text === 'string' ? b.text.replace(/\0/g, '').trim() : '';
@@ -1608,6 +1623,7 @@ export async function startServer(opts = {}) {
       telegram,
       imessage,
       donna,
+      reports,
       backend,
       tmux: backend,
       stop,
