@@ -23,6 +23,7 @@ export const PATTERNS = {
   excludeAny: RAW.exclude_any.map(re),
   excludeBefore: RAW.exclude_before.map(re),
   clauseSplit: new RegExp(RAW.clause_split, 'u'),
+  progress: re(RAW.progress.re),
 };
 
 export const LABELS = ['verified', 'not_verified', 'contradicted', 'no_changes'];
@@ -104,6 +105,8 @@ export function detectClaim(text) {
   const list = sentences(text).map((s) => ({ ...s, t: rewrite(s.text) }));
   // Each clause on its own: "Done, but one test fails" holds a claim ("done") and an admission.
   const clauses = list.filter((s) => !s.question).flatMap((s) => s.t.split(PATTERNS.clauseSplit)).map((c) => (c || '').trim()).filter(Boolean);
+  // Still working ("now fanning out four lanes", "I'm running the tests"): a progress update.
+  if (clauses.some((c) => PATTERNS.progress.test(c))) return null;
   for (const t of clauses) {
     let hit = false;
     // "14 of 15 tests passed" admits a failure: a count short of the total is no test claim.
