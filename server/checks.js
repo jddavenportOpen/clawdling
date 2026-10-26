@@ -714,6 +714,7 @@ export class Checks {
         if (this.stopped) throw new Error('Clawdling stopped during the ship check');
         this.progress(id, { phase: 'step', name: step.name, cmd: step.run });
         const r = await this.runOne(step.run, { cwd, env, timeout: step.timeout });
+        if (this.stopped) throw new Error('Clawdling stopped during the ship check');
         const ok = r.exit === 0;
         const clean = stripAnsi(r.output).replace(/\r/g, '');
         const tail = clean.split('\n').slice(-TAIL_LINES).map((l) => (l.length > 500 ? `${l.slice(0, 499)}…` : l));

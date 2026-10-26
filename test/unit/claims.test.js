@@ -635,3 +635,42 @@ test('review 10: ids keep paths and interpreters; sub-scripts, cargo ., tsc --al
   const [b] = claimsOf([prompt('x'), edit(), bash('timeout 120 npm test', 'Exit code 124', true), say('Done.')]);
   assert.equal(labelClaim(b).label, 'not_verified', 'cut off by timeout: it did not finish');
 });
+
+test('review 11: a runner that never started, or found no tests, is no check; a pass under another spelling makes a failure only possible', () => {
+  const seqs = [
+    [bash('pytest', 'Exit code 127\n(eval):1: command not found: pytest', true), bash('python3 -m pytest', '5 passed in 0.1s')],
+    [bash('python -m pytest', 'Exit code 127\nzsh: command not found: python', true), bash('python3 -m pytest', '5 passed in 0.1s')],
+    [bash('python3 -m pytest', 'Exit code 1\n/usr/bin/python3: No module named pytest', true), bash('uv run pytest', '5 passed in 0.1s')],
+    [bash('ruff check .', 'Exit code 127\ncommand not found: ruff', true), bash('uv run ruff check .', 'All checks passed!')],
+  ];
+  for (const s of seqs) {
+    const [c] = claimsOf([prompt('x'), edit(), ...s, say('All tests pass.')]);
+    assert.notEqual(labelClaim(c).label, 'contradicted', s[0][0].message.content[0].input.command);
+  }
+  const [d] = claimsOf([prompt('x'), edit(), bash('pytest', 'Exit code 1\nFAILED tests/test_a.py::test_cart', true), bash('python3 -m pytest', '5 passed in 0.1s'), say('All tests pass.')]);
+  assert.equal(labelClaim(d).label, 'not_verified', 'the failure may have been the spelling\'s: never Contradicted, never Verified');
+  const [e] = claimsOf([prompt('x'), edit(), bash('pytest', 'Exit code 5\nno tests ran in 0.01s', true), say('Done.')]);
+  assert.equal(labelClaim(e).label, 'not_verified');
+});
+
+test('review 11: after a check, a command not known to leave files alone ends what the check says', () => {
+  for (const cmd of ['cargo clippy --fix --allow-dirty', 'python3 scripts/rename.py', 'node scripts/codemod.mjs', 'bash x.sh', 'npx jscodeshift -t t.js src', 'pre-commit run --all-files', 'bundle exec rubocop -A', 'go generate ./...', 'npx prisma generate', 'uv add requests', 'go mod tidy', 'git stash', 'git clean -fd', 'bash -c "sed -i s/a/b/ x"']) {
+    const [c] = claimsOf([prompt('x'), edit(), bash('cargo test', 'test result: ok'), bash(cmd, ''), say('All tests pass.')]);
+    assert.equal(labelClaim(c).label, 'not_verified', cmd);
+  }
+  for (const cmd of ['git add -A', 'git commit -m "fix"', 'git push', 'ls src', 'cat README.md', 'gh pr create --fill', 'npm view left-pad', 'echo done']) {
+    const [c] = claimsOf([prompt('x'), edit(), bash('cargo test', 'test result: ok'), bash(cmd, ''), say('All tests pass.')]);
+    assert.equal(labelClaim(c).label, 'verified', cmd);
+  }
+  const [n] = claimsOf([prompt('x'), bash('python3 scripts/rename.py', 'renamed 12 files'), say('Done.')]);
+  assert.equal(labelClaim(n).label, 'not_verified', 'not "No changes made": the script may have changed files');
+  const [m] = claimsOf([prompt('x'), bash('ls'), say('Done: it is a parser.')]);
+  assert.equal(labelClaim(m).label, 'no_changes');
+});
+
+test('review 11: timeout behind variables or wrappers; make sub-targets; node selection', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('CI=true timeout 600 npm test', 'Exit code 124', true), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified');
+  for (const cmd of ['make test-unit', 'just test-fast', 'task test:unit', 'make unit', 'node --test-name-pattern=cart --test']) assert.equal(canonical(cmd), null, cmd);
+  for (const cmd of ['make test', 'make check', 'node --test']) assert.ok(canonical(cmd), cmd);
+});

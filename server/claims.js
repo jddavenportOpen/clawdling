@@ -512,6 +512,8 @@ function programWrites(w0, raw = '', depth = 0) {
     return false;
   }
   if (WRITE_PROGRAMS.has(h)) return true;
+  // Any tool asked to fix or write (`cargo clippy --fix`, `rubocop -A`, `golangci-lint run --fix`).
+  if (w.some((x) => /^--(fix|write|apply|autocorrect|autocorrect-all|fix-only|unsafe-fixes)$/.test(x)) || (h === 'rubocop' && w.some((x) => x === '-a' || x === '-A'))) return true;
   // PowerShell's writing cmdlets and their aliases (any case), and .NET file writes.
   if (PS_WRITES.has(h.toLowerCase()) || /\[(System\.)?IO\.File\]::(Write|Append|Copy|Move|Delete|Create)/i.test(raw)) return true;
   if ((h === 'sed' || h === 'perl') && w.some((x) => /^-[A-Za-z0-9]*i/.test(x) || x === '-I' || x.startsWith('--in-place'))) return true;
@@ -732,8 +734,11 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     // The commands that can matter to a label (not a passing `git status` or `ls`), newest 200; when
     // there were more, the claim says so (an older failure could be among them).
     const matters = after.filter(({ t }) => t.error === true || !(t.res && t.res.exit === 0 && !t.res.fail) || !readOnly(t.cmd));
+    // Shell commands not known to leave files alone, before the claim: a completion claim with no
+    // edit is "No changes made" only when there are none.
+    const maybe = edits ? 0 : before.filter((x) => SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && !(x.t.res && (x.t.res.denied || x.t.res.blocked)) && !knownSafe(x.t.cmd)).length;
     // A completion claim with no edit is No changes made: its commands are never read.
-    const kept = claim.kind === 'completion' && !edits ? [] : matters.slice(-CMDS_PER_CLAIM);
+    const kept = claim.kind === 'completion' && !edits && !maybe ? [] : matters.slice(-CMDS_PER_CLAIM);
     const cmds = kept.map(({ t }) => ({
       cmd: t.cmd,
       at: new Date(t.end ?? t.ts).toISOString(),
@@ -755,6 +760,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       next_edit_at: nextEdit ? new Date(nextEdit.t.ts).toISOString() : null,
       cmds,
       ...(kept.length && matters.length > CMDS_PER_CLAIM ? { cmds_dropped: true } : {}),
+      ...(maybe ? { maybe_changes: maybe } : {}),
     });
   }
   return out.slice(-CLAIMS_MAX);
@@ -786,7 +792,7 @@ function outcome(c, masked, chained = false, preceded = false, cut = false, late
  */
 export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = {}) {
   if (!c || typeof c !== 'object') return { label: 'not_verified', check: null };
-  if (c.kind === 'completion' && !(c.edits > 0)) return { label: 'no_changes', check: null };
+  if (c.kind === 'completion' && !(c.edits > 0)) return c.maybe_changes > 0 ? { label: 'not_verified', check: null } : { label: 'no_changes', check: null };
   const since = c.last_edit_at ? Date.parse(c.last_edit_at) : -Infinity;
   const said = Date.parse(c.at || '') || 0;
   // A ship check speaks for this claim only soon after it (24 h) and before the session changed
@@ -797,6 +803,10 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   // or a standard runner with harmless flags, its exit code visible) can verify or contradict. Any
   // other recognized check that shows a failure (piped, chained, `|| true`, only some tests...)
   // keeps the claim at Not verified: the record cannot tell whose failure it is, or what it covered.
+  // Any command after a check that is not known to leave files alone (a script, a codegen, `cargo
+  // clippy --fix`) may have changed the work: checks before it no longer speak for the claim.
+  let fence = -Infinity;
+  for (const x of Array.isArray(c.cmds) ? c.cmds : []) if (!x.cut && !knownSafe(x.cmd, { approved, detected })) fence = Math.max(fence, Date.parse(x.at) || 0);
   const checks = [];
   if (c.cmds_dropped) checks.push({ kinds: ['check'], id: null, canonical: false, ok: false, at: c.last_edit_at || c.at, cmd: '(older commands)', first_error_line: null });
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
@@ -809,18 +819,27 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
       if (failedExit && x.fail === true) checks.push({ kinds: ['check'], id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: x.err1 || null });
       continue;
     }
-    // npm's placeholder (`echo "Error: no test specified" && exit 1`): the project has no tests yet.
+    // npm's placeholder (`echo "Error: no test specified" && exit 1`) and pytest's exit 5 (no tests
+    // ran): the project has no tests yet. A runner that never started (exit 126/127, "command not
+    // found", "No module named pytest") ran nothing either.
     if (/no test specified/i.test(x.err1 || '')) continue;
+    if (x.exit === 126 || x.exit === 127 || NOT_STARTED.test(x.err1 || '')) continue;
+    if (x.exit === 5 && /pytest/.test(x.cmd)) continue;
     const canon = canonical(x.cmd, { approved, detected });
     const first = x.err1 || (x.exit ? `Exit code ${x.exit}` : null);
+    if ((Date.parse(x.at) || 0) <= fence) {
+      // Before an unknown command: a pass no longer counts, a failure is only a possible one.
+      if (failedExit || x.fail === true) checks.push({ kinds: canon ? [canon.kind] : lineKinds(x.cmd, { approved, detected }), id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
+      continue;
+    }
     if (canon) {
       // A `timeout` wrapper that cut the run off (124, or 137 for KILL): it did not finish.
-      const timedOut = /^\s*(timeout|gtimeout)\s/.test(x.cmd) && (x.exit === 124 || x.exit === 137);
+      const timedOut = behindTimeout(x.cmd) && (x.exit === 124 || x.exit === 137);
       const exitShown = typeof x.exit === 'number' && !timedOut;
       // A canonical pass: exit 0 and no failure marks (a script that hides its own exit code prints them).
-      if (!failedExit && !x.fail) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: true, cmd: x.cmd, at: x.at });
+      if (!failedExit && !x.fail) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, rid: canon.rid, canonical: true, ok: true, cmd: x.cmd, at: x.at });
       // A canonical failure: a visible non-zero exit, and not one a `cd x &&` before it could explain.
-      else if (failedExit && exitShown && x.exit !== 0 && (!canon.setupFirst || x.fail === true)) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
+      else if (failedExit && exitShown && x.exit !== 0 && (!canon.setupFirst || x.fail === true)) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, rid: canon.rid, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
       // Anything else (exit 0 with marks, an error with no exit code: a timeout) is a possible failure.
       else checks.push({ kinds: [canon.kind], id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
     } else if (failedExit || x.fail === true) {
@@ -850,6 +869,10 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   // pass never settles a failed typecheck; a pass of part of a suite never settles anything.
   const shipCovers = (p, f) => (f.ship ? f.failedKinds : f.kinds || [f.kind]).every((k) => (k === 'check' ? p.kinds.includes('test') : p.kinds.includes(k)));
   const settles = (p, f) => p.ok && ((p.ship && shipCovers(p, f)) || (p.canonical && !p.ship && f.canonical && !f.ship && p.id !== null && p.id === f.id));
+  for (let i = 0; i < checks.length; i++) {
+    const f = checks[i];
+    if (!f.ok && f.canonical && !f.ship && checks.some((p, j) => j > i && p.ok && p.canonical && !p.ship && p.rid && p.rid === f.rid && p.id !== f.id)) f.canonical = false;
+  }
   const standing = checks.filter((f, i) => !f.ok && counts(f) && !checks.some((p, j) => j > i && settles(p, f)));
   const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: x.first_error_line || null, ...(x.ship ? { ship: true } : {}) } : null);
   const canonFail = standing.filter((x) => x.canonical).pop();
@@ -918,6 +941,11 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   const w = words(raw);
   if (!w.length || runsNothing(w)) return null;
   // Its identity: where it ran (`cd packages/api &&`), what it is, and any scope flag it carried.
+  // A second key, the runner with every wrapper removed: `pytest`, `python3 -m pytest` and
+  // `uv run pytest` are one runner. A pass under another spelling cannot settle a failure, but it
+  // means the failure may have been the spelling's (a missing venv), not the code's.
+  const scope = (extra) => extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x));
+  const rkey = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, (unwrap(words(String(what))) || []).join(' '), ...scope(extra)].filter(Boolean).join(' ');
   const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, normId(what), ...extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x))].filter(Boolean).join(' ');
   // Only variables known not to change what runs (`CI=1`, `NO_COLOR=1`); any other (`PYTEST_ADDOPTS`,
   // `GOFLAGS`, `TEST=...` for rake, `TESTS=...` for make) may select tests: not the whole run.
@@ -927,30 +955,35 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   for (const ap of approved) {
     if (!ap || typeof ap.run !== 'string') continue;
     const b = words(ap.run.trim());
-    if (b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind: NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(b) || 'check', id: ident(ap.run.trim(), w.slice(b.length)), setupFirst: i > 0 };
+    if (b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind: NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(b) || 'check', id: ident(ap.run.trim(), w.slice(b.length)), rid: rkey(ap.run.trim(), w.slice(b.length)), setupFirst: i > 0 };
   }
   for (const d of detected) {
     if (!d || typeof d.cmd !== 'string') continue;
     const b = words(d.cmd.trim());
     const kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' ? 'lint' : d.kind === 'check' ? 'check' : null;
-    if (kind && !(kind === 'test' && subScript(unwrap(b) || b)) && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind, id: ident(d.cmd.trim(), w.slice(b.length)), setupFirst: i > 0 };
+    if (kind && !(kind === 'test' && subScript(unwrap(b) || b)) && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind, id: ident(d.cmd.trim(), w.slice(b.length)), rid: rkey(d.cmd.trim(), w.slice(b.length)), setupFirst: i > 0 };
   }
   const kind = wordsKind(w);
   const a = unwrap(w);
   if (!kind || !a) return null;
   const n = runnerWords(a);
   const extra = a.slice(n);
-  // Bare `make` runs the default goal (sometimes `help`): not a check by itself.
+  // Bare `make` runs the default goal (sometimes `help`): not a check by itself. For a task runner,
+  // only `test`, `tests` and `check` are the whole suite (`make test-unit` is a named part).
   if (['make', 'gmake', 'just'].includes(a[0]) && n === 1) return null;
+  if (kind === 'test' && ['make', 'gmake', 'just', 'task', 'mage'].includes(a[0]) && !['test', 'tests', 'check'].includes(a[1])) return null;
+  // node: every flag can select (`node --test-name-pattern=cart --test`).
+  if (a[0] === 'node' && a.slice(1).some((x) => x !== '--test' && !HARMLESS.test(x))) return null;
   // A test sub-script (`npm run test:unit`, `npm run e2e`) is a named part of the suite: a selection.
   if (kind === 'test' && subScript(a)) return null;
   // go test/vet/build: only ./... is the whole module (`go test` alone tests one package).
   if (a[0] === 'go' && !extra.includes('./...')) return null;
   if (!harmlessFor(a[0])(extra)) return null;
   // (The id from the words as typed, past only harmless wrappers: `python3.11 -m pytest` keeps its interpreter.)
-  return { kind, id: ident(w.slice(0, w.length - extra.length).join(' '), extra), setupFirst: i > 0 };
+  return { kind, id: ident(w.slice(0, w.length - extra.length).join(' '), extra), rid: rkey(a.slice(0, n).join(' '), extra), setupFirst: i > 0 };
 }
 
+const NOT_STARTED = /command not found|: not found|is not recognized as an internal or external command|No module named|cannot find module ['"]?(jest|vitest|mocha|eslint|typescript)|ENOENT.*spawn/i;
 const SAFE_VARS = new Set(['CI', 'FORCE_COLOR', 'NO_COLOR', 'TERM', 'NODE_ENV', 'RUST_BACKTRACE', 'CARGO_TERM_COLOR', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'LANG', 'LC_ALL', 'TZ', 'COLUMNS', 'NPM_CONFIG_COLOR', 'npm_config_color']);
 /** The variables a line sets: `X=1 cmd`, `export X=1`, `env X=1`, `cross-env X=1`. */
 function assignedVars(cmd) {
@@ -983,6 +1016,50 @@ function normId(cmd) {
   // npm's own aliases (not bun's: `bun run test` is the script, `bun test` Bun's runner).
   if (['npm', 'pnpm', 'yarn'].includes(a[0]) && (a[1] === 't' || a[1] === 'tst' || ((a[1] === 'run' || a[1] === 'run-script') && a[2] === 'test'))) a = [a[0], 'test', ...a.slice(a[1] === 't' || a[1] === 'tst' ? 2 : 3)];
   return a.join(' ');
+}
+
+// Programs that do not change files (with no output redirection: writesFiles decides that first).
+const SAFE_PROGRAMS = new Set(['cd', 'pushd', 'popd', 'pwd', 'echo', 'printf', 'true', 'false', ':', 'sleep', 'wait', 'which', 'type', 'printenv', 'ps', 'jobs', 'kill', 'pkill', 'pgrep', 'lsof', 'uptime', 'id', 'hostname', 'uname', 'export', 'unset', 'set', 'alias', 'clear', 'tput', 'date', 'whoami', 'ls', 'cat', 'grep', 'rg', 'find', 'head', 'tail', 'wc', 'file', 'stat', 'tree', 'du', 'df', 'less', 'more', 'diff', 'sort', 'uniq', 'cut', 'tr', 'awk', 'jq', 'column', 'basename', 'dirname', 'realpath', 'readlink', 'test', '[', 'seq', 'nl', 'od', 'xxd', 'md5', 'md5sum', 'shasum', 'sha256sum']);
+const GIT_SAFE = new Set(['status', 'log', 'diff', 'show', 'branch', 'rev-parse', 'ls-files', 'remote', 'describe', 'blame', 'add', 'commit', 'push', 'fetch', 'tag', 'grep', 'shortlog', 'reflog', 'config']);
+/**
+ * Is this shell line known to leave files alone? Read-only programs, git's look/record commands,
+ * recognized checks run without a fixing flag. Anything else may have changed the work.
+ */
+export function knownSafe(cmd, { approved = [], detected = [] } = {}) {
+  if (writesFiles(cmd).writes) return false;
+  for (const sg of segments(String(cmd))) {
+    const w = words(sg.raw);
+    if (!w.length) continue;
+    const u = unwrap(w);
+    if (!u) continue; // command -v: only looks a program up
+    const h = u[0].replace(/^.*[\\/]/, '');
+    if (h === 'git' && GIT_SAFE.has(u[1]) && !(u[1] === 'config' && u.length > 3) && !(u[1] === 'branch' && u.some((x) => /^-[dDmM]$/.test(x)))) continue;
+    // Tools that only report (or act elsewhere, never on the files here).
+    if (h === 'gh' && !/^(checkout|clone|download|install|extension)$/.test(u[2] || '') && u[1] !== 'repo' ? true : h === 'gh' && u[1] === 'repo' && /^(view|list)$/.test(u[2] || '')) continue;
+    if (['npm', 'pnpm', 'yarn'].includes(h) && /^(view|info|ls|list|outdated|whoami|explain|why|search|help|audit)$/.test(u[1] || '') && !u.includes('fix')) continue;
+    if (['pip', 'pip3', 'uv'].includes(h) && /^(list|show|freeze|check)$/.test(u[1] === 'pip' ? u[2] || '' : u[1] || '')) continue;
+    if (h === 'docker' && /^(ps|logs|images|inspect|version|info)$/.test(u[1] || '')) continue;
+    if (h === 'brew' && /^(list|info|search|outdated)$/.test(u[1] || '')) continue;
+    if (h === 'curl' && !u.some((x) => /^(-o|-O|--output|--remote-name|-D|--dump-header)$/.test(x) || /^-[a-zA-Z]*[oO]/.test(x))) continue;
+    if (h === 'find' && !u.some((x) => /^-(delete|exec|execdir|ok|okdir|fprint)/.test(x))) continue;
+    if (SAFE_PROGRAMS.has(h) && h !== 'find') continue;
+    if (runsNothing(w)) continue;
+    if (checkOf(sg.raw, { approved, detected })) continue;
+    return false;
+  }
+  return true;
+}
+
+/** Is the command run behind timeout/gtimeout (past assignments and time/nice/env/cross-env)? */
+function behindTimeout(cmd) {
+  return segments(String(cmd)).some((sg) => {
+    let w = sg.raw.trim().split(/\s+/);
+    for (let n = 0; n < 6 && w.length; n++) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0]) || ['time', 'nice', 'env', 'cross-env', 'command', 'exec'].includes(w[0])) w = w.slice(1);
+      else break;
+    }
+    return w[0] === 'timeout' || w[0] === 'gtimeout';
+  });
 }
 
 /** Every kind of check a shell line contains (a failure in it could be any of them). */

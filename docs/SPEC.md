@@ -513,7 +513,14 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   (`npm run format`, `make fmt`, `dart format .`) are changes, not checks, and so are bulk shell
   edits (`xargs sed -i`, `find -exec`/`-delete`, inline interpreter code that writes, fixers behind
   `uv run`/`python -m`, `--fix` passed to a script, writes run in the background). A test sub-script
-  (`npm run test:unit`, `npm run e2e`) is a named part of the suite: a selection. Any other recognized
+  (`npm run test:unit`, `npm run e2e`, `make test-unit`) is a named part of the suite: a selection.
+  After a check, any command not known to leave files alone (a script, a code generator, `go mod
+  tidy`; known-safe: read-only tools, `git add/commit/push`, recognized checks without a fixing flag)
+  ends what the checks before it say: a pass no longer counts, a failure is only possible. A runner
+  that never started (exit 126/127, "command not found", "No module named") or found no tests is no
+  check; a pass of the same runner under another spelling (`python3 -m pytest` after `pytest`) makes
+  an earlier failure only possible. A completion claim is **no_changes** only when no edit and no
+  such unknown command ran. Any other recognized
   check that shows a failure (a non-zero exit, an error, or failure marks: piped, chained, `|| true`,
   a file or name argument, a selection or skip flag, exit 0 with failure marks, a timeout) keeps the
   claim at **not_verified**: the record cannot tell whose failure it is or what the run covered. A

@@ -212,24 +212,29 @@ export function parseYaml(text) {
   };
 
   // A flow collection may continue on the next lines until its brackets close.
+  // (Bracket depth and quote state carry over as lines are added: each line is read once.)
   const joinFlow = (rest) => {
     let text = rest;
-    const open = () => {
-      let depth = 0;
-      let q = null;
-      for (let i = 0; i < text.length; i++) {
-        const c = text[i];
+    if (!/^\s*[[{]/.test(text)) return text;
+    let depth = 0;
+    let q = null;
+    let esc = false;
+    const scan = (s) => {
+      for (const c of s) {
         if (q) {
-          if (q === '"' && c === '\\') i++;
+          if (esc) esc = false;
+          else if (q === '"' && c === '\\') esc = true;
           else if (c === q) q = null;
         } else if (c === '"' || c === "'") q = c;
         else if (c === '[' || c === '{') depth++;
         else if (c === ']' || c === '}') depth--;
       }
-      return depth > 0;
     };
-    while (/^\s*[[{]/.test(text) && open() && pos < lines.length) {
-      text += ` ${stripComment(lines[pos].raw).trim()}`;
+    scan(text);
+    while (depth > 0 && pos < lines.length) {
+      const add = ` ${stripComment(lines[pos].raw).trim()}`;
+      text += add;
+      scan(add);
       pos++;
     }
     return text;

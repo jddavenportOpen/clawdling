@@ -716,6 +716,8 @@ export class Evals {
 
   /** Spawn the user's claude CLI (argv only, no shell; stdin carries the prompt). */
   spawnClaude(claude, args, { cwd, stdin = '', timeoutMs, env = this.baseEnv() }) {
+    // Once Clawdling is stopping, nothing new starts (a detached claude would outlive it).
+    if (this.stopped) return Promise.resolve({ code: null, stdout: '', stderr: 'Clawdling is stopping', timedOut: false, truncated: false, started: false });
     return new Promise((resolve) => {
       const cmd = commandFor(claude, args, { env });
       let stdout = '';
@@ -762,6 +764,7 @@ export class Evals {
   /** A judge vote: {pass, reason, cost_usd}. Throws CapReached when the cap is already spent. */
   async judgeVote(state, { criteria, text, focus }) {
     if (state.spent >= state.cap) throw new CapReached('cost cap reached');
+    if (this.stopped) throw new Error('Clawdling stopped during the check-up');
     const nonce = crypto.randomBytes(6).toString('hex');
     const prompt = [
       'You are grading the output of an AI agent against one criterion.',
@@ -1027,6 +1030,7 @@ export class Evals {
       if (err instanceof CapReached) capped = true;
       else error = `judge controls: ${err.message}`;
     }
+    if (this.stopped && !error) error = 'Clawdling stopped during the check-up';
     const judgeOk = !error && !capped && controls.every((x) => x.ok);
     const judgeUnreliable = !error && !capped && !judgeOk;
     const outCells = [];
@@ -1088,6 +1092,7 @@ export class Evals {
         }
       }
     }
+    if (this.stopped && !error) error = 'Clawdling stopped during the check-up';
     // Scores per cell: case score = mean over its runs; suite score = mean of the case scores.
     for (const cell of outCells) {
       for (const c of cell.cases) {
@@ -1126,7 +1131,7 @@ export class Evals {
       controls,
       error,
       cases_skipped: suiteSkipped,
-      score: judgeUnreliable || !current || !complete ? null : current.score,
+      score: error || judgeUnreliable || !current || !complete ? null : current.score,
       cells: outCells,
       recommendation: outCells.length > 1 && !capped && !error ? recommend(outCells, { k, judgeOk, total: cases.length }) : null,
       label: COST_NOTE,
