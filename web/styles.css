@@ -1365,7 +1365,7 @@ h3.chat-h { font-size: 16.5px; }
 .rc-h:focus { outline: none; }
 .rc-h-sub { font-size: 12px; font-weight: 400; color: var(--text-3); }
 .rc-list { list-style: none; margin: 0 -10px; padding: 0; }
-.rc-list li + li { border-top: 1px solid var(--line); }
+.rc-list > li + li { border-top: 1px solid var(--line); }
 .rc-item { width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 10px; border-radius: var(--r-md); text-align: left; }
 .rc-item:hover { background: var(--surface-2); }
 .rc-item-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -1384,6 +1384,7 @@ h3.chat-h { font-size: 16.5px; }
 .rc-empty { margin: 0; color: var(--text-3); font-size: 13px; line-height: 1.5; }
 .rc-note { margin: 10px 0 0; font-size: 12px; line-height: 1.45; color: var(--text-3); }
 .rc-label { margin: 4px 0 0; font-size: 12px; color: var(--text-2); }
+.rc-label + .rc-empty { margin-top: 10px; }
 .rc-big { margin: 0; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .rc-big-n { font-size: 26px; font-weight: 650; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
 .rc-big-l { font-size: 13px; color: var(--text-2); }
@@ -1394,7 +1395,7 @@ h3.chat-h { font-size: 16.5px; }
 .rc-sub-h { margin: 14px 0 4px; font-size: 12px; font-weight: 650; color: var(--text-2); }
 .rc-rows { list-style: none; margin: 0; padding: 0; }
 .rc-rows li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 5px 0; font-size: 13px; }
-.rc-rows li + li { border-top: 1px solid var(--line); }
+.rc-rows > li + li { border-top: 1px solid var(--line); }
 .rc-num { color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .rc-row-btn { min-width: 0; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-next { margin-bottom: 6px; font-size: 13px; }
@@ -1402,6 +1403,9 @@ h3.chat-h { font-size: 16.5px; }
   .report-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 720px) {
+  .tabs { overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab-btn { flex: none; padding: 0 10px; }
   .report-glance { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .glance-n { font-size: 18px; }
   .rc-block { padding: 14px; }
@@ -1442,7 +1446,23 @@ h3.chat-h { font-size: 16.5px; }
 /* ---------- org map usage (1.5) ---------- */
 .node-usage { font-size: 10.5px; fill: var(--text-3); font-variant-numeric: tabular-nums; pointer-events: none; paint-order: stroke; stroke: var(--bg-stage); stroke-width: 4px; stroke-linejoin: round; }
 .node.is-dim .node-usage { opacity: 0.35; }
-.legend-usage { display: inline-grid; place-items: center; width: 12px; height: 12px; font-size: 9px; font-weight: 700; color: var(--text-3); border: 1px solid var(--line-3); border-radius: 999px; }
-.map-usage { margin-top: 2px; }
+.map-usage { margin: 2px 0 0; font-size: 12.5px; color: var(--text-3); }
 .map-usage-note { color: var(--text-3); opacity: 0.85; }
 .panel-usage-note { margin: -8px 0 14px; font-size: 11.5px; }
+
+/* ---------- settings: Monday report, detailed timeline (1.5) ---------- */
+.monday-when { display: flex; gap: 6px; flex: none; }
+.monday-when .select { height: 32px; padding: 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-sm); background: var(--surface-2); }
+.monday-when .select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.monday-preview { margin: 8px 0 0; padding: 12px; max-height: 240px; overflow: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--bg-stage); font-family: var(--font-ui); font-size: 12.5px; line-height: 1.55; color: var(--text-2); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .monday-when { flex-direction: column; }
+  .monday-when .select { height: 44px; }
+}
+.monday-when .select {
+  -webkit-appearance: none; appearance: none; padding-right: 28px;
+  background-image: linear-gradient(45deg, transparent 50%, var(--text-3) 50%), linear-gradient(135deg, var(--text-3) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat;
+}
+.tl-approval, .tl-api { flex: none; font-size: 11px; color: var(--text-3); white-space: nowrap; }
+.tl-approval { color: var(--watching-text); }

@@ -183,6 +183,7 @@ test('dollar copy always reads as an equivalent, never a bill', () => {
   assert.equal(dollars(4.1), 'about $4.10');
   assert.equal(dollars(0.001), 'less than $0.01');
   assert.equal(dollars(null), 'unknown');
+  assert.equal(dollars(0), '$0.00');
   assert.match(COST_LABEL, /list-price equivalent, not a bill/);
   assert.doesNotMatch(COST_LABEL, /\b(spend|spent|charged)\b/i);
 });

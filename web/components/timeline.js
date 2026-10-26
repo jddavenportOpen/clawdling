@@ -88,6 +88,7 @@ function Entry({ e }) {
   if (e.kind === 'prompt') {
     return html`<li class="tl-row tl-prompt" style=${pad} data-kind="prompt">
       <span class="tl-who">You</span><span class="tl-text">${e.text}</span>
+      ${e.api ? html`<span class="tl-api" title="Requests to Claude in this turn (detailed timeline)">${e.api.requests} ${e.api.requests === 1 ? 'request' : 'requests'}, ${duration(e.api.ms)}</span>` : null}
       <span class="tl-cost" title="What this turn used, at list price">${e.cost === null ? 'cost unknown' : usd(e.cost)}${e.cost !== null && !e.cost_complete ? '+' : ''}</span></li>`;
   }
   if (e.kind === 'say') return html`<li class="tl-row tl-say" style=${pad} data-kind="say"><span class="tl-text">${e.text}</span></li>`;
@@ -98,5 +99,6 @@ function Entry({ e }) {
   return html`<li class=${`tl-row tl-tool is-${state}`} style=${pad} data-kind="tool" data-tool=${e.name} data-ok=${state}>
     <span class="tl-mark" aria-label=${state === 'ok' ? 'worked' : state === 'error' ? 'failed' : 'still running'} role="img">${state === 'ok' ? '✓' : state === 'error' ? '✕' : '…'}</span>
     <span class="tl-name mono">${e.name}</span><span class="tl-text">${e.summary}</span>
+    ${e.approval && e.approval.text ? html`<span class="tl-approval" title="Who let this tool run (detailed timeline)">${e.approval.text}</span>` : null}
     <span class="tl-dur">${duration(e.ms)}</span></li>`;
 }

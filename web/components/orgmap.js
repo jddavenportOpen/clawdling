@@ -342,13 +342,12 @@ export function OrgMap() {
       <div class="page-bar-main">
         <h1 class="page-title">Org map</h1>
         <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}${agents.length && !orgError ? ` · ${mobile ? 'Tap' : 'Click'} an agent to see what it knows` : ''}</p>
-        ${orgRep && orgRep.totals ? html`<p class="page-sub map-usage" data-testid="map-usage">Usage today: ${usd(orgRep.totals.today_usd)} · last 7 days: ${usd(orgRep.totals.week_usd)}${orgRep.totals.complete ? '' : ' (plus some with an unknown cost)'} <span class="map-usage-note">at list price, not a bill</span></p>` : null}
+        ${orgRep && orgRep.totals ? html`<p class="map-usage" data-testid="map-usage">Usage at list price, not a bill: today ${usd(orgRep.totals.today_usd)}, last 7 days ${usd(orgRep.totals.week_usd)}${orgRep.totals.complete ? '' : ' (plus some with an unknown cost)'}. <span class="map-usage-note">Under each agent: its last 7 days, and when it last finished work.</span></p>` : null}
       </div>
       <ul class="legend" aria-label="Legend">
         <li><span class="legend-ring ring-working" aria-hidden="true"></span> Working</li>
         <li title="Claude Code asked something and waits for your answer"><span class="legend-ring ring-needs" aria-hidden="true"></span> Needs you</li>
         <li title="Claude finished and waits for your next message"><span class="legend-ring ring-ready" aria-hidden="true"></span> Your turn</li>
-        ${orgRep ? html`<li title="Under each agent: its usage over the last 7 days at list price (not a bill), and when it last finished some work"><span class="legend-usage" aria-hidden="true">$</span> Usage, 7 days · last done</li>` : null}
       </ul>
       <div class="zoom" role="group" aria-label="Zoom">
         <button class="icon-btn" aria-label="Zoom out" onClick=${() => zoomBy(1 / 1.25)}><span aria-hidden="true" class="zoom-glyph">−</span></button>

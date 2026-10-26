@@ -114,3 +114,34 @@ test('phone card at 390: loopback shows the fix, not a QR that cannot work (P0-2
   expect(await scrollWidth(page)).toBe(390);
   expect(await smallTargets(page)).toEqual([]);
 });
+
+// 1.5: Lou checks the report card from his phone. At 375 px the Overview fits the screen (nothing
+// scrolls sideways), every block is there, and the window buttons are thumb-sized.
+test.describe('report card on a 375 px phone', () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  test('US-60: the Overview fits 375 px, with all four blocks and 44 px window buttons', async ({ page }) => {
+    await reset(isMock() ? 'report' : 'empty');
+    const id = isMock() ? 'site' : 'work';
+    await login(page, `#/agent/${id}`);
+    const card = page.getByTestId('report-card');
+    await expect(card).toBeVisible();
+    for (const b of ['rc-done', 'rc-needs', 'rc-cost', 'rc-next']) {
+      await page.getByTestId(b).scrollIntoViewIfNeeded();
+      await expect(page.getByTestId(b)).toBeVisible();
+      const box = await page.getByTestId(b).boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(375.5);
+    }
+    const sideways = await page.evaluate(() => {
+      const layer = document.querySelector('.page-layer') || document.documentElement;
+      return Math.max(layer.scrollWidth - layer.clientWidth, document.documentElement.scrollWidth - window.innerWidth);
+    });
+    expect(sideways).toBeLessThanOrEqual(1);
+    for (const k of ['today', '7d', '30d']) {
+      const b = await page.locator(`[data-window-btn="${k}"]`).boundingBox();
+      expect(b.height).toBeGreaterThanOrEqual(44);
+    }
+    await expect(page.getByTestId('rc-cost-label')).toHaveText('List-price equivalent, not a bill. On Pro and Max, usage is included in your plan.');
+  });
+});

@@ -24,6 +24,7 @@ const REFRESH_MS = 30000;
 /** "about $4.10", "less than $0.01": every dollar figure on the card reads as an estimate. */
 export function usd(x) {
   if (x === null || x === undefined || !Number.isFinite(x)) return 'unknown';
+  if (x === 0) return '$0.00';
   if (x > 0 && x < 0.005) return 'less than $0.01';
   return `about $${x.toFixed(2)}`;
 }
@@ -48,6 +49,14 @@ export function needLabel(s) {
     case 'trust': case 'imports': case 'startup': return 'Has a question before it starts';
     default: return 'Waiting on you';
   }
+}
+
+/** "just now", "3h ago", "yesterday", "Oct 3": when something happened, as a phrase. */
+export function agoText(ts, now = Date.now()) {
+  const r = relTime(ts, now);
+  if (!r) return '';
+  if (r === 'now') return 'just now';
+  return /^\d+[mhd]$/.test(r) ? `${r} ago` : r;
 }
 
 function dayLabel(day, key) {
@@ -113,7 +122,7 @@ export function ReportCard({ id, agent }) {
         <button type="button" role="listitem" class="glance" onClick=${() => go('#rc-done')}><span class="glance-n">${fresh.done.length}</span><span class="glance-l">${fresh.done.length === 1 ? 'session' : 'sessions'} with work done</span></button>
         <button type="button" role="listitem" class=${`glance ${needs.length ? 'tone-needs' : ''}`} onClick=${() => go('#rc-needs')}><span class="glance-n">${needs.length}</span><span class="glance-l">${needs.length === 1 ? 'thing needs' : 'things need'} you</span></button>
         <button type="button" role="listitem" class="glance" onClick=${() => go('#rc-cost')}><span class="glance-n">${usd(fresh.cost.total_usd).replace(/^about /, '')}</span><span class="glance-l">of usage at list price</span></button>
-        <button type="button" role="listitem" class=${`glance ${fresh.next.stale ? 'tone-needs' : ''}`} onClick=${() => go('#rc-next')}><span class="glance-n">${fresh.next.empty ? 'None' : fresh.next.updated_at ? relTime(fresh.next.updated_at, now) === 'now' ? 'Now' : relTime(fresh.next.updated_at, now) : 'Set'}</span><span class="glance-l">${fresh.next.empty ? 'next steps written' : 'since next steps were updated'}</span></button>
+        <button type="button" role="listitem" class=${`glance ${fresh.next.stale ? 'tone-needs' : ''}`} onClick=${() => go('#rc-next')}><span class="glance-n">${fresh.next.empty ? 'None' : agoText(fresh.next.updated_at, now) || 'Written'}</span><span class="glance-l">${fresh.next.empty ? 'next steps written yet' : 'next steps last updated'}</span></button>
       </div>
       <div class="report-grid">
         <${DoneBlock} r=${fresh} win=${win} name=${name} now=${now} agentsById=${agentsById} />
@@ -141,12 +150,12 @@ function DoneBlock({ r, win, name, now, agentsById }) {
       <button type="button" class="rc-item" onClick=${() => focusSession(d.sid)} data-sid=${d.sid} title="Open this session">
         <span class="rc-item-top">
           <span class="rc-item-title">${d.title || sessionName({ agent: r.agent.id }, agentsById)}</span>
-          <span class=${`rc-when ${d.live ? 'is-live' : ''}`} title=${longTime(d.when)}>${d.live ? 'Still running' : `Ended ${relTime(d.when, now) === 'now' ? 'just now' : `${relTime(d.when, now)}${/^\d/.test(relTime(d.when, now)) ? ' ago' : ''}`}`}</span>
+          <span class=${`rc-when ${d.live ? 'is-live' : ''}`} title=${longTime(d.when)}>${d.live ? 'Still running' : `Ended ${agoText(d.when, now)}`}</span>
         </span>
         ${d.line ? html`<span class="rc-line">${d.line}</span>` : html`<span class="rc-line is-empty">It finished without a closing message.</span>`}
         <span class="rc-facts">
           <span>${plural(d.files_changed, 'file')} changed</span>
-          ${d.commits ? html`<span>${plural(d.commits.length, 'commit')}</span>` : null}
+          ${d.commits && (d.commits.length || !d.live) ? html`<span>${plural(d.commits.length, 'commit')}</span>` : null}
           ${d.tool_errors ? html`<span class="tone-amber-text">${plural(d.tool_errors, 'step')} failed along the way</span>` : null}
           ${d.transcript === 'gone' ? html`<span class="rc-gone" title="Claude Code deleted this session's transcript (its retention cleanup). Clawdling kept its summary.">Transcript gone, kept summary only</span>` : null}
         </span>
@@ -195,8 +204,7 @@ function CostBlock({ c, win, name }) {
 
 function NextBlock({ n, id, name, now }) {
   const blocks = useMemo(() => parseMarkdown(n.text || ''), [n.text]);
-  const ago = n.updated_at ? relTime(n.updated_at, now) : '';
-  return html`<${Block} id="rc-next" title="Next" sub=${n.updated_at ? `from memory/NOW.md, updated ${ago === 'now' ? 'just now' : /^\d/.test(ago) ? `${ago} ago` : ago}` : null} testid="rc-next">
+  return html`<${Block} id="rc-next" title="Next" sub=${n.updated_at ? `from memory/NOW.md, updated ${agoText(n.updated_at, now)}` : null} testid="rc-next">
     ${n.stale ? html`<p class="rc-note tone-amber-text" data-testid="rc-next-stale">This note is over a week old, so it may be out of date.</p>` : null}
     ${n.empty ? html`<p class="rc-empty">Nothing written yet. ${name} writes its next steps in memory/NOW.md when it hands off a piece of work.</p>`
       : html`<div class="rc-next chat-body">${blocks.map(renderBlock)}</div>`}

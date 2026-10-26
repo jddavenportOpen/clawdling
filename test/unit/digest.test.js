@@ -39,7 +39,7 @@ test('the text: counts, approved names and dollars; the most and least used; no 
     'Clawdling: your week, the last 7 days.',
     '- Site: 3 done, 1 needs you, about $9.40',
     '- Shop: 1 done, 0 need you, about $3.10 (part unknown)',
-    '- Blog: 0 done, 2 need you, about $0.00',
+    '- Blog: 0 done, 2 need you, $0',
     '2 other agents were quiet.',
     'Most usage: Site (about $9.40). Least: Shop (about $3.10).',
     'Total: about $12.50. Usage is a list-price equivalent, not a bill: on Pro and Max it is included in your plan. Open the cockpit for the details.',

@@ -157,7 +157,7 @@ test.describe('agent page', () => {
     await reset('empty');
     const ended = await spawn({ agent: 'home', title: 'Book the plumber', status: 'ended' });
     const live = await spawn({ agent: 'home', title: 'Plan the move', status: 'working' });
-    await login(page, '#/agent/home');
+    await login(page, '#/agent/home/sessions');
     await expect(page.locator(`.srow[data-sid="${live}"]`)).toBeVisible();
     await expect(page.locator(`.srow[data-sid="${ended}"]`)).toContainText('Ended');
     await page.locator(`.srow[data-sid="${ended}"]`).getByTestId('agent-resume').click();

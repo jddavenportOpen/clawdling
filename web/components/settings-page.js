@@ -92,6 +92,8 @@ export function SettingsPage() {
         </dl>
       </section>
       <${NotifyCard} />
+      <${MondayCard} />
+      <${DetailedTimelineCard} />
       <${AccountsCard} />
       <section class="card" aria-labelledby="set-server">
         <h2 id="set-server" class="card-title">Server <button class="link-btn" onClick=${refreshHealth}>Refresh</button></h2>
@@ -242,6 +244,79 @@ function NotifyCard() {
         aria-labelledby="set-notify-msg" data-testid="notify-message" /><span class="switch-ui" aria-hidden="true"></span></label></div>
     ${srv && !srv.needs_you && channel && !srv.unprotected && srv.preview_labels ? html`<p class="set-note" data-testid="notify-preview">Turning this on approves these agent names for messages: ${Object.values(srv.preview_labels).join(', ') || 'none'}.</p>` : null}
     ${srv && srv.needs_you ? html`<p class="set-note" data-testid="notify-labels">Messages and notifications name these agents, as they were named when you turned this on: ${Object.values(srv.labels || {}).join(', ') || 'none'}. Others say "An agent". Turn it off and on to update the list.</p>` : null}
+  </section>`;
+}
+
+const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const hourText = (h) => new Date(2026, 0, 5, h).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+// The Monday report (1.5): off by default; the exact message is shown before it can be turned on.
+function MondayCard() {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.digest().then(setSt).catch(() => setSt({ enabled: false, error: true })); }, []);
+  const change = async (body) => {
+    setBusy(true);
+    try {
+      setSt(await api.setDigest(body));
+    } catch (e) {
+      errorToast('Could not change the Monday report', e);
+    }
+    setBusy(false);
+  };
+  const channel = st && st.channel === 'telegram' ? 'Telegram' : st && st.channel === 'imessage' ? 'iMessage' : null;
+  const canOn = !!(st && channel && !st.unprotected);
+  return html`<section class="card" aria-labelledby="set-monday" data-testid="monday-card">
+    <h2 id="set-monday" class="card-title">Monday report</h2>
+    <div class="set-row"><span class="set-label" id="set-monday-on">Send me a weekly report${channel ? ` on ${channel}` : ''}<span class="set-sub">${!st ? 'Checking…'
+      : st.error ? 'Could not load this setting.'
+      : st.unprotected ? "Off here: this org folder's path has characters (like ( ) ' or accents) that keep Clawdling from locking agents out of its own settings."
+      : channel ? `Once a week, to the ${channel} chat Donna is paired with: for each agent, how much got done, what needs you and its usage. Counts, agent names and dollar figures only: never a session title, a prompt or a file.`
+      : html`Pair Donna with Telegram or iMessage first (<a href="#/donna">Donna</a>).`}</span></span>
+      <label class="switch"><input type="checkbox" checked=${!!(st && st.enabled)} disabled=${!st || busy || (!(st && st.enabled) && !canOn)} onChange=${(e) => change({ enabled: e.currentTarget.checked })}
+        aria-labelledby="set-monday-on" data-testid="monday-switch" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    ${st && !st.error ? html`<div class="set-row"><span class="set-label" id="set-monday-when">When<span class="set-sub">${st.enabled && st.next_at ? `Next one: ${new Date(st.next_at).toLocaleString([], { weekday: 'long', hour: 'numeric', minute: '2-digit' })}. If Clawdling is not running then, it sends when it next starts that week.` : 'Your computer\'s local time.'}</span></span>
+      <span class="monday-when">
+        <select class="select" aria-label="Day" value=${String(st.day)} disabled=${busy} onChange=${(e) => change({ day: Number(e.currentTarget.value) })} data-testid="monday-day">
+          ${[1, 2, 3, 4, 5, 6, 0].map((d) => html`<option value=${String(d)}>${DAY_NAMES[d]}</option>`)}</select>
+        <select class="select" aria-label="Hour" value=${String(st.hour)} disabled=${busy} onChange=${(e) => change({ hour: Number(e.currentTarget.value) })} data-testid="monday-hour">
+          ${Array.from({ length: 24 }, (_, h) => html`<option value=${String(h)}>${hourText(h)}</option>`)}</select>
+      </span></div>` : null}
+    ${st && st.preview ? html`<p class="set-note">${st.enabled ? 'This is the message it would send right now:' : 'Before you turn it on, this is exactly the message it would send right now:'}</p>
+      <pre class="monday-preview" data-testid="monday-preview">${st.preview}</pre>` : null}
+    ${st && !st.enabled && canOn && st.preview_labels ? html`<p class="set-note">Turning it on approves these agent names for the report: ${Object.values(st.preview_labels).join(', ') || 'none'}. An agent added later is called "Another agent" until you turn it off and on.</p>` : null}
+    ${st && st.last_sent_at ? html`<p class="set-note">Last sent ${new Date(st.last_sent_at).toLocaleString()}${st.last_error ? ` (it did not go through: ${st.last_error})` : ''}.</p>` : null}
+  </section>`;
+}
+
+// The detailed timeline (1.5, beta): Claude Code's own OpenTelemetry, kept on this computer.
+function DetailedTimelineCard() {
+  const health = useStore((s) => s.health);
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.otel().then(setSt).catch(() => setSt({ enabled: false, error: true })); }, []);
+  const remote = !!(health && health.remote);
+  const pick = async (on) => {
+    setBusy(true);
+    try {
+      setSt(await api.setOtel(on));
+    } catch (e) {
+      if (e.body && e.body.found) setSt((x) => ({ ...(x || {}), blocked: true, reason: e.message, found: e.body.found }));
+      else errorToast('Could not change the detailed timeline', e);
+    }
+    setBusy(false);
+  };
+  return html`<section class="card" aria-labelledby="set-otel" data-testid="otel-card">
+    <h2 id="set-otel" class="card-title">Detailed timeline <span class="card-tag">beta</span></h2>
+    <div class="set-row"><span class="set-label" id="set-otel-on">Collect Claude Code's own telemetry<span class="set-sub">${!st ? 'Checking…'
+      : st.error ? 'Could not load this setting.'
+      : st.blocked ? st.reason
+      : remote ? 'Turn this on or off at the computer Clawdling runs on.'
+      : 'The Timeline then also shows who approved each tool and how long each request to Claude took. It stays on this computer: Claude Code sends it to Clawdling on 127.0.0.1, never to anyone else, and never your prompts or file contents.'}</span></span>
+      <label class="switch"><input type="checkbox" checked=${!!(st && st.enabled && !st.blocked)} disabled=${!st || busy || remote || (st.blocked && !st.enabled)} onChange=${(e) => pick(e.currentTarget.checked)}
+        aria-labelledby="set-otel-on" data-testid="otel-switch" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    ${st && st.blocked && Array.isArray(st.found) && st.found.length ? html`<p class="set-note" data-testid="otel-found">Found: ${st.found.map((f) => `${f.key} (${f.where})`).join(', ')}. Clawdling read only these names, not their values. The report card works the same without it.</p>` : null}
+    ${st && !st.blocked && !st.error ? html`<p class="set-note">${st.note} The report card works the same with it off.</p>` : null}
   </section>`;
 }
 

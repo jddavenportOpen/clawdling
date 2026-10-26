@@ -130,6 +130,7 @@ const round2 = (x) => Math.round(x * 100) / 100;
 /** "about $4.10", "less than $0.01", the plain label every dollar figure carries. */
 export function dollars(usd) {
   if (usd === null || usd === undefined || !Number.isFinite(usd)) return 'unknown';
+  if (usd === 0) return '$0.00';
   if (usd > 0 && usd < 0.005) return 'less than $0.01';
   return `about $${usd.toFixed(2)}`;
 }

@@ -19,6 +19,9 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 // The real server's own words, so the suite asserts what real users see.
 import { IMPORTS_NOTICE, LOGIN_NOTICE, SIGNED_IN_NOTICE, trustNotice } from '../../server/sessions.js';
+import { COST_LABEL, nextOf, windowRange } from '../../server/report.js';
+import { localDay } from '../../server/ledger.js';
+import { digestText } from '../../server/digest.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -234,12 +237,39 @@ const FIXTURES = {
   empty() {
     return { agents: baseAgents(), sessions: [] };
   },
+  // 1.5, the report card: Lou-style data for the website project (Done with commits, a week of
+  // usage, NOW.md next steps), a session with a 2,000-turn Timeline, a transcript Claude Code deleted.
+  report() {
+    const fx = FIXTURES.default();
+    const by = Object.fromEntries(fx.agents.map((a) => [a.id, a]));
+    by.site.repo = '/Users/ada/code/site';
+    by.site._now = ['# Launch the website: now', '_Last updated: by the agent_', '', '## State', '- Signup form live on staging; the home page loads in 1.1 s.', '',
+      '## Next steps', '- Get the hero to stack properly on phones (in progress).', '- Ask Ada to approve the pricing copy before Friday.', '- Point the domain at the new site after the approval.', '',
+      '## Open threads', '- Waiting on the logo files from the designer.', ''].join('\n');
+    by.site._nowAge = 3 * HOUR;
+    const hero = fx.sessions.find((s) => s.agent === 'site');
+    rep(hero, { line: 'The hero now stacks on phones under 400 px wide; checking Safari next.', files: 3, cost: [1.84], models: { 'claude-opus-5-5': 0.8, 'claude-sonnet-5': 0.2 } });
+    const extra = [
+      rep(sess(by, 'site', 'Add the signup form', 'ended', { ended: 3 * HOUR, model: 'opus' }), { line: 'The signup form works: it saves to the waitlist and sends the welcome email. All 24 tests pass.', files: 6, commits: [['Add the signup form with email checks', 3.4 * HOUR], ['Send the welcome email from the waitlist', 3.1 * HOUR]], cost: [0.62, 2.18], models: { 'claude-opus-5-5': 0.85, 'claude-sonnet-5': 0.15 } }),
+      rep(sess(by, 'site', 'Speed up the home page', 'ended', { ended: 26 * HOUR }), { line: 'The home page now loads in 1.1 s instead of 3.4 s: images are resized and load as you scroll.', files: 9, errors: 1, commits: [['Resize and lazy-load the hero images', 27 * HOUR]], cost: [0, 0.94, 0, 2.47], models: { 'claude-opus-5-5': 0.7, 'claude-sonnet-5': 0.3 }, tl: 2000 }),
+      rep(sess(by, 'site', 'Write the launch checklist', 'ended', { ended: 4 * DAY }), { line: 'The launch checklist is in docs/launch.md: 14 items, 9 done.', files: 1, commits: [['Add the launch checklist', 4 * DAY + HOUR]], cost: [0, 0, 0, 0, 0.96, 0, 1.21], models: { 'claude-sonnet-5': 1 }, gone: true }),
+      rep(sess(by, 'health', 'Plan the taper week', 'ended', { ended: 2 * DAY }), { line: 'Taper week planned: three short runs and one rest day.', files: 1, cost: [0, 0, 0.31], models: { 'claude-sonnet-5': 1 } }),
+    ];
+    rep(fx.sessions.find((s) => s.agent === 'home'), { line: 'Three quotes compared. The Bosch one is cheapest to run.', files: 0, cost: [0.12], models: { 'claude-haiku-4-5': 1 } });
+    return { agents: fx.agents, sessions: [...fx.sessions, ...extra], otherCommits: { site: [['Fix a typo in the footer', 2 * DAY]] } };
+  },
   // A brand-new install: no session yet and no folder trusted, so Claude Code asks about every
   // folder it opens in, unless a folder above it was trusted already (like the real CLI).
   fresh() {
     return { agents: baseAgents(), sessions: [], trustSim: true };
   },
 };
+
+/** Report-card data for a mock session, kept off its JSON (non-enumerable). */
+function rep(s, data) {
+  if (s) Object.defineProperty(s, '_rep', { value: data, enumerable: false, configurable: true });
+  return s;
+}
 
 // ---------------------------------------------------------------- 1.2: discover + setup
 // What GET /api/discover finds on Ada's computer: folders from Claude Code's history, git repos
@@ -402,6 +432,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.orgTrusted = !(name === 'empty' || name === 'fresh');
     st.fail = {};
     st.transcripts = new Map();
+    st.otherCommits = fx.otherCommits || {};
+    st.digest = { enabled: false, day: 1, hour: 8, last_sent_at: null };
+    st.otel = { enabled: false, blocked: false };
     st.accounts = [];
     st.disc = discDefaults();
     st.cloned = new Map();
@@ -686,6 +719,108 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     return [...st.sessions.values()]
       .filter((s) => s.status !== 'ended' || Date.parse(s.ended_at || s.last_activity_at) >= cutoff)
       .sort((a, b) => (b.last_activity_at || '').localeCompare(a.last_activity_at || ''));
+  }
+
+  // ---- 1.5 report card (mock data from the fixture's _rep, ages relative to now)
+  const sessionCost = (s, w) => {
+    const r = s._rep;
+    let total = 0;
+    const days = {};
+    (r.cost || []).forEach((usd, ago) => {
+      const d = localDay(Date.now() - ago * DAY);
+      days[d] = (days[d] || 0) + usd;
+    });
+    for (const d of w.list) total += days[d] || 0;
+    return { total, days };
+  };
+  const whenOf = (s) => (s.status === 'ended' ? s.ended_at : s.last_activity_at);
+  function agentReport(a, win) {
+    const now = Date.now();
+    const w = windowRange(win, now);
+    const mine = [...st.sessions.values()].filter((s) => s.agent === a.id && s._rep);
+    const done = mine.filter((s) => Date.parse(whenOf(s)) >= w.start).sort((x, y) => whenOf(y).localeCompare(whenOf(x))).map((s) => ({
+      sid: s.sid, title: s.title, line: s._rep.line, files_changed: s._rep.files || 0, tool_errors: s._rep.errors || 0, turns: 3, when: whenOf(s),
+      live: s.status !== 'ended', status: s.status, transcript: s._rep.gone ? 'gone' : 'ok',
+      commits: a.repo ? (s._rep.commits || []).map(([subject, ago], i) => ({ hash: `${s.sid.slice(0, 6)}${i}a1b2c`, subject, at: iso(ago) })) : null,
+    }));
+    const byDay = Object.fromEntries(w.list.map((d) => [d, 0]));
+    const byModel = {};
+    const tops = [];
+    let total = 0;
+    for (const s of mine) {
+      const c = sessionCost(s, w);
+      if (!c.total) continue;
+      total += c.total;
+      for (const d of w.list) byDay[d] += c.days[d] || 0;
+      for (const [model, share] of Object.entries(s._rep.models || {})) byModel[model] = (byModel[model] || 0) + c.total * share;
+      tops.push({ sid: s.sid, title: s.title, usd: c.total, account: null });
+    }
+    tops.sort((x, y) => y.usd - x.usd);
+    const other = a.repo ? (st.otherCommits[a.id] || []).filter(([, ago]) => now - ago >= w.start).map(([subject, ago], i) => ({ hash: `0ther${i}9f8e7`, subject, at: iso(ago) })) : [];
+    return {
+      schema: 1, generated_at: new Date(now).toISOString(), window: { key: win, from: new Date(w.start).toISOString(), to: new Date(now).toISOString(), days: w.list },
+      agent: { id: a.id, name: a.name, kind: a.kind, has_repo: !!a.repo }, done,
+      repo_commits: a.repo ? { other, errors: [] } : null,
+      needs: [],
+      cost: {
+        total_usd: total, label: COST_LABEL, complete: true, unknown_models: [], sessions_without_cost: 0,
+        by_day: w.list.map((d) => ({ day: d, usd: byDay[d] })),
+        by_model: Object.entries(byModel).map(([model, usd]) => ({ model, usd })).sort((x, y) => y.usd - x.usd),
+        by_account: [], top_sessions: tops.slice(0, 3),
+      },
+      next: nextOf(nowMd(a), now - (a._nowAge ?? (a._now ? 2 * DAY : 9 * DAY)), now),
+    };
+  }
+  function orgReport() {
+    const now = Date.now();
+    const week = windowRange('7d', now);
+    const today = windowRange('today', now);
+    const all = [...st.sessions.values()].filter((s) => s._rep);
+    const sum = (list, w) => list.reduce((n, s) => n + sessionCost(s, w).total, 0);
+    const agents = st.agents.map((a) => {
+      const mine = all.filter((s) => s.agent === a.id);
+      const ended = mine.filter((s) => s.status === 'ended').map((s) => s.ended_at).sort().reverse();
+      const needs = [...st.sessions.values()].filter((s) => s.agent === a.id && (s.status === 'needs_you' || (s.status === 'ready' && s.last_message))).length;
+      return { id: a.id, name: a.name, kind: a.kind, cost_usd: sum(mine, week), cost_complete: true, done: mine.filter((s) => Date.parse(whenOf(s)) >= week.start).length, needs, last_done_at: ended[0] || null };
+    });
+    return { schema: 1, generated_at: new Date(now).toISOString(), window: { key: '7d' }, label: COST_LABEL, totals: { today_usd: sum(all, today), week_usd: sum(all, week), complete: true }, agents };
+  }
+  function timelineOf(s, after) {
+    const r = s._rep;
+    const t0 = Date.parse(s.created_at);
+    const all = [];
+    const turns = r && r.tl ? r.tl : 3;
+    const push = (e) => all.push({ ...e, n: all.length });
+    for (let i = 0; i < turns; i++) {
+      const at = (k) => new Date(t0 + i * 60000 + k * 1000).toISOString();
+      push({ kind: 'prompt', ts: at(0), text: i === 0 ? (s.title || 'Get started') : `Keep going: step ${i + 1}`, turn: i + 1, depth: 0, cost: 0.0123 + (i % 7) * 0.002, cost_complete: true, ...(st.otel.enabled ? { api: { requests: 2, ms: 3400 } } : {}) });
+      push({ kind: 'say', ts: at(1), text: i === 0 ? 'Let me look at how the page is built first.' : 'Running the next check.', depth: 0 });
+      push({ kind: 'tool', id: `toolu_${i}a`, name: 'Bash', summary: i % 5 === 1 ? 'npm test' : 'git status', ts: at(2), depth: 0, ms: 1400 + (i % 3) * 600, ok: i % 5 !== 1, ...(st.otel.enabled ? { approval: { decision: 'accept', source: 'user_temporary', text: 'you allowed it once' } } : {}) });
+      if (i === 0) {
+        push({ kind: 'tool', id: 'toolu_agent', name: 'Agent', summary: 'Check the page on small phones', ts: at(3), depth: 0, ms: 41000, ok: true });
+        push({ kind: 'subagent', ts: at(4), description: 'Check the page on small phones', agent_type: 'general-purpose', depth: 1, parent: 'toolu_agent' });
+        push({ kind: 'tool', id: 'toolu_sub1', name: 'Read', summary: 'src/components/Hero.tsx', ts: at(5), depth: 1, ms: 120, ok: true });
+        push({ kind: 'say', ts: at(6), text: 'The hero uses a fixed 1200 px width, so it overflows on phones.', depth: 1 });
+      }
+      push({ kind: 'tool', id: `toolu_${i}b`, name: 'Edit', summary: 'src/components/Hero.tsx', ts: at(8), depth: 0, ms: 300, ok: true });
+    }
+    if (r && r.gone) return { entries: [], next: after, more: false, total: 0, transcript: 'gone', summary: { turns: 6, tools: 21, last_line: r.line, cost: { usd: 2.17, complete: true } }, status: s.status, detailed: st.otel.enabled };
+    const page = all.filter((e) => e.n > after).slice(0, 500);
+    const next = page.length ? page[page.length - 1].n : after;
+    return { entries: page, next, more: all.length > 0 && all[all.length - 1].n > next, total: all.length, transcript: 'ok', status: s.status, cost: { usd: all.filter((e) => e.kind === 'prompt').reduce((n, e) => n + e.cost, 0), source: 'repriced', complete: true }, label: COST_LABEL, detailed: st.otel.enabled };
+  }
+  function digestStatus() {
+    const ch = channelStatus();
+    const channel = ch.telegram.paired ? 'telegram' : ch.imessage.enabled ? 'imessage' : null;
+    const labels = Object.fromEntries(st.agents.map((a) => [a.id, a.name]));
+    return { enabled: st.digest.enabled, day: st.digest.day, day_name: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][st.digest.day], hour: st.digest.hour, channel,
+      preview: digestText(orgReport(), { labels }), labels: st.digest.enabled ? labels : {}, ...(st.digest.enabled ? {} : { preview_labels: labels }), last_sent_at: null, last_error: null,
+      next_at: st.digest.enabled ? new Date(Date.now() + 3 * DAY).toISOString() : null };
+  }
+  function otelStatus() {
+    return { enabled: st.otel.enabled, active: st.otel.enabled && !st.otel.blocked, blocked: st.otel.blocked,
+      ...(st.otel.blocked ? { reason: 'Your Claude Code already has telemetry settings, so the detailed timeline stays off and Clawdling uses transcripts.', found: [{ where: 'your Claude Code settings', key: 'OTEL_EXPORTER_OTLP_ENDPOINT' }] } : {}),
+      note: "It takes effect at each session's next start: sessions started earlier keep their setting until they restart." };
   }
 
   function channelStatus() {
@@ -1208,6 +1343,43 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       send(res, 201, publicAgent(a));
       return;
     }
+    // 1.5: the report card, the org's totals, a session's Timeline, the Monday report, the detailed timeline.
+    mm = p.match(/^\/api\/agents\/([^/]+)\/report$/);
+    if (mm && m === 'GET') {
+      const a = agentById(decodeURIComponent(mm[1]));
+      if (!a) { send(res, 404, { error: `no agent "${mm[1]}"` }); return; }
+      const win = url.searchParams.get('window') || '7d';
+      if (!['today', '7d', '30d'].includes(win)) { send(res, 400, { error: 'window must be today, 7d or 30d' }); return; }
+      send(res, 200, agentReport(a, win));
+      return;
+    }
+    if (p === '/api/org/report' && m === 'GET') { send(res, 200, orgReport()); return; }
+    mm = p.match(/^\/api\/sessions\/([^/]+)\/timeline$/);
+    if (mm && m === 'GET') {
+      const s = st.sessions.get(decodeURIComponent(mm[1]));
+      if (!s) { send(res, 404, { error: 'no such session' }); return; }
+      const raw = url.searchParams.get('after');
+      const after = raw === null || raw === '' ? -1 : Number(raw);
+      if (!Number.isInteger(after) || after < -1) { send(res, 400, { error: 'after must be an integer >= -1' }); return; }
+      send(res, 200, timelineOf(s, after));
+      return;
+    }
+    if (p === '/api/digest' && m === 'GET') { send(res, 200, digestStatus()); return; }
+    if (p === '/api/digest' && m === 'POST') {
+      if (body.enabled === true && !channelStatus().telegram.paired && !channelStatus().imessage.enabled) { send(res, 400, { error: 'Pair Telegram or iMessage with Donna first: the Monday report goes to that chat.' }); return; }
+      if (typeof body.enabled === 'boolean') st.digest.enabled = body.enabled;
+      if (Number.isInteger(body.day)) st.digest.day = body.day;
+      if (Number.isInteger(body.hour)) st.digest.hour = body.hour;
+      send(res, 200, digestStatus());
+      return;
+    }
+    if (p === '/api/otel' && m === 'GET') { send(res, 200, otelStatus()); return; }
+    if (p === '/api/otel' && m === 'POST') {
+      if (st.otel.blocked && body.enabled) { send(res, 409, { error: 'Your Claude Code already has telemetry settings, so the detailed timeline stays off and Clawdling uses transcripts.', found: [{ where: 'your Claude Code settings', key: 'OTEL_EXPORTER_OTLP_ENDPOINT' }] }); return; }
+      st.otel.enabled = !!body.enabled;
+      send(res, 200, otelStatus());
+      return;
+    }
     if (p === '/api/channels' && m === 'GET') { send(res, 200, channelStatus()); return; }
     if (p === '/api/notify' && m === 'GET') { send(res, 200, { needs_you: !!st.notifyNeedsYou, channel: st.org.channels?.telegram?.chat_id ? 'telegram' : null }); return; }
     if (p === '/api/notify' && m === 'POST') {
@@ -1255,6 +1427,14 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (p === '/__mock/requests') { send(res, 200, st.requests); return; }
+    // 1.5: the detailed timeline's preflight finds the user's own telemetry settings ({blocked}).
+    if (p === '/__mock/otel' && req.method === 'POST') {
+      const b = await readBody(req);
+      st.otel.blocked = !!(b && b.blocked);
+      if (st.otel.blocked) st.otel.enabled = false;
+      send(res, 200, { ok: true });
+      return;
+    }
     if (p === '/__mock/transcript' && req.method === 'POST') {
       // A chat transcript for one session: [{role, text, tools?, model?}] (what the server reads from Claude Code's JSONL).
       const b = await readBody(req);

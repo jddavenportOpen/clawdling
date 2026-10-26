@@ -35,6 +35,10 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
     CLAWDLING_OSASCRIPT_BIN: path.join(repo, 'test', 'fixtures', 'fake-osascript.mjs'),
     CLAWDLING_CHATDB_PATH: path.join(home, 'no-chat.db'),
     CLAWDLING_WEB_DIR: path.join(ROOT, 'web'), // always test THIS cockpit
+    // Claude Code's own folder for this run: the fake claude writes its transcripts there (the
+    // report card and Timeline read them), and nothing reads the real ~/.claude.
+    CLAUDE_CONFIG_DIR: path.join(home, 'claude-config'),
+    CLAWDLING_MANAGED_SETTINGS: '',
   });
   execFileSync(process.execPath, [cli, 'init', '--defaults'], { env, stdio: 'ignore', timeout: 30000 });
 

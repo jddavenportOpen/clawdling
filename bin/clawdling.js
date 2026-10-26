@@ -598,7 +598,7 @@ async function cmdLs(args) {
 }
 
 const WINDOW_LABEL = { today: 'today', '7d': 'the last 7 days', '30d': 'the last 30 days' };
-const usd = (x) => (x === null || x === undefined || !Number.isFinite(x) ? 'unknown' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
+const usd = (x) => (x === null || x === undefined || !Number.isFinite(x) ? 'unknown' : x === 0 ? '$0.00' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
 const NEED_WORD = { question: 'a question', plan: 'a plan to approve', permission: 'a permission', error: 'a failed turn', sign_in: 'a sign-in', startup: 'a question before it starts', reply: 'your reply' };
 
 async function cmdReport(args) {

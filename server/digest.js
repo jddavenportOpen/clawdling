@@ -33,7 +33,7 @@ export function weekSendTime(ms, { day = 1, hour = 8 } = {}) {
   return new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + offset, hour, 0, 0, 0).getTime();
 }
 
-const money = (x) => (!Number.isFinite(x) ? 'unknown' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
+const money = (x) => (!Number.isFinite(x) ? 'unknown' : x === 0 ? '$0' : x > 0 && x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`);
 
 /**
  * The message, exactly as sent. `org` is Reports.orgReport({window: '7d'}); `labels` maps agent id
