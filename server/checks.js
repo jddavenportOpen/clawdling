@@ -421,17 +421,25 @@ export class Checks {
     const names = new Set();
     for (const d of filtersFrom) for (const n of await this.filterNames(d)) names.add(n);
     const filters = [...names].flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`, '-c', `filter.${n}.required=false`]);
-    return this.exec('git', [...gitSafe(this.hooksDir()), ...filters, ...(await this.systemEol()), '-C', repo, ...args], { timeout, env: this.gitEnv(), ...(maxBuffer ? { maxBuffer } : {}) });
+    return this.exec('git', [...gitSafe(this.hooksDir()), ...filters, ...(await this.systemEol(repo)), '-C', repo, ...args], { timeout, env: this.gitEnv(), ...(maxBuffer ? { maxBuffer } : {}) });
   }
 
   /**
    * The system config is not read (GIT_CONFIG_NOSYSTEM), but Git for Windows keeps core.autocrlf
    * there: carry its line-ending settings over, so the snapshot has the line endings your checkout has.
    */
-  async systemEol() {
-    if (this.eolArgs) return this.eolArgs;
+  async systemEol(repo) {
+    this.eolArgs = this.eolArgs || new Map();
+    if (this.eolArgs.has(repo)) return this.eolArgs.get(repo);
     const out = [];
     for (const key of ['core.autocrlf', 'core.eol']) {
+      // Your own or the repo's setting wins, as it does for git itself: carry the system one only when neither sets it.
+      try {
+        await this.exec('git', ['-C', repo, 'config', '--get', key], { timeout: GIT_TIMEOUT, env: this.gitEnv() });
+        continue;
+      } catch {
+        // not set at the user or repo level
+      }
       try {
         const { stdout } = await this.exec('git', ['config', '--system', '--get', key], { timeout: GIT_TIMEOUT, env: { ...this.gitEnv(), GIT_CONFIG_NOSYSTEM: '0' } });
         const v = String(stdout).trim();
@@ -440,7 +448,7 @@ export class Checks {
         // not set
       }
     }
-    this.eolArgs = out;
+    this.eolArgs.set(repo, out);
     return out;
   }
 
@@ -505,7 +513,8 @@ export class Checks {
       const m = /^120000 [0-9a-f]+ \d+\t(.+)$/s.exec(entry);
       if (!m) continue;
       const file = path.join(dir, m[1]);
-      if (!path.relative(dir, file) || path.relative(dir, file).startsWith('..')) continue;
+      const rel = path.relative(dir, file);
+      if (!rel || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) continue;
       try {
         if (fs.lstatSync(file).isSymbolicLink()) {
           fs.unlinkSync(file);

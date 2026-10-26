@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { badgeText, checkOf, claimEvidence, detectClaim, fixMessage, labelClaim, resultInfo, segments, sentences, whenText, writesFiles } from '../../server/claims.js';
+import { badgeText, canonical, checkOf, claimEvidence, detectClaim, fixMessage, labelClaim, resultInfo, segments, sentences, whenText, writesFiles } from '../../server/claims.js';
 import { LedgerReader, summarize } from '../../server/ledger.js';
 
 // ------------------------------------------------------------------------------- claim patterns
@@ -228,11 +228,11 @@ test('labels: the latest check decides; a declined or blocked check is not a che
   assert.equal(labelClaim(bg).label, 'not_verified');
 });
 
-test('labels: a masked check counts only when its output says pass or fail', () => {
+test('labels: a check whose exit code is hidden never verifies or contradicts; its failure keeps Not verified', () => {
   const [ok] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -5', 'Tests: 4 passed, 4 total'), say('Done.')]);
-  assert.equal(labelClaim(ok).label, 'verified');
+  assert.equal(labelClaim(ok).label, 'not_verified', 'not a canonical run');
   const [bad] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -5', 'Tests: 1 failed, 3 passed'), say('Done.')]);
-  assert.equal(labelClaim(bad).label, 'contradicted', 'the pipe hid the exit code; the output did not');
+  assert.equal(labelClaim(bad).label, 'not_verified', 'a failure shown: never Verified, but whose it is cannot be told');
   const [unclear] = claimsOf([prompt('x'), edit(), bash('npm test | tail -1', 'Done in 2.1s'), say('Done.')]);
   assert.equal(labelClaim(unclear).label, 'not_verified');
 });
@@ -335,7 +335,7 @@ test('review: in an && chain with other commands, only a pass counts (a failure 
   const [e] = claimsOf([prompt('x'), edit(), bash('npm test && npm run build', 'Exit code 1\n# pass 5\n# fail 0\nFound 2 errors', true), say('All tests pass.')]);
   assert.equal(labelClaim(e).label, 'not_verified', 'the build\'s errors are not the tests\'');
   const [f] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test', '# pass 5\n# fail 0'), say('Done.')]);
-  assert.equal(labelClaim(f).label, 'verified', 'the whole line passed');
+  assert.equal(labelClaim(f).label, 'not_verified', 'only a single command (after cd/export) is a canonical run');
   const [d] = claimsOf([prompt('x'), edit(), bash('cd app && npm test', 'Exit code 1\nnot ok 1 - adds\n# fail 1', true), say('Done.')]);
   assert.equal(labelClaim(d).label, 'contradicted', 'cd is not another command, and the failure marks are the test\'s');
   const [e2] = claimsOf([prompt('x'), edit(), bash('cd nope && npm test', 'Exit code 1\ncd: no such file or directory: nope', true), say('Done.')]);
@@ -375,11 +375,11 @@ test('review 3: a later || or ; hides the check\'s exit; a per-test pass line is
   const [a] = claimsOf([prompt('x'), edit(), bash('npm test && npm run build || true', 'FAIL test/a.test.js\n  adds'), say('Done.')]);
   assert.equal(labelClaim(a).label, 'not_verified', '`|| true` made the line pass');
   const [b] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -20', '✔ adds (1ms)\n✖ subtracts (2ms)\nℹ tests 2\nℹ pass 1\nℹ fail 1'), say('Done.')]);
-  assert.equal(labelClaim(b).label, 'contradicted', 'node\'s spec format: ✖ and ℹ fail 1');
+  assert.equal(labelClaim(b).label, 'not_verified', 'node\'s spec format: ✖ and ℹ fail 1 are a failure, behind a pipe');
   const [c] = claimsOf([prompt('x'), edit(), bash('npx jest 2>&1 | head -40', 'PASS src/a.test.js\n  ✓ adds (2 ms)'), say('Done.')]);
   assert.equal(labelClaim(c).label, 'not_verified', 'head may have cut the failure off');
   const [d] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -5', 'ℹ tests 5\nℹ pass 5\nℹ fail 0'), say('Done.')]);
-  assert.equal(labelClaim(d).label, 'verified', 'the totals, with zero failures');
+  assert.equal(labelClaim(d).label, 'not_verified', 'totals behind a pipe are not a canonical run');
   const [e] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -5', '✔ adds (1ms)'), say('Done.')]);
   assert.equal(labelClaim(e).label, 'not_verified', 'one passing test line, no totals');
   const [f] = claimsOf([prompt('x'), edit(), bash('npm ci && npm test 2>&1 | tail', 'npm error code ERESOLVE'), say('Done.')]);
@@ -410,7 +410,7 @@ test('review 4: set +e and set +o pipefail turn the options off; any filter down
   assert.notEqual(labelClaim(a).label, 'verified', 'errexit was turned off again: the exit is the echo\'s');
   const [b] = claimsOf([prompt('x'), edit(), bash('set -o pipefail; set +o pipefail; npm test | cat', '# pass 5\n# fail 0'), say('Done.')]);
   assert.equal(checkOf('set -o pipefail; set +o pipefail; npm test | cat').masked, true);
-  assert.equal(labelClaim(b).label, 'verified', 'totals with zero failures still count when the exit is hidden');
+  assert.equal(labelClaim(b).label, 'not_verified', 'a hidden exit code never verifies');
   const [c] = claimsOf([prompt('x'), edit(), bash("npm test 2>&1 | tail -100 | grep '^# pass'", '# pass 4'), say('Done.')]);
   assert.equal(labelClaim(c).label, 'not_verified', 'grep further down the pipe dropped the failure totals');
   const [d] = claimsOf([prompt('x'), edit(), bash('npm test >/dev/null 2>&1; echo "Tests: 5 passed"', 'Tests: 5 passed'), say('Done.')]);
@@ -451,18 +451,18 @@ test('review 5: set -e does not stop at a check inside an && list; set -euo pipe
   assert.notEqual(labelClaim(a).label, 'verified');
   assert.equal(checkOf('set -euo pipefail; npx jest 2>&1 | tail -30').masked, false, 'pipefail from the flag group');
   const [b] = claimsOf([prompt('x'), edit(), bash('npm test 2>&1 | tail -20 || true', '# pass 5\n# fail 0'), say('Done.')]);
-  assert.equal(labelClaim(b).label, 'verified', '`|| true` prints nothing: the totals still count');
+  assert.equal(labelClaim(b).label, 'not_verified', '`|| true` hides the exit code');
   const long = `npm test ${'-x '.repeat(400)}|| true`;
   const [c] = claimsOf([prompt('x'), edit(), bash(long, 'not ok 1\n# fail 1'), say('Done.')]);
   assert.equal(labelClaim(c).label, 'not_verified', 'only its first 1,000 characters were kept');
 });
 
-test('a run of only some tests can contradict a claim, never verify it', () => {
+test('a run of only some tests never verifies; its failure keeps Not verified', () => {
   for (const cmd of ['pytest -k cart', 'npx jest -t adds', 'go test -run TestCart ./...', 'npx vitest run --testNamePattern=adds', 'npx mocha --grep cart']) {
     const [a] = claimsOf([prompt('x'), edit(), bash(cmd, '# pass 3\n# fail 0'), say('Done. All tests pass.')]);
     assert.equal(labelClaim(a).label, 'not_verified', cmd);
-    const [b] = claimsOf([prompt('x'), edit(), bash(cmd, 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done. All tests pass.')]);
-    assert.equal(labelClaim(b).label, 'contradicted', cmd);
+    const [b] = claimsOf([prompt('x'), edit(), bash(cmd, 'Exit code 1\nnot ok 1\n# fail 1', true), bash('npm test'), say('Done. All tests pass.')]);
+    assert.equal(labelClaim(b).label, 'not_verified', `${cmd}: a failure a canonical pass of another command does not settle`);
   }
 });
 
@@ -493,7 +493,9 @@ test('review 6: set -e does not make a check behind && count; selection by posit
   const approved = [{ name: 'tests', run: 'pytest -m "not slow"' }];
   const [y] = claimsOf([prompt('x'), edit(), bash('pytest -m "not slow"', '5 passed in 0.2s'), say('Done. All tests pass.')]);
   assert.equal(labelClaim(y, { approved }).label, 'verified', 'the command you approved is your definition of the check');
-  assert.equal(checkOf('npm test -- --passWithNoTests', { detected: [{ kind: 'test', cmd: 'npm test' }] }), null, 'no generic fallback past a skip flag');
+  assert.equal(canonical('npm test -- --passWithNoTests', { detected: [{ kind: 'test', cmd: 'npm test' }] }), null, 'a skip flag is never a canonical run');
+  const [z] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm test -- --passWithNoTests', 'Exit code 1\nFAIL a', true), say('Done.')]);
+  assert.equal(labelClaim(z).label, 'not_verified', 'and its failure still counts');
   for (const cmd of ['go test -c ./...', 'pytest --fixtures', 'cargo nextest list']) assert.equal(checkOf(cmd), null, cmd);
 });
 
@@ -504,14 +506,33 @@ test('review 6: a cut command and PowerShell writes are changes', () => {
 });
 
 test('review 6: an older failure is kept even after 30 other commands', () => {
+  const head = [prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true)]; // in time order
   const noise = Array.from({ length: 35 }, (_, i) => bash(`git status ${i}`, 'clean'));
-  const [a] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), ...noise, bash('npm run lint', 'All checks passed'), say('Done.')]);
+  const [a] = claimsOf([...head, ...noise, bash('npm run lint', 'All checks passed'), say('Done.')]);
   assert.equal(labelClaim(a).label, 'contradicted');
 });
 
-test('a whole-suite pass covers an earlier failure of part of it', () => {
+test('a failure of part of a suite is settled only by a passing ship check; a part passing never settles the whole', () => {
   const [a] = claimsOf([prompt('x'), edit(), bash('npx jest src/cart.test.js', 'Exit code 1\nFAIL src/cart.test.js', true), bash('npx jest', 'Tests: 12 passed, 12 total'), say('Done. All tests pass.')]);
-  assert.equal(labelClaim(a).label, 'verified');
+  assert.equal(labelClaim(a).label, 'not_verified', 'what the whole run covered cannot be told from the record');
+  const at = new Date(Date.parse(a.at) + 60000).toISOString();
+  assert.equal(labelClaim(a, { shipRuns: [{ at, results: [{ name: 'tests', cmd: 'npx jest', kind: 'test', ok: true }] }] }).label, 'verified', 'a passing ship check settles it');
   const [b] = claimsOf([prompt('x'), edit(), bash('npx jest', 'Exit code 1\nFAIL src/cart.test.js\nTests: 1 failed, 11 passed', true), bash('npx jest src/cart.test.js', 'Tests: 3 passed, 3 total'), say('Done. All tests pass.')]);
   assert.equal(labelClaim(b).label, 'contradicted', 'a part passing never covers the whole suite failing');
+});
+
+test('canonical runs: one command, the project\'s check or a standard runner, harmless flags only', () => {
+  for (const cmd of ['npm test', 'npm test -- --ci', 'cd app && npm test', 'CI=1 npm test', 'pytest -q', 'go test ./...', 'cargo test', 'npx eslint .', 'npx tsc --noEmit', 'ruff check .', 'npm test 2>&1']) assert.ok(canonical(cmd), cmd);
+  for (const cmd of ['npm test | tail', 'npm test || true', 'npm ci && npm test', 'npm test; echo done', 'pytest tests/a.py', 'pytest -k cart', 'npm test -- --grep x', 'npm test > out.txt', 'npm test &', 'jest --passWithNoTests', 'go test -run TestA ./...']) assert.equal(canonical(cmd), null, cmd);
+  assert.equal(canonical('pytest -m "not slow"', { approved: [{ name: 'tests', run: 'pytest -m "not slow"' }] }).kind, 'test');
+  assert.equal(canonical('npm test -- --ci').id, canonical('npm test').id, 'the same check');
+  assert.notEqual(canonical('npm run lint').id, canonical('npm run typecheck').id);
+});
+
+test('more than 200 commands after the last edit: the older ones could hold a failure, so no Verified from the session alone', () => {
+  const head = [prompt('x'), edit()]; // timestamps come from the order of the calls
+  const noise = Array.from({ length: 205 }, (_, i) => bash(`git status ${i}`, 'clean'));
+  const [a] = claimsOf([...head, ...noise, bash('npm test'), say('Done.')]);
+  assert.equal(a.cmds_dropped, true);
+  assert.equal(labelClaim(a).label, 'not_verified');
 });

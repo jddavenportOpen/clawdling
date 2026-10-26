@@ -333,6 +333,7 @@ const WHOLE = new Set(['./...', '...', '.', './']);
 function runnerWords(a) {
   const [h, b] = a;
   if (['npm', 'pnpm', 'yarn', 'bun'].includes(h)) return b === 'run' || b === 'run-script' ? 3 : 2;
+  if (['ruff', 'biome', 'golangci-lint', 'deno', 'bun', 'uv', 'poetry'].includes(h) && b && !b.startsWith('-')) return 2;
   if (['go', 'cargo', 'dotnet', 'swift', 'mix', 'flutter', 'dart', 'deno', 'make', 'gmake', 'just', 'rake', 'composer', 'mvn', 'mvnw', 'gradle', 'gradlew', 'bazel', 'buck2', 'zig', 'playwright', 'cypress', 'task', 'mage'].includes(h)) return 2;
   if (h === 'vitest' && b === 'run') return 2;
   if (/manage\.py$/.test(h)) return 2;
@@ -425,8 +426,6 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     }
     if (!kind) kind = wordsKind(w);
     if (!kind) continue;
-    // A flag that runs no tests keeps a test command from being a test check, on every path.
-    if (kind === 'test' && w.some((x) => SKIP_EXTRA.test(x))) continue;
     // The exit code that reaches the tool result: the last command's, unless a failure stops the chain.
     // Any later `||`, `;` (without set -e), `&` or pipe (without pipefail) can hide the check's own
     // exit (`npm test && npm run build || true`), not only the operator right after it.
@@ -468,6 +467,8 @@ const PS_WRITES = new Set(['set-content', 'add-content', 'out-file', 'new-item',
 const PKG_WRITES = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'version', 'dedupe', 'prune']);
 
 function segmentWrites(raw) {
+  // A redirection to a quoted file name (`> "a.js"`) writes too.
+  for (const m of raw.matchAll(/(?:^|[^<>&\d])\d?>>?\s*(["'])([^"']*)\1/g)) if (!/^\/dev\//.test(m[2])) return true;
   // A redirection to a file (not 2>&1, not /dev/null), outside quotes.
   const bare = raw.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""');
   for (const m of bare.matchAll(/(?:^|[^<>&\d])\d?>>?\s*([^\s&|;<>]+)/g)) {
@@ -601,7 +602,7 @@ export function resultInfo(content, isError) {
 
 const CLAIMS_MAX = 50;
 const SHIP_WINDOW_MS = 24 * 3600 * 1000;
-const CMDS_PER_CLAIM = 30;
+const CMDS_PER_CLAIM = 200;
 
 /**
  * The evidence for every claim in one transcript (main file plus subagents), compact enough for a
@@ -649,9 +650,8 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     const otherEditsEnd = before.filter((x) => x !== lastEdit && isWorkEdit(x.t, where)).reduce((m, x) => Math.max(m, x.t.end ?? x.t.ts), -Infinity);
     const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter && lastEdit.t.ts >= otherEditsEnd;
     const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
-    // The newest commands, plus the failed ones among the older (a failure must not fall out of the record).
-    const failedCmd = ({ t }) => t.error === true || (t.res && (t.res.fail || (t.res.exit !== null && t.res.exit !== 0)));
-    const kept = [...after.slice(0, -CMDS_PER_CLAIM).filter(failedCmd).slice(-CMDS_PER_CLAIM), ...after.slice(-CMDS_PER_CLAIM)];
+    // The newest commands; when there were more, the claim says so (an older failure could be among them).
+    const kept = after.slice(-CMDS_PER_CLAIM);
     const cmds = kept.map(({ t }) => ({
       cmd: t.cmd,
       at: new Date(t.end ?? t.ts).toISOString(),
@@ -672,6 +672,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       last_edit_at: lastEdit ? new Date(editsEnd).toISOString() : null,
       next_edit_at: nextEdit ? new Date(nextEdit.t.ts).toISOString() : null,
       cmds,
+      ...(after.length > CMDS_PER_CLAIM ? { cmds_dropped: true } : {}),
     });
   }
   return out.slice(-CLAIMS_MAX);
@@ -707,52 +708,95 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   const since = c.last_edit_at ? Date.parse(c.last_edit_at) : -Infinity;
   const said = Date.parse(c.at || '') || 0;
   // A ship check speaks for this claim only soon after it (24 h) and before the session changed
-  // anything again (`until`, the next claim's last edit): one check never relabels a week.
+  // anything again (`until`, its next change): one check never relabels a week.
   const shipFrom = Math.max(since, said - 60000);
   const shipTo = Math.min(said + SHIP_WINDOW_MS, c.until ? Date.parse(c.until) : Infinity);
+  // What the session's own commands say. Only a canonical run (one command: the project's check,
+  // or a standard runner with harmless flags, its exit code visible) can verify or contradict. Any
+  // other recognized check that shows a failure (piped, chained, `|| true`, only some tests...)
+  // keeps the claim at Not verified: the record cannot tell whose failure it is, or what it covered.
   const checks = [];
+  if (c.cmds_dropped) checks.push({ kind: 'check', id: null, canonical: false, ok: false, at: c.last_edit_at || c.at, cmd: '(older commands)', first_error_line: null });
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
-    if (x.cut) continue; // only its first 1,000 characters were kept: the rest could hide its exit
+    if (x.cut) continue; // only its first 1,000 characters were kept (and it counts as a change)
     const k = checkOf(x.cmd, { approved, detected });
     if (!k) continue;
-    let ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later, k.behind);
-    if (ok === true && k.partial) ok = null;
-    if (ok === null) continue;
-    checks.push({ kind: k.kind, id: k.id, partial: k.partial, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
+    const signal = x.error === true || (x.exit !== null && x.exit !== undefined && x.exit !== 0) || x.fail === true;
+    const canon = canonical(x.cmd, { approved, detected });
+    const first = x.err1 || (x.exit ? `Exit code ${x.exit}` : null);
+    if (canon && !signal) checks.push({ kind: canon.kind, id: canon.id, canonical: true, ok: true, cmd: x.cmd, at: x.at });
+    // A failure behind `cd x &&` with no failure marks may be the cd's: a possible failure, not a canonical one.
+    else if (canon && (!canon.setupFirst || x.fail === true)) checks.push({ kind: canon.kind, id: canon.id, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
+    else if (signal) checks.push({ kind: k.kind, id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
   }
+  // Each ship-check run after the claim is one check: it passed only when every step passed. A
+  // passing run (the whole approved list, on a snapshot of the work) settles everything before it.
   for (const r of Array.isArray(shipRuns) ? shipRuns : []) {
     const t = Date.parse(r.at || r.started_at || '');
     if (!Number.isFinite(t) || !(t > shipFrom) || !(t < shipTo)) continue;
-    for (const x of Array.isArray(r.results) ? r.results : []) {
-      if (x.setup) continue;
-      checks.push({ kind: x.kind || 'check', id: checkId(x.cmd), cmd: x.cmd, at: new Date(t).toISOString(), ok: x.ok === true, first_error_line: x.ok ? null : x.err1 || null, ship: true });
-    }
+    const steps = (Array.isArray(r.results) ? r.results : []).filter((x) => !x.setup);
+    if (!steps.length) continue;
+    const bad = steps.find((x) => x.ok !== true);
+    checks.push({ ship: true, kinds: steps.map((x) => x.kind || 'check'), failedKinds: steps.filter((x) => x.ok !== true).map((x) => x.kind || 'check'), canonical: true, ok: !bad, cmd: bad ? bad.cmd : steps[steps.length - 1].cmd, at: new Date(t).toISOString(), first_error_line: bad ? bad.err1 || null : null });
   }
   checks.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
-  const latest = (pred) => {
-    const list = checks.filter(pred);
-    return list.length ? list[list.length - 1] : null;
-  };
   const needs = c.kind === 'tests' && Array.isArray(c.needs) && c.needs.length ? c.needs : null;
+  const counts = (x) => !needs || (x.ship ? (x.ok ? x.kinds : x.failedKinds).some((k) => needs.includes(k)) : needs.includes(x.kind) || (!x.canonical && x.kind === 'check'));
+  // A failure stands unless something after it settles it: a passing ship-check run, or a canonical
+  // pass of the same check (the same command, whatever harmless flags). A lint pass never settles a
+  // failed typecheck; a pass of part of a suite never settles anything.
+  const settles = (p, f) => p.ok && (p.ship || (p.canonical && f.canonical && !f.ship && p.id !== null && p.id === f.id));
+  const standing = checks.filter((f, i) => !f.ok && counts(f) && !checks.some((p, j) => j > i && settles(p, f)));
   const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: x.first_error_line || null, ...(x.ship ? { ship: true } : {}) } : null);
-  // A failure stands unless the same check passed after it: the same command (whatever extra flags),
-  // or the whole suite it was a part of (`npm test` after a failed `npm test tests/a.test.js`). A lint
-  // that passed never cancels a failed typecheck, nor a later ship-check step a failed one.
-  const covers = (p, f) => p.id === f.id || (!p.partial && f.id.startsWith(`${p.id} `));
-  const standing = (pred) => checks.filter((f, i) => pred(f) && !f.ok && !checks.some((p, j) => j > i && p.ok && covers(p, f)));
-  const lastOf = (list) => (list.length ? list[list.length - 1] : null);
-  if (!needs) {
-    const l = latest(() => true);
-    if (!l) return { label: 'not_verified', check: null };
-    const bad = lastOf(standing(() => true));
-    if (bad) return { label: 'contradicted', check: strip(bad) };
-    return { label: 'verified', check: strip(l) };
-  }
-  // A tests claim names what passed: each one needs a check of that kind, and no failure standing.
-  const bad = lastOf(standing((x) => needs.includes(x.kind)));
-  if (bad) return { label: 'contradicted', check: strip(bad) };
-  if (needs.every((n) => checks.some((x) => x.kind === n && x.ok))) return { label: 'verified', check: strip(latest((x) => needs.includes(x.kind))) };
+  const canonFail = standing.filter((x) => x.canonical).pop();
+  if (canonFail) return { label: 'contradicted', check: strip(canonFail) };
+  if (standing.length) return { label: 'not_verified', check: null };
+  const passes = checks.filter((x) => x.ok && counts(x));
+  const enough = needs ? needs.every((n) => passes.some((x) => (x.ship ? x.kinds.includes(n) : x.kind === n))) : passes.length > 0;
+  if (enough) return { label: 'verified', check: strip(passes[passes.length - 1]) };
   return { label: 'not_verified', check: null };
+}
+
+// Flags that change nothing about what a run covers: a run with only these is still the whole check.
+const HARMLESS = /^(-q|-qq|--quiet|-v|-vv|-vvv|--verbose|--ci|--color|--colors|--no-color|--no-colors|--color=\w+|--silent|-s|--runInBand|-i|--no-cache|--tb=\w+|--reporter=\S+|--maxWorkers=\d+%?|-x|--exitfirst|--no-header|-rA|-ra|--durations=\d+|-race|--race|-count=1|--noEmit|--pretty|--pretty=\w+|--max-warnings=\d+|--format=\w+|--no-fund|--no-audit|--locked|--frozen|--offline|--all-targets|--workspace|--all|--no-watch|--watch=false|--run|--coverage|--cov|--cov-report=\S+|--forceExit|--detectOpenHandles|--passWithNoTests=false)$/;
+// Steps before the command that run no check: `cd app &&`, `export CI=1 &&`, `NODE_ENV=test`.
+const SETUP_STEP = (w) => w[0] === 'cd' || w[0] === 'pushd' || w[0] === 'export' || (w.length > 0 && w.every((y) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(y)));
+
+/**
+ * Is this shell line a canonical run of a check? One command (after optional `cd x &&` style setup
+ * steps; a trailing `2>&1` is fine): an approved or detected command exactly, or a standard runner
+ * (npm test, pytest, go test ./..., cargo test, eslint ., tsc --noEmit...), with only harmless extra
+ * flags. Returns {kind, id, setupFirst} or null.
+ */
+export function canonical(cmd, { approved = [], detected = [] } = {}) {
+  const segs = segments(cmd);
+  let i = 0;
+  while (i < segs.length - 1 && segs[i].op === '&&' && SETUP_STEP(words(segs[i].raw))) i++;
+  const last = segs.length - 1;
+  if (i !== last && !(i === last - 1 && segs[i].op === ';' && !segs[last].raw.trim())) return null;
+  if (segs[i].op && segs[i].op !== ';') return null;
+  const raw = segs[i].raw.replace(/\s+2>&1\s*$/, '').trim();
+  if (/[<>|&]/.test(raw.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, ''))) return null;
+  const w = words(raw);
+  if (!w.length || runsNothing(w)) return null;
+  const harmless = (extra) => extra.every((x) => HARMLESS.test(x) || WHOLE.has(x) || x === '--');
+  for (const ap of approved) {
+    if (!ap || typeof ap.run !== 'string') continue;
+    const b = words(ap.run.trim());
+    if (b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmless(w.slice(b.length))) return { kind: NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(b) || 'check', id: `approved:${ap.run.trim()}`, setupFirst: i > 0 };
+  }
+  for (const d of detected) {
+    if (!d || typeof d.cmd !== 'string') continue;
+    const b = words(d.cmd.trim());
+    const kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' || d.kind === 'format' ? 'lint' : d.kind === 'check' ? 'check' : null;
+    if (kind && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmless(w.slice(b.length))) return { kind, id: `detected:${d.cmd.trim()}`, setupFirst: i > 0 };
+  }
+  const kind = wordsKind(w);
+  const a = unwrap(w);
+  if (!kind || !a) return null;
+  const n = runnerWords(a);
+  if (!harmless(a.slice(n))) return null;
+  return { kind, id: `runner:${a.slice(0, n).join(' ')}`, setupFirst: i > 0 };
 }
 
 /** The one message "Ask the agent to fix it" sends, exactly as shown to the owner first. */

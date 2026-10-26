@@ -499,21 +499,25 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   the stack's detected test/build/lint commands, or the generic list (`npm test`, `pnpm test`,
   `yarn test`, `pytest`, `go test`, `cargo test`, `make test`, `make check`, `npm run build`,
   `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`, `python -m`, `cd x &&`).
-  The rules lean to **not_verified** whenever the record cannot tell (added in review, after six
-  rounds of edge cases): a check whose exit code cannot reach the result (piped, `|| true`, `;`
-  without `set -e`, behind `&&`) counts only from its output's totals, and not at all when the
-  output is filtered (anything down the pipe but `tail`, `cat`, `tee`) or a later command could
-  have printed them; in a line with other commands a failure counts only when it is clearly the
-  check's; a run of only some tests (selection flags, or a file or name argument on a generic
-  command) can contradict a claim but never verify it (the flags added to an approved command are
-  the only selection for it: the command you approve is your definition of the check); a command
-  cut at 1,000 characters is no check and counts as a change. Each ship-check run after the claim
-  (and before the session's next change, within 24 hours) adds its steps. A failure stands unless
-  the same check (the same command, whatever extra flags) passed after it: **contradicted** when
-  one stands, **verified** when every check passed, **not_verified** when there is none (the
-  default); a `tests` claim needs a check of each kind it names; a completion claim with no edit
-  is **no_changes**. Ship-check runs that left anything out (new files git does not track,
-  submodules, filtered files) are not evidence.
+  Only a **canonical run** can verify or contradict (added in review, after seven rounds of edge
+  cases on arbitrary shell lines): one command, after optional `cd x &&`, `export` or `VAR=value`
+  steps and a trailing `2>&1`; it is an approved or detected command, or a standard runner (`npm
+  test`, `pytest`, `go test ./...`, `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with
+  only harmless extra flags (`-q`, `-v`, `--ci`, `--color`, `--noEmit`...); its exit code is
+  visible. Any other recognized check that shows a failure (a non-zero exit, an error, or failure
+  marks: piped, chained, `|| true`, a file or name argument, a selection or skip flag) keeps the
+  claim at **not_verified**: the record cannot tell whose failure it is or what the run covered. A
+  failure stands unless something after it settles it: a canonical pass of the same check (the same
+  command, whatever harmless flags), or a passing ship-check run. Each ship-check run after the
+  claim (before the session's next change, within 24 hours) is one check that passed only when
+  every step passed. **contradicted** when a canonical failure (or a failed ship-check run)
+  stands; **not_verified** when any other failure stands, or there is no check (the default);
+  **verified** when nothing stands and a canonical pass or a passing ship-check run exists; a
+  `tests` claim needs one of each kind it names; a completion claim with no edit is
+  **no_changes**. A command cut at 1,000 characters is no check and counts as a change; with more
+  than 200 shell commands after the last edit, the session alone cannot verify. Ship-check runs
+  that left anything out (new files git does not track, submodules, filtered files) are not
+  evidence.
 - `GET /api/sessions/:sid/claims` → `{claims[{at, kind, needs, phrase, label, check{cmd, at, ok,
   first_error_line, ship?}, badge, fix?}]}`; `fix` (the last claim, when contradicted) is the one
   message "Ask the agent to fix it" sends: ``Your last check failed: `<command>` → `<first error

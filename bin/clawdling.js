@@ -664,10 +664,13 @@ async function cmdCheck(args) {
   if (!v.approved) throw new CliError('checks.yaml changed since it was approved. Review it in the cockpit (Check-up tab) before it runs.');
   const started = await api(ctx, 'POST', `${q}/run`);
   if (!args.flags.json) console.error(`Running the ship check for ${id} in a scratch copy of ${v.repo}…`);
-  for (;;) {
+  // Stopped, with no new result for 10 s: it ended without saving one (the cockpit's log says why).
+  for (let idle = 0; ; ) {
     await sleepMs(500);
     v = await api(ctx, 'GET', q);
     if (!v.running && v.last && v.last.started_at >= started.started_at) break;
+    idle = v.running ? 0 : idle + 1;
+    if (idle > 20) throw new CliError('The ship check ended without a result. Look in the cockpit (Check-up tab) for what went wrong.');
   }
   const r = v.last;
   if (args.flags.json) console.log(JSON.stringify(r, null, 2));
@@ -722,6 +725,7 @@ async function cmdCheckup(args) {
     const pct = (x) => (x === null || x === undefined ? '-' : `${Math.round(x * 100)}%`);
     if (r.judge_unreliable) out.push(`Check-up for ${id}: judge unreliable (it passed an empty answer or failed a good one), so there is no score. Tighten the criteria.`);
     else out.push(`Check-up for ${id}: score ${pct(r.score)}${r.capped ? ' (stopped at the cost cap: not every run happened)' : ''}`);
+    if (r.error) out.push(`  ${r.error}`);
     for (const cell of r.cells) {
       if (r.cells.length > 1) out.push(`  ${cell.label}${cell.current ? ' (current)' : ''}: ${pct(cell.score)}, $${(cell.cost_per_run ?? 0).toFixed(3)} a run`);
       for (const c of cell.cases) out.push(`  ${r.cells.length > 1 ? '  ' : ''}${c.runs.every((x) => x.passed) ? 'pass' : 'FAIL'}  ${c.name}${c.runs.some((x) => x.error) ? ` (${c.runs.find((x) => x.error).error})` : ''}`);
@@ -730,8 +734,8 @@ async function cmdCheckup(args) {
     out.push(`  Cost: $${r.cost_usd.toFixed(2)} (${r.label})`);
     console.log(out.join('\n'));
   }
-  const current = r.cells.find((c) => c.current) || r.cells[0];
-  process.exitCode = r.judge_unreliable || r.capped ? 2 : current && current.score !== null && current.score >= threshold ? 0 : 1;
+  // No score (an error, the cap, an unreliable judge) is never a pass.
+  process.exitCode = r.judge_unreliable || r.capped || r.error || r.score === null ? 2 : r.score >= threshold ? 0 : 1;
 }
 
 async function cmdSpawn(args) {

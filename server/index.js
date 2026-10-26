@@ -1487,7 +1487,7 @@ export async function startServer(opts = {}) {
       ['GET', /^\/api\/otel$/, () => [200, otelStatus()]],
       ['POST', /^\/api\/otel$/, async (req) => {
         // The computer itself only: not through a remote address, nor from the Wi-Fi with --host 0.0.0.0.
-        if (!loopbackPeer(req.socket.remoteAddress)) throw new HttpError(403, 'Only the computer Clawdling runs on can do this. Open Settings there.');
+        if (!loopbackPeer(req.socket.remoteAddress) && req.socket.remoteAddress !== req.socket.localAddress) throw new HttpError(403, 'Only the computer Clawdling runs on can do this. Open Settings there.');
         const b = await jsonBody(req);
         if (typeof b.enabled !== 'boolean') throw badRequest('send {enabled: true|false}');
         if (b.enabled) {

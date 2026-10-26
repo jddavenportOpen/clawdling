@@ -50,7 +50,9 @@ function post(p, body, { host = `127.0.0.1:${srv.port}`, headers = {} } = {}) {
       res.on('data', (d) => (t += d));
       res.on('end', () => resolve({ status: res.statusCode, text: t }));
     });
-    req.on('error', reject);
+    // The server may answer (413) and close before a large body is all sent: the write then fails
+    // with EPIPE or ECONNRESET. That is a refusal too, not a test failure.
+    req.on('error', (err) => (err.code === 'EPIPE' || err.code === 'ECONNRESET' ? resolve({ status: 'closed', text: err.code }) : reject(err)));
     req.end(data);
   });
 }
@@ -106,7 +108,7 @@ test('on: the env block lands in our own --settings file; the ingest rules; reco
   assert.equal((await post('/otlp/v1/logs', logs, { headers: { ...good, 'x-forwarded-for': '203.0.113.9' } })).status, 403, 'through a proxy');
   assert.equal((await post('/otlp/v1/logs', logs, { host: 'collector.example.com', headers: good })).status, 403, 'a name Clawdling does not know');
   assert.equal((await post('/otlp/v1/logs', 'x', { headers: { ...good, 'content-type': 'application/x-protobuf' } })).status, 415, 'protobuf');
-  assert.equal((await post('/otlp/v1/logs', `{"pad":"${'x'.repeat(1024 * 1024)}"}`, { headers: good })).status, 413, 'over 1 MB');
+  assert.ok([413, 'closed'].includes((await post('/otlp/v1/logs', `{"pad":"${'x'.repeat(1024 * 1024)}"}`, { headers: good })).status), 'over 1 MB: refused (413, or closed before the body was all sent)');
   assert.equal((await post('/otlp/v1/nope', logs, { headers: good })).status, 404);
   const ok = await post('/otlp/v1/logs', logs, { headers: good });
   assert.equal(ok.status, 200, ok.text);

@@ -63,7 +63,9 @@ of three labels:
 - **Verified**: a check ran after the agent's last change and passed ("`npm test` passed at
   14:02, after the last edit"), and every check that ran passed.
 - **Not verified**: no check ran after the last change, or the record cannot tell (only some tests
-  ran, or the output was filtered). This is the default, and it is not an accusation: it just
+  ran, the exit code was hidden, or a failure showed in a command line with other commands). Only a
+  plain run of the check (`npm test`, `pytest`, your approved command) can verify or contradict.
+  This is the default, and it is not an accusation: it just
   means there is no receipt yet.
 - **Contradicted**: a check ran after the last change and failed, and the same check did not pass
   after it. The label quotes the first error line, the claim waits in **Needs you**, and **Ask the agent to fix it** sends one message,
