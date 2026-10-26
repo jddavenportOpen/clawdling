@@ -448,7 +448,8 @@ export async function startServer(opts = {}) {
     // --settings file, and never where the user already has telemetry settings (otel.js preflight).
     const otelState = new OtelState(paths.otel);
     const traces = new TraceStore(paths.traces);
-    const otelLimit = new RateLimit();
+    // Test mode may lower the rate (CLAWDLING_OTLP_RATE) so a test can cross it on any machine.
+    const otelLimit = new RateLimit(testMode && Number(env.CLAWDLING_OTLP_RATE) > 0 ? Number(env.CLAWDLING_OTLP_RATE) : undefined);
     const OTLP_INFLIGHT_MAX = 4;
     let otelInflight = 0;
     // Agents must be kept out of .clawdling (its secret is there): with an org path Claude Code's file

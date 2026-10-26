@@ -29,7 +29,7 @@ before(async () => {
   socket = uniqueSocket();
   configDir = path.join(home, 'claude-config');
   // No managed settings from the computer running the tests (CLAWDLING_MANAGED_SETTINGS, test mode only).
-  const env = testEnv({ CLAWDLING_TMUX_SOCKET: socket, CLAUDE_CONFIG_DIR: configDir, FAKE_CLAUDE_LOG: path.join(home, 'fake.log'), CLAWDLING_MANAGED_SETTINGS: '' });
+  const env = testEnv({ CLAWDLING_TMUX_SOCKET: socket, CLAUDE_CONFIG_DIR: configDir, FAKE_CLAUDE_LOG: path.join(home, 'fake.log'), CLAWDLING_MANAGED_SETTINGS: '', CLAWDLING_OTLP_RATE: '20' });
   for (const k of Object.keys(env)) if (/^OTEL_|TELEMETRY/.test(k)) delete env[k];
   cli(['init', '--defaults'], { env, home });
   srv = await startServerProc({ home, env });
@@ -142,10 +142,14 @@ test('on: the env block lands in our own --settings file; the ingest rules; reco
   for (const r of hanging) r.destroy();
   await new Promise((r) => setTimeout(r, 300));
   assert.equal((await post('/otlp/v1/metrics', { resourceMetrics: [] }, { headers: good })).status, 200, 'slots come back when uploads end');
-  // Too fast: at most 50 a second.
-  const burst = await Promise.all(Array.from({ length: 70 }, () => post('/otlp/v1/metrics', { resourceMetrics: [] }, { headers: good })));
+  // Too fast: a per-session budget each second (50 in use; 20 in this test, so a slow machine that
+  // spreads the burst over several seconds still crosses it).
+  await new Promise((r) => setTimeout(r, 1100));
+  const t0 = Date.now();
+  const burst = await Promise.all(Array.from({ length: 80 }, () => post('/otlp/v1/metrics', { resourceMetrics: [] }, { headers: good })));
+  const seconds = Math.ceil((Date.now() - t0) / 1000) + 1;
   assert.ok(burst.some((r) => r.status === 429), 'some refused');
-  assert.ok(burst.filter((r) => r.status === 200).length <= 50);
+  assert.ok(burst.filter((r) => r.status === 200).length <= 20 * seconds, 'never more than the budget for each second the burst spanned');
 });
 
 test('every remote path is refused, even with the right secret', async () => {
