@@ -7,6 +7,7 @@
 // Deterministic and local: regular expressions over the transcript, no model call. A model judging
 // "is this really done" would be one more claim; the receipt is a fact from the record.
 import fs from 'node:fs';
+import path from 'node:path';
 import { oneLine, stripAnsi } from './util.js';
 
 const RAW = JSON.parse(fs.readFileSync(new URL('./claims-patterns.json', import.meta.url), 'utf8'));
@@ -17,11 +18,11 @@ export const PATTERNS = {
   fixVerbs: new RegExp(RAW.fix_scope.verbs, 'gu'),
   fixWords: new RegExp(RAW.fix_scope.words, 'gu'),
   clauseEnd: re(RAW.fix_scope.clause_end),
-  cancel: re(RAW.message_cancel.re),
   tests: RAW.tests.map((x) => ({ need: x.need, re: re(x.re) })),
   completion: RAW.completion.map((x) => ({ re: re(x.re) })),
   excludeAny: RAW.exclude_any.map(re),
   excludeBefore: RAW.exclude_before.map(re),
+  clauseSplit: new RegExp(RAW.clause_split, 'u'),
 };
 
 export const LABELS = ['verified', 'not_verified', 'contradicted', 'no_changes'];
@@ -66,6 +67,8 @@ function fixScope(s) {
   let i = 0;
   for (const m of s.matchAll(PATTERNS.fixVerbs)) {
     if (m.index < i) continue;
+    // A fix that did not happen ("could not fix", "tried to fix", "need to fix") names nothing fixed.
+    if (/(\bnot|n't|\bnever|\bunable to|\bfailed to|\btried to|\btry to|\bneed to|\bneeds to|\bwill|\bgoing to|\bto)\s+(?:\w+\s+)?$/.test(s.slice(Math.max(0, m.index - 24), m.index))) continue;
     const from = m.index + m[0].length;
     const rest = s.slice(from);
     const end = PATTERNS.clauseEnd.exec(rest);
@@ -97,15 +100,17 @@ export function detectClaim(text) {
   let phrase = null;
   let testPhrase = null;
   let completion = false;
+  // A claim beside an admitted failure ("Done. One test fails.") stays a claim: the record decides.
   const list = sentences(text).map((s) => ({ ...s, t: rewrite(s.text) }));
-  // A message that admits a current failure anywhere makes no claim, whatever else it says.
-  if (list.some((s) => !s.question && PATTERNS.cancel.test(s.t))) return null;
-  for (const s of list) {
-    if (s.question) continue;
-    const t = s.t;
-    if (!t) continue;
+  // Each clause on its own: "Done, but one test fails" holds a claim ("done") and an admission.
+  const clauses = list.filter((s) => !s.question).flatMap((s) => s.t.split(PATTERNS.clauseSplit)).map((c) => (c || '').trim()).filter(Boolean);
+  for (const t of clauses) {
     let hit = false;
+    // "14 of 15 tests passed" admits a failure: a count short of the total is no test claim.
+    const nm = /(\d+)\s*(?:of|\/|out of)\s*(\d+)/.exec(t);
+    const short = !!nm && Number(nm[1]) < Number(nm[2]);
     for (const p of PATTERNS.tests) {
+      if (short) break;
       const m = p.re.exec(t);
       if (m && !excluded(t, m.index)) {
         needs.add(p.need);
@@ -339,6 +344,74 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
   return found;
 }
 
+// A shell command that changes files counts as an edit ("the agent's last file change"): an output
+// redirection to a file, or a program that writes (sed -i, mv, a formatter with --write, git apply...).
+const WRITE_PROGRAMS = new Set(['mv', 'cp', 'rm', 'rmdir', 'touch', 'mkdir', 'ln', 'truncate', 'patch', 'rsync', 'install', 'unzip', 'tar']);
+const GIT_WRITES = new Set(['apply', 'checkout', 'restore', 'reset', 'merge', 'rebase', 'cherry-pick', 'pull', 'am', 'mv', 'rm', 'revert', 'switch']);
+const PKG_WRITES = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'version', 'dedupe', 'prune']);
+
+function segmentWrites(raw) {
+  // A redirection to a file (not 2>&1, not /dev/null), outside quotes.
+  const bare = raw.replace(/'[^']*'|"(?:[^"\\]|\\.)*"/g, '""');
+  for (const m of bare.matchAll(/(?:^|[^<>&\d])\d?>>?\s*([^\s&|;<>]+)/g)) {
+    const target = m[1];
+    if (!target.startsWith('&') && !/^\/dev\//.test(target) && target !== '""') return true;
+  }
+  let w = words(raw);
+  if (w[0] === 'sudo' || w[0] === 'command' || w[0] === 'time' || w[0] === 'env') w = w.slice(1).filter((x) => !/^[A-Za-z_]\w*=/.test(x));
+  if (w[0] === 'npx' || w[0] === 'bunx') w = w.slice(1);
+  const [h, b] = [String(w[0] || '').replace(/^.*[\\/]/, ''), w[1]];
+  if (WRITE_PROGRAMS.has(h)) return true;
+  if ((h === 'sed' || h === 'perl') && w.some((x) => /^-[a-z]*i/.test(x) || x.startsWith('--in-place'))) return true;
+  if (h === 'tee' && w.slice(1).some((x) => !x.startsWith('-'))) return true;
+  if (h === 'git' && GIT_WRITES.has(b) || (h === 'git' && b === 'stash' && /^(pop|apply)$/.test(w[2] || ''))) return true;
+  if ((h === 'npm' || h === 'pnpm' || h === 'yarn' || h === 'bun') && PKG_WRITES.has(b)) return true;
+  if (h === 'prettier' && w.some((x) => x === '--write' || x === '-w')) return true;
+  if ((h === 'eslint' || h === 'ruff' || h === 'biome' || h === 'stylelint') && w.some((x) => x === '--fix' || x === '--write' || x === '--apply')) return true;
+  if (h === 'ruff' && b === 'format' && !w.includes('--check')) return true;
+  if ((h === 'black' || h === 'isort' || h === 'autopep8') && !w.includes('--check') && !w.includes('--diff')) return true;
+  if ((h === 'gofmt' || h === 'goimports') && w.includes('-w')) return true;
+  if ((h === 'go' && b === 'fmt') || (h === 'cargo' && (b === 'fmt' || b === 'fix')) || h === 'rustfmt') return true;
+  return false;
+}
+
+/**
+ * Does this shell command change files? {writes, checkAfter}: checkAfter is true when a check runs
+ * after the write in the same command line (`... > f && npm test`), so it still counts after the edit.
+ */
+export function writesFiles(cmd) {
+  const segs = segments(cmd);
+  let last = -1;
+  segs.forEach((sg, i) => {
+    if (segmentWrites(sg.raw)) last = i;
+  });
+  if (last === -1) return { writes: false, checkAfter: false };
+  const after = segs.slice(last + 1).map((x) => x.raw).join(' ; ');
+  const k = after ? checkOf(after) : null;
+  return { writes: true, checkAfter: !!k && !k.masked };
+}
+
+// Agent memory notes (the /handoff), and files outside the session's folder, are not the work.
+const MEMORY_FILE = /(^|[\\/])memory[\\/](NOW|LOG)\.md$/i;
+function inside(dir, file) {
+  if (!dir || !file || !path.isAbsolute(String(file))) return true;
+  const key = (x) => (process.platform === 'win32' ? x.toLowerCase() : x);
+  const d = key(path.resolve(dir));
+  const f = key(path.resolve(String(file)));
+  return f === d || f.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
+}
+
+/** Is this tool call a change to the work (an edit), for "after the last edit"? */
+export function isWorkEdit(t, cwd) {
+  if (t.end === null || t.end === undefined || t.error === true) return false;
+  if (CLAIM_EDIT_TOOLS.has(t.name)) {
+    if (t.file && MEMORY_FILE.test(t.file)) return false;
+    return inside(cwd, t.file);
+  }
+  if (SHELL_TOOLS.has(t.name) && typeof t.cmd === 'string' && !t.bg) return writesFiles(t.cmd).writes;
+  return false;
+}
+
 // ---------------------------------------------------------------------------------- tool results
 
 const DENIED = /doesn't want to proceed|does not want to proceed|tool use was rejected|user rejected|was denied|permission (to use .* )?(has been |was )?denied|requested permissions|interrupted by user|\[Request interrupted/i;
@@ -421,12 +494,15 @@ export function claimEvidence({ main, subs = [] }) {
     let lastEdit = null;
     let edits = 0;
     for (const x of before) {
-      if (CLAIM_EDIT_TOOLS.has(x.t.name) && x.t.end !== null && x.t.error !== true) {
+      if (isWorkEdit(x.t, main.cwd)) {
         lastEdit = x;
         edits++;
       }
     }
-    const after = before.filter((x) => (!lastEdit || cmp(x.key, lastEdit.key) > 0) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
+    // A command that writes and then runs a check (`... > f && npm test`) is the edit and, just after
+    // it, the check.
+    const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter;
+    const after = before.filter((x) => (!lastEdit || cmp(x.key, lastEdit.key) > 0 || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && !x.t.bg && x.t.res && !x.t.res.denied && !x.t.res.blocked);
     const cmds = after.slice(-CMDS_PER_CLAIM).map(({ t }) => ({
       cmd: t.cmd,
       at: new Date(t.end ?? t.ts).toISOString(),
