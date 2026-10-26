@@ -754,7 +754,23 @@ export class SessionManager {
     return this.view(rec);
   }
 
-  async launch(rec, { prompt = '', resume = false, cols, rows } = {}) {
+  /**
+   * Start claude for a session. While a launch is in progress, a close event from the session's
+   * previous run (its tmux control client noticing the kill late) must not mark this record ended:
+   * the new run's hooks would then be ignored and it would never become ready (onControlClose).
+   */
+  async launch(rec, opts = {}) {
+    const rt = this.rt(rec.sid);
+    rt.pendingLaunch = true; // until this launch's run takes over (rt.gen++ in launchNow)
+    try {
+      return await this.launchNow(rec, opts);
+    } finally {
+      rt.pendingLaunch = false;
+      rt.launchingSettings = null;
+    }
+  }
+
+  async launchNow(rec, { prompt = '', resume = false, cols, rows } = {}) {
     const target = this.resolveTarget(rec.agent);
     rec.cwd = target.cwd;
     rec.agent_name = target.name;
@@ -842,7 +858,8 @@ export class SessionManager {
     ]);
     const rt = this.rt(rec.sid);
     rt.gen++;
-    rt.launchingSettings = null; // started: an end from now on is this run's own
+    rt.pendingLaunch = false; // from here, a close event is this run's own (its gen)
+    rt.launchingSettings = null;
     rt.launchedAt = Date.now();
     rt.resumed = !!resume;
     if (!resume) rt.firstPrompt = prompt || ''; // in memory only, for "Start again" (restart())
@@ -1000,9 +1017,9 @@ export class SessionManager {
     if (rt.control === cc) rt.control = null;
     if (this.closing) return;
     this.flushOutput(rec, rt);
-    if (rt.gen !== gen) return; // a newer launch owns this session name now
+    if (rt.gen !== gen || rt.pendingLaunch) return; // a newer launch owns (or is taking) this session name
     const alive = await this.backend.hasSession(rec.tmux_name);
-    if (rt.gen !== gen || this.closing) return;
+    if (rt.gen !== gen || rt.pendingLaunch || this.closing) return;
     if (alive) {
       if (rt.reattach++ < 5) {
         setTimeout(() => {
