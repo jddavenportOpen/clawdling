@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { LedgerReader, LedgerStore, localDay, subagentFiles, summarize, timeline } from './ledger.js';
+import { LABELS, badgeText, fixMessage, labelClaim } from './claims.js';
 import { badRequest, execFileP, isUuid, oneLine } from './util.js';
 
 export const SCHEMA = 1;
@@ -487,6 +488,8 @@ export class Reports {
         }
       }
     }
+    const ctx = this.claimContext ? this.claimContext(agentId) : {};
+    const labelledBySid = new Map(all.map((s) => [s.sid, this.labelled(s, ctx)]));
     for (const s of all) {
       if (!(s.turns > 0 || s.tools > 0) || !inWindow(whenOf(s))) continue;
       const commits = repos.length ? pool.filter((c) => owner.get(c.hash)?.sid === s.sid) : null;
@@ -503,6 +506,7 @@ export class Reports {
         status: s.status,
         commits: commits ? commits.slice(0, 20).map(({ hash, subject, at }) => ({ hash, subject, at })) : null,
         transcript: s.transcript,
+        claim: labelledBySid.get(s.sid)?.slice(-1)[0] || null,
       });
     }
     done.sort((a, b) => String(b.when || '').localeCompare(String(a.when || '')));
@@ -515,7 +519,30 @@ export class Reports {
       if (!needsYouView(v)) continue;
       needs.push({ sid: v.sid, title: v.title || null, kind: needKind(v), text: oneLine(v.status === 'needs_you' ? v.notification || '' : v.last_message || '', 240), since: v.last_activity_at });
     }
+    // A finished turn whose claim a check contradicted: say so, with the fix (same row, same count as the rail).
+    for (const n of needs) {
+      const last = labelledBySid.get(n.sid)?.slice(-1)[0];
+      if (n.kind === 'reply' && last && last.label === 'contradicted') Object.assign(n, { kind: 'contradicted', claim: last, fix: fixMessage(last.check) });
+    }
     needs.sort((a, b) => (a.kind === 'reply') - (b.kind === 'reply') || String(b.since || '').localeCompare(String(a.since || '')));
+    // Ended sessions whose last claim was contradicted (not on the rail: listed under Needs you apart).
+    const contradicted = [];
+    for (const s of all) {
+      if (s.status !== 'ended' || !inWindow(whenOf(s))) continue;
+      const last = labelledBySid.get(s.sid)?.slice(-1)[0];
+      if (last && last.label === 'contradicted') contradicted.push({ sid: s.sid, title: s.title || null, claim: last, fix: fixMessage(last.check), since: whenOf(s) });
+    }
+    contradicted.sort((a, b) => String(b.since || '').localeCompare(String(a.since || '')));
+    // The Verified block: claims of the last 7 days by label, the last ship check, the last check-up.
+    const week = windowRange('7d', this.now());
+    const byLabel = Object.fromEntries(LABELS.map((l) => [l, 0]));
+    for (const list of labelledBySid.values()) {
+      for (const c of list) {
+        const t = Date.parse(c.at || '');
+        if (Number.isFinite(t) && t >= week.start) byLabel[c.label]++;
+      }
+    }
+    const vi = this.verifyInfo ? this.verifyInfo(agentId) : {};
 
     const cost = this.costOf(all, w);
     let nowText = '';
@@ -545,9 +572,29 @@ export class Reports {
       done,
       repo_commits: repos.length ? { other, errors: git.filter((g) => !g.ok).map((g) => ({ repo: g.repo, error: g.error })) } : null,
       needs,
+      contradicted,
       cost,
       next: nextOf(nowText, mtime, this.now()),
+      verified: { claims_7d: byLabel, ship: vi.ship || null, checkup: vi.checkup || null },
     };
+  }
+
+  /** A summary's claims with their labels (1.6), given the agent's approved checks and ship checks. */
+  labelled(s, ctx) {
+    return (Array.isArray(s.claims) ? s.claims : []).map((c) => {
+      const l = labelClaim(c, ctx);
+      return { at: c.at, kind: c.kind, needs: c.needs || [], phrase: c.phrase || null, label: l.label, check: l.check, badge: badgeText(l) };
+    });
+  }
+
+  /** One session's claim receipts, for its chat view: each with its label and evidence; the fix text for the last one when contradicted. */
+  sessionClaims(rec) {
+    const s = this.summary(rec, { lazy: true });
+    const ctx = this.claimContext ? this.claimContext(rec.agent) : {};
+    const claims = this.labelled(s, ctx);
+    const last = claims[claims.length - 1];
+    if (last && last.label === 'contradicted') last.fix = fixMessage(last.check);
+    return { sid: rec.sid, claims, status: rec.status };
   }
 
   /** Usage in a window: total, by day, by model, top three sessions; list-price equivalents. */
@@ -642,7 +689,8 @@ export class Reports {
       }
       let needs = 0;
       for (const rec of this.sessions.records.values()) if (rec.agent === a.id && needsYouView(this.sessions.view(rec))) needs++;
-      agents.push({ id: a.id, name: a.name, kind: a.kind, cost_usd: c.total_usd, cost_complete: c.complete, done: doneCount, needs, last_done_at: lastDone });
+      const vi = this.verifyInfo ? this.verifyInfo(a.id) : {};
+      agents.push({ id: a.id, name: a.name, kind: a.kind, cost_usd: c.total_usd, cost_complete: c.complete, done: doneCount, needs, last_done_at: lastDone, checkup: vi.checkup || null });
     }
     const tot = (win) => this.costOf(all, win);
     const t1 = tot(today);
