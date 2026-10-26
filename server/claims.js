@@ -226,7 +226,8 @@ const KIND_BY_SCRIPT = [
   [/^(lint|eslint|stylelint|format[:_-]check|fmt[:_-]check|prettier[:_-]check|typecheck|type-check|types|check-types|tsc|check:types|lint[:_-].*)$/, 'lint'],
   [/^(check|verify|ci|validate|precommit|pre-commit)([:_.-].*)?$/, 'check'],
 ];
-const MAKE_KIND = { test: 'test', tests: 'test', check: 'test', unittest: 'test', spec: 'test', e2e: 'test', build: 'build', all: 'build', compile: 'build', lint: 'lint', vet: 'lint', typecheck: 'lint', fmt: 'lint', 'fmt-check': 'lint', format: 'lint', ci: 'check', verify: 'check' };
+const FORMAT_VERIFY = /(^|\s)(--verify-no-changes|--set-exit-if-changed|--check-formatted|--check|--lint|--dry-run)(\s|$)/;
+const MAKE_KIND = { test: 'test', tests: 'test', check: 'test', unittest: 'test', spec: 'test', e2e: 'test', build: 'build', all: 'build', compile: 'build', lint: 'lint', vet: 'lint', typecheck: 'lint', 'fmt-check': 'lint', 'format-check': 'lint', ci: 'check', verify: 'check' };
 
 function scriptKind(name) {
   for (const [r, k] of KIND_BY_SCRIPT) if (r.test(String(name || '').toLowerCase())) return k;
@@ -242,6 +243,8 @@ export function unwrap(w) {
   // Wrappers that run what follows: time, npx/pnpm dlx/bunx, python -m, uv run, poetry run, env.
   for (let n = 0; n < 4; n++) {
     const h = a[0];
+    // `command -v pytest` and `type pytest` only look a program up.
+    if (h === 'command' && /^-[vV]$/.test(a[1] || '')) return null;
     if (h === 'time' || h === 'command' || h === 'exec' || h === 'nice' || h === 'nohup' || h === 'xvfb-run') a = a.slice(1).filter((x, i) => !(i === 0 && /^-/.test(x)));
     else if ((h === 'timeout' || h === 'gtimeout') && a.length > 2) a = a.slice(1).filter((x, i, arr) => !(arr.slice(0, i + 1).every((y) => /^-|^\d+[smhd]?$/.test(y))));
     else if (h === 'cross-env' || h === 'cross-env-shell') a = a.slice(1).filter((x, i, arr) => !(arr.slice(0, i + 1).every((y) => /=/.test(y))));
@@ -309,7 +312,8 @@ export function wordsKind(w) {
     const t = a.slice(1).find((x) => !x.startsWith('-'));
     return t === 'test' || t === 'verify' || t === 'check' ? 'test' : t === 'build' || t === 'package' || t === 'compile' || t === 'assemble' ? 'build' : null;
   }
-  if (['dotnet', 'swift', 'mix', 'flutter', 'dart', 'bazel', 'buck2', 'zig'].includes(h)) return b === 'test' ? 'test' : b === 'build' ? 'build' : b === 'analyze' || b === 'format' ? 'lint' : null;
+  // `dart format .` and friends rewrite files: a lint check only in their verify mode.
+  if (['dotnet', 'swift', 'mix', 'flutter', 'dart', 'bazel', 'buck2', 'zig'].includes(h)) return b === 'test' ? 'test' : b === 'build' ? 'build' : b === 'analyze' || (b === 'format' && FORMAT_VERIFY.test(a.join(' '))) ? 'lint' : null;
   if (h === 'rake' && (b === 'test' || b === 'spec')) return 'test';
   if (h === 'composer' && b === 'test') return 'test';
   return null;
@@ -338,6 +342,7 @@ function runnerWords(a) {
   const [h, b] = a;
   if (['npm', 'pnpm', 'yarn', 'bun'].includes(h)) return b === 'run' || b === 'run-script' ? 3 : 2;
   if (['ruff', 'biome', 'golangci-lint', 'deno', 'bun', 'uv', 'poetry'].includes(h) && b && !b.startsWith('-')) return 2;
+  if (['make', 'gmake', 'just'].includes(h)) return b && !b.startsWith('-') ? 2 : 1;
   if (['go', 'cargo', 'dotnet', 'swift', 'mix', 'flutter', 'dart', 'deno', 'make', 'gmake', 'just', 'rake', 'composer', 'mvn', 'mvnw', 'gradle', 'gradlew', 'bazel', 'buck2', 'zig', 'playwright', 'cypress', 'task', 'mage'].includes(h)) return 2;
   if (h === 'vitest' && b === 'run') return 2;
   if (/manage\.py$/.test(h)) return 2;
@@ -420,7 +425,7 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     if (!kind) {
       for (const d of detected) {
         if (d && typeof d.cmd === 'string' && sameOrFlags(trimmed, d.cmd)) {
-          kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' || d.kind === 'format' ? 'lint' : d.kind === 'check' ? 'check' : null;
+          kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' ? 'lint' : d.kind === 'check' ? 'check' : null;
           if (kind) {
             base = d.cmd;
             break;
@@ -493,6 +498,10 @@ function segmentWrites(raw) {
   if (h === 'prettier' && w.some((x) => x === '--write' || x === '-w')) return true;
   if ((h === 'eslint' || h === 'ruff' || h === 'biome' || h === 'stylelint') && w.some((x) => x === '--fix' || x === '--write' || x === '--apply')) return true;
   if (h === 'ruff' && b === 'format' && !w.includes('--check')) return true;
+  // A formatter run (`npm run format`, `make fmt`, `dart format .`) rewrites files.
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(h) && /^(format|fmt|prettier|fix|lint:fix|lint-fix|format:write)$/.test(b === 'run' || b === 'run-script' ? w[2] || '' : b || '')) return true;
+  if (['make', 'gmake', 'just'].includes(h) && w.slice(1).some((x) => /^(fmt|format|fix)$/.test(x))) return true;
+  if (['dotnet', 'swift', 'mix', 'flutter', 'dart'].includes(h) && b === 'format' && !FORMAT_VERIFY.test(w.join(' '))) return true;
   if ((h === 'black' || h === 'isort' || h === 'autopep8') && !w.includes('--check') && !w.includes('--diff')) return true;
   if ((h === 'gofmt' || h === 'goimports') && w.includes('-w')) return true;
   if ((h === 'go' && b === 'fmt') || (h === 'cargo' && (b === 'fmt' || b === 'fix')) || h === 'rustfmt') return true;
@@ -520,9 +529,34 @@ const MEMORY_FILE = /(^|[\\/])memory[\\/](NOW|LOG)\.md$/i;
 function inside(dir, file) {
   if (!dir || !file || !path.isAbsolute(String(file))) return true;
   const key = (x) => (process.platform === 'win32' ? x.toLowerCase() : x);
-  const d = key(path.resolve(dir));
-  const f = key(path.resolve(String(file)));
-  return f === d || f.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
+  const under = (d, f) => f === d || f.startsWith(d.endsWith(path.sep) ? d : d + path.sep);
+  // By path, and by real path: a folder under a link (~/clawdling -> a synced folder) is reached by
+  // Claude Code through its real path.
+  return under(key(path.resolve(dir)), key(path.resolve(String(file)))) || under(key(realOf(dir)), key(realOf(String(file))));
+}
+
+const realCache = new Map();
+/** The real path of `p`, through its nearest existing parent (a file may be gone since). */
+function realOf(p) {
+  const abs = path.resolve(p);
+  if (realCache.has(abs)) return realCache.get(abs);
+  const rest = [];
+  let cur = abs;
+  let out = abs;
+  for (;;) {
+    try {
+      out = path.join(fs.realpathSync.native(cur), ...rest);
+      break;
+    } catch {
+      const up = path.dirname(cur);
+      if (up === cur) break;
+      rest.unshift(path.basename(cur));
+      cur = up;
+    }
+  }
+  if (realCache.size > 5000) realCache.clear();
+  realCache.set(abs, out);
+  return out;
 }
 
 /** Is this tool call a change to the work (an edit), for "after the last edit"? `roots`: where it counts. */
@@ -554,7 +588,11 @@ const ERROR_LINE = /(\berror\b|\berr!|\bfail(ed|ure|ing|s)?\b|✗|✕|×|\basser
 // Failure marks: the capitals test runners print (FAIL, ERROR:), and counts above zero.
 const FAIL_UPPER = /(^|\s)(FAIL|FAILED|FAILURES?)\b|npm ERR!|^npm error\b|^not ok \d|^\s*\u2716|^\u2139 fail [1-9]|\btest result: FAILED|\bERROR:|\bBUILD FAILED\b/m;
 const FAIL_COUNT = /\b([1-9]\d*) (tests? )?(failed|failing|failures?|errors?)\b|\bTests?:\s+[1-9]\d* failed|^# fail [1-9]|\bexit (code|status) [1-9]/im;
-const failMark = (t) => FAIL_UPPER.test(t) || FAIL_COUNT.test(t);
+// ESLint ends a warnings-only run with "✖ 2 problems (0 errors, 2 warnings)": not a failure.
+const failMark = (t) => {
+  const s = String(t).replace(/^\s*\u2716 \d+ problems? \(0 errors?, \d+ warnings?\)\s*$/gm, '');
+  return FAIL_UPPER.test(s) || FAIL_COUNT.test(s);
+};
 // The totals a runner prints at the end. With a hidden exit code only these count: a per-test line
 // (✔ adds, ok 1, PASS a.test.js) says nothing about the tests after it.
 const PASS_SUMMARY = /\b[1-9]\d* (tests? )?(passed|passing)\b|\bTests?:\s+\d+ passed\b|^# pass [1-9]|^\u2139 pass [1-9]|\btest result: ok\b|\bBUILD SUCCESS(FUL)?\b|\bCompiled successfully\b|\bbuilt in \d|\bAll checks passed\b|\bFound 0 errors\b|\b0 problems\b/im;
@@ -626,7 +664,7 @@ function readOnly(cmd) {
  */
 export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
   // Where a change counts: the session's folder, plus a group project agent's repos (--add-dir).
-  const where = (roots && roots.length ? roots : [main.cwd]).filter(Boolean);
+  const where = [...new Set([...(roots && roots.length ? roots : []), main.cwd])].filter(Boolean);
   const finals = main.finals instanceof Map ? [...main.finals.values()] : [];
   if (!finals.length) return [];
   const all = [];
@@ -666,7 +704,8 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     // The commands that can matter to a label (not a passing `git status` or `ls`), newest 200; when
     // there were more, the claim says so (an older failure could be among them).
     const matters = after.filter(({ t }) => t.error === true || !(t.res && t.res.exit === 0 && !t.res.fail) || !readOnly(t.cmd));
-    const kept = matters.slice(-CMDS_PER_CLAIM);
+    // A completion claim with no edit is No changes made: its commands are never read.
+    const kept = claim.kind === 'completion' && !edits ? [] : matters.slice(-CMDS_PER_CLAIM);
     const cmds = kept.map(({ t }) => ({
       cmd: t.cmd,
       at: new Date(t.end ?? t.ts).toISOString(),
@@ -687,7 +726,7 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
       last_edit_at: lastEdit ? new Date(editsEnd).toISOString() : null,
       next_edit_at: nextEdit ? new Date(nextEdit.t.ts).toISOString() : null,
       cmds,
-      ...(matters.length > CMDS_PER_CLAIM ? { cmds_dropped: true } : {}),
+      ...(kept.length && matters.length > CMDS_PER_CLAIM ? { cmds_dropped: true } : {}),
     });
   }
   return out.slice(-CLAIMS_MAX);
@@ -745,10 +784,12 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
     const canon = canonical(x.cmd, { approved, detected });
     const first = x.err1 || (x.exit ? `Exit code ${x.exit}` : null);
     if (canon) {
-      // A canonical run's visible exit code decides (eslint ends warnings with "✖ 2 problems" and exits 0).
-      if (!failedExit) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: true, cmd: x.cmd, at: x.at });
-      // A failure behind `cd x &&` with no failure marks may be the cd's: a possible failure, not a canonical one.
-      else if (!canon.setupFirst || x.fail === true) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
+      const exitShown = typeof x.exit === 'number';
+      // A canonical pass: exit 0 and no failure marks (a script that hides its own exit code prints them).
+      if (!failedExit && !x.fail) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: true, cmd: x.cmd, at: x.at });
+      // A canonical failure: a visible non-zero exit, and not one a `cd x &&` before it could explain.
+      else if (failedExit && exitShown && x.exit !== 0 && (!canon.setupFirst || x.fail === true)) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
+      // Anything else (exit 0 with marks, an error with no exit code: a timeout) is a possible failure.
       else checks.push({ kinds: [canon.kind], id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
     } else if (failedExit || x.fail === true) {
       // Whose failure it is cannot be told: it counts against every claim, as any of the line's kinds.
@@ -769,7 +810,8 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   const needs = c.kind === 'tests' && Array.isArray(c.needs) && c.needs.length ? c.needs : null;
   // A canonical check counts for the claim's kinds; a failure whose owner cannot be told counts
   // against every claim.
-  const counts = (x) => !needs || !x.canonical || (x.ship ? (x.ok ? x.kinds : x.failedKinds).some((k) => needs.includes(k)) : needs.includes(x.kind));
+  // (A failure of a general check, `make ci`, counts against a tests claim: it may be a test.)
+  const counts = (x) => !needs || !x.canonical || (x.ship ? (x.ok ? x.kinds : x.failedKinds).some((k) => needs.includes(k) || (!x.ok && k === 'check' && needs.includes('test'))) : needs.includes(x.kind) || (!x.ok && x.kind === 'check' && needs.includes('test')));
   // A failure stands unless something after it settles it: a canonical pass of the same check (the
   // same command and scope, whatever harmless flags), or a passing ship-check run with a step of
   // every kind the failure could be (a failure of unknown kind needs a run with a test step). A lint
@@ -835,19 +877,21 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   const w = words(raw);
   if (!w.length || runsNothing(w)) return null;
   // Its identity: where it ran (`cd packages/api &&`), what it is, and any scope flag it carried.
-  const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, what, ...extra.filter((x) => SCOPE_FLAG.test(x))].filter(Boolean).join(' ');
+  const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, normId(what), ...extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x))].filter(Boolean).join(' ');
+  // Variables that select tests (`PYTEST_ADDOPTS="-k cart"`, `GOFLAGS=-run=X`): not the whole run.
+  if (/(^|[\s;&|])(export\s+)?(PYTEST_ADDOPTS|GOFLAGS|JEST_[A-Z_]+|VITEST_[A-Z_]+|MOCHA_[A-Z_]+|NODE_OPTIONS|npm_config_[a-z_]+)=/.test(cmd)) return null;
   const harmlessFor = (runner) => (extra) => extra.every((x, j) => HARMLESS.test(x) || (SHORT_HARMLESS[runner] || []).includes(x) || SCOPE_FLAG.test(x) || x === '--' || (WHOLE.has(x) && runner !== 'go') || (runner === 'go' && x === './...') || (j > 0 && (extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-')));
   const runnerOf = (b) => (unwrap(b) || b)[0];
   for (const ap of approved) {
     if (!ap || typeof ap.run !== 'string') continue;
     const b = words(ap.run.trim());
-    if (b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind: NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(b) || 'check', id: ident(`approved:${ap.run.trim()}`, w.slice(b.length)), setupFirst: i > 0 };
+    if (b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind: NAME_KIND[String(ap.name || '').toLowerCase()] || wordsKind(b) || 'check', id: ident(ap.run.trim(), w.slice(b.length)), setupFirst: i > 0 };
   }
   for (const d of detected) {
     if (!d || typeof d.cmd !== 'string') continue;
     const b = words(d.cmd.trim());
-    const kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' || d.kind === 'format' ? 'lint' : d.kind === 'check' ? 'check' : null;
-    if (kind && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind, id: ident(`detected:${d.cmd.trim()}`, w.slice(b.length)), setupFirst: i > 0 };
+    const kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' ? 'lint' : d.kind === 'check' ? 'check' : null;
+    if (kind && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind, id: ident(d.cmd.trim(), w.slice(b.length)), setupFirst: i > 0 };
   }
   const kind = wordsKind(w);
   const a = unwrap(w);
@@ -857,7 +901,16 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   // go test/vet/build: only ./... is the whole module (`go test` alone tests one package).
   if (a[0] === 'go' && !extra.includes('./...')) return null;
   if (!harmlessFor(a[0])(extra)) return null;
-  return { kind, id: ident(`runner:${a.slice(0, n).join(' ')}`, extra), setupFirst: i > 0 };
+  return { kind, id: ident(a.slice(0, n).join(' '), extra), setupFirst: i > 0 };
+}
+
+/** One spelling for one check: past wrappers, `npm t` and `npm run test` are `npm test`. */
+function normId(cmd) {
+  const a = unwrap(words(String(cmd))) || [];
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(a[0])) {
+    if (a[1] === 't' || a[1] === 'tst' || ((a[1] === 'run' || a[1] === 'run-script') && a[2] === 'test')) return [a[0], 'test', ...a.slice(a[1] === 't' || a[1] === 'tst' ? 2 : 3)].join(' ');
+  }
+  return a.join(' ');
 }
 
 /** Every kind of check a shell line contains (a failure in it could be any of them). */

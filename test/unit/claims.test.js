@@ -569,3 +569,46 @@ test('review 8: wrappers are seen through; a failure whose owner cannot be told 
   const [b] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm run build && npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done. All tests pass.')]);
   assert.equal(labelClaim(b).label, 'not_verified', 'the failure may be the tests\'');
 });
+
+test('review 9: -p values are scope; command -v runs nothing; formatters are changes, not checks; ids ignore spelling', () => {
+  assert.notEqual(canonical('cargo test -p api').id, canonical('cargo test -p web').id);
+  const [a] = claimsOf([prompt('x'), edit(), bash('cargo test -p api', 'Exit code 101\ntest result: FAILED', true), bash('cargo test -p web', 'test result: ok'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'contradicted');
+  for (const cmd of ['command -v pytest', 'command -V eslint']) assert.equal(checkOf(cmd), null, cmd);
+  for (const cmd of ['npm run format', 'make fmt', 'dart format .', 'mix format', 'dotnet format']) {
+    assert.equal(writesFiles(cmd).writes, true, cmd);
+    assert.equal(canonical(cmd, { detected: [{ kind: 'format', cmd: 'npm run format' }] }), null, cmd);
+  }
+  assert.equal(checkOf('dotnet format --verify-no-changes').kind, 'lint');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm run format', 'formatted 3 files'), say('Done.')]);
+  assert.equal(labelClaim(b, { detected: [{ kind: 'format', cmd: 'npm run format' }] }).label, 'not_verified');
+  assert.equal(canonical('npm t').id, canonical('npm test').id);
+  assert.equal(canonical('npm run test').id, canonical('npm test').id);
+  assert.equal(canonical('timeout 120 npm test').id, canonical('npm test', { detected: [{ kind: 'test', cmd: 'npm test' }] }).id);
+  for (const cmd of ['make -v', 'make -q', 'make -t', 'make -i']) assert.equal(canonical(cmd), null, cmd);
+  for (const cmd of ['PYTEST_ADDOPTS="-k cart" pytest', 'export PYTEST_ADDOPTS=-kcart && pytest', 'GOFLAGS=-run=TestCart go test ./...']) assert.equal(canonical(cmd), null, cmd);
+});
+
+test('review 9: exit 0 with failure marks, or an error with no exit code, is a possible failure; eslint warnings are not marks', () => {
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test', 'npm run unit; npm run e2e\nFAILED tests/e2e.spec.js'), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified');
+  const [b] = claimsOf([prompt('x'), edit(), bash('npm test', 'Command timed out after 2m 0.0s', true), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'not_verified', 'did not finish: not a contradiction');
+  const [c] = claimsOf([prompt('x'), edit(), bash('npx eslint .', '/repo/a.js\n  3:1  warning  no-console\n\n✖ 2 problems (0 errors, 2 warnings)'), say('Done.')]);
+  assert.equal(labelClaim(c).label, 'verified');
+  const [d] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('make ci', 'Exit code 2\nFAIL integration', true), say('All tests pass.')]);
+  assert.equal(labelClaim(d).label, 'contradicted', 'a failed general check counts against a tests claim');
+});
+
+test('review 9: edits through a linked session folder are changes', () => {
+  const real = tmp();
+  const link = path.join(tmp(), 'org-link');
+  fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir');
+  const f = path.join(tmp(), 'projects', 'p', '9a1d2c4e-1111-4222-8333-444455556666.jsonl');
+  fs.mkdirSync(path.dirname(f), { recursive: true });
+  const recs = [prompt('x'), bash('npm test'), edit(path.join(fs.realpathSync.native(real), 'src', 'a.js')), say('All tests pass.')].flat().map((r) => ({ ...r, cwd: link }));
+  fs.writeFileSync(f, recs.map((r) => JSON.stringify(r)).join('\n') + '\n');
+  const [c] = summarize(new LedgerReader().session(f), { claimRoots: [link] }).claims;
+  assert.equal(c.edits, 1, 'the real path is inside the linked folder');
+  assert.equal(labelClaim(c).label, 'not_verified', 'the test ran before the edit');
+});

@@ -502,14 +502,19 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`, `python -m`, `cd x &&`).
   Only a **canonical run** can verify or contradict (added in review, after seven rounds of edge
   cases on arbitrary shell lines): one command, after optional `cd x &&`, `export` or `VAR=value`
-  steps and a trailing `2>&1`; it is an approved or detected command, or a standard runner (`npm
-  test`, `pytest`, `go test ./...`, `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with
-  only harmless extra flags (`-q`, `-v`, `--ci`, `--color`, `--noEmit`...); its exit code is
-  visible. Any other recognized check that shows a failure (a non-zero exit, an error, or failure
-  marks: piped, chained, `|| true`, a file or name argument, a selection or skip flag) keeps the
+  steps (not variables that select tests, such as `PYTEST_ADDOPTS`) and a trailing `2>&1`; it is
+  an approved or detected command, or a standard runner (`npm test`, `pytest`, `go test ./...`,
+  `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with only harmless extra flags (long
+  flags such as `--ci`, `--verbose`, `--noEmit`; short ones only where they mean verbose or quiet
+  for that runner: `pytest -q`, `go test -v`). It passes on exit 0 with no failure marks and fails
+  on a visible non-zero exit. Its identity is its command in one spelling (`npm t` is `npm test`),
+  where it ran (`cd packages/api &&`) and its scope flags (`--workspace`, `-p api`). Formatter runs
+  (`npm run format`, `make fmt`, `dart format .`) are changes, not checks. Any other recognized
+  check that shows a failure (a non-zero exit, an error, or failure marks: piped, chained, `|| true`,
+  a file or name argument, a selection or skip flag, exit 0 with failure marks, a timeout) keeps the
   claim at **not_verified**: the record cannot tell whose failure it is or what the run covered. A
-  failure stands unless something after it settles it: a canonical pass of the same check (the same
-  command, whatever harmless flags), or a passing ship-check run. Each ship-check run after the
+  failure stands unless something after it settles it: a canonical pass of the same check, or a
+  passing ship-check run with a step of each kind the failure could be. Each ship-check run after the
   claim (before the session's next change, within 24 hours) is one check that passed only when
   every step passed. **contradicted** when a canonical failure (or a failed ship-check run)
   stands; **not_verified** when any other failure stands, or there is no check (the default);
