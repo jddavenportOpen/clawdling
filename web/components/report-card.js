@@ -121,7 +121,7 @@ export function ReportCard({ id, agent }) {
       <ul class="report-glance" aria-label="At a glance">
         <li><button type="button" class="glance" onClick=${() => go('#rc-done')}><span class="glance-n">${fresh.done.length}</span><span class="glance-l">${fresh.done.length === 1 ? 'session' : 'sessions'} with work done</span></button></li>
         <li><button type="button" class=${`glance ${needs.length ? 'tone-needs' : ''}`} onClick=${() => go('#rc-needs')}><span class="glance-n">${needs.length}</span><span class="glance-l">${needs.length === 1 ? 'thing needs' : 'things need'} you</span></button></li>
-        <li><button type="button" class="glance" onClick=${() => go('#rc-cost')}><span class="glance-n">${usd(fresh.cost.total_usd).replace(/^about /, '')}${fresh.cost.complete ? '' : '+'}</span><span class="glance-l">of usage at list price${fresh.cost.complete ? '' : ', plus some unknown'}</span></button></li>
+        <li><button type="button" class="glance" onClick=${() => go('#rc-cost')}><span class="glance-n">${!fresh.cost.total_usd && !fresh.cost.complete ? 'Unknown' : `${usd(fresh.cost.total_usd).replace(/^about /, '')}${fresh.cost.complete ? '' : '+'}`}</span><span class="glance-l">of usage at list price${fresh.cost.complete ? '' : ', plus some unknown'}</span></button></li>
         <li><button type="button" class=${`glance ${fresh.next.stale ? 'tone-needs' : ''}`} onClick=${() => go('#rc-next')}><span class="glance-n">${fresh.next.empty ? 'None' : agoText(fresh.next.updated_at, now) || 'Written'}</span><span class="glance-l">${fresh.next.empty ? 'next steps written yet' : 'next steps last updated'}</span></button></li>
       </ul>
       <div class="report-grid">
@@ -186,7 +186,7 @@ function CostBlock({ c, win, name }) {
   const max = Math.max(0, ...c.by_day.map((d) => d.usd));
   const unknown = !c.complete;
   return html`<${Block} id="rc-cost" title="Cost" sub=${IN_WINDOW[win]} testid="rc-cost">
-    <p class="rc-big"><span class="rc-big-n" data-testid="rc-cost-total">${usd(c.total_usd)}</span> <span class="rc-big-l">of usage at list price</span></p>
+    <p class="rc-big"><span class="rc-big-n" data-testid="rc-cost-total">${!c.total_usd && !c.complete ? 'Cost unknown' : usd(c.total_usd)}</span> <span class="rc-big-l">${!c.total_usd && !c.complete ? 'for this window' : 'of usage at list price'}</span></p>
     ${c.sessions_counting ? html`<p class="rc-note" data-testid="rc-counting">Still reading ${plural(c.sessions_counting, 'older session')}; this figure will grow.</p>` : null}
     ${unknown && !c.sessions_counting ? html`<p class="rc-note tone-amber-text">${c.unknown_models.length ? `Plus usage with an unknown cost (${c.unknown_models.map(modelName).join(', ')} is not in Clawdling's price table).` : ''}${c.sessions_without_cost ? ` ${plural(c.sessions_without_cost, 'session')} had no transcript to read, so ${c.sessions_without_cost === 1 ? 'its' : 'their'} usage is unknown.` : ''}</p>` : null}
     <p class="rc-label" data-testid="rc-cost-label">${COST_NOTE}</p>

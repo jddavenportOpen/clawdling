@@ -19,6 +19,8 @@ export const PRICES = JSON.parse(fs.readFileSync(new URL('./prices.json', import
 // The tools that change a file, by file_path. Paths are counted, never sent anywhere.
 export const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 const AGENT_TOOLS = new Set(['Task', 'Agent']);
+// Record types this version knows (a transcript with none of them is a format it has not seen).
+const KNOWN_TYPES = new Set(['user', 'assistant', 'system', 'summary', 'cost-state', 'attachment', 'file-history-snapshot', 'queue-operation', 'last-prompt', 'permission-mode', 'mode', 'pr-link']);
 const TEXT_MAX = 300;
 const PROMPT_MAX = 500;
 const SUB_FILES_MAX = 500;
@@ -91,7 +93,7 @@ function newState(file, ino) {
     items: [], // in transcript order: {k: 'prompt'|'say'|'tool', ...}
     tools: new Map(), // tool_use id -> {id, name, summary, file, ts, end, error, turn, depth}
     usage: new Map(), // message.id + requestId -> {model, usage, ts, turn}
-    turn: 0, prompts: 0, lastText: null, costState: null,
+    turn: 0, prompts: 0, lastText: null, costState: null, known: 0,
     firstTs: null, lastTs: null, records: 0, assistants: 0, issues: new Set(), meta: null,
   };
 }
@@ -110,6 +112,7 @@ export function applyRecord(st, o, { sub = false } = {}) {
   if (!o || typeof o !== 'object') return;
   st.records++;
   st.seq++;
+  if (typeof o.type === 'string' && KNOWN_TYPES.has(o.type)) st.known++;
   const ts = typeof o.timestamp === 'string' ? Date.parse(o.timestamp) : NaN;
   if (Number.isFinite(ts)) {
     if (st.firstTs === null || ts < st.firstTs) st.firstTs = ts;
@@ -246,7 +249,10 @@ function advance(st) {
   return st;
 }
 
-/** Every subagent transcript beside a session's file: <dir>/<sid>/subagents/**.jsonl. */
+/**
+ * Every subagent transcript beside a session's file: <dir>/<sid>/subagents/**.jsonl (at most 500;
+ * `truncated` on the array says when there were more, and the cost then says it is incomplete).
+ */
 export function subagentFiles(mainFile) {
   const root = path.join(path.dirname(mainFile), path.basename(mainFile, '.jsonl'), 'subagents');
   const out = [];
@@ -259,14 +265,20 @@ export function subagentFiles(mainFile) {
       return;
     }
     for (const e of list) {
-      if (out.length >= SUB_FILES_MAX) return;
+      if (out.length >= SUB_FILES_MAX) {
+        out.truncated = true;
+        return;
+      }
       const f = path.join(dir, e.name);
       if (e.isDirectory()) walk(f, depth + 1);
       else if (e.isFile() && e.name.endsWith('.jsonl')) out.push(f);
     }
   };
   walk(root, 0);
-  return out.sort();
+  const truncated = !!out.truncated;
+  const sorted = out.sort();
+  sorted.truncated = truncated;
+  return sorted;
 }
 
 /** Incremental reader of whole sessions (main transcript plus its subagents), cached per file. */
@@ -301,7 +313,9 @@ export class LedgerReader {
   session(mainFile) {
     const touched = new Set();
     const main = this.state(mainFile, false, touched);
-    const subs = main.gone ? [] : subagentFiles(mainFile).map((f) => this.state(f, true, touched));
+    const files = main.gone ? [] : subagentFiles(mainFile);
+    const subs = files.map((f) => this.state(f, true, touched));
+    subs.truncated = !!files.truncated;
     // Evict the least recently used files, never one this call just read.
     for (const k of this.cache.keys()) {
       if (this.cache.size <= this.maxFiles) break;
@@ -376,7 +390,7 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
       costGaps.last = { cli: cs.total, repriced, at: new Date().toISOString() };
     }
   } else {
-    cost = { usd: repriced, source: 'repriced', complete: unknown.size === 0, unknown_models: [...unknown].sort(), models: byModel };
+    cost = { usd: repriced, source: 'repriced', complete: unknown.size === 0 && !subs.truncated, unknown_models: [...unknown].sort(), models: byModel };
   }
   // By day, in this computer's time zone. With the CLI's own total, each message's share of the
   // repriced cost carries the same share of the CLI's number, so the days add up to the total.
@@ -395,9 +409,10 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
   const changed = new Set();
   for (const t of tools) if (t.file && t.error !== true && t.end !== null) changed.add(t.file);
   const issues = new Set(main.issues);
+  if (subs.truncated) issues.add('more than 500 subagent files (the rest are not counted)');
   for (const s of subs) for (const i of s.issues) issues.add(`subagent: ${i}`);
   // A transcript with records but no turn, tool or usage this parser knows is a format it has not seen.
-  const unseen = main.records > 0 && main.assistants === 0 && main.prompts === 0 && !main.costState;
+  const unseen = main.records > 0 && main.known === 0;
   if (unseen) issues.add('no record this version of Clawdling knows');
   // When it is the CLI's own number, it already priced every model (hasUnknownModelCost is false).
   const unknown_days = cost.source === 'cli' ? {} : Object.fromEntries(Object.entries(unknownDays).map(([d, s]) => [d, [...s].sort()]));

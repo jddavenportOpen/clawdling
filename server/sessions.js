@@ -174,7 +174,12 @@ const TELEMETRY_UNSET = 'for v in $(env | sed -n \'s/^\\(OTEL_[A-Za-z0-9_]*\\)=.
 export function buildLauncherScript({ cwd, env = {}, argv, comment = 'Clawdling session launcher', clearTelemetry = false }) {
   const lines = ['#!/bin/sh', `# ${oneLine(comment, 200)}`];
   lines.push(`cd ${shq(cwd)} || exit 1`);
-  if (clearTelemetry) lines.push(TELEMETRY_UNSET);
+  if (clearTelemetry) {
+    lines.push(TELEMETRY_UNSET);
+    // And the Claude Code folder the preflight checked: an old CLAUDE_CONFIG_DIR from the tmux server
+    // goes (set again below when this session uses one).
+    if (!Object.hasOwn(env, 'CLAUDE_CONFIG_DIR')) lines.push('unset CLAUDE_CONFIG_DIR');
+  }
   for (const [k, v] of Object.entries(env)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(k)) throw new Error(`invalid environment variable name ${k}`);
     lines.push(`${k}=${shq(v)}; export ${k}`);
@@ -792,6 +797,9 @@ export class SessionManager {
     // A second Claude account is only its own config folder, handed to this session's claude.
     const accountDir = this.accountDir(rec.account);
     if (accountDir) sessionEnv.CLAUDE_CONFIG_DIR = accountDir;
+    // With the detailed timeline on, the default login's folder is the one Clawdling itself runs with
+    // (what its preflight read), even if the tmux server started with another.
+    else if (sessionEnv.OTEL_EXPORTER_OTLP_HEADERS && this.env.CLAUDE_CONFIG_DIR) sessionEnv.CLAUDE_CONFIG_DIR = this.env.CLAUDE_CONFIG_DIR;
     let how;
     if (this.backend.launcher) {
       // tmux: a /bin/sh launcher, so tmux only ever sees our own safe strings.

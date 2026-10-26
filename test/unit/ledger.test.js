@@ -280,6 +280,8 @@ test('the tmux launcher clears telemetry variables a long-lived tmux server may 
   const out = execFileSync('/bin/sh', [script], { env: { PATH: '/usr/bin:/bin', OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'https://collector.example.com', OTEL_LOG_USER_PROMPTS: '1', DISABLE_TELEMETRY: '1' }, encoding: 'utf8' });
   assert.match(out, /^OTEL_EXPORTER_OTLP_HEADERS=x-clawdling-otlp=abc$/m);
   assert.doesNotMatch(out, /OTEL_EXPORTER_OTLP_LOGS_ENDPOINT|OTEL_LOG_USER_PROMPTS|DISABLE_TELEMETRY/);
+  const withDir = execFileSync('/bin/sh', [script], { env: { PATH: '/usr/bin:/bin', CLAUDE_CONFIG_DIR: '/old/config' }, encoding: 'utf8' });
+  assert.doesNotMatch(withDir, /CLAUDE_CONFIG_DIR=\/old\/config/, "the tmux server's old Claude folder is not used");
   fs.writeFileSync(script, buildLauncherScript({ cwd: dir, env: {}, argv: ['/usr/bin/env'] }));
   assert.match(execFileSync('/bin/sh', [script], { env: { PATH: '/usr/bin:/bin', OTEL_LOG_USER_PROMPTS: '1' }, encoding: 'utf8' }), /OTEL_LOG_USER_PROMPTS=1/, 'off: the user\'s own environment is left alone');
   fs.rmSync(dir, { recursive: true, force: true });
@@ -306,4 +308,25 @@ test('/clear: the transcript a session leaves stays in its receipt, added up wit
   assert.equal(r.turns, 2);
   assert.equal(r.last_line, 'done b');
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('more than 500 subagent files: the cost says it is incomplete, never a silent drop', () => {
+  const dir = tmp();
+  const main = path.join(dir, '88888888-8888-4888-8888-888888888888.jsonl');
+  fs.writeFileSync(main, `${JSON.stringify({ type: 'user', timestamp: '2026-10-20T10:00:00.000Z', message: { role: 'user', content: 'go' } })}\n`);
+  const sub = path.join(dir, '88888888-8888-4888-8888-888888888888', 'subagents');
+  fs.mkdirSync(sub, { recursive: true });
+  for (let i = 0; i < 501; i++) fs.writeFileSync(path.join(sub, `agent-${String(i).padStart(3, '0')}.jsonl`), '');
+  const s = summarize(new LedgerReader().session(main));
+  assert.equal(s.cost.complete, false);
+  assert.ok(s.format.issues.some((x) => /500 subagent/.test(x)));
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('a transcript with only slash-command plumbing is a known format (no false doctor warning)', () => {
+  const dir = tmp();
+  const f = path.join(dir, 'p.jsonl');
+  fs.writeFileSync(f, `${JSON.stringify({ type: 'user', message: { role: 'user', content: '<command-name>/login</command-name>' } })}\n${JSON.stringify({ type: 'system', subtype: 'local_command' })}\n`);
+  assert.equal(summarize(new LedgerReader().session(f)).format.ok, true);
+  fs.rmSync(dir, { recursive: true, force: true });
 });
