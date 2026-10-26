@@ -316,7 +316,11 @@ test('more than 500 subagent files: the cost says it is incomplete, never a sile
   fs.writeFileSync(main, `${JSON.stringify({ type: 'user', timestamp: '2026-10-20T10:00:00.000Z', message: { role: 'user', content: 'go' } })}\n`);
   const sub = path.join(dir, '88888888-8888-4888-8888-888888888888', 'subagents');
   fs.mkdirSync(sub, { recursive: true });
-  for (let i = 0; i < 501; i++) fs.writeFileSync(path.join(sub, `agent-${String(i).padStart(3, '0')}.jsonl`), '');
+  for (let i = 0; i < 500; i++) fs.writeFileSync(path.join(sub, `agent-${String(i).padStart(3, '0')}.jsonl`), '');
+  assert.equal(summarize(new LedgerReader().session(main)).cost.complete, true, 'exactly 500 is not "more than 500"');
+  // The 501st sits in a folder found after the first 500: still counted as "more".
+  fs.mkdirSync(path.join(sub, 'workflows', 'wf_1'), { recursive: true });
+  fs.writeFileSync(path.join(sub, 'workflows', 'wf_1', 'agent-x.jsonl'), '');
   const s = summarize(new LedgerReader().session(main));
   assert.equal(s.cost.complete, false);
   assert.ok(s.format.issues.some((x) => /500 subagent/.test(x)));

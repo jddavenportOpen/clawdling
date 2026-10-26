@@ -218,6 +218,12 @@ function NextBlock({ n, id, name, now }) {
  * The org's report (7 days: per agent, and the totals for today and 7 days), refreshed every
  * `everyMs` while the page is visible and whenever `key` changes (agents added or removed).
  */
+/** "about $4.10", "about $4.10+" (part unknown), or "unknown" (nothing known): one rule everywhere. */
+export function usdOrUnknown(x, complete = true) {
+  if (!complete && !(x > 0)) return 'unknown';
+  return `${usd(x)}${complete ? '' : '+'}`;
+}
+
 export function useOrgReport(key = '', everyMs = 30000) {
   const [rep, setRep] = useState(null);
   useEffect(() => {

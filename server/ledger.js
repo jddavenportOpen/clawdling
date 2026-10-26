@@ -257,7 +257,7 @@ export function subagentFiles(mainFile) {
   const root = path.join(path.dirname(mainFile), path.basename(mainFile, '.jsonl'), 'subagents');
   const out = [];
   const walk = (dir, depth) => {
-    if (depth > 3 || out.length >= SUB_FILES_MAX) return;
+    if (depth > 3 || out.length > SUB_FILES_MAX) return;
     let list;
     try {
       list = fs.readdirSync(dir, { withFileTypes: true });

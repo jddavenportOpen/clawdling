@@ -610,7 +610,8 @@ async function cmdReport(args) {
     const o = await api(ctx, 'GET', `/api/org/report${q}`);
     if (args.flags.json) return console.log(JSON.stringify(o, null, 2));
     console.log(`Your org, ${WINDOW_LABEL[win] || win}`);
-    console.log(`Usage today: ${usd(o.totals.today_usd)} · last 7 days: ${o.totals.complete || o.totals.week_usd > 0 ? usd(o.totals.week_usd) : 'cost unknown'}${o.totals.complete ? '' : ' (some usage has an unknown cost)'}`);
+    const unk = (x, ok) => (ok === false && !(x > 0) ? 'cost unknown' : usd(x));
+    console.log(`Usage today: ${unk(o.totals.today_usd, o.totals.today_complete)} · last 7 days: ${unk(o.totals.week_usd, o.totals.week_complete)}${o.totals.complete ? '' : ' (some usage has an unknown cost)'}`);
     console.log(`(${o.label})\n`);
     console.log(`${pad('AGENT', 18)}${pad('DONE', 6)}${pad('NEEDS YOU', 11)}${pad('USAGE', 18)}LAST DONE`);
     for (const a of o.agents) console.log(`${pad(a.name, 18)}${pad(a.done, 6)}${pad(a.needs, 11)}${pad(!a.cost_complete && !(a.cost_usd > 0) ? 'cost unknown' : usd(a.cost_usd) + (a.cost_complete ? '' : '+'), 18)}${a.last_done_at ? rel(a.last_done_at) : '-'}`);

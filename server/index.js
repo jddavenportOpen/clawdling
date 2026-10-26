@@ -455,10 +455,10 @@ export async function startServer(opts = {}) {
     // rules cannot express, the detailed timeline stays off, like the needs-you ping and the report.
     const otelGuarded = () => pinger.guarded();
     const managedOverride = testMode && typeof env.CLAWDLING_MANAGED_SETTINGS === 'string' ? env.CLAWDLING_MANAGED_SETTINGS.split(path.delimiter).filter(Boolean) : null;
-    function otelPreflight() {
+    function otelPreflight(extraDirs = []) {
       return preflight({
         env,
-        configDirs: [configDir, ...accounts.list().map((a) => a.dir).filter(Boolean)],
+        configDirs: [configDir, ...accounts.list().map((a) => a.dir).filter(Boolean), ...extraDirs],
         // Every folder a session runs in or adds: the org, each agent's own folder, each repo.
         projectDirs: [home, ...org.agents().flatMap((a) => [a.dir, a.repo, ...(Array.isArray(a.repos) ? a.repos : [])]).filter(Boolean)],
         ...(managedOverride ? { managed: managedOverride, profiles: [] } : {}),
@@ -467,19 +467,20 @@ export async function startServer(opts = {}) {
     const OTEL_BLOCKED = 'Your Claude Code already has telemetry settings, so the detailed timeline stays off and Clawdling uses transcripts.';
     const OTEL_UNGUARDED = "Clawdling cannot keep agents out of its own settings in a folder whose path has characters like ( ) ' or accents, so the detailed timeline stays off here.";
     let otelActive = false;
-    function otelEnv() {
+    function otelEnv(extraDirs = []) {
       const st = otelState.read();
-      otelActive = st.enabled && otelGuarded() && otelPreflight().clear;
+      otelActive = st.enabled && otelGuarded() && otelPreflight(extraDirs).clear;
       return otelActive ? envBlock({ port }) : null;
     }
-    function writeHooks() {
-      writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, env: otelEnv() }), 0o600);
+    function writeHooks(extraDirs = []) {
+      writeJson(paths.hooksSettings, buildHooksSettings({ nodePath, hookScript, stopFailure: supportsStopFailure(versionLine), home, env: otelEnv(extraDirs) }), 0o600);
     }
     // Before every launch and resume: the preflight runs again (settings may have changed since), and
     // a session started while it is on gets its own telemetry credential, never the org's secret.
     sessions.beforeLaunch = (rec) => {
       try {
-        writeHooks();
+        // Including the exact Claude Code folder this launch uses (a login folder behind a link too).
+        writeHooks([sessions.configDirFor(rec, configDir)].filter((d) => typeof d === 'string' && d));
       } catch (err) {
         // The preflight could not run: the settings file loses its telemetry block, and this session
         // gets no credential. Never a stale block from before.

@@ -16,7 +16,7 @@ import { load, save } from '../lib/prefs.js';
 import { OrgError, useImportStep } from './first-run.js';
 import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf, countOf } from './setup.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
-import { usd, useOrgReport } from './report-card.js';
+import { usd, usdOrUnknown, useOrgReport } from './report-card.js';
 
 const TAU = Math.PI * 2;
 const R_OWNER = 30;
@@ -342,7 +342,7 @@ export function OrgMap() {
       <div class="page-bar-main">
         <h1 class="page-title">Org map</h1>
         <p class="page-sub">${agents.length} agents · ${counts.domains} ${counts.domains === 1 ? 'domain' : 'domains'} · ${counts.projects} ${counts.projects === 1 ? 'project' : 'projects'} · ${counts.live} live${counts.needs ? html` · <span class="tone-amber-text">${counts.needs} need you</span>` : null}${agents.length && !orgError ? ` · ${mobile ? 'Tap' : 'Click'} an agent to see what it knows` : ''}</p>
-        ${orgRep && orgRep.totals ? html`<p class="map-usage" data-testid="map-usage">Usage at list price, not a bill: today ${usd(orgRep.totals.today_usd)}, last 7 days ${!orgRep.totals.complete && !(orgRep.totals.week_usd > 0) ? 'unknown' : usd(orgRep.totals.week_usd)}${orgRep.totals.complete || !(orgRep.totals.week_usd > 0) ? '' : ' (plus some with an unknown cost)'}. <span class="map-usage-note">Under each agent: its last 7 days, and when it last finished work.</span></p>` : null}
+        ${orgRep && orgRep.totals ? html`<p class="map-usage" data-testid="map-usage">Usage at list price, not a bill: today ${usdOrUnknown(orgRep.totals.today_usd, orgRep.totals.today_complete !== false)}, last 7 days ${usdOrUnknown(orgRep.totals.week_usd, orgRep.totals.week_complete ?? orgRep.totals.complete)}${orgRep.totals.complete ? '' : ' (+ means some usage has an unknown cost)'}. <span class="map-usage-note">Under each agent: its last 7 days, and when it last finished work.</span></p>` : null}
       </div>
       <ul class="legend" aria-label="Legend">
         <li><span class="legend-ring ring-working" aria-hidden="true"></span> Working</li>

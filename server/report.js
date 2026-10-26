@@ -587,7 +587,7 @@ export class Reports {
       generated_at: new Date(now).toISOString(),
       window: { key: w.key, from: new Date(w.start).toISOString(), to: new Date(w.end).toISOString() },
       label: COST_LABEL,
-      totals: { today_usd: t1.total_usd, week_usd: t7.total_usd, complete: t1.complete && t7.complete },
+      totals: { today_usd: t1.total_usd, week_usd: t7.total_usd, today_complete: t1.complete, week_complete: t7.complete, complete: t1.complete && t7.complete },
       agents,
     };
   }
