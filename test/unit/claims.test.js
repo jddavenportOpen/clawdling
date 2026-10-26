@@ -454,3 +454,12 @@ test('review 5: set -e does not stop at a check inside an && list; set -euo pipe
   const [c] = claimsOf([prompt('x'), edit(), bash(long, 'not ok 1\n# fail 1'), say('Done.')]);
   assert.equal(labelClaim(c).label, 'not_verified', 'only its first 1,000 characters were kept');
 });
+
+test('a run of only some tests can contradict a claim, never verify it', () => {
+  for (const cmd of ['pytest -k cart', 'npx jest -t adds', 'go test -run TestCart ./...', 'npx vitest run --testNamePattern=adds', 'npx mocha --grep cart']) {
+    const [a] = claimsOf([prompt('x'), edit(), bash(cmd, '# pass 3\n# fail 0'), say('Done. All tests pass.')]);
+    assert.equal(labelClaim(a).label, 'not_verified', cmd);
+    const [b] = claimsOf([prompt('x'), edit(), bash(cmd, 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done. All tests pass.')]);
+    assert.equal(labelClaim(b).label, 'contradicted', cmd);
+  }
+});

@@ -319,6 +319,7 @@ const runsNothing = (w) => {
   return w.some((x) => NO_RUN.test(x)) || (DRY_N.has(a[0]) && a.some((x) => x === '-n' || x === '--just-print' || x === '--recon'));
 };
 /** The approved command itself, or it with extra flags (`npm test -- --ci`), never another script. */
+const TEST_SELECT = /^(-k|-t|-g|-m|--grep(=.*)?|--testNamePattern(=.*)?|--test-name-pattern(=.*)?|--testPathPattern(=.*)?|--test-path-pattern(=.*)?|--filter(=.*)?|--only|-run=(?!['"]?\^\$).*|--test-only)$/;
 // Extra flags that turn a test run into one that runs none (`mvn test -DskipTests`, `go test ./... -run=^$`).
 const SKIP_EXTRA = /^(-DskipTests(=true)?|-Dmaven\.test\.skip(=true)?|-run=['"]?\^\$['"]?|-list(=.*)?|-N|--show-only(=.*)?|-x|--passWithNoTests)$/;
 function sameOrFlags(cmd, base) {
@@ -409,7 +410,10 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
     // A later part of the line that can print (after ;, || or &&) could supply a pass of its own.
     const quiet = (w2) => !w2.length || ['true', ':', 'false', 'exit', 'return'].includes(w2[0]) || w2.every((y) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(y));
     const later = rest.slice(0, -1).some((x, j) => (x.op === ';' || x.op === '||' || x.op === '&&') && rest[j + 1] && !quiet(words(rest[j + 1].raw)));
-    found = { kind, masked, chained: !masked && meaningful > 1, preceded, cut, later, cmd: trimmed };
+    // Only some tests selected (`pytest -k cart`, `jest -t adds`, `go test -run TestCart`): a pass
+    // says nothing about the rest, a failure still counts.
+    const partial = kind === 'test' && (unwrap(w) || w).some((x, j, arr) => TEST_SELECT.test(x) || (x === '-run' && !/^['"]?\^\$['"]?$/.test(arr[j + 1] || '')));
+    found = { kind, masked, chained: !masked && meaningful > 1, preceded, cut, later, partial, cmd: trimmed };
     if (!masked) break; // an unmasked check decides
   }
   return found;
@@ -660,7 +664,8 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
     if (x.cut) continue; // only its first 1,000 characters were kept: the rest could hide its exit
     const k = checkOf(x.cmd, { approved, detected });
     if (!k) continue;
-    const ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later);
+    let ok = outcome(x, k.masked, k.chained, k.preceded, k.cut, k.later);
+    if (ok === true && k.partial) ok = null;
     if (ok === null) continue;
     checks.push({ kind: k.kind, cmd: x.cmd, at: x.at, ok, first_error_line: ok ? null : x.err1 || (x.exit ? `Exit code ${x.exit}` : null) });
   }
