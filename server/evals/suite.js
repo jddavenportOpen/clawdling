@@ -44,25 +44,51 @@ const GRADER_RE = /^[a-z0-9][a-z0-9_-]{0,59}$/;
 const MAX_CASES = 20;
 const MAX_FILE = 64 * 1024;
 export const DEFAULT_TOOLS = ['Read', 'Glob', 'Grep'];
-// Read-only tools a case may allow; Bash only as listed commands (`Bash(npm test:*)`), never bare.
+// Read-only tools a case may allow. No Bash in 1.6: a command pattern cannot be made safe here,
+// because Claude Code merges allow rules from every settings layer and the first word of a command
+// says little about what it runs (`git -c alias...`, `npx`, `/bin/sh`).
 const SAFE_TOOLS = new Set(['Read', 'Glob', 'Grep', 'LS', 'TodoWrite']);
-const BASH_PATTERN = /^Bash\(([A-Za-z0-9._/-]+(?: [A-Za-z0-9._/=@,+-]+)*)(:\*)?\)$/;
 
 /** Is this allowed_tools entry one a 1.6 check-up runs with? Returns null, or why not. */
 export function toolProblem(t) {
   if (typeof t !== 'string' || !t) return 'empty tool name';
   if (SAFE_TOOLS.has(t)) return null;
-  const m = BASH_PATTERN.exec(t);
-  if (m && m[1] !== '*' && !/^(sh|bash|zsh|env|eval|exec|sudo|xargs|curl|wget|nc|ssh|scp|rsync|python[\d.]*|node|ruby|perl|php|pwsh|powershell)$/.test(m[1].split(' ')[0])) return null;
-  if (t === 'Bash' || /^Bash\(\*?\)$/.test(t)) return 'Bash is allowed only as a listed command, like Bash(npm test:*)';
-  if (m) return `${t} would let the agent run any program; list the exact command instead`;
-  return `${t} is not available in a 1.6 check-up (read-only tools: Read, Glob, Grep; Bash only as listed commands)`;
+  if (/^(Bash|PowerShell)\b/.test(t)) return `${t}: a 1.6 check-up cannot run commands (read-only tools: Read, Glob, Grep, LS). Ship checks run your test commands.`;
+  return `${t} is not available in a 1.6 check-up (read-only tools: Read, Glob, Grep, LS)`;
 }
 
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
 /** The evals folder of an agent folder. */
 export const evalsDir = (agentDir) => path.join(agentDir, 'evals');
+
+/**
+ * Is `dir` a real folder (not a link, not a file)? Makes it when missing and `create` is set. Every
+ * read listing and every write under evals/ goes through this, so a link the agent planted (evals ->
+ * your home folder) is refused instead of listed, written into or deleted.
+ */
+export function realDir(dir, { create = false } = {}) {
+  let st = null;
+  try {
+    st = fs.lstatSync(dir);
+  } catch {
+    st = null;
+  }
+  if (st && !st.isDirectory()) throw badRequest(`${path.basename(dir)} is a link or a file, not a folder: Clawdling reads and writes check-ups only in real folders inside the agent folder`);
+  if (!st && create) fs.mkdirSync(dir, { mode: 0o755 });
+  return !!st || create;
+}
+
+/** The folder of one case, every step a real folder (evals/<case>[/graders]). */
+export function caseDir(agentDir, id, { create = false, graders = false } = {}) {
+  if (!CASE_RE.test(String(id || ''))) throw badRequest('a case name is lower-case letters, numbers and -, at most 60');
+  const evals = evalsDir(agentDir);
+  if (!realDir(evals, { create })) return null;
+  const cdir = path.join(evals, id);
+  if (!realDir(cdir, { create })) return null;
+  if (graders && !realDir(path.join(cdir, 'graders'), { create })) return null;
+  return cdir;
+}
 
 function readSmall(file) {
   try {
@@ -216,6 +242,11 @@ export function loadSuite(agentDir, approvals = {}) {
   const out = { dir, exists: false, cases: [], settings: { ...SUITE_DEFAULTS }, settings_error: null, settings_text: null };
   let names = [];
   try {
+    if (!realDir(dir)) return out;
+  } catch (err) {
+    return { ...out, exists: true, settings_error: err.message };
+  }
+  try {
     names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory() && CASE_RE.test(e.name) && e.name !== 'results' && e.name !== 'mocks').map((e) => e.name).sort();
     out.exists = true;
   } catch {
@@ -235,6 +266,7 @@ export function loadSuite(agentDir, approvals = {}) {
     if (promptText !== null) files['prompt.md'] = promptText;
     let graderNames = [];
     try {
+      if (!realDir(path.join(cdir, 'graders'))) throw new Error('no graders folder');
       graderNames = fs.readdirSync(path.join(cdir, 'graders'), { withFileTypes: true }).filter((e) => e.isFile() && e.name.endsWith('.md')).map((e) => e.name).sort();
     } catch {
       graderNames = [];
@@ -316,8 +348,7 @@ export function writeCase(agentDir, id, { prompt, graders, reference }) {
     parseGrader(name, text);
   }
   if (reference !== undefined && reference !== null && (typeof reference !== 'string' || reference.length > MAX_FILE)) throw badRequest('reference.md must be text (at most 64 KB)');
-  const cdir = path.join(evalsDir(agentDir), id);
-  fs.mkdirSync(path.join(cdir, 'graders'), { recursive: true });
+  const cdir = caseDir(agentDir, id, { create: true, graders: true });
   writeFileAtomic(path.join(cdir, 'prompt.md'), prompt.endsWith('\n') ? prompt : `${prompt}\n`, 0o644);
   for (const [name, text] of Object.entries(graders)) writeFileAtomic(path.join(cdir, 'graders', `${name}.md`), text.endsWith('\n') ? text : `${text}\n`, 0o644);
   for (const f of fs.readdirSync(path.join(cdir, 'graders'))) {
@@ -332,7 +363,7 @@ export function writeCase(agentDir, id, { prompt, graders, reference }) {
 export function writeSettings(agentDir, settings) {
   const s = parseSettings(stringifyYaml({ ...SUITE_DEFAULTS, ...settings }));
   const text = `# Clawdling check-up settings (not part of the plugin-eval format).\n${stringifyYaml({ runs: s.runs, judge_model: s.judge_model, max_cost_usd: s.max_cost_usd, ...(s.created_by_draft_version ? { created_by_draft_version: s.created_by_draft_version } : {}) })}`;
-  fs.mkdirSync(evalsDir(agentDir), { recursive: true });
+  realDir(evalsDir(agentDir), { create: true });
   writeFileAtomic(path.join(evalsDir(agentDir), SUITE_FILE), text, 0o644);
   return text;
 }

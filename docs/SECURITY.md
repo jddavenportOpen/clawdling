@@ -396,23 +396,31 @@ To limit the damage a hostile script could do:
   detected from the repo, each shown exactly with what it does (the script's own text, from
   `package.json`, or the target's recipe lines). The approve request must echo the exact command
   strings shown, or it is refused. The list is written to `<agent folder>/checks.yaml`, and a
-  fingerprint of it (commands, names and timeouts) to `.clawdling/checks/<agent>/approved.json`,
+  fingerprint of it (commands, names, timeouts and the repo's real path) to `.clawdling/checks/<agent>/approved.json`,
   which agents' file tools are denied. Agents can edit their own folder, so a run starts only when
-  `checks.yaml` still matches that fingerprint: any change, by anyone, needs your approval again.
+  `checks.yaml` still matches that fingerprint: any change, by anyone, needs your approval again,
+  and so does pointing the agent at another repo.
 - **Never the live repo.** `git stash create` snapshots the tracked files, uncommitted changes
   included, as a commit object without touching the working tree or the index; `git worktree add
   --detach` puts that snapshot in a scratch folder under the system temp folder; the checks run
-  there; the worktree is removed with `git worktree remove --force` and `git worktree prune`.
+  there; the worktree is removed with `git worktree remove --force` (never `git worktree prune`,
+  which would also drop records of your own worktrees on an unplugged drive).
   Untracked files are not copied (they can be secrets or build junk); the cockpit says so. Every
-  git call carries `core.hooksPath` pointed at an empty folder, `core.fsmonitor=false`, LFS filters
-  off, `protocol.allow=never` and `GIT_NO_LAZY_FETCH=1`, so the repo's own config cannot make git
-  run a program or fetch.
+  git call carries `core.hooksPath` pointed at an empty folder, `core.fsmonitor=false`, every
+  clean/smudge/process filter named in the git config switched off (LFS included),
+  `protocol.allow=never` and `GIT_NO_LAZY_FETCH=1`, so the repo's own config cannot make git run a
+  program or fetch. The scratch worktree still shares the repo's object store, branches and config:
+  a check's own script that runs `git config` or `git stash` acts on the live repo, as it would if
+  you ran it yourself.
 - **A scrubbed environment.** The checks get Clawdling's child environment without the variables a
   parent Claude Code session sets, without anything that looks like a credential (names with
-  `TOKEN`, `SECRET`, `PASSWORD`, `API_KEY`, `AUTH`...; `ANTHROPIC_*`, `AWS_*`, `GH_*`, `GITHUB_*`,
-  `SSH_AUTH_SOCK`, `CLAUDE_CONFIG_DIR` and similar), without any variable named in the org's `.env`,
+  `TOKEN`, `SECRET`, `PASSWORD`, `PASS`, `PWD`, `DSN`, `API_KEY`, `AUTH`...; `ANTHROPIC_*`,
+  `AWS_*`, `GH_*`, `GITHUB_*`, `SSH_AUTH_SOCK`, `CLAUDE_CONFIG_DIR` and similar; any value that is a
+  URL with a password in it), without any variable named in the org's `.env`,
   and with `CI=true` so test runners run once instead of watching.
-- **Bounded.** One ship check per org at a time; output capped at 256 KB per command, of which the
+- **Bounded.** A step is over when its shell exits (a background child holding the output open
+  gets half a second), and anything the step left running in its process group is ended. One ship
+  check per org at a time; output capped at 256 KB per command, of which the
   last 40 lines are kept, for 90 days, in `.clawdling/checks/<agent>/`. Scratch worktrees in use are
   listed in `.clawdling/checks/active.json`, and Clawdling removes any a crash left behind when it
   starts.
@@ -426,7 +434,12 @@ To limit the damage a hostile script could do:
   on a subscription). Clawdling never calls the Anthropic API and never reads a credential. Every
   call passes `--no-session-persistence`, `--strict-mcp-config` (no MCP server starts) and a
   `--settings` file with `disableAllHooks`, so your own hooks and MCP servers do not run inside a
-  check-up.
+  check-up. The run's `claude` gets only the settings file and the scratch copy's own project
+  settings (`--setting-sources project`): your user settings and any `settings.local.json` "don't
+  ask again" list do not widen what a check-up may do. Its environment has no Clawdling variables,
+  nothing from the org `.env` and nothing credential-looking, except what the CLI itself signs in
+  with (`ANTHROPIC_*`, `CLAUDE_CODE_*`, `CLAUDE_CONFIG_DIR`, and Bedrock's or Vertex's variables
+  when the CLI is set to use them).
 - **Drafting** is one call with no tools (`--tools ""`), a JSON schema and `--max-budget-usd 0.50`,
   given the agent's CLAUDE.md, NOW.md, the end of LOG.md and the org's me.md. It writes the cases
   unapproved; nothing runs until you have read them.
@@ -437,20 +450,30 @@ To limit the damage a hostile script could do:
   without `evals/` (so the agent cannot read its own test), `.env` files, links,
   `node_modules` and `.git` (a project agent also gets a detached worktree of its repo at HEAD).
   The run gets the same context a real session gets (the org rules, the agent's CLAUDE.md and
-  NOW.md) and runs in that copy with `--permission-mode default`. Its tools are read-only by default
-  (Read, Glob, Grep); Bash appears only as listed commands (`Bash(npm test:*)`), never bare, never a
-  shell or a network tool, and write tools are not offered. In print mode anything not allowed is
-  denied, not asked. Reading outside the copy is denied by Claude Code's own rules, and the live
-  agent's `evals/` folder and Clawdling's `.clawdling/` are denied even by absolute path. The copy
-  is removed after each run, and on start if a crash left one.
+  NOW.md) and runs in that copy with `--permission-mode default`. Its tools are read-only (Read,
+  Glob, Grep, LS): no Bash and no write tools in 1.6, because a command pattern such as
+  `Bash(npm test:*)` cannot be made safe here (allow rules merge from every settings layer, and
+  `git`, `npx` or `/bin/sh` run anything). Your test commands run in the ship check instead. In
+  print mode anything not allowed is denied, not asked. Reading outside the copy is denied by Claude
+  Code's own rules, and the live agent's `evals/` folder and Clawdling's `.clawdling/` are denied
+  even by absolute path, by path and by real path; if a rule cannot name one of those folders (a
+  path with characters Claude Code rules cannot express), the check-up refuses to run. The copy is
+  removed after each run, and on start if a crash left one.
+- **Links.** Clawdling reads and writes check-ups only in real folders: a link at `evals/`, at a
+  case folder, at `graders/` or at `results/` is refused, never listed, written into or deleted
+  through.
 - **The judge** has no tools, gets only the criterion and the answer (between two random markers,
   with an instruction to treat the answer as data), answers through a JSON schema, and votes three
   times; a case passes on two of three. A steered judge can only mis-score, never act. Before any
   agent run, the judge also grades an empty answer (it must fail) and each case's `reference.md`
-  (it must pass); if either goes wrong the suite shows "judge unreliable" and no agent run is spent.
+  (it must pass); if either goes wrong, or any judge call fails, the suite shows "judge unreliable"
+  and no agent run is spent. `regex` graders run in a separate V8 context with a one-second
+  deadline, so a pattern that backtracks badly fails its grader instead of stalling Clawdling.
 - **Plan burn.** The cost is estimated and shown before every run ("This starts N Claude Code runs on
   your plan, about $X, capped at $Y"); the cap (default $2.00, list-price equivalent) is checked
-  before each launch, and each run carries `--max-budget-usd` with what is left. One run per case
+  before each launch, and each run carries `--max-budget-usd` with what is left. A run or judge
+  vote that ends without reporting its cost (a timeout, a crash) counts as its whole budget, so the
+  cap holds even when costs are unknown. One run per case
   by default, one check-up per org at a time, never scheduled.
 - **Try a cheaper model** runs the same cases with other `--model` and `--effort` values. "Use this"
   writes the agent's default model and effort to its own `agent.json` (Clawdling's config); it never

@@ -337,7 +337,7 @@ test('check-up: a deliberately lenient rubric makes the judge unreliable, and no
 test('check-up: unknown frontmatter, bare Bash and an edit made outside the cockpit are refused', async () => {
   const bad = async (prompt) => (await request(srv, 'PUT', '/api/agents/health/evals/knows-its-job', { prompt, graders: { criteria: '---\ntype: llm\n---\nok' } })).body.error;
   assert.match(await bad('---\nname: x\nfoo: 1\n---\nHi'), /unknown frontmatter key "foo"/);
-  assert.match(await bad('---\nallowed_tools: [Bash]\n---\nHi'), /Bash is allowed only as a listed command/);
+  assert.match(await bad('---\nallowed_tools: [Bash]\n---\nHi'), /cannot run commands/);
   assert.match(await bad('---\nallowed_tools: [Write]\n---\nHi'), /not available in a 1\.6 check-up/);
   assert.match((await request(srv, 'PUT', '/api/agents/health/evals/knows-its-job', { prompt: '---\nname: x\n---\nHi', graders: { g: '---\ntype: baseline\n---\nx' } })).body.error, /not supported in 1\.6/);
   // The agent (or anyone) edits a case on disk: it stops running until the owner approves it again.

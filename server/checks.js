@@ -35,12 +35,22 @@ const MAX_SETUP = 3;
 const DEFAULT_TIMEOUT = 600;
 const PREFIX = 'clawdling-check-';
 const GIT_TIMEOUT = 60000;
+const EXIT_DRAIN_MS = 500;
 export const UNTRACKED_NOTE = 'Checks run on committed and modified tracked files. New files the agent has not added to git are not included.';
 export const SCRIPTS_NOTE = "A check runs your project's own scripts as you. A script's contents can change without the command changing, so approve only commands from projects you trust.";
 export const SETUP_NOTE = 'A setup step usually downloads and runs code from the internet (npm ci, pip install). It is off unless you tick it.';
 
 // Environment variables that look like credentials: never handed to a project's scripts.
-const CREDENTIAL_NAME = /(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|PASSPHRASE|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH|COOKIE|SESSION)(_|$)/i;
+const CREDENTIAL_NAME = /(^|_)(TOKEN|SECRET|PASS|PWD|DSN|API_?KEY|ACCESS_?KEY|PRIVATE_?KEY|CREDENTIALS?|AUTH|COOKIE|SESSION)(_|$)|PASSWORD|PASSWD|PASSPHRASE/i;
+const NOT_CREDENTIAL = new Set(['PWD', 'OLDPWD']);
+// A URL with a password in it (postgres://user:pass@host/db), whatever the variable is called.
+const CREDENTIAL_URL = /^[a-z][a-z0-9+.-]*:\/\/[^/\s:@]*:[^/\s@]+@/i;
+
+/** Does this variable look like a credential? (Clawdling's own and the CLI's are listed in CREDENTIAL_PREFIX.) */
+export function looksLikeCredential(k, v) {
+  if (NOT_CREDENTIAL.has(k.toUpperCase())) return false;
+  return CREDENTIAL_EXACT.has(k.toUpperCase()) || CREDENTIAL_NAME.test(k) || CREDENTIAL_PREFIX.test(k) || CREDENTIAL_URL.test(String(v ?? ''));
+}
 const CREDENTIAL_PREFIX = /^(ANTHROPIC_|CLAUDE_CODE_OAUTH|AWS_|AZURE_|GOOGLE_APPLICATION|GCLOUD_|GH_|GITHUB_|GITLAB_|NPM_TOKEN|NODE_AUTH|TS_AUTH|TAILSCALE_|CLOUDFLARE_|CF_|OPENAI_|CLAWDLING_|OTEL_)/i;
 const CREDENTIAL_EXACT = new Set(['SSH_AUTH_SOCK', 'GPG_AGENT_INFO', 'GNUPGHOME', 'KUBECONFIG', 'DOCKER_CONFIG', 'NETRC', 'CLAUDE_CONFIG_DIR']);
 
@@ -53,7 +63,7 @@ export function checkEnv(base, orgEnvKeys = []) {
   const env = childEnv(base);
   const drop = new Set(orgEnvKeys);
   for (const k of Object.keys(env)) {
-    if (drop.has(k) || CREDENTIAL_EXACT.has(k.toUpperCase()) || CREDENTIAL_NAME.test(k) || CREDENTIAL_PREFIX.test(k)) delete env[k];
+    if (drop.has(k) || looksLikeCredential(k, env[k])) delete env[k];
   }
   env.CI = 'true';
   return env;
@@ -66,6 +76,22 @@ export function gitSafe(hooksDir) {
     '-c', 'protocol.allow=never', ...['ext', 'file', 'ssh', 'git', 'http', 'https'].flatMap((p) => ['-c', `protocol.${p}.allow=never`]),
     '-c', 'filter.lfs.smudge=', '-c', 'filter.lfs.process=', '-c', 'filter.lfs.required=false', '-c', 'submodule.recurse=false',
   ];
+}
+
+/**
+ * Filter driver names from `git config -z --get-regexp ^filter\.` output (NUL between entries, a
+ * newline between key and value; a name may contain dots). Throws on a name `-c` cannot express.
+ */
+export function filterDrivers(text) {
+  const names = new Set();
+  for (const entry of String(text || '').split('\0')) {
+    const key = entry.split('\n')[0];
+    const m = /^filter\.(.+)\.[^.]+$/s.exec(key);
+    if (!m) continue;
+    if (/[=\s]/.test(m[1])) throw new Error(`the repo's git config has a filter named ${JSON.stringify(m[1])} that Clawdling cannot switch off`);
+    names.add(m[1]);
+  }
+  return [...names];
 }
 
 const NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 _.:-]{0,39}$/;
@@ -108,9 +134,19 @@ export function normalizeConfig(input) {
   return out;
 }
 
-/** The fingerprint of an approved list: what runs, in what order, with what timeouts. */
-export function fingerprint(cfg) {
-  const canon = JSON.stringify({ setup: cfg.setup.map((s) => [s.run, s.timeout]), checks: cfg.checks.map((c) => [c.name, c.run, c.timeout]) });
+/** The repo as the fingerprint names it: its real path, so pointing agent.json elsewhere needs approval again. */
+export function repoKey(repo) {
+  if (!repo) return null;
+  try {
+    return fs.realpathSync(repo);
+  } catch {
+    return path.resolve(repo);
+  }
+}
+
+/** The fingerprint of an approved list: what runs, in what order, with what timeouts, in which repo. */
+export function fingerprint(cfg, repo = null) {
+  const canon = JSON.stringify({ setup: cfg.setup.map((s) => [s.run, s.timeout]), checks: cfg.checks.map((c) => [c.name, c.run, c.timeout]), repo: repoKey(repo) });
   return crypto.createHash('sha256').update(canon).digest('hex');
 }
 
@@ -211,7 +247,7 @@ export class Checks {
 
   /** checks.yaml as written, and whether it is still exactly what the owner approved. */
   config(id) {
-    const { agent } = this.target(id);
+    const { agent, repo } = this.target(id);
     const file = this.configFile(agent);
     let text = null;
     try {
@@ -228,7 +264,7 @@ export class Checks {
       return { exists: true, config: null, approved: false, changed: true, error: err instanceof YamlError || err instanceof HttpError ? `checks.yaml: ${err.message}` : 'checks.yaml could not be read' };
     }
     const rec = readJson(path.join(this.agentDir(id), 'approved.json'), null);
-    const approved = !!rec && typeof rec.fingerprint === 'string' && rec.fingerprint === fingerprint(cfg);
+    const approved = !!rec && typeof rec.fingerprint === 'string' && rec.fingerprint === fingerprint(cfg, repo);
     return { exists: true, config: cfg, approved, changed: !approved, error: null, approved_at: approved ? rec.approved_at : null };
   }
 
@@ -269,7 +305,7 @@ export class Checks {
     const header = `# Clawdling ship check for ${agent.name}. Approved in the cockpit on ${approvedAt}.\n# Editing this file needs approval again before anything runs (Check-up tab).\n`;
     writeFileAtomic(this.configFile(agent), header + stringifyYaml(doc), 0o644);
     fs.mkdirSync(this.agentDir(id), { recursive: true, mode: 0o700 });
-    writeJson(path.join(this.agentDir(id), 'approved.json'), { fingerprint: fingerprint(cfg), approved_at: approvedAt, commands: runs }, 0o600);
+    writeJson(path.join(this.agentDir(id), 'approved.json'), { fingerprint: fingerprint(cfg, repo), approved_at: approvedAt, commands: runs }, 0o600);
     this.events?.record?.({ type: 'checks', action: 'approved', agent: id, count: cfg.checks.length, setup: cfg.setup.length });
     return this.view(id);
   }
@@ -325,13 +361,34 @@ export class Checks {
     return d;
   }
 
-  git(repo, args, { timeout = GIT_TIMEOUT } = {}) {
+  gitEnv() {
     const env = { ...checkEnv(this.env), GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_LFS_SKIP_SMUDGE: '1', GIT_NO_LAZY_FETCH: '1', GIT_PROTOCOL_FROM_USER: '0', GIT_CONFIG_NOSYSTEM: '1' };
     delete env.CI;
-    return this.exec('git', [...gitSafe(this.hooksDir()), '-C', repo, ...args], { timeout, env });
+    return env;
   }
 
-  /** Remove a scratch worktree: git's record of it, then the folder, then prune. */
+  /** Every filter driver the repo's config names (reading config runs nothing). */
+  async filterNames(repo) {
+    let stdout = '';
+    try {
+      ({ stdout } = await this.exec('git', [...gitSafe(this.hooksDir()), '-C', repo, 'config', '-z', '--get-regexp', '^filter\\.'], { timeout: GIT_TIMEOUT, env: this.gitEnv() }));
+    } catch {
+      return []; // no filter configured (git config exits 1)
+    }
+    return filterDrivers(stdout);
+  }
+
+  async git(repo, args, { timeout = GIT_TIMEOUT } = {}) {
+    // A clean/smudge/process filter is a program from the repo's config: switch every one off, so making
+    // the scratch copy runs nothing but git itself.
+    const filters = (await this.filterNames(repo)).flatMap((n) => ['-c', `filter.${n}.clean=`, '-c', `filter.${n}.smudge=`, '-c', `filter.${n}.process=`, '-c', `filter.${n}.required=false`]);
+    return this.exec('git', [...gitSafe(this.hooksDir()), ...filters, '-C', repo, ...args], { timeout, env: this.gitEnv() });
+  }
+
+  /**
+   * Remove a scratch worktree: git's record of it, then the folder. Never `git worktree prune`: that
+   * would also drop the records of the owner's own worktrees whose folders are missing (an unplugged drive).
+   */
   async removeWorktree(repo, dir) {
     if (!this.ours(dir)) return;
     try {
@@ -343,11 +400,6 @@ export class Checks {
       fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3 });
     } catch (err) {
       this.logger?.warn?.(`checks: could not remove ${dir}: ${err.message}`);
-    }
-    try {
-      await this.git(repo, ['worktree', 'prune']);
-    } catch {
-      // the repo is gone
     }
   }
 
@@ -365,11 +417,6 @@ export class Checks {
       await this.git(repo, ['worktree', 'remove', '--force', dir]);
     } catch {
       // already gone
-    }
-    try {
-      await this.git(repo, ['worktree', 'prune']);
-    } catch {
-      // the repo is gone
     }
   }
 
@@ -441,9 +488,13 @@ export class Checks {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        clearTimeout(drain);
         this.children.delete(child);
+        // Whatever the step left running in its process group (a server, a watcher) ends with it.
+        if (this.platform !== 'win32') killTree(child, 'SIGKILL');
         resolve({ exit, ms: Date.now() - started, output: out.length > OUTPUT_CAP ? out.slice(-OUTPUT_CAP) : out, timedOut });
       };
+      let drain = null;
       const timer = setTimeout(() => {
         timedOut = true;
         killTree(child, 'SIGTERM');
@@ -453,6 +504,11 @@ export class Checks {
       child.on('error', (err) => {
         out += `\n${err.message}`;
         finish(null);
+      });
+      // The step is over when its shell exits; a background child holding the pipes open gets a short
+      // drain, not the whole timeout.
+      child.on('exit', (code) => {
+        if (!timedOut) drain = setTimeout(() => finish(code), EXIT_DRAIN_MS);
       });
       child.on('close', (code) => finish(timedOut ? null : code));
     });

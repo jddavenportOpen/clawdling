@@ -10,8 +10,10 @@
 // A grader that cannot be evaluated fails with the reason, never passes by default.
 import fs from 'node:fs';
 import path from 'node:path';
+import vm from 'node:vm';
 
 const FOCUS_MAX = 100000;
+const FILE_TEXT_MAX = 1024 * 1024;
 const FOCUS_TAIL = 20000;
 export const VOTES = 3;
 
@@ -40,12 +42,15 @@ export function globRegex(glob) {
 /** The text a regex or llm grader reads, as plugin eval builds it. */
 export function focusText(target, run) {
   if (target && typeof target === 'object' && target.source === 'file') {
+    if (run.fileTexts && Object.hasOwn(run.fileTexts, target.path)) return run.fileTexts[target.path];
+    if (!run.cwd) return { unavailable: `focus file ${target.path} does not exist` };
     const base = path.resolve(run.cwd);
     const file = path.resolve(base, target.path);
     if (!file.startsWith(base + path.sep)) return { unavailable: `focus file ${target.path} is outside the run folder` };
     try {
       const real = fs.realpathSync(file);
       if (!real.startsWith(fs.realpathSync(base) + path.sep)) return { unavailable: `focus file ${target.path} leaves the run folder through a link` };
+      if (fs.statSync(real).size > FILE_TEXT_MAX) return { unavailable: `focus file ${target.path} is over 1 MB` };
       const buf = fs.readFileSync(real);
       if (buf.includes(0)) return { unavailable: `focus file ${target.path} is not text` };
       return { text: buf.toString('utf8') };
@@ -59,43 +64,70 @@ export function focusText(target, run) {
   return { unavailable: `unknown target ${JSON.stringify(target)}` };
 }
 
+/** The {source: file} texts a case's graders read, captured before the run folder is removed. */
+export function fileTexts(graders, run) {
+  const out = {};
+  for (const g of graders || []) {
+    const t = g.type === 'llm' ? g.focus : g.type === 'regex' ? g.target : null;
+    if (t && typeof t === 'object' && t.source === 'file' && !Object.hasOwn(out, t.path)) out[t.path] = focusText(t, { ...run, fileTexts: null });
+  }
+  return out;
+}
+
+// Grader patterns are owner-approved but run over agent-written text: each runs in a vm context with a
+// deadline, so a pattern that backtracks badly fails its grader instead of freezing the server.
+const REGEX_MS = 1000;
+const REGEX_INPUT_MAX = 4 * 1024 * 1024;
+const REGEX_CODE = {
+  test: 'new RegExp(p, f).test(t)',
+  count: "(t.match(new RegExp(p, f.includes('g') ? f : f + 'g')) || []).length",
+};
+const regexBox = vm.createContext({});
+
+/** Run a pattern over text in the sandbox: {value} or {error}. mode: test | count. */
+export function runRegex(pattern, flags, text, mode = 'test', { timeoutMs = REGEX_MS } = {}) {
+  regexBox.p = String(pattern);
+  regexBox.f = String(flags || '');
+  regexBox.t = String(text ?? '').slice(0, REGEX_INPUT_MAX);
+  try {
+    return { value: vm.runInContext(REGEX_CODE[mode], regexBox, { timeout: timeoutMs }) };
+  } catch (err) {
+    return { error: /timed out/i.test(String(err?.message)) ? `the pattern took more than ${timeoutMs / 1000} s (it backtracks badly on this text)` : `bad pattern: ${err?.message}` };
+  } finally {
+    regexBox.t = '';
+  }
+}
+
 const fail = (g, why) => ({ name: g.name, type: g.type, passed: false, weight: g.weight, explanation: why });
 
 export function gradeRegex(g, run) {
   const f = focusText(g.target, run);
   if (f.unavailable) return fail(g, f.unavailable);
   const label = typeof g.target === 'object' ? `file ${g.target.path}` : g.target || 'last_message';
-  let re;
-  let all;
-  try {
-    re = new RegExp(g.pattern, g.flags || '');
-    all = new RegExp(g.pattern, (g.flags || '').includes('g') ? g.flags : `${g.flags || ''}g`);
-  } catch (err) {
-    return fail(g, `bad pattern: ${err.message}`);
-  }
+  // Each mode compiles its own RegExp, so a `g` flag's lastIndex never carries between calls.
   if (g.match === 'contains' || !g.match) {
-    const ok = re.test(f.text);
+    const r = runRegex(g.pattern, g.flags, f.text);
+    if (r.error) return fail(g, r.error);
+    const ok = r.value === true;
     return { name: g.name, type: g.type, passed: ok, weight: g.weight, explanation: ok ? `matched ${g.pattern}` : `pattern not found in ${label}` };
   }
   if (g.match === 'not_contains') {
-    const ok = !re.test(f.text);
+    const r = runRegex(g.pattern, g.flags, f.text);
+    if (r.error) return fail(g, r.error);
+    const ok = r.value !== true;
     return { name: g.name, type: g.type, passed: ok, weight: g.weight, explanation: ok ? 'pattern absent as expected' : 'pattern found (expected absent)' };
   }
   const m = /^count:(\d+)$/.exec(String(g.match));
   if (!m) return fail(g, `unknown match mode "${g.match}" (use contains | not_contains | count:N)`);
-  const n = (f.text.match(all) || []).length;
+  const r = runRegex(g.pattern, g.flags, f.text, 'count');
+  if (r.error) return fail(g, r.error);
+  const n = r.value;
   return { name: g.name, type: g.type, passed: n === Number(m[1]), weight: g.weight, explanation: `found ${n} matches (expected ${m[1]})` };
 }
 
 function callMatches(call, spec) {
   if (call.name !== spec.tool) return false;
-  if (spec.input_match) {
-    try {
-      return new RegExp(spec.input_match).test(call.inputText);
-    } catch {
-      return false;
-    }
-  }
+  if (spec.input_match) return runRegex(spec.input_match, '', call.inputText).value === true;
   return true;
 }
 

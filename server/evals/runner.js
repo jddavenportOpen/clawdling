@@ -14,15 +14,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { looksLikeCredential } from '../checks.js';
 import { killTree } from '../channels/donna.js';
-import { absPathRule, runtimeDeny } from '../hooks.js';
+import { readEnvFile } from '../envfile.js';
+import { absPathRule } from '../hooks.js';
 import { priceFor } from '../ledger.js';
 import { childEnv, which } from '../paths.js';
 import { commandFor, spawnOptions } from '../platform.js';
 import { toolSummary } from '../transcripts.js';
 import { HttpError, badRequest, conflict, isValidEffort, isValidModel, oneLine, readJson, writeJson } from '../util.js';
-import { caseScore, grade, gradeLlm } from './graders.js';
-import { Approvals, DEFAULT_TOOLS, SUITE_DEFAULTS, evalsDir, graderFile, loadSuite, parseSettings, promptFile, requireCase, writeCase, writeSettings } from './suite.js';
+import { caseScore, fileTexts, grade, gradeLlm } from './graders.js';
+import { Approvals, DEFAULT_TOOLS, SUITE_DEFAULTS, caseDir, evalsDir, realDir, graderFile, loadSuite, parseSettings, promptFile, requireCase, writeCase, writeSettings } from './suite.js';
 
 export const EVAL_PREFIX = 'clawdling-eval-';
 const JUDGE_BUDGET = 0.05;
@@ -30,6 +32,7 @@ const DRAFT_BUDGET = 0.5;
 const DRAFT_VERSION = 1;
 const JUDGE_ALLOWANCE = 0.008; // list-price dollars per judge vote, for the estimate (measured ~$0.005 on haiku)
 const RUN_FLOOR = 0.03;
+const STDOUT_MAX = 32 * 1024 * 1024;
 const COPY_MAX_FILES = 5000;
 const COPY_MAX_BYTES = 64 * 1024 * 1024;
 const COPY_SKIP = new Set(['evals', 'node_modules', '.git', '.venv', 'venv', '__pycache__', '.DS_Store']);
@@ -212,6 +215,42 @@ function walk(root, { max = LIST_MAX } = {}) {
   return out;
 }
 
+/**
+ * Read and Edit deny rules for folders a check-up must not reach (the live test cases, Clawdling's
+ * runtime folder), by path and by real path. Throws when a path cannot be written as a rule: running
+ * without the rule would hand the agent its own answers.
+ */
+/** The real path of `p`, through its nearest existing parent when it does not exist yet. */
+function realPathOf(p) {
+  const rest = [];
+  let cur = path.resolve(p);
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(cur), ...rest); // native: also expands Windows short names (RUNNER~1)
+    } catch {
+      const up = path.dirname(cur);
+      if (up === cur) return path.resolve(p);
+      rest.unshift(path.basename(cur));
+      cur = up;
+    }
+  }
+}
+
+export function denyRules(dirs, platform = process.platform) {
+  const out = new Set();
+  for (const dir of dirs.filter(Boolean)) {
+    const real = realPathOf(dir);
+    for (const tool of ['Read', 'Edit']) {
+      const rule = absPathRule(tool, real, platform);
+      if (!rule) throw new Error(`a check-up cannot run here: Claude Code permission rules cannot name the folder ${real} (it has characters other than letters, numbers, spaces and . _ / -)`);
+      out.add(rule);
+      const asGiven = absPathRule(tool, dir, platform);
+      if (asGiven) out.add(asGiven);
+    }
+  }
+  return [...out];
+}
+
 /** Copy an agent folder into a scratch folder: no evals/, no .env files, no links, bounded. */
 export function copyAgentFolder(src, dest) {
   let files = 0;
@@ -374,6 +413,7 @@ export class Evals {
     const agent = this.agent(id);
     let names = [];
     try {
+      if (!realDir(evalsDir(agent.dir)) || !realDir(this.resultsDir(agent))) return [];
       names = fs.readdirSync(this.resultsDir(agent));
     } catch {
       return [];
@@ -486,7 +526,9 @@ export class Evals {
     const agent = this.agent(id);
     if (this.active && this.active.agent === id) throw conflict('a check-up of this agent is running; remove cases when it ends');
     const c = requireCase(this.suite(id), caseId);
-    fs.rmSync(path.join(evalsDir(agent.dir), c.id), { recursive: true, force: true });
+    // caseDir refuses a link at evals/ or at the case folder, so this deletes only a real folder there.
+    const cdir = caseDir(agent.dir, c.id);
+    if (cdir) fs.rmSync(cdir, { recursive: true, force: true });
     this.approvals.set(id, { [c.id]: null });
     this.events?.record?.({ type: 'evals', action: 'case-removed', agent: id, case: c.id });
     return this.view(id);
@@ -540,6 +582,8 @@ export class Evals {
   async draft(id, { model = 'sonnet' } = {}) {
     const agent = this.agent(id);
     if (this.active) throw conflict('a check-up is running; draft when it ends');
+    // Before paying for a draft: every folder it will write into must be a real folder, not a link.
+    for (const slug of DRAFT_SLUGS) caseDir(agent.dir, slug, { graders: true });
     const read = (f, max = 20000) => {
       try {
         const t = fs.readFileSync(f, 'utf8');
@@ -603,9 +647,20 @@ export class Evals {
 
   // ------------------------------------------------------------------------------------ print mode
 
+  /**
+   * The environment a check-up's claude gets: no Clawdling variables, nothing from the org .env, and
+   * nothing credential-looking except what the CLI itself signs in with (Anthropic, Claude Code,
+   * and Bedrock's or Vertex's when the CLI is set to use them).
+   */
   baseEnv() {
     const env = childEnv(this.env);
-    for (const k of Object.keys(env)) if (/^CLAWDLING_/.test(k)) delete env[k];
+    const org = new Set(Object.keys(readEnvFile(this.paths.env)));
+    const bedrock = /^(1|true)$/i.test(env.CLAUDE_CODE_USE_BEDROCK || '');
+    const vertex = /^(1|true)$/i.test(env.CLAUDE_CODE_USE_VERTEX || '');
+    const cliAuth = (k) => /^(ANTHROPIC_|CLAUDE_CODE_)/.test(k) || k === 'CLAUDE_CONFIG_DIR' || (bedrock && /^AWS_/.test(k)) || (vertex && /^(GOOGLE_|GCLOUD_|CLOUDSDK_|CLOUD_ML_)/.test(k));
+    for (const k of Object.keys(env)) {
+      if (/^CLAWDLING_/.test(k) || (org.has(k) && !cliAuth(k)) || (!cliAuth(k) && looksLikeCredential(k, env[k]))) delete env[k];
+    }
     return env;
   }
 
@@ -617,7 +672,7 @@ export class Evals {
     writeJson(settings, { disableAllHooks: true }, 0o600);
     const work = path.join(dir, 'work');
     fs.mkdirSync(work);
-    const args = ['-p', '--output-format', 'json', ...(model ? ['--model', model] : []), '--max-budget-usd', String(budget), '--tools', '', '--json-schema', JSON.stringify(schema), '--settings', settings, '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--append-system-prompt', system];
+    const args = ['-p', '--output-format', 'json', ...(model ? ['--model', model] : []), '--max-budget-usd', String(budget), '--tools', '', '--json-schema', JSON.stringify(schema), '--settings', settings, '--setting-sources', 'project', '--strict-mcp-config', '--disable-slash-commands', '--no-session-persistence', '--append-system-prompt', system];
     return this.spawnClaude(claude, args, { cwd: work, stdin: prompt, timeoutMs }).then((r) => {
       fs.rmSync(dir, { recursive: true, force: true });
       let o = null;
@@ -626,7 +681,8 @@ export class Evals {
       } catch {
         o = null;
       }
-      const cost = Number(o?.total_cost_usd) || 0;
+      // No result line (a timeout, a crash): its cost is unknown, so it counts as the whole budget.
+      const cost = o && Number.isFinite(Number(o.total_cost_usd)) ? Number(o.total_cost_usd) : budget;
       if (!o || o.is_error || !o.structured_output) return { structured: null, cost, error: oneLine(o?.result || o?.subtype || r.stderr.split('\n').find((l) => l.trim()) || (r.timedOut ? 'timed out' : `claude exited with code ${r.code}`), 200) };
       return { structured: o.structured_output, cost, error: null };
     });
@@ -640,6 +696,7 @@ export class Evals {
       let stderr = '';
       let done = false;
       let timedOut = false;
+      let truncated = false;
       const child = spawn(cmd.file, cmd.args, spawnOptions(cmd, { cwd, env, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }));
       this.children.add(child);
       const finish = (code) => {
@@ -647,7 +704,7 @@ export class Evals {
         done = true;
         clearTimeout(timer);
         this.children.delete(child);
-        resolve({ code, stdout, stderr, timedOut });
+        resolve({ code, stdout, stderr, timedOut, truncated });
       };
       const timer = setTimeout(() => {
         timedOut = true;
@@ -656,7 +713,8 @@ export class Evals {
         setTimeout(() => finish(null), 5000).unref?.();
       }, timeoutMs);
       child.stdout.on('data', (d) => {
-        if (stdout.length < 16 * 1024 * 1024) stdout += d;
+        if (stdout.length < STDOUT_MAX) stdout += d;
+        else truncated = true;
       });
       child.stderr.on('data', (d) => {
         if (stderr.length < 64 * 1024) stderr += d;
@@ -720,7 +778,8 @@ export class Evals {
 
   async removeScratch(entry) {
     if (!entry || !this.ours(entry.dir)) return;
-    if (entry.repo && entry.worktree && this.checks) await this.checks.removeWorktreeAt(entry.repo, entry.worktree, entry.dir);
+    // Only the worktree this module made (<scratch>/repo): a tampered registry cannot point at another.
+    if (entry.repo && entry.worktree === path.join(entry.dir, 'repo') && this.checks) await this.checks.removeWorktreeAt(entry.repo, entry.worktree, entry.dir);
     try {
       fs.rmSync(entry.dir, { recursive: true, force: true, maxRetries: 3 });
     } catch (err) {
@@ -768,7 +827,7 @@ export class Evals {
     const ctxFile = path.join(dir, 'context.md');
     fs.writeFileSync(ctxFile, ctx, { mode: 0o600 });
     // The live agent's own test cases and Clawdling's folder are denied even by absolute path.
-    const deny = [absPathRule('Read', evalsDir(agent.dir)), absPathRule('Edit', evalsDir(agent.dir)), ...runtimeDeny(this.paths.home)].filter(Boolean);
+    const deny = denyRules([evalsDir(agent.dir), this.paths.home && path.join(this.paths.home, '.clawdling')]);
     const settingsFile = path.join(dir, 'settings.json');
     writeJson(settingsFile, { disableAllHooks: true, permissions: { deny } }, 0o600);
     return { dir, cwd, notes, ctxFile, settingsFile, entry };
@@ -827,20 +886,22 @@ export class Evals {
     try {
       const before = new Set(walk(sc.cwd));
       const tools = c.fm.allowed_tools.length ? c.fm.allowed_tools : DEFAULT_TOOLS;
-      const names = [...new Set(tools.map((t) => t.replace(/\(.*$/, '')))];
-      const bash = tools.filter((t) => /^Bash\(/.test(t));
+      const names = [...new Set(tools)];
+      const budget = Math.max(0.01, Math.round(remaining * 100) / 100);
       const model = cell.model || c.fm.model || null;
       const args = [
         '-p', '--output-format', 'stream-json', '--verbose',
         ...(model ? ['--model', model] : []),
         ...(cell.effort ? ['--effort', cell.effort] : []),
-        '--max-budget-usd', String(Math.max(0.01, Math.round(remaining * 100) / 100)),
+        '--max-budget-usd', String(budget),
         '--max-turns', String(c.fm.max_turns),
         '--tools', names.join(','),
-        ...(bash.length ? ['--allowedTools', ...bash] : []),
         '--permission-mode', 'default',
         '--no-session-persistence',
         '--settings', sc.settingsFile,
+        // Only the scratch copy's own project settings (its permissions travel with the agent): never
+        // the user's or a settings.local.json "don't ask again" list, which are not part of the case.
+        '--setting-sources', 'project',
         '--strict-mcp-config',
         '--append-system-prompt-file', sc.ctxFile,
         ...(sc.notes !== sc.cwd ? ['--add-dir', sc.notes] : []),
@@ -849,18 +910,24 @@ export class Evals {
       const r = await this.spawnClaude(this.claude(), args, { cwd: sc.cwd, stdin: c.prompt, timeoutMs: c.fm.timeout_seconds * 1000, env });
       const run = parseStream(r.stdout);
       const res = run.result || {};
-      const cost = Number(res.total_cost_usd) || 0;
+      // A run with no result line (a timeout, a crash, output past the cap) spent an unknown amount up
+      // to its budget: count the whole budget, so the cap still holds.
+      const unknownCost = !run.result || !Number.isFinite(Number(res.total_cost_usd));
+      const cost = unknownCost ? budget : Number(res.total_cost_usd);
       state.spent += cost;
       const denials = Array.isArray(res.permission_denials) ? res.permission_denials.map((d) => ({ tool: String(d.tool_name || ''), input: oneLine(JSON.stringify(d.tool_input || {}), 160) })) : [];
       let error = null;
       if (r.timedOut) error = `timed out after ${c.fm.timeout_seconds}s`;
+      else if (!run.result && r.truncated) error = 'the run printed more than 32 MB';
       else if (!run.result) error = oneLine(r.stderr.split('\n').find((l) => l.trim()) || `claude exited with code ${r.code}`, 200);
       else if (res.is_error) error = oneLine(res.subtype === 'error_max_turns' ? `stopped at max_turns (${c.fm.max_turns})` : res.subtype === 'error_max_budget_usd' ? 'stopped at the cost cap' : res.result || res.subtype || 'the run failed', 200);
       else if (denials.some((d) => /^(AskUserQuestion|ExitPlanMode)$/.test(d.tool))) error = 'the agent tried to ask a question, which a check-up cannot answer';
       const after = walk(sc.cwd);
       run.files = after.filter((f) => !before.has(f));
       run.cwd = sc.cwd;
-      return { run, cost, error, denials, num_turns: res.num_turns ?? null, duration_ms: res.duration_ms ?? Date.now() - started };
+      // Graders run after the scratch copy is gone: read the files they need now.
+      run.fileTexts = fileTexts(c.graders, run);
+      return { run, cost, cost_unknown: unknownCost, error, denials, num_turns: res.num_turns ?? null, duration_ms: res.duration_ms ?? Date.now() - started };
     } finally {
       await this.removeScratch(sc.entry);
       this.unregister(sc.entry.dir);
@@ -879,11 +946,13 @@ export class Evals {
         if (!seen.has(key)) {
           const r = await gradeLlm(g, { last_message: '', trace: [], files: [], cwd: this.tmpdir }, judge);
           seen.set(key, r);
-          out.push({ case: c.id, grader: g.name, kind: 'empty', expected: 'fail', ok: !r.passed, votes: r.judge_votes, reasons: r.reasons });
+          // A vote that errored counts as FAIL, which is what this control expects: a judge that only
+          // errors must not pass it, so any judge error makes the control fail.
+          out.push({ case: c.id, grader: g.name, kind: 'empty', expected: 'fail', ok: !r.passed && !r.judge_errors, votes: r.judge_votes, reasons: r.reasons, judge_errors: r.judge_errors || 0 });
         }
         if (c.reference && g.focus === 'last_message') {
           const r = await gradeLlm(g, { last_message: c.reference, trace: [], files: [], cwd: this.tmpdir }, judge);
-          out.push({ case: c.id, grader: g.name, kind: 'reference', expected: 'pass', ok: r.passed, votes: r.judge_votes, reasons: r.reasons });
+          out.push({ case: c.id, grader: g.name, kind: 'reference', expected: 'pass', ok: r.passed && !r.judge_errors, votes: r.judge_votes, reasons: r.reasons, judge_errors: r.judge_errors || 0 });
         }
       }
     }
@@ -995,7 +1064,8 @@ export class Evals {
       label: COST_NOTE,
     };
     const dir = this.resultsDir(agent);
-    fs.mkdirSync(dir, { recursive: true });
+    realDir(evalsDir(agent.dir), { create: true });
+    realDir(dir, { create: true });
     const stamp = state.started_at.replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
     let f = path.join(dir, `${stamp}.json`);
     for (let i = 1; fs.existsSync(f); i++) f = path.join(dir, `${stamp}-${i}.json`);

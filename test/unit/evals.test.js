@@ -4,10 +4,11 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { caseScore, globRegex, grade, gradeFileExists, gradeLlm, gradeRegex, gradeToolOrder, gradeToolUsed, judgeText } from '../../server/evals/graders.js';
-import { cheaperFamily, copyAgentFolder, defaultMatrix, holds, lowerEffort, parseCells, parseStream, recommend, wilsonLow, Evals } from '../../server/evals/runner.js';
-import { GRADER_KEYS, PLUGIN_EVAL_GRADER_KEYS, PLUGIN_EVAL_PROMPT_KEYS, PROMPT_KEYS, graderFile, loadSuite, parseGrader, parsePrompt, parseSettings, promptFile, toolProblem, writeCase } from '../../server/evals/suite.js';
+import { caseScore, fileTexts, globRegex, grade, gradeFileExists, gradeLlm, gradeRegex, gradeToolOrder, gradeToolUsed, judgeText, runRegex } from '../../server/evals/graders.js';
+import { cheaperFamily, copyAgentFolder, defaultMatrix, denyRules, holds, lowerEffort, parseCells, parseStream, recommend, wilsonLow, Evals } from '../../server/evals/runner.js';
+import { GRADER_KEYS, PLUGIN_EVAL_GRADER_KEYS, PLUGIN_EVAL_PROMPT_KEYS, PROMPT_KEYS, caseDir, graderFile, loadSuite, parseGrader, parsePrompt, parseSettings, promptFile, toolProblem, writeCase } from '../../server/evals/suite.js';
 import { splitFrontmatter } from '../../server/yaml-lite.js';
+import { absPathRule } from '../../server/hooks.js';
 
 const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-evals-'));
 const run = (o = {}) => ({ last_message: '', trace: [], tool_calls: [], files: [], cwd: os.tmpdir(), ...o });
@@ -86,9 +87,10 @@ test('parsePrompt: defaults, limits, and every unknown or unsupported key refuse
   assert.throws(() => parsePrompt('---\nname: a\n---\nTODO: describe what the agent should do'), /blank template/);
 });
 
-test('toolProblem: read-only tools and listed Bash commands only', () => {
-  for (const ok of ['Read', 'Glob', 'Grep', 'LS', 'Bash(npm test:*)', 'Bash(go test ./...)', 'Bash(git status)']) assert.equal(toolProblem(ok), null, ok);
-  for (const bad of ['Bash', 'Bash(*)', 'Bash()', 'Write', 'Edit', 'WebFetch', 'mcp__x__y', 'Bash(sh -c:*)', 'Bash(curl:*)', 'Bash(python:*)', 'Bash(npm test && rm -rf /)', 'Bash(rm -rf ~;:*)']) assert.ok(toolProblem(bad), bad);
+test('toolProblem: read-only tools only, no Bash at all in 1.6 (a command pattern cannot be made safe)', () => {
+  for (const ok of ['Read', 'Glob', 'Grep', 'LS', 'TodoWrite']) assert.equal(toolProblem(ok), null, ok);
+  for (const bad of ['Bash', 'Bash(*)', 'Bash()', 'Write', 'Edit', 'WebFetch', 'mcp__x__y', 'Bash(npm test:*)', 'Bash(git:*)', 'Bash(/bin/sh:*)', 'Bash(SH:*)', 'Bash(bash.exe:*)', 'Bash(npx:*)', 'PowerShell(npm test)']) assert.ok(toolProblem(bad), bad);
+  assert.match(toolProblem('Bash(npm test:*)'), /cannot run commands/);
 });
 
 test('parseGrader: plugin-eval semantics for defaults, body fields and per-type keys', () => {
@@ -294,4 +296,135 @@ test('copyAgentFolder: no evals/, no .env, no links out, bounded', () => {
   assert.ok(fs.existsSync(path.join(dest, 'CLAUDE.md')));
   assert.ok(fs.existsSync(path.join(dest, 'memory', 'NOW.md')));
   for (const gone of ['evals', '.env', '.env.local', 'home-link']) assert.equal(fs.existsSync(path.join(dest, gone)), false, gone);
+});
+
+// ------------------------------------------------------------------------- review fixes (round 1)
+
+const stubEvals = (dir, { spawn, env = {} } = {}) => {
+  const agent = { id: 'demo', name: 'Demo', kind: 'domain', dir, model: null, effort: null };
+  const ev = new Evals({ paths: { rt: path.join(dir, '.rt'), home: dir, env: path.join(dir, '.env'), meMd: path.join(dir, 'me.md') }, org: { require: () => agent }, reports: { summaries: () => [] }, sessions: {}, env: { PATH: '', ...env } });
+  ev.claude = () => '/bin/claude';
+  const calls = [];
+  ev.spawnClaude = async (bin, args, opts) => {
+    calls.push({ args, opts });
+    return spawn(args, opts);
+  };
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-evals-run-'));
+  ev.scratch = async () => ({ dir: work, cwd: work, notes: work, ctxFile: path.join(work, 'ctx.md'), settingsFile: path.join(work, 's.json'), entry: { dir: work } });
+  ev.removeScratch = async () => fs.rmSync(work, { recursive: true, force: true });
+  ev.unregister = () => {};
+  return { ev, agent, calls, work };
+};
+const caseOf = (graders = [], fm = {}) => ({ id: 'a', prompt: 'Q?', graders, fm: { allowed_tools: [], max_turns: 3, timeout_seconds: 10, ...fm } });
+
+test('cost cap: a run with no result line (timeout, crash) counts as its whole budget, so the cap holds', async () => {
+  const dir = tmp();
+  const { ev, agent, calls } = stubEvals(dir, { spawn: async () => ({ code: null, stdout: '{"type":"system"}\n', stderr: '', timedOut: true, truncated: false }) });
+  const state = { id: 'x', cap: 0.5, spent: 0, judgeCost: 0, judgeModel: 'haiku' };
+  const r = await ev.runCase(agent, caseOf(), { model: null }, state, 1);
+  assert.equal(r.cost, 0.5);
+  assert.equal(r.cost_unknown, true);
+  assert.equal(state.spent, 0.5);
+  assert.match(r.error, /timed out/);
+  assert.equal(calls[0].args[calls[0].args.indexOf('--max-budget-usd') + 1], '0.5');
+  await assert.rejects(ev.runCase(agent, caseOf(), { model: null }, state, 2), (e) => e.cap === true, 'no second launch');
+  assert.equal(calls.length, 1);
+  // A judge vote with no result is charged its budget too.
+  const st2 = { id: 'y', cap: 1, spent: 0, judgeCost: 0, judgeModel: 'haiku' };
+  ev.spawnClaude = async () => ({ code: null, stdout: '', stderr: '', timedOut: true, truncated: false });
+  await assert.rejects(ev.judgeVote(st2, { criteria: 'c', text: 't', focus: 'last_message' }));
+  assert.equal(st2.spent, 0.05);
+});
+
+test('check-up runs: read-only tools, project settings only, no --allowedTools, file graders read before cleanup', async () => {
+  const dir = tmp();
+  const result = { type: 'result', subtype: 'success', is_error: false, result: 'done', total_cost_usd: 0.02, num_turns: 2 };
+  const { ev, agent, calls, work } = stubEvals(dir, {
+    spawn: async (args, opts) => {
+      fs.mkdirSync(path.join(opts.cwd, 'notes'), { recursive: true });
+      fs.writeFileSync(path.join(opts.cwd, 'notes', 'out.md'), 'the invoices are next\n');
+      return { code: 0, stdout: `${JSON.stringify(result)}\n`, stderr: '', timedOut: false, truncated: false };
+    },
+  });
+  const g = parseGrader('says', '---\ntype: regex\ntarget: {source: file, path: notes/out.md}\n---\ninvoices');
+  const state = { id: 'x', cap: 2, spent: 0, judgeCost: 0, judgeModel: 'haiku' };
+  const r = await ev.runCase(agent, caseOf([g], { allowed_tools: ['Read', 'Grep'] }), { model: null }, state, 1);
+  assert.equal(fs.existsSync(work), false, 'the scratch copy is gone');
+  assert.equal(r.cost, 0.02);
+  assert.equal(gradeRegex(g, { ...r.run }).passed, true, 'graded from the text read before cleanup');
+  const a = calls[0].args;
+  assert.equal(a[a.indexOf('--tools') + 1], 'Read,Grep');
+  assert.equal(a[a.indexOf('--setting-sources') + 1], 'project');
+  assert.ok(!a.includes('--allowedTools'));
+});
+
+test('check-up environment: credentials and the org .env stay out; the CLI keeps its own sign-in', () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, '.env'), 'ORG_ONLY=1\nANTHROPIC_MODEL=x\n');
+  const { ev } = stubEvals(dir, { spawn: async () => ({}), env: { HOME: dir, GH_TOKEN: 'g', PGPASSWORD: 'p', DATABASE_URL: 'postgres://u:secret@h/db', ORG_ONLY: '1', CLAUDE_CODE_OAUTH_TOKEN: 'o', ANTHROPIC_API_KEY: 'k', ANTHROPIC_MODEL: 'x', CLAUDE_CONFIG_DIR: '/c', AWS_ACCESS_KEY_ID: 'a', CLAWDLING_TOKEN: 't', LANG: 'C' } });
+  const env = ev.baseEnv();
+  for (const k of ['GH_TOKEN', 'PGPASSWORD', 'DATABASE_URL', 'ORG_ONLY', 'AWS_ACCESS_KEY_ID', 'CLAWDLING_TOKEN']) assert.equal(env[k], undefined, k);
+  for (const k of ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL', 'CLAUDE_CONFIG_DIR', 'LANG', 'HOME']) assert.ok(env[k], k);
+  ev.env = { ...ev.env, CLAUDE_CODE_USE_BEDROCK: '1', AWS_ACCESS_KEY_ID: 'a' };
+  assert.equal(ev.baseEnv().AWS_ACCESS_KEY_ID, 'a', 'Bedrock sign-in kept when the CLI uses Bedrock');
+});
+
+test('symlinks: a linked evals/, case folder or graders/ is refused, never listed, written into or deleted', () => {
+  const dir = tmp();
+  const outside = tmp();
+  fs.mkdirSync(path.join(outside, 'code'));
+  fs.writeFileSync(path.join(outside, 'code', 'keep.txt'), 'x');
+  fs.symlinkSync(outside, path.join(dir, 'evals'), 'dir');
+  const s = loadSuite(dir, {});
+  assert.deepEqual(s.cases, [], 'the linked folder\'s children are not shown as cases');
+  assert.match(s.settings_error, /link/);
+  const body = { prompt: promptFile({ name: 'code' }, 'Q?'), graders: { c: graderFile({ type: 'llm' }, 'x') } };
+  assert.throws(() => writeCase(dir, 'code', body), /link/);
+  assert.throws(() => caseDir(dir, 'code'), /link/);
+  assert.ok(fs.existsSync(path.join(outside, 'code', 'keep.txt')));
+  assert.ok(!fs.existsSync(path.join(outside, 'code', 'prompt.md')));
+  // A real evals/ with a linked case folder or graders/ folder.
+  const d2 = tmp();
+  fs.mkdirSync(path.join(d2, 'evals'));
+  fs.symlinkSync(outside, path.join(d2, 'evals', 'code'), 'dir');
+  assert.throws(() => writeCase(d2, 'code', body), /link/);
+  writeCase(d2, 'real', body);
+  fs.rmSync(path.join(d2, 'evals', 'real', 'graders'), { recursive: true });
+  fs.symlinkSync(path.join(outside, 'code'), path.join(d2, 'evals', 'real', 'graders'), 'dir');
+  assert.throws(() => writeCase(d2, 'real', body), /link/);
+  assert.deepEqual(fs.readdirSync(path.join(outside, 'code')), ['keep.txt']);
+  assert.match(loadSuite(d2, {}).cases.find((c) => c.id === 'real').error, /grader/);
+});
+
+test('regex graders run in a sandbox with a deadline: a pattern that backtracks fails, the server does not freeze', () => {
+  const t0 = Date.now();
+  const r = gradeRegex({ name: 'bad', type: 'regex', pattern: '^(a+)+$', flags: '', match: 'contains', target: 'last_message', weight: 1 }, run({ last_message: `${'a'.repeat(40)}b` }));
+  assert.equal(r.passed, false);
+  assert.match(r.explanation, /backtracks/);
+  assert.ok(Date.now() - t0 < 5000);
+  assert.deepEqual(runRegex('b', 'i', 'aBc'), { value: true });
+  assert.equal(gradeToolUsed({ name: 't', tool: 'Read', input_match: '^(a+)+$', min: 0, max: 0 }, run({ tool_calls: [call('Read', { p: `${'a'.repeat(30)}b` })] })).passed, true);
+  assert.deepEqual(fileTexts([], run()), {});
+});
+
+test('controls: a judge that only errors makes the controls fail (judge unreliable), even on the empty answer', async () => {
+  const dir = tmp();
+  const { ev } = stubEvals(dir, { spawn: async () => ({}) });
+  ev.judgeVote = async () => {
+    throw new Error('boom');
+  };
+  const g = parseGrader('c', '---\ntype: llm\n---\nNames the budget.');
+  const out = await ev.controls([{ id: 'a', graders: [g], reference: null }], { spent: 0, cap: 1 });
+  assert.equal(out.length, 1);
+  assert.equal(out[0].ok, false);
+  assert.equal(out[0].judge_errors, 3);
+});
+
+test('deny rules: by path and real path; a folder a rule cannot name stops the check-up', () => {
+  const dir = tmp();
+  const rules = denyRules([path.join(dir, 'evals')]);
+  const real = fs.realpathSync.native(dir);
+  assert.ok(rules.includes(absPathRule('Edit', path.join(real, 'evals'))), 'the real path, though evals/ does not exist yet');
+  if (absPathRule('Read', path.join(dir, 'evals'))) assert.ok(rules.includes(absPathRule('Read', path.join(dir, 'evals'))), 'and the path as given');
+  assert.throws(() => denyRules(['/home/x~y/evals'], 'linux'), /cannot name the folder/);
 });

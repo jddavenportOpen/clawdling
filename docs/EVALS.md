@@ -48,10 +48,9 @@ In two sentences, what is your job, and who do you work for?
 
 The text under the frontmatter is the prompt: what the owner types to the agent.
 
-**Tools.** A check-up's tools are read-only: `Read`, `Glob`, `Grep`, `LS`. Bash appears only as a
-listed command, for example `Bash(npm test:*)` (any `npm test ...`) or `Bash(go test ./...)`
-(exactly that), never bare `Bash`, and never a shell, an interpreter or a network tool. Write tools
-are not offered in 1.6. Anything else the agent tries is denied (and listed on the run), never
+**Tools.** A check-up's tools are read-only: `Read`, `Glob`, `Grep`, `LS` (and `TodoWrite`). There
+is no Bash and no write tool in 1.6: a check-up asks how the agent answers, and your test commands
+run in the ship check. Anything else the agent tries is denied (and listed on the run), never
 asked. Other plugin-eval keys (`env`, `append_system_prompt`, `disallowed_tools`, ...) are refused
 with a reason rather than ignored.
 
@@ -74,7 +73,8 @@ the case's score.
   run created, one a line; files that existed before the run never appear) or
   `{source: file, path: notes/out.md}` (a file in the run folder).
 - `match`: `contains` (default), `not_contains`, or `count:N` (exactly N matches).
-- `flags`: JavaScript regular-expression flags, such as `i` for case-insensitive.
+- `flags`: JavaScript regular-expression flags, such as `i` for case-insensitive. A pattern that
+  takes more than a second on the run's text (one that backtracks badly) fails its grader.
 - `input_match` (tool_used, and `{tool, input_match}` in tool_order): a regular expression over the
   call's input as JSON.
 - `min` defaults to 1. For "must not call X", use `min: 0` and `max: 0`.
@@ -117,7 +117,7 @@ three passed), and the cockpit marks a case that flip-flops.
 
 Before any agent run, the judge grades two things it should get right: an empty answer, which must
 fail every `llm` grader, and the case's `reference.md`, which must pass. If the judge passes the
-empty answer or fails the reference, the suite says **judge unreliable** instead of a score, and no
+empty answer or fails the reference, or a judge call fails, the suite says **judge unreliable** instead of a score, and no
 agent run is spent. A criterion like "any answer is fine" trips it. The fix is concrete criteria.
 
 ## .clawdling-suite.yaml
@@ -127,6 +127,9 @@ runs: 1              # runs per case: 1 or 3
 judge_model: haiku   # the model that grades llm graders
 max_cost_usd: 2      # the hard cap for one check-up, list-price equivalent
 ```
+
+A run that ends without reporting its cost (a timeout, a crash) counts as the whole budget it was
+given, so a check-up of slow runs stops at the cap instead of running past it.
 
 ## Running
 
