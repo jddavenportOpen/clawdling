@@ -84,6 +84,12 @@ function confined(dir) {
   };
 }
 
+/** A file inside `dir` (by realpath, so a link that leaves it reads as missing) as text, or null. */
+export function readInside(dir, rel, max = MAX_READ) {
+  const rp = confined(dir).file(rel);
+  return rp ? readText(rp, max) : null;
+}
+
 function listDir(dir, max = 2000) {
   if (!dir) return [];
   try {

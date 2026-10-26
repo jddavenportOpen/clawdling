@@ -78,6 +78,10 @@ import { SessionManager } from './sessions.js';
 import { claudeConfigDir, findTranscript } from './transcripts.js';
 import { NeedsYouPinger } from './needs-you.js';
 import { Reports } from './report.js';
+import { Checks } from './checks.js';
+import { Evals, parseCells } from './evals/runner.js';
+import { fixMessage } from './claims.js';
+import { detectStack } from './stack.js';
 import { Digest } from './digest.js';
 import { KINDS as OTLP_KINDS, INGEST_MAX_BYTES, OtelState, RateLimit, SECRET_HEADER, TraceStore, enrich, envBlock, normalize, preflight, sessionHeaders } from './otel.js';
 import { Accounts } from './accounts.js';
@@ -437,6 +441,50 @@ export async function startServer(opts = {}) {
     const reports = new Reports({ paths, org, sessions, env: cEnv, logger });
     sessions.onEnded = (rec) => setImmediate(() => reports.sessionEnded(rec));
     sessions.onTranscriptSwitch = (rec, oldPath) => setImmediate(() => reports.transcriptSwitched(rec, oldPath));
+    // Verified done (1.6): the ship check and agent check-ups; claim receipts read both.
+    const checks = new Checks({ paths, org, events, logger, env: cEnv });
+    const evals = new Evals({ paths, org, sessions, reports, checks, events, claudeBin, env: cEnv, logger });
+    const stackCache = new Map(); // repo -> {at, commands}: detectStack for claim receipts, a minute at a time
+    reports.claimContext = (agentId) => {
+      const a = org.agent(agentId);
+      if (!a) return {};
+      let detected = [];
+      if (a.repo) {
+        const hit = stackCache.get(a.repo);
+        if (hit && Date.now() - hit.at < 60000) detected = hit.commands;
+        else {
+          try {
+            detected = detectStack(a.repo).commands;
+          } catch {
+            detected = [];
+          }
+          stackCache.set(a.repo, { at: Date.now(), commands: detected });
+        }
+      }
+      let approved = [];
+      let shipRuns = [];
+      try {
+        const c = a.kind === 'project' && a.repo ? checks.config(agentId) : null;
+        approved = c && c.config && c.approved ? c.config.checks : [];
+        shipRuns = a.kind === 'project' ? checks.evidence(agentId) : [];
+      } catch {
+        // no ship check
+      }
+      return { approved, detected, shipRuns };
+    };
+    reports.verifyInfo = (agentId) => {
+      const a = org.agent(agentId);
+      let ship = null;
+      try {
+        if (a && a.kind === 'project') {
+          const v = checks.view(agentId);
+          ship = { available: v.available, configured: v.exists && !!v.config, approved: v.approved, last: v.last ? { at: v.last.started_at, ok: v.last.ok, error: v.last.error, results: v.last.results.map((r) => ({ name: r.name, cmd: r.cmd, ok: r.ok, setup: r.setup })) } : null };
+        }
+      } catch {
+        ship = null;
+      }
+      return { ship, checkup: evals.latest(agentId) };
+    };
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
 
@@ -1367,6 +1415,51 @@ export async function startServer(opts = {}) {
       // The report card (1.5), read-only: an agent's four blocks, the org's totals, a session's Timeline.
       ['GET', /^\/api\/agents\/([^/]+)\/report$/, async (req, m, res, url) => [200, await reports.agentReport(agentParam(m), { window: url.searchParams.get('window') || '7d' })]],
       ['GET', /^\/api\/org\/report$/, (req, m, res, url) => [200, reports.orgReport({ window: url.searchParams.get('window') || '7d' })]],
+      // Verified done (1.6). Approving commands, running them and spending the plan happen only from
+      // the computer itself (a paired device can read results and send "fix it", nothing more).
+      ['GET', /^\/api\/agents\/([^/]+)\/checks$/, (req, m) => [200, checks.view(agentParam(m))]],
+      ['PUT', /^\/api\/agents\/([^/]+)\/checks$/, async (req, m) => [200, checks.approve(agentParam(m), await jsonBody(req))], { local: true }],
+      ['POST', /^\/api\/agents\/([^/]+)\/checks\/run$/, (req, m) => [202, checks.start(agentParam(m))], { local: true }],
+      ['GET', /^\/api\/agents\/([^/]+)\/evals$/, (req, m) => [200, evals.view(agentParam(m))]],
+      ['GET', /^\/api\/agents\/([^/]+)\/evals\/estimate$/, (req, m, res, url) => {
+        const id = agentParam(m);
+        const k = Number(url.searchParams.get('k') || 1);
+        if (![1, 3].includes(k)) throw badRequest('k is 1 or 3');
+        // models: "default" (the Try-a-cheaper-model matrix) or "model:effort,model:effort"; none = the agent as it is.
+        const models = url.searchParams.get('models');
+        const cells = models === 'default' ? evals.view(id).matrix : parseCells(models, org.require(id));
+        return [200, evals.estimate(id, { k, cells: cells || undefined, judgeModel: url.searchParams.get('judge') || null })];
+      }],
+      ['POST', /^\/api\/agents\/([^/]+)\/evals\/draft$/, async (req, m) => [200, await evals.draft(agentParam(m))], { local: true }],
+      ['POST', /^\/api\/agents\/([^/]+)\/evals\/approve$/, async (req, m) => [200, evals.approve(agentParam(m), await jsonBody(req))], { local: true }],
+      ['POST', /^\/api\/agents\/([^/]+)\/evals\/settings$/, async (req, m) => [200, evals.saveSettings(agentParam(m), await jsonBody(req))], { local: true }],
+      ['POST', /^\/api\/agents\/([^/]+)\/evals\/run$/, async (req, m) => {
+        const b = await jsonBody(req);
+        return [202, evals.start(agentParam(m), { k: b.k, maxCostUsd: b.maxCostUsd ?? b.max_cost_usd, models: b.models, judgeModel: b.judgeModel ?? b.judge_model })];
+      }, { local: true }],
+      ['POST', /^\/api\/agents\/([^/]+)\/evals\/apply$/, async (req, m) => {
+        const id = agentParam(m);
+        const b = await jsonBody(req);
+        const r = evals.apply(id, { model: b.model, effort: b.effort });
+        publishOrg('agent_updated', id);
+        return [200, r];
+      }, { local: true }],
+      ['PUT', /^\/api\/agents\/([^/]+)\/evals\/([a-z0-9][a-z0-9-]{0,59})$/, async (req, m) => [200, evals.saveCase(agentParam(m), m[2], await jsonBody(req))], { local: true }],
+      // Claim receipts for one session's chat, and "Ask the agent to fix it" (the exact text shown).
+      ['GET', /^\/api\/sessions\/([^/]+)\/claims$/, (req, m) => [200, reports.sessionClaims(sessions.require(sidParam(m)))]],
+      ['POST', /^\/api\/sessions\/([^/]+)\/fix$/, async (req, m) => {
+        const rec = sessions.require(sidParam(m));
+        const b = await jsonBody(req);
+        const c = reports.sessionClaims(rec);
+        const last = c.claims[c.claims.length - 1];
+        if (!last || last.label !== 'contradicted') throw new HttpError(409, 'The last claim in this session is not contradicted any more.');
+        const text = fixMessage(last.check);
+        if (b.text !== text) throw new HttpError(409, 'The message changed since it was shown. Look at it again before sending.');
+        if (rec.status === 'ended') await sessions.resume(rec.sid, {});
+        await sessions.send(rec.sid, text, true);
+        events.record({ type: 'claims', action: 'fix-sent', sid: rec.sid });
+        return [200, { sent: true, text }];
+      }],
       ['GET', /^\/api\/sessions\/([^/]+)\/timeline$/, (req, m, res, url) => {
         const sid = sidParam(m);
         const afterRaw = url.searchParams.get('after');
@@ -1738,6 +1831,9 @@ export async function startServer(opts = {}) {
     telegram.start();
     imessage.start();
     reports.backfill();
+    // Scratch worktrees and copies a crash left behind (ship checks, check-ups).
+    checks.sweep().catch((err) => logger.warn(`checks: ${err.message}`));
+    evals.sweep().catch((err) => logger.warn(`evals: ${err.message}`));
     // The detailed timeline's records: 14 days, 50 MB, checked at start and every hour.
     const tracePrune = () => {
       try {
@@ -1768,6 +1864,8 @@ export async function startServer(opts = {}) {
       digest.stop();
       clearInterval(traceTimer);
       reports.stopped = true;
+      checks.stop();
+      evals.stop();
       donna.stop();
       found.worker?.terminate().catch(() => {});
       await sessions.shutdown();
@@ -1805,6 +1903,8 @@ export async function startServer(opts = {}) {
       imessage,
       donna,
       reports,
+      checks,
+      evals,
       digest,
       otel: { state: otelState, traces },
       backend,

@@ -646,6 +646,17 @@ export class SessionManager {
    * agent the repos it works on; for repo-rooted project agents also the org + agent CLAUDE.md and
    * NOW.md, which do not load from a repo). */
   writeContextFile(target) {
+    const file = path.join(this.paths.ctx, `${target.id}.md`);
+    writeFileAtomic(file, this.contextText(target), 0o600);
+    return file;
+  }
+
+  /**
+   * The context text itself. A check-up (1.6) runs the agent in a scratch copy outside the org
+   * folder, where the org CLAUDE.md no longer loads by folder: `orgRules` adds it, the way a
+   * repo-rooted project agent already gets it.
+   */
+  contextText(target, { orgRules = false } = {}) {
     const read = (f, max = 60000) => {
       try {
         const t = fs.readFileSync(f, 'utf8');
@@ -696,10 +707,10 @@ export class SessionManager {
       lines.push('', '## Org rules (the org CLAUDE.md)', '', read(this.paths.orgClaudeMd).trim());
       lines.push('', `## Your agent file (${path.join(target.dir, 'CLAUDE.md')})`, '', agentMd.trim());
       lines.push('', '## Current state (memory/NOW.md)', '', read(path.join(target.dir, 'memory', 'NOW.md')).trim());
+    } else if (orgRules) {
+      lines.push('', '## Org rules (the org CLAUDE.md)', '', read(this.paths.orgClaudeMd).trim());
     }
-    const file = path.join(this.paths.ctx, `${target.id}.md`);
-    writeFileAtomic(file, lines.join('\n') + '\n', 0o600);
-    return file;
+    return lines.join('\n') + '\n';
   }
 
   claudeAbs() {
@@ -726,7 +737,7 @@ export class SessionManager {
       kind: target.kind,
       title: cleanTitle(title) || (text ? deriveTitle(text) : null),
       model: model || target.model || null,
-      effort: effort || null,
+      effort: effort || target.effort || null,
       account: accountId,
       purpose: purpose === 'signin' ? 'signin' : null,
       // A Use from anywhere setup chat runs with the guard hook (and keeps it on resume).

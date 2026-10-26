@@ -11,7 +11,7 @@ import {
   conflict,
   ensureDir,
   isValidAgentId,
-  isValidModel,
+  isValidEffort, isValidModel,
   notFound,
   oneLine,
   readJson,
@@ -341,6 +341,8 @@ function normalizeAgent(raw, kind, dir) {
     repo: kind === 'project' ? raw.repo || null : null,
     domain: kind === 'project' ? raw.domain || null : null,
     model: typeof raw.model === 'string' && isValidModel(raw.model) ? raw.model : null,
+    // The default effort for new sessions (1.6: set by "Use this" after "Try a cheaper model").
+    effort: isValidEffort(raw.effort) ? raw.effort : null,
     permission_mode: PERMISSION_MODES.has(raw.permission_mode) ? raw.permission_mode : null,
     created_at: raw.created_at || null,
     source: normalizeSource(raw.source),
