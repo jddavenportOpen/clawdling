@@ -16,6 +16,7 @@ import { Icon } from './icons.js';
 
 const POLL_MS = 1500;
 const money = (x) => (x === null || x === undefined || !Number.isFinite(x) ? 'unknown' : x > 0 && x < 0.005 ? 'less than $0.01' : `$${x.toFixed(2)}`);
+const listText = (a) => (a.length <= 1 ? a.join('') : `${a.slice(0, -1).join(', ')} and ${a[a.length - 1]}`);
 const pct = (x) => (x === null || x === undefined ? '–' : `${Math.round(x * 100)}%`);
 const secs = (ms) => (ms === null || ms === undefined ? '' : ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`);
 const ago = (iso, now) => {
@@ -217,16 +218,17 @@ function AgentCheckup({ id, name, now }) {
         ${drafting ? html`<p class="cu-progress" role="status"><span class="cu-spinner" aria-hidden="true"></span> One Claude Code run is writing five cases from ${name}'s files…</p>` : null}
       </div>`
       : html`
-        <${CaseList} v=${v} id=${id} onChange=${setV} disabled=${!!v.active} />
-        <${SuiteSettings} v=${v} id=${id} onChange=${setV} disabled=${!!v.active} />
+        ${v.active ? html`<${Progress} a=${v.active} />` : null}
+        ${last ? html`<${Result} r=${last} now=${now} id=${id} onApplied=${reload} />` : null}
         <div class="cu-actions">
           <button type="button" class="btn btn-primary" disabled=${!v.runnable || !!v.active || v.busy} onClick=${() => setDialog({ kind: 'run', estimate: v.estimate, k: v.settings.runs, cap: v.settings.max_cost_usd })} data-testid="checkup-run"><${Icon} name="play" size=${13} /> ${v.active ? 'Running…' : `Run the check-up (${plural(v.runnable, 'case')})`}</button>
         </div>
         ${v.busy ? html`<p class="rc-note">Another agent's check-up is running; one runs at a time.</p>` : null}
         ${!v.runnable && v.cases.length ? html`<p class="rc-note tone-amber-text">Approve at least one case to run the check-up.</p>` : null}
-        ${v.active ? html`<${Progress} a=${v.active} />` : null}
-        ${last ? html`<${Result} r=${last} now=${now} id=${id} onApplied=${reload} />` : null}
         ${v.runnable ? html`<${Cheaper} v=${v} id=${id} onCompare=${(estimate, models) => setDialog({ kind: 'compare', estimate, models, k: v.settings.runs, cap: v.settings.max_cost_usd })} />` : null}
+        <h3 class="rc-sub-h cu-cases-h">The cases</h3>
+        <${CaseList} v=${v} id=${id} onChange=${setV} disabled=${!!v.active} />
+        <${SuiteSettings} v=${v} id=${id} onChange=${setV} disabled=${!!v.active} />
         ${v.history.length > 1 ? html`<details class="cu-history"><summary>Earlier check-ups</summary><ul class="rc-rows">${v.history.slice(1).map((h) => html`<li key=${h.file}><span>${new Date(h.started_at).toLocaleString()}${h.cells && h.cells.length > 1 ? ' · comparison' : ''}</span><span class="rc-num">${h.judge_unreliable ? 'judge unreliable' : h.score === null ? 'no score' : pct(h.score)} · ${money(h.cost_usd)}</span></li>`)}</ul></details>` : null}`}
     ${dialog && dialog.kind === 'draft' ? html`<${DraftDialog} name=${name} onClose=${() => setDialog(null)} onGo=${draft} />` : null}
     ${dialog && (dialog.kind === 'run' || dialog.kind === 'compare') ? html`<${CostDialog} d=${dialog} v=${v} onClose=${() => setDialog(null)} onGo=${start} />` : null}
@@ -396,7 +398,7 @@ function Result({ r, now, id, onApplied }) {
   const cells = r.cells || [];
   const cur = cells.find((c) => c.current) || cells[0];
   return html`<div class="cu-result-eval" data-testid="checkup-result">
-    <h3 class="rc-sub-h">Last check-up <span class="rc-h-sub">${ago(r.started_at, now)}</span></h3>
+    <h3 class="rc-sub-h cu-last-h">Last check-up <span class="rc-h-sub">${ago(r.started_at, now)}</span></h3>
     ${r.judge_unreliable ? html`<div class="cu-warn tone-bad" data-testid="judge-unreliable"><${Icon} name="alert" size=${14} /> <span><strong>Judge unreliable.</strong> The judge passed an empty answer or failed a good one, so a score would mean nothing. No agent run was spent. Make the criteria concrete (what a good answer must say), then run it again.</span></div>
       <ul class="cu-controls">${r.controls.filter((x) => !x.ok).map((x) => html`<li key=${`${x.case}-${x.grader}-${x.kind}`}>${x.case} / ${x.grader}: ${x.kind === 'empty' ? 'passed an empty answer' : 'failed the reference answer'}${x.reasons && x.reasons[0] ? ` ("${x.reasons[0]}")` : ''}</li>`)}</ul>`
       : html`<p class="cu-score" data-testid="checkup-score">${r.score === null ? html`<span class="tone-amber-text">${r.capped ? 'Stopped at the cost cap before every case ran, so there is no score.' : r.error || 'No score.'}</span>` : html`<span class="cu-score-n">${pct(r.score)}</span> <span class="cu-score-l">of the graders passed${cur ? `, ${cur.passes} of ${cur.cases.length} cases fully` : ''}</span>`}</p>`}
@@ -465,7 +467,7 @@ function Cheaper({ v, id, onCompare }) {
   }, [id, v.runnable, v.settings.runs]);
   if (v.matrix.length < 2) return null;
   return html`<details class="cu-cheaper" data-testid="checkup-cheaper"><summary>Try a cheaper model</summary>
-    <p class="rc-note">Runs the same cases with ${v.matrix.map((c) => c.label).join(', ')}, then recommends the cheapest that holds up. Nothing changes until you click "Use this".</p>
+    <p class="rc-note">Runs the same cases with ${listText(v.matrix.map((c) => c.label))}, then recommends the cheapest that holds up. Nothing changes until you click "Use this".</p>
     <button type="button" class="btn btn-quiet btn-sm" disabled=${!est || !!v.active || v.busy} onClick=${() => onCompare(est, models)} data-testid="checkup-compare-run">Compare ${plural(v.matrix.length, 'setting')}</button>
   </details>`;
 }

@@ -32,11 +32,17 @@ export function evidenceText(c) {
   return c.kind === 'tests' ? `No ${c.needs && c.needs.length ? c.needs.join(' or ') : 'test'} check ran after the last edit.` : 'No check ran after the last edit.';
 }
 
+/** Evidence text with its `command` spans shown as code. */
+export function Evidence({ text }) {
+  const parts = String(text || '').split(/`([^`]+)`/);
+  return html`${parts.map((p, i) => (i % 2 ? html`<code key=${i}>${p}</code>` : p))}`;
+}
+
 /** A small label pill (report card rows, map), with the evidence in its title. */
 export function ClaimPill({ claim, compact = false }) {
   if (!claim) return null;
   const l = LABEL[claim.label] || LABEL.not_verified;
-  return html`<span class=${`claim-pill tone-${l.tone}`} data-claim=${claim.label} title=${evidenceText(claim)}><${Icon} name=${l.icon} size=${11} />${compact ? null : ' '}${compact ? html`<span class="sr-only">${l.text}</span>` : l.text}</span>`;
+  return html`<span class=${`claim-pill tone-${l.tone}`} data-claim=${claim.label} title=${evidenceText(claim).replace(/`/g, '')}><${Icon} name=${l.icon} size=${11} />${compact ? null : ' '}${compact ? html`<span class="sr-only">${l.text}</span>` : l.text}</span>`;
 }
 
 /** The claims of one session, re-read when its transcript grows (a moment after). */
@@ -70,7 +76,7 @@ export function ClaimBadge({ claim, sid, onSent }) {
   return html`<div class=${`claim-badge tone-${l.tone}`} data-testid="claim-badge" data-claim=${claim.label}>
     <button type="button" class="claim-head" aria-expanded=${open ? 'true' : 'false'} onClick=${() => setOpen((x) => !x)}>
       <${Icon} name=${l.icon} size=${13} /><span class="claim-label">${l.text}</span>
-      <span class="claim-why">${evidenceText(claim)}</span>
+      <span class="claim-why"><${Evidence} text=${evidenceText(claim)} /></span>
       <${Icon} name=${open ? 'chevron-down' : 'chevron-right'} size=${12} />
     </button>
     ${open ? html`<div class="claim-detail" data-testid="claim-detail">
