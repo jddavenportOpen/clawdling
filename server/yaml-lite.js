@@ -15,6 +15,11 @@ export class YamlError extends Error {
 }
 
 const MAX_DEPTH = 20;
+const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function checkKey(key, line) {
+  if (BAD_KEYS.has(key)) throw new YamlError(`the key "${key}" is not allowed`, line);
+  return key;
+}
 
 /** A plain scalar's value: true/false/null/~, an integer or a float, else the text itself. */
 function plainValue(s) {
@@ -106,6 +111,7 @@ function readFlow(s, i, line, depth = 0) {
         if (s[i] !== ':') throw new YamlError(`a flow map needs key: value (after "${String(key).slice(0, 30)}")`, line);
         i++;
         const [v, j] = readFlow(s, i, line, depth + 1);
+        checkKey(key, line);
         if (Object.hasOwn(out, key)) throw new YamlError(`duplicate key "${key}"`, line);
         out[key] = v;
         i = j;
@@ -262,6 +268,7 @@ export function parseYaml(text) {
         key = m[1].trim();
         rest = m[2];
       }
+      checkKey(key, l.n);
       if (Object.hasOwn(out, key)) throw new YamlError(`duplicate key "${key}"`, l.n);
       pos++;
       out[key] = afterKey(rest, l, depth);

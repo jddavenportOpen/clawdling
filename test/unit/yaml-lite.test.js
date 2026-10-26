@@ -44,7 +44,7 @@ match: count:2
 });
 
 test('parseYaml: anything it does not understand is an error with a line number, never a guess', () => {
-  for (const bad of ['a: *alias', 'a: &anchor 1', 'a: !!str x', 'a: [1, 2', 'a: 1\na: 2', '\tb: 1', 'a: "x\\q"', 'a: {b c}', '  a: 1\nb: 2', 'just text']) {
+  for (const bad of ['__proto__: {polluted: true}', 'a: {__proto__: 1}', 'constructor: x', 'a: *alias', 'a: &anchor 1', 'a: !!str x', 'a: [1, 2', 'a: 1\na: 2', '\tb: 1', 'a: "x\\q"', 'a: {b c}', '  a: 1\nb: 2', 'just text']) {
     assert.throws(() => parseYaml(bad), YamlError, JSON.stringify(bad));
   }
 });
