@@ -226,7 +226,8 @@ turned off).
   never reaches Donna. iMessage only answers the configured handle.
 - Each turn is `claude -p --permission-mode dontAsk --setting-sources project,local
   --strict-mcp-config --allowedTools ...`. The allow-list is `clawdling spawn`, `send`, `ls`,
-  `new`, `end`, `discover` and `import` (without `--yes`), reading files inside the org folder,
+  `report` (the read-only report card, since 1.5.1), `new`, `end`, `discover` and `import` (without
+  `--yes`), reading files inside the org folder,
   and editing her own `memory/`; under `dontAsk` everything else is refused without a prompt. No
   arbitrary shell, no writes elsewhere, no network tools. `clawdling init`, `start`, `service`,
   `donna`, `attach` and `import --yes` refuse to run inside a Donna turn: creating agents is the
@@ -240,6 +241,10 @@ turned off).
   Code still signs in the usual way (Clawdling never handles the credentials).
 - Interactive agent sessions are different on purpose: they are your normal Claude Code sessions
   with your settings, MCP servers and permission prompts, shown in the cockpit.
+- Each turn's prompt also carries "today so far" from the report card (per agent: sessions with work
+  done, with their titles and the agent's own last line, what waits on you, and the usage figure), so
+  "what got done today?" is answered from the record. It goes only to your own Claude Code, in the
+  turn, and its reply only to your own paired chat, like every Donna reply.
 - Text messages are untrusted input to a model. The allow-list bounds what a confused or tricked
   Donna can do: start, message or end your own agents' sessions, which then run under Claude Code's
   normal permission prompts in the cockpit.

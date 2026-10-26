@@ -132,6 +132,22 @@ test('Done, Needs you, Cost and the Timeline after one working session; receipts
   assert.equal(o.agents.find((a) => a.id === 'donna').cost_usd, 0);
 });
 
+test('Donna answers "what got done today" from the report card: her turn carries it, and may run clawdling report', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'demo', prompt: 'please do some work? for Donna' })).body;
+  await waitFor(async () => (await status(s.sid)) === 'ready', { label: 'ready', timeout: 20000 });
+  const r = await request(srv, 'POST', '/api/donna/chat', { text: 'What got done today, and what needs me?' });
+  assert.equal(r.status, 200, r.text);
+  const logs = fs.readFileSync(path.join(home, 'fake.log'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  const input = logs.filter((l) => l.mode === 'print-input').pop().input;
+  assert.match(input, /Today so far \(from the report card/);
+  assert.match(input, /- Demo \(demo\): \d+ sessions? with work done: .*I added a README section\. The test command failed, so the tests need a look\./);
+  assert.match(input, /needs you: 1 \(reply\)/);
+  const turn = logs.filter((l) => l.mode === 'print').pop();
+  assert.ok(turn.argv.includes('Bash(clawdling report *)'), 'the read-only report card is on her allow-list');
+  assert.ok(!turn.argv.some((a) => /^Bash\(clawdling (start|stop|service|remote)/.test(a)));
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+});
+
 test('a domain agent has no commits block; bad input is refused', async () => {
   const r = (await request(srv, 'GET', '/api/agents/health/report')).body;
   assert.equal(r.agent.has_repo, false);

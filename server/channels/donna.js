@@ -17,8 +17,9 @@ export const DONNA_TIMEOUT_MS = 180000;
 export function donnaAllowedTools(home, platform = process.platform) {
   // discover is read-only, and only its table (names, folders, dates: no descriptions or README
   // text) is hers; import without --yes only prints a plan (the CLI refuses --yes in her turns).
+  // report is the read-only report card (1.5): what got done, what needs the owner, what it used.
   const commands = [
-    'clawdling spawn *', 'clawdling send *', 'clawdling ls', 'clawdling ls *', 'clawdling new *', 'clawdling end *',
+    'clawdling spawn *', 'clawdling send *', 'clawdling ls', 'clawdling ls *', 'clawdling report', 'clawdling report *', 'clawdling new *', 'clawdling end *',
     'clawdling discover', 'clawdling discover --all', 'clawdling discover --no-github', 'clawdling discover --all --no-github', 'clawdling import *',
   ];
   const tools = commands.map((c) => `Bash(${c})`);
@@ -52,7 +53,31 @@ export function buildDonnaArgs({ sessionId, resume, home, ctxFile, model }) {
   return a;
 }
 
-export function buildDonnaPrompt({ owner, channel, text, agents = [], sessions = [] }) {
+/**
+ * "Today so far", from the report card (1.5), in a few lines for Donna's prompt: per agent that did
+ * something or needs the owner, the sessions with work done (title and the agent's own last line)
+ * and what is waiting. `org`: today's org report; `agents`: [{id, name, done, needs, usd}] from each
+ * busy agent's report. No model call.
+ */
+export function todayLines({ org, agents = [] } = {}) {
+  if (!org || !Array.isArray(org.agents)) return [];
+  const out = [];
+  const usd = (x) => (Number.isFinite(x) && x > 0 ? (x < 0.005 ? 'less than $0.01' : `about $${x.toFixed(2)}`) : '$0.00');
+  for (const a of agents) {
+    const done = (a.done || []).slice(0, 3).map((d) => `"${oneLine(d.title || 'untitled session', 60)}"${d.line ? `: ${oneLine(d.line, 140)}` : ''}${d.live ? ' (still running)' : ''}`);
+    const needs = (a.needs || []).map((n) => n.kind);
+    const parts = [];
+    if (a.done && a.done.length) parts.push(`${a.done.length} session${a.done.length === 1 ? '' : 's'} with work done: ${done.join('; ')}${a.done.length > 3 ? '; ...' : ''}`);
+    if (needs.length) parts.push(`needs you: ${needs.length} (${[...new Set(needs)].join(', ')})`);
+    if (Number.isFinite(a.usd) && a.usd > 0) parts.push(`usage ${usd(a.usd)}`);
+    if (parts.length) out.push(`- ${a.name} (${a.id}): ${parts.join('; ')}`);
+  }
+  const t = org.totals || {};
+  out.push(`Usage today: ${t.today_complete === false && !(t.today_usd > 0) ? 'unknown' : usd(t.today_usd)} (a list-price equivalent, not a bill).`);
+  return out;
+}
+
+export function buildDonnaPrompt({ owner, channel, text, agents = [], sessions = [], today = null }) {
   const roster = agents.map((a) => `- ${a.id} (${a.kind}): ${a.name}: ${oneLine(a.mission, 160)}`).join('\n') || '- (no agents)';
   const live =
     sessions
@@ -72,7 +97,11 @@ export function buildDonnaPrompt({ owner, channel, text, agents = [], sessions =
     'Live sessions:',
     live,
     '',
+    ...(today && today.length
+      ? ['Today so far (from the report card, `clawdling report --window today`):', ...today, '']
+      : []),
     `Route it (clawdling spawn / clawdling send) or answer it yourself if it is about the org, then reply to ${owner} in 1-3 short plain-text lines. Your final message is sent back as a text message.`,
+    `For "what got done" or "what needs me", answer from "Today so far" above: it is the report card. For more, \`clawdling report [agent] --window today|7d\` and \`clawdling ls --json\` are yours to run (read-only).`,
   ].join('\n');
 }
 
@@ -174,6 +203,7 @@ export class DonnaRouter {
       text,
       agents: this.org.agents(),
       sessions: this.sessions.list(),
+      today: await this.today(),
     });
     let sessionId = isUuid(org.donna_session) ? org.donna_session : null;
     let resume = !!sessionId;
@@ -192,6 +222,24 @@ export class DonnaRouter {
       });
     }
     return r.text;
+  }
+
+  /** Today's report card in a few lines (the agents that did something or need the owner). */
+  async today() {
+    if (!this.reports) return null;
+    try {
+      const org = this.reports.orgReport({ window: 'today' });
+      const busy = org.agents.filter((a) => a.done > 0 || a.needs > 0).slice(0, 8);
+      const agents = [];
+      for (const a of busy) {
+        const r = await this.reports.agentReport(a.id, { window: 'today' });
+        agents.push({ id: a.id, name: a.name, done: r.done, needs: r.needs, usd: r.cost.total_usd });
+      }
+      return todayLines({ org, agents });
+    } catch (err) {
+      this.logger?.warn?.(`donna: today's report: ${err.message}`);
+      return null;
+    }
   }
 
   exec(claude, args, prompt, cwd) {

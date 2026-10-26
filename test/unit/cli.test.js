@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { launchdPlist, parseArgs, systemdUnit, versionAtLeast, windowsStartupScript } from '../../bin/clawdling.js';
-import { buildDonnaArgs, buildDonnaPrompt, donnaAllowedTools, parseResult } from '../../server/channels/donna.js';
+import { buildDonnaArgs, buildDonnaPrompt, donnaAllowedTools, parseResult, todayLines } from '../../server/channels/donna.js';
 
 test('parseArgs: positionals, --flag value, --flag=value, booleans, --', () => {
   const a = parseArgs(['spawn', 'health', 'look at --this', '--model', 'haiku', '--json', '--title=Sleep', '--', '--literal']);
@@ -56,6 +56,34 @@ test('Donna prompt carries the message, roster and live sessions; result parsing
   assert.equal(parseResult('noise\n{"type":"result","result":"ok","session_id":"s"}\n').result, 'ok');
   assert.equal(parseResult('[{"type":"system"},{"type":"result","result":"arr"}]').result, 'arr');
   assert.equal(parseResult('garbage'), null);
+});
+
+test('Donna may read the report card (1.5.1), and still cannot start, stop, rewire or reach out', () => {
+  const tools = donnaAllowedTools('/Users/ada/clawdling');
+  assert.ok(tools.includes('Bash(clawdling report)') && tools.includes('Bash(clawdling report *)'), 'the read-only report card');
+  assert.ok(tools.includes('Bash(clawdling ls *)'), 'ls --json was already hers');
+  for (const cmd of ['start', 'stop', 'service', 'remote', 'donna', 'attach', 'open', 'init']) {
+    assert.ok(!tools.some((t) => t.startsWith(`Bash(clawdling ${cmd}`)), `not clawdling ${cmd}`);
+  }
+  assert.ok(!tools.some((t) => /^(Write|WebFetch|WebSearch)/.test(t)), 'no writes beyond memory/, no web');
+  assert.deepEqual(tools.filter((t) => t.startsWith('Edit(')), ['Edit(memory/**)']);
+});
+
+test('Donna prompt: "Today so far" from the report card, and how to answer "what got done"', () => {
+  const today = todayLines({
+    org: { totals: { today_usd: 0.21, today_complete: true }, agents: [] },
+    agents: [
+      { id: 'docs-site', name: 'docs-site', done: [{ title: 'Fix the broken links', line: 'I fixed two broken links, and npm test now passes.' }], needs: [{ kind: 'permission' }], usd: 0.09 },
+      { id: 'status-page', name: 'status-page', done: [], needs: [{ kind: 'question' }], usd: 0 },
+    ],
+  });
+  assert.equal(today[0], '- docs-site (docs-site): 1 session with work done: "Fix the broken links": I fixed two broken links, and npm test now passes.; needs you: 1 (permission); usage about $0.09');
+  assert.equal(today[1], '- status-page (status-page): needs you: 1 (question)');
+  assert.match(today[2], /^Usage today: about \$0\.21 \(a list-price equivalent, not a bill\)\.$/);
+  const p = buildDonnaPrompt({ owner: 'Maya', channel: 'telegram', text: 'What got done today, and what needs me?', agents: [], sessions: [], today });
+  assert.match(p, /Today so far \(from the report card, `clawdling report --window today`\):\n- docs-site/);
+  assert.match(p, /answer from "Today so far" above: it is the report card/);
+  assert.doesNotMatch(buildDonnaPrompt({ owner: 'Maya', channel: 'app', text: 'hi', today: null }), /Today so far \(/);
 });
 
 test('pairing info: LAN URL when bound to all interfaces, loopback otherwise', async () => {

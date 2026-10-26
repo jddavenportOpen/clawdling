@@ -435,6 +435,7 @@ export async function startServer(opts = {}) {
     sessions.onNeedsYou = (rec) => pinger.onNeedsYou(rec);
     // The report card (1.5): receipts under .clawdling/ledger, written when a session ends.
     const reports = new Reports({ paths, org, sessions, env: cEnv, logger });
+    donna.reports = reports; // Donna answers "what got done today" from the report card
     sessions.onEnded = (rec) => setImmediate(() => reports.sessionEnded(rec));
     sessions.onTranscriptSwitch = (rec, oldPath) => setImmediate(() => reports.transcriptSwitched(rec, oldPath));
     const transcripts = sessions.transcripts;

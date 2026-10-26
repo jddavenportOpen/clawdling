@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.5.1 (2026-10-26)
+
+**Two fixes found while filming the 1.5 demo with Claude Code 2.1.308.**
+
+- **The plan card shows the plan again** (issue #21). Claude Code 2.1.308 calls `ExitPlanMode` with
+  an empty input and keeps the plan in its own plan file, `<config folder>/plans/<name>.md`, which it
+  writes (and rewrites) just before. The card now reads the plan from there: the session's last write
+  to that file, read only inside that `plans` folder (a `.md` file whose real path is in it, never
+  through a link). The 2.1.283 shape, with the plan in the input, works as before. New contract
+  fixtures: a real 2.1.308 plan session (scrubbed) and the empty-input shape; the live check
+  `test/live/questions-live.mjs` now also fails on an empty plan card.
+- **Donna answers "what got done today, and what needs me?" from the report card.** Her text-message
+  turns could not run `clawdling report` (added in 1.5 for agents' sessions, not for her), and her
+  prompt carried only the live sessions, so she said not much was finished and that her access was
+  denied. Now `clawdling report` (read-only) is on her allow-list, and each turn carries "today so
+  far" from the report card: per agent, the sessions with work done (title and the agent's own last
+  line), what waits on you, and the usage. Nothing she can change or send grew: no new write, remote
+  or channel command. New live check `test/live/donna-live.mjs` asks her exactly that question with
+  the real Claude Code (it failed on 1.5.0 and passes now).
+
 ## 1.5.0 (2026-10-25)
 
 **The report card: what got done, what it cost, what needs you. In plain words, on your own machine.**
