@@ -401,8 +401,8 @@ To limit the damage a hostile script could do:
   `checks.yaml` still matches that fingerprint: any change, by anyone, needs your approval again,
   and so does pointing the agent at another repo.
 - **Never the live repo.** `git stash create` snapshots the tracked files, uncommitted changes
-  included, as a commit object without touching the working tree or the index; `git worktree add
-  --detach` puts that snapshot in a scratch folder under the system temp folder; the checks run
+  included, as a commit object without changing your files or what is staged (git may refresh the
+  index's cached file times); `git worktree add --detach` puts that snapshot in a scratch folder under the system temp folder; the checks run
   there; the worktree is removed with `git worktree remove --force` (never `git worktree prune`,
   which would also drop records of your own worktrees on an unplugged drive).
   Untracked files are not copied (they can be secrets or build junk); the cockpit says so. Every
