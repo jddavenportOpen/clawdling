@@ -1475,3 +1475,10 @@ h3.chat-h { font-size: 16.5px; }
 .ws-usage { font-size: 12px; color: var(--text-3); white-space: nowrap; text-decoration: none; }
 .ws-usage:hover { color: var(--text); }
 @media (max-width: 1100px) { .ws-usage { display: none; } }
+.rc-open { display: inline-flex; align-items: center; gap: 2px; flex: none; font-size: 12px; font-weight: 500; color: var(--accent); }
+.rc-item:hover .rc-open { text-decoration: underline; }
+.ended-sub code { white-space: nowrap; }
+@media (max-width: 720px) {
+  .pane-view .seg-btn { padding: 0 9px; }
+  .pane-actions [data-testid="pane-attach"] { display: none; }
+}

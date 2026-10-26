@@ -119,7 +119,8 @@ function Entry({ e }) {
       ${e.api ? html`<span class="tl-api" title="Requests to Claude in this turn (detailed timeline)">${e.api.requests} ${e.api.requests === 1 ? 'request' : 'requests'}, ${duration(e.api.ms)}</span>` : null}
       <span class="tl-cost" title="What this turn used, at list price">${e.cost === null ? 'cost unknown' : usd(e.cost)}${e.cost !== null && !e.cost_complete ? '+' : ''}</span></li>`;
   }
-  if (e.kind === 'say') return html`<li class="tl-row tl-say" style=${pad} data-kind="say"><span class="tl-text">${e.text}</span></li>`;
+  // The agent's words, without Markdown marks (`code`, **bold**) a reader would see literally.
+  if (e.kind === 'say') return html`<li class="tl-row tl-say" style=${pad} data-kind="say"><span class="tl-text">${String(e.text || '').replace(/`+|\*\*/g, '')}</span></li>`;
   if (e.kind === 'subagent') {
     return html`<li class="tl-row tl-sub" style=${pad} data-kind="subagent"><span class="tl-who">Subagent</span><span class="tl-text">${e.description}</span></li>`;
   }

@@ -151,6 +151,7 @@ function DoneBlock({ r, win, name, now, agentsById }) {
         <span class="rc-item-top">
           <span class="rc-item-title">${d.title || sessionName({ agent: r.agent.id }, agentsById)}</span>
           <span class=${`rc-when ${d.live ? 'is-live' : ''}`} title=${longTime(d.when)}>${d.live ? 'Still running' : `Ended ${agoText(d.when, now)}`}</span>
+          <span class="rc-open" aria-hidden="true"><${Icon} name="chevron-right" size=${12} /></span>
         </span>
         ${d.line ? html`<span class="rc-line">${d.line}</span>` : html`<span class="rc-line is-empty">It finished without a closing message.</span>`}
         <span class="rc-facts">
@@ -175,7 +176,8 @@ function NeedsBlock({ needs, name, now, agentsById }) {
     ${needs.length ? html`<ul class="rc-list">${needs.map((s) => html`<li key=${s.sid}>
       <button type="button" class="rc-item rc-need" onClick=${() => focusSession(s.sid)} data-sid=${s.sid} title="Open this session">
         <span class="rc-item-top"><${StatusGlyph} status=${s.status} label=${false} />
-          <span class="rc-item-title">${needLabel(s)}</span><span class="rc-when">${relTime(s.last_activity_at, now)}</span></span>
+          <span class="rc-item-title">${needLabel(s)}</span><span class="rc-when">${relTime(s.last_activity_at, now)}</span>
+          <span class="rc-open" aria-hidden="true">${isBlocked(s) ? 'Answer' : 'Open'} <${Icon} name="chevron-right" size=${12} /></span></span>
         <span class="rc-line">${sessionName(s, agentsById)}${isBlocked(s) && s.notification ? `: ${s.notification}` : !isBlocked(s) && s.last_message ? `: ${String(s.last_message).replace(/`|\*\*/g, '')}` : ''}</span>
       </button></li>`)}</ul>`
       : html`<p class="rc-empty">Nothing is waiting on you. When ${name} asks a question, wants permission, or a turn fails, it shows up here.</p>`}
