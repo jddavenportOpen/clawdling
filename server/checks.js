@@ -362,7 +362,7 @@ export class Checks {
   /** Ship-check runs as claim evidence ({at, results}), newest last; not runs that left new files out. */
   evidence(id) {
     try {
-      return this.history(id, 50).reverse().filter((r) => !(r.untracked > 0 || r.submodules > 0 || r.filtered > 0)).map((r) => ({ at: r.started_at, results: r.results }));
+      return this.history(id, 50).reverse().filter((r) => !r.error && !(r.untracked > 0 || r.submodules > 0 || r.filtered > 0)).map((r) => ({ at: r.started_at, results: r.results }));
     } catch {
       return [];
     }
@@ -710,6 +710,8 @@ export class Checks {
       const env = checkEnv(this.env, orgKeys);
       const steps = [...c.config.setup.map((s, i) => ({ ...s, name: `setup${c.config.setup.length > 1 ? ` ${i + 1}` : ''}`, setup: true })), ...c.config.checks.map((x) => ({ ...x, setup: false }))];
       for (const step of steps) {
+        // Clawdling is stopping: no next step, and the run is saved as cut short (not evidence).
+        if (this.stopped) throw new Error('Clawdling stopped during the ship check');
         this.progress(id, { phase: 'step', name: step.name, cmd: step.run });
         const r = await this.runOne(step.run, { cwd, env, timeout: step.timeout });
         const ok = r.exit === 0;
@@ -766,6 +768,7 @@ export class Checks {
 
   /** End anything still running (server shutdown). */
   stop() {
+    this.stopped = true;
     for (const child of this.children) killTree(child, 'SIGKILL');
   }
 }

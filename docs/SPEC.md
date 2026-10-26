@@ -502,14 +502,18 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`, `python -m`, `cd x &&`).
   Only a **canonical run** can verify or contradict (added in review, after seven rounds of edge
   cases on arbitrary shell lines): one command, after optional `cd x &&`, `export` or `VAR=value`
-  steps (not variables that select tests, such as `PYTEST_ADDOPTS`) and a trailing `2>&1`; it is
+  steps (only variables known not to change what runs: `CI`, `NO_COLOR`, `NODE_ENV`...) and a
+  trailing `2>&1`; it is
   an approved or detected command, or a standard runner (`npm test`, `pytest`, `go test ./...`,
   `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with only harmless extra flags (long
   flags such as `--ci`, `--verbose`, `--noEmit`; short ones only where they mean verbose or quiet
   for that runner: `pytest -q`, `go test -v`). It passes on exit 0 with no failure marks and fails
   on a visible non-zero exit. Its identity is its command in one spelling (`npm t` is `npm test`),
   where it ran (`cd packages/api &&`) and its scope flags (`--workspace`, `-p api`). Formatter runs
-  (`npm run format`, `make fmt`, `dart format .`) are changes, not checks. Any other recognized
+  (`npm run format`, `make fmt`, `dart format .`) are changes, not checks, and so are bulk shell
+  edits (`xargs sed -i`, `find -exec`/`-delete`, inline interpreter code that writes, fixers behind
+  `uv run`/`python -m`, `--fix` passed to a script, writes run in the background). A test sub-script
+  (`npm run test:unit`, `npm run e2e`) is a named part of the suite: a selection. Any other recognized
   check that shows a failure (a non-zero exit, an error, or failure marks: piped, chained, `|| true`,
   a file or name argument, a selection or skip flag, exit 0 with failure marks, a timeout) keeps the
   claim at **not_verified**: the record cannot tell whose failure it is or what the run covered. A

@@ -472,6 +472,8 @@ export function checkOf(cmd, { approved = [], detected = [] } = {}) {
 // redirection to a file, or a program that writes (sed -i, mv, a formatter with --write, git apply...).
 const WRITE_PROGRAMS = new Set(['mv', 'cp', 'rm', 'rmdir', 'touch', 'mkdir', 'ln', 'truncate', 'patch', 'rsync', 'install', 'unzip', 'tar']);
 const GIT_WRITES = new Set(['apply', 'checkout', 'restore', 'reset', 'merge', 'rebase', 'cherry-pick', 'pull', 'am', 'mv', 'rm', 'revert', 'switch']);
+const INLINE_CODE = /(^|[\s;&|(])(python[\d.]*|node|ruby|perl|php|deno|bun|Rscript)(\s+-[A-Za-z]*\s+|\s+)(-c\b|-e\b|-E\b|--eval\b|-(\s|$)|[^\n]*<<)/m;
+const CODE_WRITES = /write|open\([^)]*['"][wax]|unlink|rename|remove|rmtree|rmdir|mkdir|replace\(|truncate|copyfile|shutil|os\.system|subprocess|spawn|execSync|fs\.|File\.(write|open|delete)|Path\(|chmod/i;
 const PS_WRITES = new Set(['set-content', 'add-content', 'out-file', 'new-item', 'remove-item', 'move-item', 'copy-item', 'rename-item', 'clear-content', 'expand-archive', 'compress-archive', 'tee-object', 'sc', 'ac', 'ni', 'ri', 'mi', 'cpi', 'rni', 'del', 'erase', 'rd', 'move', 'copy', 'ren', 'md', 'mkdir', 'rm', 'mv', 'cp']);
 const PKG_WRITES = new Set(['install', 'i', 'add', 'remove', 'rm', 'uninstall', 'un', 'update', 'up', 'upgrade', 'version', 'dedupe', 'prune']);
 
@@ -484,14 +486,37 @@ function segmentWrites(raw) {
     const target = m[1];
     if (!target.startsWith('&') && !/^\/dev\//.test(target) && target !== '""') return true;
   }
-  let w = words(raw);
-  if (w[0] === 'sudo' || w[0] === 'command' || w[0] === 'time' || w[0] === 'env') w = w.slice(1).filter((x) => !/^[A-Za-z_]\w*=/.test(x));
-  if (w[0] === 'npx' || w[0] === 'bunx') w = w.slice(1);
+  return programWrites(words(raw), raw);
+}
+
+/** Does this program (its words) write files? Seen past wrappers, xargs and find -exec. */
+function programWrites(w0, raw = '', depth = 0) {
+  if (depth > 4 || !w0.length) return false;
+  let w = w0[0] === 'sudo' ? w0.slice(1).filter((x, i) => !(i === 0 && x.startsWith('-'))) : w0;
+  w = unwrap(w) || w; // uv run ruff format ., poetry run black ., python -m black ., pnpm exec eslint --fix
   const [h, b] = [String(w[0] || '').replace(/^.*[\\/]/, ''), w[1]];
+  // xargs runs what follows on every input line (`grep -rl x src | xargs sed -i ...`).
+  if (h === 'xargs') {
+    let j = 1;
+    while (j < w.length && w[j].startsWith('-')) j += /^-[IndPLaEs]$/.test(w[j]) ? 2 : 1;
+    return programWrites(w.slice(j), raw, depth + 1);
+  }
+  // find deletes, or runs a program on each file it finds.
+  if (h === 'find') {
+    if (w.includes('-delete')) return true;
+    const e = w.findIndex((x) => /^-(exec|execdir|ok|okdir)$/.test(x));
+    if (e !== -1) {
+      const end = w.findIndex((x, j) => j > e && (x === ';' || x === '\\;' || x === '+'));
+      return programWrites(w.slice(e + 1, end === -1 ? undefined : end), raw, depth + 1);
+    }
+    return false;
+  }
   if (WRITE_PROGRAMS.has(h)) return true;
   // PowerShell's writing cmdlets and their aliases (any case), and .NET file writes.
   if (PS_WRITES.has(h.toLowerCase()) || /\[(System\.)?IO\.File\]::(Write|Append|Copy|Move|Delete|Create)/i.test(raw)) return true;
-  if ((h === 'sed' || h === 'perl') && w.some((x) => /^-[a-z]*i/.test(x) || x.startsWith('--in-place'))) return true;
+  if ((h === 'sed' || h === 'perl') && w.some((x) => /^-[A-Za-z0-9]*i/.test(x) || x === '-I' || x.startsWith('--in-place'))) return true;
+  // `--fix` or `--write` passed to any package script (`npm run lint -- --fix`, `pnpm lint --fix`).
+  if (['npm', 'pnpm', 'yarn', 'bun'].includes(h) && w.some((x) => x === '--fix' || x === '--write')) return true;
   if (h === 'tee' && w.slice(1).some((x) => !x.startsWith('-'))) return true;
   if (h === 'git' && GIT_WRITES.has(b) || (h === 'git' && b === 'stash' && /^(pop|apply)$/.test(w[2] || ''))) return true;
   if ((h === 'npm' || h === 'pnpm' || h === 'yarn' || h === 'bun') && PKG_WRITES.has(b)) return true;
@@ -513,6 +538,8 @@ function segmentWrites(raw) {
  * after the write in the same command line (`... > f && npm test`), so it still counts after the edit.
  */
 export function writesFiles(cmd) {
+  // Inline code for an interpreter (`python3 - <<'EOF'`, `node -e`, `ruby -e`) that touches files.
+  if (INLINE_CODE.test(cmd) && CODE_WRITES.test(cmd)) return { writes: true, checkAfter: false };
   const segs = segments(cmd);
   let last = -1;
   segs.forEach((sg, i) => {
@@ -566,7 +593,8 @@ export function isWorkEdit(t, roots) {
   // shell tools an error is a non-zero exit, not "nothing was written". Only a call that never ran
   // (declined, blocked) changed nothing.
   // A command cut at 1,000 characters may write past the cut: it counts as a change.
-  if (SHELL_TOOLS.has(t.name) && typeof t.cmd === 'string' && !t.bg) return !(t.res && (t.res.denied || t.res.blocked)) && (t.cmdCut === true || writesFiles(t.cmd).writes);
+  // (A write run in the background is a change too.)
+  if (SHELL_TOOLS.has(t.name) && typeof t.cmd === 'string') return !(t.res && (t.res.denied || t.res.blocked)) && (t.cmdCut === true || writesFiles(t.cmd).writes);
   if (t.error === true) return false;
   if (CLAIM_EDIT_TOOLS.has(t.name)) {
     if (t.file && MEMORY_FILE.test(t.file)) return false;
@@ -781,10 +809,14 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
       if (failedExit && x.fail === true) checks.push({ kinds: ['check'], id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: x.err1 || null });
       continue;
     }
+    // npm's placeholder (`echo "Error: no test specified" && exit 1`): the project has no tests yet.
+    if (/no test specified/i.test(x.err1 || '')) continue;
     const canon = canonical(x.cmd, { approved, detected });
     const first = x.err1 || (x.exit ? `Exit code ${x.exit}` : null);
     if (canon) {
-      const exitShown = typeof x.exit === 'number';
+      // A `timeout` wrapper that cut the run off (124, or 137 for KILL): it did not finish.
+      const timedOut = /^\s*(timeout|gtimeout)\s/.test(x.cmd) && (x.exit === 124 || x.exit === 137);
+      const exitShown = typeof x.exit === 'number' && !timedOut;
       // A canonical pass: exit 0 and no failure marks (a script that hides its own exit code prints them).
       if (!failedExit && !x.fail) checks.push({ kind: canon.kind, kinds: [canon.kind], id: canon.id, canonical: true, ok: true, cmd: x.cmd, at: x.at });
       // A canonical failure: a visible non-zero exit, and not one a `cd x &&` before it could explain.
@@ -849,6 +881,15 @@ const SHORT_HARMLESS = {
   pnpm: ['-s'],
   yarn: ['-s'],
 };
+// Where `.` means the whole project, and where --all means every member (cargo's workspace).
+const WHOLE_DOT = new Set(['pytest', 'py.test', 'eslint', 'ruff', 'biome', 'stylelint', 'mypy', 'flake8', 'pylint', 'black', 'isort', 'prettier', 'oxlint', 'xo', 'standard']);
+const SCOPE_RUNNERS = new Set(['cargo']);
+/** A package script other than the main `test` (`npm run test:unit`, `pnpm e2e`). */
+function subScript(a) {
+  if (!['npm', 'pnpm', 'yarn', 'bun'].includes(a[0])) return false;
+  const script = a[1] === 'run' || a[1] === 'run-script' ? a[2] : a[1];
+  return !!script && !['test', 't', 'tst'].includes(script) && !script.startsWith('-');
+}
 // Flags that change what a run covers (`cargo test --workspace`): part of the check's identity.
 const SCOPE_FLAG = /^(--workspace|--all|--all-targets|--all-features|-p|--package(=.*)?|--recursive|-r)$/;
 // Steps before the command that run no check: `cd app &&`, `export CI=1 &&`, `NODE_ENV=test`.
@@ -878,9 +919,10 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   if (!w.length || runsNothing(w)) return null;
   // Its identity: where it ran (`cd packages/api &&`), what it is, and any scope flag it carried.
   const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, normId(what), ...extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x))].filter(Boolean).join(' ');
-  // Variables that select tests (`PYTEST_ADDOPTS="-k cart"`, `GOFLAGS=-run=X`): not the whole run.
-  if (/(^|[\s;&|])(export\s+)?(PYTEST_ADDOPTS|GOFLAGS|JEST_[A-Z_]+|VITEST_[A-Z_]+|MOCHA_[A-Z_]+|NODE_OPTIONS|npm_config_[a-z_]+)=/.test(cmd)) return null;
-  const harmlessFor = (runner) => (extra) => extra.every((x, j) => HARMLESS.test(x) || (SHORT_HARMLESS[runner] || []).includes(x) || SCOPE_FLAG.test(x) || x === '--' || (WHOLE.has(x) && runner !== 'go') || (runner === 'go' && x === './...') || (j > 0 && (extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-')));
+  // Only variables known not to change what runs (`CI=1`, `NO_COLOR=1`); any other (`PYTEST_ADDOPTS`,
+  // `GOFLAGS`, `TEST=...` for rake, `TESTS=...` for make) may select tests: not the whole run.
+  for (const v of assignedVars(cmd)) if (!SAFE_VARS.has(v)) return null;
+  const harmlessFor = (runner) => (extra) => extra.every((x, j) => HARMLESS.test(x) || (SHORT_HARMLESS[runner] || []).includes(x) || (SCOPE_FLAG.test(x) && (SCOPE_RUNNERS.has(runner) || x !== '--all')) || x === '--' || (WHOLE_DOT.has(runner) && (x === '.' || x === './')) || (runner === 'go' && x === './...') || (j > 0 && (extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-')));
   const runnerOf = (b) => (unwrap(b) || b)[0];
   for (const ap of approved) {
     if (!ap || typeof ap.run !== 'string') continue;
@@ -891,25 +933,55 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
     if (!d || typeof d.cmd !== 'string') continue;
     const b = words(d.cmd.trim());
     const kind = d.kind === 'test' ? 'test' : d.kind === 'build' ? 'build' : d.kind === 'lint' || d.kind === 'typecheck' ? 'lint' : d.kind === 'check' ? 'check' : null;
-    if (kind && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind, id: ident(d.cmd.trim(), w.slice(b.length)), setupFirst: i > 0 };
+    if (kind && !(kind === 'test' && subScript(unwrap(b) || b)) && b.length && w.length >= b.length && b.every((x, j) => w[j] === x) && harmlessFor(runnerOf(b))(w.slice(b.length))) return { kind, id: ident(d.cmd.trim(), w.slice(b.length)), setupFirst: i > 0 };
   }
   const kind = wordsKind(w);
   const a = unwrap(w);
   if (!kind || !a) return null;
   const n = runnerWords(a);
   const extra = a.slice(n);
+  // Bare `make` runs the default goal (sometimes `help`): not a check by itself.
+  if (['make', 'gmake', 'just'].includes(a[0]) && n === 1) return null;
+  // A test sub-script (`npm run test:unit`, `npm run e2e`) is a named part of the suite: a selection.
+  if (kind === 'test' && subScript(a)) return null;
   // go test/vet/build: only ./... is the whole module (`go test` alone tests one package).
   if (a[0] === 'go' && !extra.includes('./...')) return null;
   if (!harmlessFor(a[0])(extra)) return null;
-  return { kind, id: ident(a.slice(0, n).join(' '), extra), setupFirst: i > 0 };
+  // (The id from the words as typed, past only harmless wrappers: `python3.11 -m pytest` keeps its interpreter.)
+  return { kind, id: ident(w.slice(0, w.length - extra.length).join(' '), extra), setupFirst: i > 0 };
+}
+
+const SAFE_VARS = new Set(['CI', 'FORCE_COLOR', 'NO_COLOR', 'TERM', 'NODE_ENV', 'RUST_BACKTRACE', 'CARGO_TERM_COLOR', 'PYTHONUNBUFFERED', 'PYTHONDONTWRITEBYTECODE', 'LANG', 'LC_ALL', 'TZ', 'COLUMNS', 'NPM_CONFIG_COLOR', 'npm_config_color']);
+/** The variables a line sets: `X=1 cmd`, `export X=1`, `env X=1`, `cross-env X=1`. */
+function assignedVars(cmd) {
+  const out = [];
+  for (const sg of segments(String(cmd))) {
+    const toks = sg.raw.trim().split(/\s+/);
+    let j = 0;
+    if (['export', 'env', 'cross-env'].includes(toks[0])) j = 1;
+    for (; j < toks.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[j]); j++) out.push(toks[j].split('=')[0]);
+    // `timeout 60 env X=1 ...`: assignments after a wrapper too.
+    const e = toks.indexOf('env');
+    if (e > 0) for (let k = e + 1; k < toks.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[k]); k++) out.push(toks[k].split('=')[0]);
+  }
+  return out;
 }
 
 /** One spelling for one check: past wrappers, `npm t` and `npm run test` are `npm test`. */
 function normId(cmd) {
-  const a = unwrap(words(String(cmd))) || [];
-  if (['npm', 'pnpm', 'yarn', 'bun'].includes(a[0])) {
-    if (a[1] === 't' || a[1] === 'tst' || ((a[1] === 'run' || a[1] === 'run-script') && a[2] === 'test')) return [a[0], 'test', ...a.slice(a[1] === 't' || a[1] === 'tst' ? 2 : 3)].join(' ');
+  let a = words(String(cmd));
+  // Only wrappers that do not change what runs are dropped; `./api/test.sh` keeps its folder and
+  // `python3.11 -m pytest` its interpreter.
+  for (let n = 0; n < 4 && a.length; n++) {
+    const h = a[0];
+    if (['time', 'command', 'exec', 'nice', 'nohup', 'xvfb-run', 'npx', 'bunx'].includes(h)) a = a.slice(1).filter((x, i) => !(i === 0 && x.startsWith('-')));
+    else if ((h === 'timeout' || h === 'gtimeout') && a.length > 2) a = a.slice(1).filter((x, i, arr) => !(arr.slice(0, i + 1).every((y) => /^-|^\d+[smhd]?$/.test(y))));
+    else if (h === 'env' || h === 'cross-env') a = a.slice(1).filter((x, i, arr) => !(arr.slice(0, i + 1).every((y) => /=/.test(y))));
+    else if ((h === 'npm' || h === 'pnpm' || h === 'yarn') && (a[1] === 'exec' || a[1] === 'dlx')) a = a.slice(2).filter((x) => x !== '--');
+    else break;
   }
+  // npm's own aliases (not bun's: `bun run test` is the script, `bun test` Bun's runner).
+  if (['npm', 'pnpm', 'yarn'].includes(a[0]) && (a[1] === 't' || a[1] === 'tst' || ((a[1] === 'run' || a[1] === 'run-script') && a[2] === 'test'))) a = [a[0], 'test', ...a.slice(a[1] === 't' || a[1] === 'tst' ? 2 : 3)];
   return a.join(' ');
 }
 

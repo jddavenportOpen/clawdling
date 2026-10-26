@@ -612,3 +612,26 @@ test('review 9: edits through a linked session folder are changes', () => {
   assert.equal(c.edits, 1, 'the real path is inside the linked folder');
   assert.equal(labelClaim(c).label, 'not_verified', 'the test ran before the edit');
 });
+
+test('review 10: bulk shell edits are changes', () => {
+  const edits = ["grep -rl oldName src | xargs sed -i 's/oldName/newName/g'", "find src -name '*.ts' -exec sed -i 's/a/b/' {} +", "find . -name '*.orig' -delete", "sed -Ei 's/a/b/' src/a.js", "perl -0pi -e 's/a/b/' src/a.js", "python3 - <<'EOF'\nfrom pathlib import Path\nPath('src/a.js').write_text('x')\nEOF", 'node -e "require(\'fs\').writeFileSync(\'src/a.js\', \'x\')"', 'uv run ruff format .', 'poetry run black .', 'python -m black .', 'pnpm exec eslint --fix .', 'npm run lint -- --fix', 'pnpm lint --fix'];
+  for (const cmd of edits) {
+    const [c] = claimsOf([prompt('x'), edit(), bash('npm test'), bash(cmd, ''), say('Renamed it everywhere. All tests pass.')]);
+    assert.equal(labelClaim(c).label, 'not_verified', cmd);
+  }
+  const [bg] = claimsOf([prompt('x'), edit(), bash('npm test'), bash("sed -i 's/a/b/' src/a.js", 'Command running in background with ID: b1', false, { run_in_background: true }), say('Done.')]);
+  assert.equal(labelClaim(bg).label, 'not_verified', 'a write run in the background is a change');
+  assert.equal(writesFiles('python3 -c "import json; print(json.load(open(\'p.json\')))"').writes, false, 'reading is not a change');
+});
+
+test('review 10: ids keep paths and interpreters; sub-scripts, cargo ., tsc --all and bare make are not canonical; npm placeholder; timeout; variables', () => {
+  const approved = [{ name: 'api', run: './api/test.sh' }, { name: 'web', run: './web/test.sh' }];
+  assert.notEqual(canonical('./api/test.sh', { approved }).id, canonical('./web/test.sh', { approved }).id);
+  assert.notEqual(canonical('python3.11 -m pytest').id, canonical('python3.12 -m pytest').id);
+  for (const cmd of ['npm run test:unit', 'npm run e2e', 'pnpm test:smoke', 'cargo test .', 'tsc --all', 'make', 'TEST=test/models/cart_test.rb rake test', 'TESTS=cart make test', 'export PYTEST_ADDOPTS=-kcart && pytest']) assert.equal(canonical(cmd, { detected: [{ kind: 'test', cmd: 'npm run test:unit' }] }), null, cmd);
+  for (const cmd of ['CI=1 npm test', 'NO_COLOR=1 pytest', 'export CI=true && npm test', 'cargo test --all', 'pytest .']) assert.ok(canonical(cmd), cmd);
+  const [a] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\n> echo "Error: no test specified" && exit 1\nError: no test specified', true), say('Done.')]);
+  assert.equal(labelClaim(a).label, 'not_verified', 'the project has no tests yet');
+  const [b] = claimsOf([prompt('x'), edit(), bash('timeout 120 npm test', 'Exit code 124', true), say('Done.')]);
+  assert.equal(labelClaim(b).label, 'not_verified', 'cut off by timeout: it did not finish');
+});

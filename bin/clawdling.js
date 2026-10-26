@@ -706,10 +706,17 @@ async function cmdCheckup(args) {
   const started = await api(ctx, 'POST', `${base}/run`, { k, maxCostUsd: cap, ...(models ? { models } : {}) });
   let last = '';
   let v;
-  for (;;) {
+  for (let idle = 0; ; ) {
     await sleepMs(1000);
     v = await api(ctx, 'GET', base);
     const a = v.active;
+    // Not running, and no result of this run for 10 s (Clawdling restarted): stop waiting.
+    idle = a ? 0 : idle + 1;
+    if (idle > 10 && !(v.last_run && v.last_run.id === started.id)) {
+      console.error('The check-up stopped without a result. Look in the cockpit (Check-up tab).');
+      process.exitCode = 2;
+      return;
+    }
     if (a && !args.flags.json) {
       const line = `  ${a.done}/${a.total} runs, $${a.spent_usd.toFixed(2)} so far${a.current ? `: ${a.current}` : ''}`;
       if (line !== last) console.error(line);
@@ -718,7 +725,11 @@ async function cmdCheckup(args) {
     if (!a && v.last_run && v.last_run.id === started.id) break;
   }
   const r = v.history.find((h) => h.id === started.id);
-  if (!r) throw new CliError(`the check-up stopped before it wrote a result: ${v.last_run.error || 'unknown error'}`);
+  if (!r) {
+    console.error(`The check-up stopped before it wrote a result: ${v.last_run.error || 'unknown error'}`);
+    process.exitCode = 2; // no score, never "below the threshold"
+    return;
+  }
   if (args.flags.json) console.log(JSON.stringify(r, null, 2));
   else {
     const out = [];

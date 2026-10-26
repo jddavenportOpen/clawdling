@@ -997,6 +997,7 @@ export class Evals {
     const seen = new Map();
     for (const c of cases) {
       for (const g of c.graders) {
+        if (this.stopped) throw new Error('Clawdling stopped during the check-up');
         if (g.type !== 'llm' || typeof g.focus === 'object') continue;
         const key = `${g.focus}\u0000${g.criteria}`;
         if (!seen.has(key)) {
@@ -1067,6 +1068,10 @@ export class Evals {
             if (run.skipPaid || r.capStopped) capped = true;
             const graders = [];
             for (const g of c.graders) {
+              if (this.stopped) {
+                error = 'Clawdling stopped during the check-up';
+                break outer;
+              }
               let res;
               try {
                 res = await grade(g, run, (a) => this.judgeVote(state, a));

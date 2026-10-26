@@ -238,3 +238,22 @@ test('review 6: a check-up copy keeps no committed link; a ship check whose temp
   assert.match(r.error, /ENOENT|no such file/i);
   assert.equal(checks.running, null, 'the slot is free again');
 });
+
+test('review 10: a ship check cut short by stopping Clawdling is saved with an error and is not evidence', { skip: !hasGit && 'no git' }, async () => {
+  const repo = tmp();
+  const git = (...a) => execFileSync('git', ['-C', repo, ...a], { stdio: 'pipe' });
+  git('init', '-q');
+  git('config', 'user.email', 't@example.com');
+  git('config', 'user.name', 'T');
+  fs.writeFileSync(path.join(repo, 'check.js'), 'process.exit(0)\n');
+  git('add', '.');
+  git('commit', '-qm', 'init');
+  const dir = tmp();
+  const agent = { id: 'web', name: 'Web', kind: 'project', dir, repo };
+  const checks = new Checks({ paths: { rt: tmp(), env: path.join(dir, '.env') }, org: { require: () => agent } });
+  checks.approve('web', { checks: [{ name: 'tests', run: 'node check.js', timeout: 60 }], shown: ['node check.js'] });
+  checks.stop();
+  const r = await checks.run('web');
+  assert.match(r.error, /stopped/);
+  assert.deepEqual(checks.evidence('web'), []);
+});
