@@ -91,7 +91,7 @@ instant. To get more receipts:
 - **Try a cheaper model.** The same check-up across models and effort levels; Clawdling recommends
   the cheapest one that holds up, and changes nothing until you click "Use this".
 
-![An agent's Check-up tab: the last ship check and the check-up score, case by case](docs/img/checkup.png)
+![An agent's Check-up tab: the check-up score, case by case, and the approved cases](docs/img/checkup.png)
 
 The report card gets a **Verified** block (the week's claims by label, the last ship check and the
 last check-up), and the org map shows each agent's last check-up. Everything stays on your computer:
