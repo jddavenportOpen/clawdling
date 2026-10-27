@@ -221,8 +221,8 @@ test('a crash in the middle of a ship check leaves no worktree once Clawdling st
   await new Promise((r) => setTimeout(r, 5000)); // the orphaned check finishes (Windows keeps a running process's folder)
   assert.equal(worktrees(), 2, 'still there after the crash');
   srv = await startServerProc({ home, env });
-  await waitFor(() => worktrees() === 1, { label: 'swept on start', timeout: 20000 });
-  assert.deepEqual(leftovers('clawdling-check-demo-'), []);
+  // (The sweep removes git's record first, then the private folder that held it.)
+  await waitFor(() => worktrees() === 1 && leftovers('clawdling-check-demo-').length === 0, { label: 'swept on start', timeout: 20000 });
   assert.deepEqual(readJsonFile(path.join(home, '.clawdling', 'checks', 'active.json')).runs, []);
   const back = { checks: [{ name: 'tests', run: 'npm test', timeout: 120 }] };
   await request(srv, 'PUT', '/api/agents/demo/checks', { ...back, shown: ['npm test'] });
