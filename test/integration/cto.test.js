@@ -289,15 +289,17 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: 1 }, asOwner())).status, 200);
   await waitFor(async () => /Your CTO review flagged this/.test((await status(shopSid)).last_message || ''), { label: 'the message reached Shop', timeout: 30000 });
   await waitFor(async () => (await status(sid)).status === 'ready', { label: 'review done', timeout: 30000 });
+  // Kept when the turn ended (its Stop), before anyone opened the page or the CTO view.
+  const keptFile = path.join(home, '.clawdling', 'cto', 'activity', `${week}.json`);
+  const kept = await waitFor(() => readJsonFile(keptFile), { label: 'the record kept at the turn\'s end', timeout: 10000 });
+  assert.deepEqual(kept.deliveries.map((d) => d.state), ['declined', 'sent'], 'the record outlives the sessions');
   const sessions = (await request(srv, 'GET', '/api/sessions')).body;
   assert.ok(!sessions.some((s) => s.agent === 'blog'), 'no message reached Blog');
   rev = (await request(srv, 'GET', `/api/cto/reviews/${week}`)).body;
   assert.deepEqual(rev.deliveries.map((d) => [d.verb, d.state]), [['spawn', 'declined'], ['send', 'sent']]);
   assert.equal(rev.decisions[0].state, 'answered');
   assert.match(rev.text, /^Declined: Your CTO review flagged this/m, 'the declined message is noted in the review');
-  // Kept when the turn ended (its Stop), before anyone opened the page.
-  const kept = readJsonFile(path.join(home, '.clawdling', 'cto', 'activity', `${week}.json`));
-  assert.deepEqual(kept.deliveries.map((d) => d.state), ['declined', 'sent'], 'the record outlives the sessions');
+
   const view = (await request(srv, 'GET', '/api/cto')).body;
   assert.equal(view.reviews[0].week, week);
   assert.equal(view.running, null, 'a finished review is not "running"');

@@ -98,7 +98,7 @@ export function decisionOutput(d) {
 // A send or spawn as a command of its own: `clawdling` (by any path or shim name) right before the
 // verb, after options only. Narrower than CROSS_AGENT_RE (which the seat's "ask" uses): the review
 // page's list and the cockpit's banner use it, so `clawdling report send-x` is not a message.
-export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?\s+(?:--[a-z-]+(?:[ =][^\s"';&|]+)?\s+)*(?:send|spawn)(?=\s|$)/;
+export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?(?:\s|\\\n)+(?:--[a-z-]+(?:[ =](?:"[^"]*"|'[^']*'|[^\s"';&|]+))?(?:\s|\\\n)+)*(?:send|spawn)(?=\s|$)/i;
 
 // The CLI's own options for send and spawn, with the shape of their values.
 const SEND_OPTIONS = { '--model': /^[A-Za-z0-9._:\[\]-]{1,80}$/, '--effort': /^[a-z]{1,10}$/, '--account': /^[A-Za-z0-9._-]{1,60}$/, '--cols': /^\d{1,4}$/, '--rows': /^\d{1,4}$/ };
@@ -111,7 +111,7 @@ const SEND_FLAGS = new Set(['--json', '--no-enter']);
  * backtick or bare quote inside, which a shell would expand) or single quotes, one line, nothing
  * else. Only that form is offered as a one-tap yes; anything else is answered in the terminal.
  */
-export function parseSend(cmd) {
+export function parseSend(cmd, tool = 'Bash') {
   const s = String(cmd || '');
   const loose = /\b(send|spawn)\b/i.exec(s);
   const notPlain = { plain: false, verb: loose ? loose[1].toLowerCase() : 'send', target: null, message: s };
@@ -128,6 +128,8 @@ export function parseSend(cmd) {
     if (v === undefined || !SEND_OPTIONS[flag].test(v)) return notPlain;
   }
   const q = m[4];
+  // PowerShell has its own quoting (a backslash is not an escape): only the simplest message counts.
+  if (tool === 'PowerShell' && /[\\"'`$]/.test(q.slice(1, -1))) return notPlain;
   const message = q[0] === '"' ? q.slice(1, -1).replace(/\\(["\\])/g, '$1') : q.slice(1, -1);
   return { plain: true, verb: m[1], target: m[3], message };
 }

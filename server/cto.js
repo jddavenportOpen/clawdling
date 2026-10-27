@@ -94,7 +94,7 @@ export function scanTranscript(file) {
       if (o.type === 'assistant' && c.type === 'tool_use' && typeof c.id === 'string') {
         const cmd = typeof c.input?.command === 'string' ? c.input.command : null;
         if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && SEND_COMMAND_RE.test(cmd)) {
-          const ps = parseSend(cmd);
+          const ps = parseSend(cmd, c.name);
           if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: ps.verb, command: cmd.slice(0, 4000), plain: ps.plain, message: ps.plain ? ps.message : null, state: 'pending', note: null });
         } else if (c.name === 'AskUserQuestion' && Array.isArray(c.input?.questions)) {
           if (!asks.has(c.id)) asks.set(c.id, { id: c.id, at: o.timestamp || null, questions: c.input.questions.slice(0, 4).map((q) => ({ question: oneLine(String(q?.question || ''), 300), options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map((x) => oneLine(String(x?.label || ''), 120)) })), answers: null, state: 'waiting' });

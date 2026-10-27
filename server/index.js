@@ -497,6 +497,10 @@ export async function startServer(opts = {}) {
     // The CTO seat (1.7): its launch settings, the weekly review (opt-in), its line in the Monday report.
     const cto = new Cto({ paths, org, sessions, reports, events, logger });
     sessions.seatLaunch = (rec, target) => cto.launchSettings(rec, target, { nodePath, hookScript, stopFailure: supportsStopFailure(versionLine) });
+    // A CTO turn ended (Stop, SessionEnd, or a "No" that stopped it): keep its week's record now.
+    sessions.onTurnEnd = (rec) => {
+      if (rec.kind === 'cto') setImmediate(() => cto.record(rec));
+    };
     digest.ctoLine = () => {
       try {
         return cto.digestLine();

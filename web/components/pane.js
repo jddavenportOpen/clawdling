@@ -158,7 +158,8 @@ export function Pane({ sid, index, hidden, order, span, layout, solo }) {
     ${needsSignIn(s) ? html`<${LoginBanner} s=${s} accent=${focused || solo} />`
       : s.status === 'needs_you' && STARTUP_DIALOGS[s.waiting_on] ? html`<${DialogBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
       : chat && s.asking ? null
-      : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo} />`
+      : s.status === 'needs_you' && s.waiting_on === 'permission_prompt' && Array.isArray(s.choices) && s.choices.length ? html`<${QuestionBanner} s=${s} mobile=${mobile} accent=${focused || solo}
+          onTerminal=${() => { const focusTerm = () => { const v = terms.get(sid); if (v) v.focus(); }; if (view !== 'raw') { setView('raw'); requestAnimationFrame(() => requestAnimationFrame(focusTerm)); } else focusTerm(); }} />`
       : s.status === 'needs_you' ? html`<button class="pane-alert" onClick=${() => {
         const focusTerm = () => { const v = terms.get(sid); if (v) v.focus(); };
         if (chat) { setView('raw'); requestAnimationFrame(() => requestAnimationFrame(focusTerm)); } else focusTerm();
@@ -312,7 +313,7 @@ function DialogBanner({ s, mobile, accent }) {
 const QUESTION_MAX = 3;
 const choiceLabel = (c) => String((c && c.label) || '').replace(/^\s*\d+[.)]\s*/, '');
 
-function QuestionBanner({ s, mobile, accent }) {
+function QuestionBanner({ s, mobile, accent, onTerminal }) {
   const [busy, setBusy] = useState(0);
   const shown = s.choices.slice(0, QUESTION_MAX);
   const answer = async (option) => {
@@ -324,7 +325,8 @@ function QuestionBanner({ s, mobile, accent }) {
     <${StatusGlyph} status="needs_you" label=${false} />
     <span class="dialog-text" data-testid="pane-question-text">${s.pending_cmd ? 'Send this message to another agent?' : s.notification || 'Claude Code is asking for your permission.'}</span>
     ${s.pending_cmd ? html`<code class="dialog-cmd" data-testid="pane-pending-cmd">${s.pending_cmd}</code>` : null}
-    ${s.pending_cmd && s.pending_cmd_plain === false ? html`<span class="dialog-cmd-warn" data-testid="pane-pending-warn">This is more than one plain message, or too long to show whole. Read it in the terminal below, and answer it there.</span>` : null}
+    ${s.pending_cmd && s.pending_cmd_plain === false ? html`<span class="dialog-cmd-warn" data-testid="pane-pending-warn">This is more than one plain message, or too long to show whole. Read it in the terminal, and answer it there.</span>
+      <span class="dialog-actions"><button class=${`btn ${accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${onTerminal} data-testid="pane-pending-terminal">Show the terminal</button></span>` : null}
     ${s.pending_cmd && s.pending_cmd_plain === false ? null : html`<span class="dialog-actions">
       ${shown.map((c, i) => html`<button key=${c.option} class=${`btn ${i === 0 && accent ? 'btn-primary' : 'btn-quiet'} btn-sm dialog-choice`} title=${choiceLabel(c)}
         onClick=${() => answer(c.option)} disabled=${!!busy} data-option=${c.option} data-testid="question-choice">

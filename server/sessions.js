@@ -389,7 +389,7 @@ export class SessionManager {
       // The CTO seat's message waiting for the owner's yes or no (shown with Claude Code's prompt).
       pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.command : null,
       // ...and whether it is exactly one message the cockpit can show whole (else: read the terminal).
-      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command).plain : null,
+      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command, rec.pending_cmd.tool).plain : null,
       // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
       background: isLive(rec.status) ? this.runtime.get(rec.sid)?.background ?? null : null,
       resumable: rec.status === 'ended',
@@ -1181,7 +1181,7 @@ export class SessionManager {
     if (event === 'PreToolUse') {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
       // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
-      rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000 } : null;
+      rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash' } : null;
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
     }
@@ -1497,6 +1497,7 @@ export class SessionManager {
             rec.pending_cmd = null;
             rec.last_message = 'You said no, so Claude stopped. Tell it what to do instead.';
             this.onStatusChange(rec);
+            this.onTurnEnd?.(rec);
             return;
           }
         } catch {

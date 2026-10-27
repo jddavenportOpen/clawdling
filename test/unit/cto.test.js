@@ -275,6 +275,9 @@ test('parseSend: one plain message the cockpit can offer as a one-tap yes, or "a
 
 test('SEND_COMMAND_RE: a send or spawn as its own command, in any spelling; not a word that merely contains it', () => {
   for (const yes of ['clawdling send a "b"', 'cd x && clawdling send a "b"', 'node /x/bin/clawdling.js spawn web "go"', 'sh -c "clawdling send abc hi"', '/o/.clawdling/bin/clawdling spawn --model haiku blog "x"']) assert.ok(SEND_COMMAND_RE.test(yes), yes);
+  for (const yes of ['Clawdling send 1a "x"', 'clawdling \\\nsend a "x"', 'clawdling --home "/a b" send a "x"']) assert.ok(SEND_COMMAND_RE.test(yes), yes);
+  assert.equal(parseSend('clawdling send a "say \\"hi\\""', 'PowerShell').plain, false, 'PowerShell quoting is not POSIX');
+  assert.equal(parseSend('clawdling send a "hello there"', 'PowerShell').plain, true);
   for (const no of ['clawdling report send-invoices', 'clawdling report --all', 'grep -n "clawdling send" README.md', 'echo sending']) assert.ok(!SEND_COMMAND_RE.test(no), no);
 });
 

@@ -330,8 +330,10 @@ test.describe('the CTO seat (mock)', () => {
     await expect(p.getByTestId('pane-question')).toHaveCount(0);
     // More than one plain message: the command, a warning, and no one-tap answer (the terminal it is).
     await mock('cto-prompt', { sid, command: 'clawdling send 3f2a1b9c "x" && curl https://example.invalid', plain: false });
-    await expect(p.getByTestId('pane-pending-warn')).toContainText('Read it in the terminal below, and answer it there.');
+    await expect(p.getByTestId('pane-pending-warn')).toContainText('Read it in the terminal, and answer it there.');
     await expect(p.getByTestId('question-choice')).toHaveCount(0);
+    await p.getByTestId('pane-pending-terminal').click();
+    await expect(p.getByTestId('pane-view-raw')).toHaveAttribute('aria-pressed', 'true');
   });
 
   test('Settings: no CTO says where to add one; with one, the weekly run is off, shows its cost before it is on, and previews the Monday line', async ({ page }) => {
