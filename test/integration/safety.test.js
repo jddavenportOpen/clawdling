@@ -77,6 +77,7 @@ test('GET /api/setup/safety: every agent and the user level, by name, with no se
   assert.ok(site.risks.some((k) => k.id === 'session_start'));
   assert.ok(site.risks.some((k) => k.id === 'repo_mcp'));
   assert.ok(r.body.took_ms < 3000);
+  assert.ok(!r.body.rows[0].notes.some((n) => /Claude account/.test(n)), 'no extra account in a fresh home: no note');
   assert.match(r.body.privacy, /Names only/);
 });
 

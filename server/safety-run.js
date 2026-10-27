@@ -102,7 +102,7 @@ export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJ
     platform,
   });
   // Extra Claude accounts (1.0.1) are their own config folders, which Clawdling never reads.
-  if (accounts > 0 && audit.rows[0]) audit.rows[0].notes.push(`Sessions you start on one of your ${accounts === 1 ? 'other Claude account' : `${accounts} other Claude accounts`} load that account's own settings, which Clawdling does not read.`);
+  if (accounts > 0 && audit.rows[0]) audit.rows[0].notes.push(`Sessions you start on ${accounts === 1 ? 'your other Claude account' : `one of your ${accounts} other Claude accounts`} load that account's own settings, which Clawdling does not read.`);
   return audit;
 }
 

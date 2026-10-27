@@ -312,6 +312,13 @@ test('unknown names are never green; tags and accepted risks are the owner\'s lo
   assert.deepEqual(Object.keys(verdicts(w.run({ choices }))).sort(), ['_user', 'a', 'donna']);
 });
 
+test('extra Claude accounts: a note on the user level, worded for one or several', () => {
+  const w = world();
+  assert.equal(row(w.run(), USER_ROW).notes.length, 0);
+  assert.match(row(w.run({ accounts: 1 }), USER_ROW).notes[0], /^Sessions you start on your other Claude account load/);
+  assert.match(row(w.run({ accounts: 2 }), USER_ROW).notes[0], /^Sessions you start on one of your 2 other Claude accounts load/);
+});
+
 test('offlineChannels: what org.json says, for the CLI with no cockpit', () => {
   assert.deepEqual(offlineChannels({ channels: { telegram: { enabled: true, chat_id: 5 }, imessage: { enabled: false, handle: null } } }), { telegram: { configured: true, enabled: true, paired: true }, imessage: { enabled: false, saved: false } });
   assert.deepEqual(offlineChannels(null).telegram.paired, false);

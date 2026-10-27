@@ -711,7 +711,7 @@ export async function startServer(opts = {}) {
     /** The setup safety audit (1.8), the GET /api/setup/safety body. */
     function safetyAudit() {
       const o = org.read();
-      const body = runSafetyAudit({ agents: org.agents(), home, userHome, configDir, env: cEnv, channels: { telegram: telegram.status(o), imessage: imessage.status(o) }, choices: safetyChoices, managed: managedOverride || undefined, accounts: accounts.list().length });
+      const body = runSafetyAudit({ agents: org.agents(), home, userHome, configDir, env: cEnv, channels: { telegram: telegram.status(o), imessage: imessage.status(o) }, choices: safetyChoices, managed: managedOverride || undefined, accounts: accounts.list().filter((a) => !a.default).length });
       return { ...body, privacy: SAFETY_PRIVACY };
     }
 
