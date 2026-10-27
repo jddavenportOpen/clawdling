@@ -55,7 +55,7 @@ before(() => {
   initOrg({ home, answers: { owner: 'Ada', domains: [{ name: 'Health' }] } });
   db = path.join(home, 'chat.db');
   osaLog = path.join(home, 'osascript.log');
-  execFileSync(SQLITE, [db], {
+  execFileSync(SQLITE, ['-cmd', '.timeout 5000', db], {
     input:
       'CREATE TABLE handle (ROWID INTEGER PRIMARY KEY, id TEXT, service TEXT);' +
       'CREATE TABLE message (ROWID INTEGER PRIMARY KEY, text TEXT, handle_id INTEGER, is_from_me INTEGER, date INTEGER, service TEXT, attributedBody BLOB);' +
@@ -84,7 +84,7 @@ test('poller: starts from now, routes only the owner, replies via osascript argv
   assert.equal(JSON.parse(fs.readFileSync(stateFile, 'utf8')).last_rowid, 1, 'first poll only records where history ends');
   assert.equal(asked.length, 0, 'history is never replayed');
   const blob = attributedBody('via attributed body').toString('hex');
-  execFileSync(SQLITE, [db], {
+  execFileSync(SQLITE, ['-cmd', '.timeout 5000', db], {
     input:
       "INSERT INTO message VALUES (2, 'hello donna', 1, 0, 0, 'iMessage', NULL);" +
       "INSERT INTO message VALUES (3, 'stranger says hi', 2, 0, 0, 'iMessage', NULL);" +
@@ -134,7 +134,7 @@ test('unsupported off macOS', () => {
 test('start() polls on an interval once enabled', { skip: !hasSqlite && 'no sqlite3' }, async () => {
   gw.pollMs = 50;
   gw.start();
-  execFileSync(SQLITE, [db], { input: "INSERT INTO message VALUES (6, 'second wave', 1, 0, 0, 'iMessage', NULL);" });
+  execFileSync(SQLITE, ['-cmd', '.timeout 5000', db], { input: "INSERT INTO message VALUES (6, 'second wave', 1, 0, 0, 'iMessage', NULL);" });
   await waitFor(() => asked.some((a) => a.text === 'second wave'), { label: 'interval poll' });
   gw.stop();
 });

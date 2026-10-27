@@ -181,7 +181,7 @@ export class IMessageGateway {
   }
 
   async query(sql) {
-    const { stdout } = await execFileP(this.sqliteBin(), ['-json', '-readonly', this.chatDb(), sql], { timeout: 10000 });
+    const { stdout } = await execFileP(this.sqliteBin(), ['-json', '-readonly', '-cmd', '.timeout 3000', this.chatDb(), sql], { timeout: 10000 }); // wait out a write lock (Messages, or a test) instead of failing the poll
     const t = stdout.trim();
     return t ? JSON.parse(t) : [];
   }
