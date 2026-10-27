@@ -1624,13 +1624,6 @@ function homeLevel(p, home) {
   return rel.length === 1 && ['documents', 'desktop', 'downloads', 'library', 'pictures', 'icloud drive (archive)'].includes(rel[0].toLowerCase());
 }
 
-/** Where Claude Code reads managed (policy) settings on this OS. */
-export function managedSettingsPaths(platform = process.platform) {
-  if (platform === 'darwin') return ['/Library/Application Support/ClaudeCode/managed-settings.json'];
-  if (platform === 'win32') return ['C:\\Program Files\\ClaudeCode\\managed-settings.json', 'C:\\ProgramData\\ClaudeCode\\managed-settings.json'];
-  return ['/etc/claude-code/managed-settings.json'];
-}
-
 // ---- .gitignore, read as files (the audit starts no process, so no `git check-ignore`)
 
 /** A gitignore pattern as a RegExp over a path relative to the ignore file's folder, or null. */
@@ -1726,7 +1719,7 @@ export function gitIgnored(repo, rel, { home = os.homedir(), env = process.env }
  *   user: {settings, managed[], mcp[], plugins[], marketplaces[]}
  *   dirs: {<dir>: {settings, local, mcp_json[], mcp_local[], local_not_ignored, in_repo}}
  */
-export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.homedir(), env = process.env, managed, platform = process.platform } = {}) {
+export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.homedir(), env = process.env, managed = [] } = {}) {
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
   const user = scopeOf(cfg, false);
@@ -1769,7 +1762,7 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.
     user: {
       config_dir: show(cfg),
       settings,
-      managed: (managed || managedSettingsPaths(platform)).map((f) => fileFacts(f, LENIENT)).filter(Boolean),
+      managed: (Array.isArray(managed) ? managed : []).map((f) => fileFacts(f, LENIENT)).filter(Boolean),
       mcp: cj.user,
       plugins: listPlugins(cfg, settings ? settings.plugins : []),
       marketplaces,

@@ -10,8 +10,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ensureDir, readJson, writeJson } from './util.js';
 
-export const KINDS = ['session', 'claim', 'check', 'checkup', 'cost', 'needs', 'next', 'model'];
-export const RECEIPT_RE = /\bR-(session|claim|check|checkup|cost|needs|next|model)-[0-9a-f]{8}\b/g;
+export const KINDS = ['session', 'claim', 'check', 'checkup', 'cost', 'needs', 'next', 'model', 'safety'];
+export const RECEIPT_RE = /\bR-(session|claim|check|checkup|cost|needs|next|model|safety)-[0-9a-f]{8}\b/g;
 const WEEK_RE = /^\d{4}-W\d{2}$/;
 const INDEX_MAX = 5000; // receipts kept per week (a big org's week is a few hundred)
 const WEEKS_KEEP = 26;
@@ -72,7 +72,7 @@ export function agentText(s, max) {
   if (typeof s !== 'string') return null;
   // Control, line-separator, bidi and zero-width characters: they can reorder or hide what is shown.
   let out = s.replace(INVISIBLE_RE, '').replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  out = out.replace(/\[(\s*)R-/gi, '($1R-').replace(/\bR-(session|claim|check|checkup|cost|needs|next|model)-([0-9a-f]{8})\b/gi, 'R $1 $2');
+  out = out.replace(/\[(\s*)R-/gi, '($1R-').replace(/\bR-(session|claim|check|checkup|cost|needs|next|model|safety)-([0-9a-f]{8})\b/gi, 'R $1 $2');
   if (out.length > max) out = `${out.slice(0, max - 1)}…`;
   return out || null;
 }
@@ -185,6 +185,7 @@ export function collectReceipts(report) {
     if (a.checkup?.last) put(a.checkup.last, 'checkup', a.id, 'check-up');
     if (a.checkup?.previous) put(a.checkup.previous, 'checkup', a.id, 'earlier check-up');
     if (a.cheaperModel?.last) put(a.cheaperModel.last, 'model', a.id, 'try a cheaper model');
+    if (a.safety) put(a.safety, 'safety', a.id, `setup safety: ${a.safety.verdict}`);
   }
   return out;
 }

@@ -39,7 +39,8 @@ const log = (entry) => {
 };
 
 if (argv[0] === '--version' || argv[0] === '-v') {
-  console.log('2.1.999 (Claude Code)');
+  // FAKE_CLAUDE_VERSION: a version the compat file has checked (the e2e real server), else newer than any.
+  console.log(`${process.env.FAKE_CLAUDE_VERSION || '2.1.999'} (Claude Code)`);
   process.exit(0);
 }
 if (argv[0] === 'auth') process.exit(0);

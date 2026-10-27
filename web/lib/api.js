@@ -106,6 +106,10 @@ export const api = {
   },
   // The user's own Claude Code setup, names and descriptions only (never a key or a command).
   setup: () => request('GET', '/api/setup'),
+  // Setup safety (1.8): the lethal trifecta per agent; the owner's local accept and tag choices.
+  safety: () => request('GET', '/api/setup/safety'),
+  acceptSafety: (body) => request('POST', '/api/setup/safety/accept', body),
+  tagSafety: (body) => request('POST', '/api/setup/safety/tag', body),
   // One project per call, so the cockpit can show each row's progress: {path?, github?, url?, name?,
   // domain?, new_domain?, clone?} or {group: {name, domain?, new_domain?}, items: [{path}]}.
   // 201 {agent, created, cloned}, or 200 {agent, skipped, reason} when it is already an agent.

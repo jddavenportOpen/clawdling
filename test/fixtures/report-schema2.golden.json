@@ -294,6 +294,34 @@
     "null",
     "string"
   ],
+  "$.agents[].safety": [
+    "null",
+    "object"
+  ],
+  "$.agents[].safety.accepted": [
+    "boolean"
+  ],
+  "$.agents[].safety.link": [
+    "string"
+  ],
+  "$.agents[].safety.receipt": [
+    "string"
+  ],
+  "$.agents[].safety.risks": [
+    "array"
+  ],
+  "$.agents[].safety.risks[]": [
+    "string"
+  ],
+  "$.agents[].safety.trifecta": [
+    "boolean"
+  ],
+  "$.agents[].safety.unknown": [
+    "number"
+  ],
+  "$.agents[].safety.verdict": [
+    "string"
+  ],
   "$.agents[].sessions_ever": [
     "number"
   ],

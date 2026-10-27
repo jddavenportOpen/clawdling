@@ -10,6 +10,7 @@ import { refreshOrg } from '../lib/live.js';
 import { navigate, toast, openOverlay } from '../lib/actions.js';
 import { tildify, plural } from '../lib/util.js';
 import { Icon, AgentIcon } from './icons.js';
+import { SafetySection } from './safety.js';
 
 const LIMIT = 6; // long lists show this many, then "Show all N"
 
@@ -220,6 +221,7 @@ export function SetupCard() {
   return html`<section class="card setup-card" id="setup" aria-labelledby="set-setup" data-testid="setup-card">
     <h2 id="set-setup" class="card-title">Your Claude Code setup <button class="link-btn" onClick=${reload}>Refresh</button></h2>
     <p class="set-note setup-lead">Every agent session loads these, because Claude Code loads them in every session.</p>
+    <${SafetySection} />
     ${err === 'unsupported' ? html`<p class="panel-quiet">This Clawdling server can't show your setup yet. Update it, then reload this page.</p>`
       : err && !data ? html`<p class="form-error" role="alert"><${Icon} name="alert" size=${14} /> Couldn't read your Claude Code setup: ${err}</p>`
       : loading && !data ? html`<div class="panel-skel" aria-label="Loading"></div>`

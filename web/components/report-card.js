@@ -15,6 +15,7 @@ import { renderBlock } from './chat-view.js';
 import { StatusGlyph } from './status.js';
 import { Icon } from './icons.js';
 import { ClaimPill, Evidence, FixDialog, LABEL as CLAIM_LABEL, evidenceText } from './claims.js';
+import { SafetyLine } from './safety.js';
 
 export const WINDOWS = [['today', 'Today'], ['7d', '7 days'], ['30d', '30 days']];
 const IN_WINDOW = { today: 'today', '7d': 'in the last 7 days', '30d': 'in the last 30 days' };
@@ -109,7 +110,7 @@ export function ReportCard({ id, agent }) {
 
   return html`<div class="report" data-testid="report-card" data-window=${win}>
     <div class="report-bar">
-      <p class="report-lede">What ${name} got done, what it needs from you, and what it used, in plain words.</p>
+      <p class="report-lede">What ${name} got done, what it needs from you, and what it used, in plain words. <${SafetyLine} agentId=${id} /></p>
       <div class="seg" role="group" aria-label="Time window">
         ${WINDOWS.map(([k, label]) => html`<button type="button" class=${`seg-btn ${win === k ? 'is-on' : ''}`} aria-pressed=${win === k ? 'true' : 'false'}
           onClick=${() => setWin(k)} data-window-btn=${k}>${label}</button>`)}

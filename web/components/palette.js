@@ -62,6 +62,7 @@ export function Palette() {
       ['New agent…', 'user-plus', () => openOverlay({ type: 'wizard' }), 'create domain project wizard'],
       ['Bring in your projects…', 'import', () => openOverlay({ type: 'import' }), 'import repo repos github clone find discover folders new agent project'],
       ['Your Claude Code setup', 'layers', () => navigate('#/settings/setup'), 'skills subagents mcp hooks plugins commands settings'],
+      ['Setup safety: the lethal trifecta', 'key', () => navigate('#/settings/safety'), 'safety security trifecta risk permissions shield'],
       ['New scratch session', 'terminal', () => startSession('scratch').catch(() => {}), 'plain claude no agent'],
       ['Toggle sidebar', 'chevrons-left', () => toggleRail(), 'rail collapse expand'],
       ['Layout: Focus', 'layout-focus', () => setLayout('focus'), 'view'],

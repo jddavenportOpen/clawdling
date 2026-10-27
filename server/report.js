@@ -254,6 +254,20 @@ export function mergeParts(parts) {
  * Reports for one org. `sessions` is the SessionManager (records, views, transcript lookup).
  * Session summaries are cached in .clawdling/ledger (receipts that outlive transcripts).
  */
+/** An agent's setup safety receipt for the schema 2 report, or null when the audit has no row. */
+function safetyEntry(id, v, week) {
+  if (!v || !['green', 'amber', 'red'].includes(v.verdict)) return null;
+  return {
+    receipt: receiptId('safety', id, week, v.verdict, (v.risks || []).join(',')),
+    link: '#/settings/safety',
+    verdict: v.verdict,
+    trifecta: !!v.trifecta,
+    accepted: !!v.accepted,
+    risks: (v.risks || []).filter((r) => typeof r === 'string').slice(0, 10),
+    unknown: Number.isFinite(v.unknown) ? v.unknown : 0,
+  };
+}
+
 export class Reports {
   constructor({ paths, org, sessions, env = process.env, logger, exec = execFileP, now = () => Date.now(), reader = new LedgerReader() }) {
     Object.assign(this, { paths, org, sessions, env, logger, exec, now, reader });
@@ -750,6 +764,8 @@ export class Reports {
       cheaperModel: {
         last: cheaper ? { receipt: receiptId('model', a.id, cheaper.at), link: aLink('checkup'), at: cheaper.at, recommendation: cheaper.recommendation ? { label: agentText(cheaper.recommendation.label, 60), current: !!cheaper.recommendation.current, saves_pct: cheaper.recommendation.saves_pct ?? null } : null } : null,
       },
+      // Setup safety (1.8): the same verdict as the shield, by name only (green, amber or red).
+      safety: safetyEntry(a.id, this.safetyInfo ? this.safetyInfo(a.id) : null, week),
     };
   }
 

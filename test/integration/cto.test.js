@@ -19,7 +19,7 @@ let env;
 const repos = {};
 const DAY = 86400000;
 const GOLDEN = path.join(ROOT, 'test', 'fixtures', 'report-schema2.golden.json');
-const ID_RE = /^R-(session|claim|check|checkup|cost|needs|next|model)-[0-9a-f]{8}$/;
+const ID_RE = /^R-(session|claim|check|checkup|cost|needs|next|model|safety)-[0-9a-f]{8}$/;
 
 function makeRepo(name, value) {
   const repo = path.join(home, `${name}-repo`);

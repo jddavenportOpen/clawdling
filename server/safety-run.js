@@ -5,8 +5,9 @@
 // `clawdling discover --setup --safety`. Reads files only: no process, no socket.
 import fs from 'node:fs';
 import path from 'node:path';
-import { scanSafety } from './discover.js';
+import { redactSecrets, scanSafety } from './discover.js';
 import { donnaAllowedTools } from './channels/donna.js';
+import { managedSettingsPaths } from './otel.js';
 import { ctoPermissions, CTO_ID } from './org.js';
 import { auditSafety, CAPS, USER_ROW } from './safety.js';
 import { badRequest, clampText, isValidAgentId, oneLine, readJson, writeJson } from './util.js';
@@ -38,7 +39,7 @@ export class SafetyChoices {
     const v = this.read();
     if (reason === null || reason === undefined || reason === false) delete v.accepted[id];
     else {
-      const r = oneLine(clampText(String(reason), REASON_MAX * 2), REASON_MAX).trim();
+      const r = oneLine(redactSecrets(clampText(String(reason), REASON_MAX * 2)), REASON_MAX).trim();
       if (r.length < 3) throw badRequest('say why you accept this risk (a few words)');
       v.accepted[id] = { reason: r, at: now.toISOString() };
     }
@@ -78,9 +79,9 @@ function placeOf(a, home) {
  * The audit for an org. `agents` = org.agents(); `channels` = {telegram: status(), imessage:
  * status()} (or, offline, what org.json says); `home` = the org folder; `userHome` = the user's home.
  */
-export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJsonPath, env = process.env, channels = {}, choices = null, managed, platform = process.platform } = {}) {
+export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJsonPath, env = process.env, channels = {}, choices = null, managed, accounts = 0, platform = process.platform } = {}) {
   const placed = agents.filter((a) => a && typeof a.id === 'string').map((a) => placeOf(a, home));
-  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), homedir: userHome, env, managed, platform });
+  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), homedir: userHome, env, managed: managed || managedSettingsPaths(platform, env) });
   const cto = placed.find((a) => a.kind === 'cto' || a.id === CTO_ID);
   let ctoRules = null;
   if (cto) {
@@ -91,7 +92,7 @@ export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJ
     }
   }
   const { accepted, tags } = choices ? choices.read() : { accepted: {}, tags: {} };
-  return auditSafety({
+  const audit = auditSafety({
     scan,
     agents: placed,
     org: { home, channels, donnaTools: donnaAllowedTools(home, platform), cto: ctoRules },
@@ -100,6 +101,9 @@ export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJ
     home: userHome,
     platform,
   });
+  // Extra Claude accounts (1.0.1) are their own config folders, which Clawdling never reads.
+  if (accounts > 0 && audit.rows[0]) audit.rows[0].notes.push(`Sessions you start on one of your ${accounts === 1 ? 'other Claude account' : `${accounts} other Claude accounts`} load that account's own settings, which Clawdling does not read.`);
+  return audit;
 }
 
 /** Channels as org.json records them, for the CLI when the cockpit is not running. */

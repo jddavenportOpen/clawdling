@@ -1,5 +1,5 @@
 // Settings (#/settings): your phone, appearance, workspace, shortcuts, what the server reports, and
-// your own Claude Code setup (#/settings/setup scrolls to it).
+// your own Claude Code setup (#/settings/setup scrolls to it; #/settings/safety to its Safety section).
 import { html } from '../lib/html.js';
 import { useEffect, useState } from 'preact/hooks';
 import { useStore, getState } from '../lib/store.js';
@@ -23,9 +23,9 @@ export function SettingsPage() {
   const [theme, setTheme] = useState(getThemePref());
 
   useEffect(() => {
-    if (section !== 'setup') return undefined;
+    if (section !== 'setup' && section !== 'safety') return undefined;
     const id = requestAnimationFrame(() => {
-      const card = document.getElementById('setup');
+      const card = document.getElementById(section);
       if (card) card.scrollIntoView({ block: 'start' });
     });
     return () => cancelAnimationFrame(id);

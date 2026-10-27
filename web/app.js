@@ -21,7 +21,7 @@ import { Wizard } from './components/wizard.js';
 import { ImportScreen } from './components/import.js';
 import { EndDialog, Menu, Toasts } from './components/dialogs.js';
 import { Icon, Mark } from './components/icons.js';
-import { HealthBanner } from './components/health-banner.js';
+import { CompatNote, HealthBanner } from './components/health-banner.js';
 
 setState({ ...initialState(), route: parseRoute(), booting: true });
 initTheme();
@@ -100,6 +100,7 @@ function App() {
   const page = route.name !== 'cockpit';
   return html`<div class=${`app ${mobile ? 'is-mobile' : ''} rail-${rail}`} data-route=${route.name} data-mobile-view=${mobileView}>
     <${HealthBanner} />
+    <${CompatNote} />
     <${Rail} />
     <div class="stage">
       <${Workspace} hidden=${page} />

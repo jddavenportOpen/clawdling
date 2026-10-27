@@ -1688,3 +1688,82 @@ ol.cto-dec-list { list-style: decimal; padding-left: 20px; }
 .dialog-cmd-warn { flex: 1 1 100%; order: 2; color: var(--needs-text); font-size: 12.5px; }
 .hero-meta .mono { overflow-wrap: anywhere; word-break: break-all; }
 .cto-del-cmd { display: block; font: 12.5px/1.45 var(--font-mono); white-space: pre-wrap; }
+
+/* ── 1.8: Setup safety (the lethal trifecta), shields ─────────────────── */
+.shield { flex: none; vertical-align: -2px; }
+.shield path:first-child { stroke-width: 1.3; stroke-linejoin: round; }
+.shield .shield-mark { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.shield-green path:first-child { fill: color-mix(in srgb, var(--ready) 22%, transparent); stroke: var(--ready-text); }
+.shield-green .shield-mark { stroke: var(--ready-text); }
+.shield-amber path:first-child { fill: color-mix(in srgb, var(--needs) 24%, transparent); stroke: var(--needs-text); }
+.shield-amber .shield-mark { stroke: var(--needs-text); }
+.shield-red path:first-child { fill: var(--danger); stroke: var(--danger); }
+.shield-red .shield-mark { stroke: var(--danger-ink); }
+.map-shield path { stroke-width: 1.2; stroke-linejoin: round; }
+.map-shield.shield-green path { fill: color-mix(in srgb, var(--ready) 35%, var(--bg-stage)); stroke: var(--ready-text); }
+.map-shield.shield-amber path { fill: color-mix(in srgb, var(--needs) 40%, var(--bg-stage)); stroke: var(--needs-text); }
+.map-shield.shield-red path { fill: var(--danger); stroke: var(--danger); }
+
+.safety-sec { margin: 14px 0 6px; padding: 14px 16px; border-radius: var(--r-md); background: var(--bg-stage); border: 1px solid var(--line); }
+.safety-sec .card-h { margin-top: 0; }
+.safety-lead { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
+.safety-tally { margin: 0 0 8px; font-size: 12.5px; color: var(--text-2); }
+.safety-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.safety-row + .safety-row { border-top: 1px solid var(--line); }
+.safety-row-head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; gap: 10px; width: 100%; padding: 9px 2px; background: none; border: 0; color: inherit; font: inherit; text-align: left; cursor: pointer; min-height: 40px; }
+.safety-row-head:focus-visible { outline: 2px solid var(--focus, var(--working)); outline-offset: 2px; border-radius: 6px; }
+.safety-row-name { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.safety-row-icon { display: inline-grid; place-items: center; color: var(--text-2); }
+.safety-row-sum { font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.verdict-red .safety-row-sum { color: var(--danger); font-weight: 600; }
+.verdict-amber .safety-row-sum { color: var(--needs-text); }
+.safety-row-legs { display: inline-flex; gap: 3px; }
+.leg { width: 8px; height: 8px; border-radius: 50%; border: 1.3px solid var(--text-3); }
+.leg.is-on { background: var(--text-2); border-color: var(--text-2); }
+.verdict-red .leg.is-on { background: var(--danger); border-color: var(--danger); }
+.safety-row-body { padding: 2px 2px 14px 26px; display: flex; flex-direction: column; gap: 10px; }
+.safety-mode { margin: 0; font-size: 12.5px; color: var(--text-2); }
+.safety-sentence { margin: 0; padding: 8px 10px; border-radius: var(--r-md); font-size: 13px; background: color-mix(in srgb, var(--danger) 10%, transparent); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); }
+.safety-chips { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.safety-chip { min-width: 0; padding: 8px 10px; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--bg); }
+.safety-chip.is-off { opacity: 0.8; }
+.safety-chip-head { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.safety-chip-dot { width: 8px; height: 8px; border-radius: 50%; border: 1.3px solid var(--text-3); }
+.safety-chip.is-on .safety-chip-dot { background: var(--text); border-color: var(--text); }
+.verdict-red .safety-chip.is-on { border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.verdict-red .safety-chip.is-on .safety-chip-dot { background: var(--danger); border-color: var(--danger); }
+.safety-chip-n { margin-left: auto; font-weight: 400; color: var(--text-3); }
+.safety-chip-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.safety-chip-list li, .safety-risks li, .safety-unknown li { display: flex; flex-direction: column; gap: 1px; font-size: 12.5px; overflow-wrap: anywhere; }
+.safety-chip-none { margin: 6px 0 0; font-size: 12px; color: var(--text-3); }
+.safety-src { font-size: 11px; color: var(--text-3); overflow-wrap: anywhere; }
+.safety-h { margin: 0 0 4px; font-size: 12px; font-weight: 600; color: var(--text-2); }
+.safety-fixes ol { margin: 0; padding-left: 18px; font-size: 13px; display: flex; flex-direction: column; gap: 4px; overflow-wrap: anywhere; }
+.safety-fixes .set-note { margin: 4px 0 0; }
+.safety-risks ul, .safety-unknown ul, .safety-notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.safety-notes li { font-size: 12.5px; color: var(--text-2); }
+.safety-accept { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.safety-accept input { flex: 1 1 220px; min-width: 0; }
+.safety-accepted { margin: 0; font-size: 12.5px; color: var(--needs-text); }
+.safety-tag { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-top: 4px; font-size: 12px; }
+.safety-tag-opt { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; }
+.safety-tag-open { align-self: flex-start; font-size: 12px; }
+.safety-privacy { margin: 10px 0 0; }
+.safety-line { display: inline-flex; align-items: center; gap: 6px; margin: 0; padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg-stage); color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; min-height: 28px; }
+.safety-line.verdict-red { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--line)); }
+.safety-line.verdict-amber { color: var(--needs-text); }
+.report-lede .safety-line { margin-left: 6px; vertical-align: middle; }
+.map-panel .safety-line { margin: 2px 0 10px; }
+@media (max-width: 720px) {
+  .safety-sec { padding: 12px; }
+  .safety-chips { grid-template-columns: minmax(0, 1fr); }
+  .safety-row-head { grid-template-columns: auto minmax(0, 1fr) auto; }
+  .safety-row-sum { grid-column: 2 / 4; grid-row: 2; white-space: normal; }
+  .safety-row-legs { grid-column: 3; grid-row: 1; }
+  .safety-row-body { padding-left: 4px; }
+  .report-lede .safety-line { margin: 6px 0 0; }
+}
+
+/* The newer-Claude-Code note (1.8): not a problem, so not the health banner's red. */
+.compat-note { display: flex; align-items: flex-start; gap: 10px; padding: 8px 14px; font-size: 13px; background: var(--needs-soft); border-bottom: 1px solid color-mix(in srgb, var(--needs) 30%, transparent); color: var(--text); }
+.compat-note p { margin: 0; flex: 1; }

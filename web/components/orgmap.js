@@ -16,6 +16,7 @@ import { relTime, clamp, prefersReducedMotion, tildify, plural } from '../lib/ut
 import { load, save } from '../lib/prefs.js';
 import { OrgError, useImportStep } from './first-run.js';
 import { useSetup, repoAdds, RepoAdds, SetupKindPanelBody, kindOf, countOf } from './setup.js';
+import { MapShield, Shield, SHIELD_WORD, rowFor, useSafety } from './safety.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 import { usd, usdOrUnknown, useOrgReport } from './report-card.js';
 
@@ -203,6 +204,8 @@ export function OrgMap() {
   const ownerName = org && org.owner ? org.owner : owner;
   const [layer, setLayer] = useState(() => !!load('mapSetupLayer', false));
   const setup = useSetup(layer);
+  // Setup safety (1.8): a shield on every agent (green, amber or red); read once, locally.
+  const safety = useSafety(true);
   const importStep = useImportStep();
   const L = useMemo(() => layoutOrg(agents, ownerName, { setup: layer }), [agents, ownerName, layer]);
   const [sel, setSel] = useState(null);
@@ -432,6 +435,7 @@ export function OrgMap() {
             <g class="nodes">
               ${L.nodes.map((n) => html`<${MapNode} key=${n.id} n=${n} st=${statsById[n.id]} rep=${repById[n.id]} now=${now} selected=${sel === n.id}
                 dim=${related ? !related.has(n.id) : false} reduced=${reduced} adds=${n.kind === 'project' && (adds[n.id] || []).some(repoAdds)}
+                shield=${(rowFor(safety.data, n.kind === 'owner' ? '_user' : n.id) || {}).verdict || null}
                 onSelect=${() => setSel(sel === n.id ? null : n.id)} onHover=${(on) => setHover(on ? n.id : null)} />`)}
             </g>
             ${chips.length ? html`<g class="setup-layer" role="group" aria-label="Your Claude Code setup, loaded in every session" data-testid="setup-halo">
@@ -454,15 +458,15 @@ export function OrgMap() {
       </div>
       ${setupSel && sdata ? html`<${SetupPanel} kind=${setupSel} data=${sdata} onClose=${() => setSel(null)} />`
         : selNode ? html`<${MapPanel} n=${selNode} rep=${repById[selNode.id]} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName}
-          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} setupBusy=${layer && setup.refreshing} />` : null}
+          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} setupBusy=${layer && setup.refreshing} safety=${rowFor(safety.data, selNode.id)} />` : null}
     </div>
   </div>`;
 }
 
-function MapNode({ n, st, rep, now, selected, dim, reduced, adds, onSelect, onHover }) {
+function MapNode({ n, st, rep, now, selected, dim, reduced, adds, shield, onSelect, onHover }) {
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
   const use = usageLine(rep, now);
-  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${use ? `, ${use.long}` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}`;
+  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${use ? `, ${use.long}` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}${shield ? `, setup safety: ${SHIELD_WORD[shield]}` : ''}`;
   // The usage line sits on the far side of the label from the node (below a label under it, above
   // one over it, under a label beside it).
   const below = n.base === 'hanging';
@@ -493,6 +497,7 @@ function MapNode({ n, st, rep, now, selected, dim, reduced, adds, onSelect, onHo
       <text y="0.5">${count}</text></g>` : null}
     ${adds ? html`<g class="setup-badge" transform=${`translate(${-n.r * 0.74} ${n.r * 0.74})`} data-setup-badge="true">
       <title>Its repo adds its own Claude Code setup</title><circle r="6" /><circle class="setup-badge-dot" r="2.2" /></g>` : null}
+    ${shield ? html`<${MapShield} verdict=${shield} x=${n.r * 0.74} y=${n.r * 0.74} />` : null}
     <text class="node-label" x=${n.lx - n.x} y=${ly} text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.text}</text>
     ${use ? html`<text class="node-usage" x=${n.lx - n.x} y=${uy} text-anchor=${n.anchor} dominant-baseline=${n.base} data-usage=${n.id}>${use.short}</text>` : null}
     ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (top ? 14 : 16)}
@@ -555,7 +560,7 @@ function SetupPanel({ kind, data, onClose }) {
   </aside>`;
 }
 
-function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, setupBusy }) {
+function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, setupBusy, safety }) {
   const [detail, setDetail] = useState(null);
   const [err, setErr] = useState('');
   const now = useStore((s) => s.now);
@@ -599,6 +604,8 @@ function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, set
         <div><dt>Last done</dt><dd>${rep.last_done_at ? relTime(rep.last_done_at, now) : '–'}</dd></div>
         <div data-testid="panel-checkup"><dt>Last check-up</dt><dd>${rep.checkup ? `${rep.checkup.judge_unreliable ? 'judge unreliable' : rep.checkup.score === null || rep.checkup.score === undefined ? 'no score' : `${Math.round(rep.checkup.score * 100)}%`} · ${relTime(rep.checkup.at, now)}${Number.isFinite(rep.checkup.cost_per_run) ? ` · ${rep.checkup.cost_per_run < 0.005 ? '<$0.01' : `$${rep.checkup.cost_per_run.toFixed(2)}`} a run` : ''}` : '–'}</dd></div></dl>
         <p class="panel-quiet panel-usage-note">Usage is a list-price equivalent, not a bill. On Pro and Max it is included in your plan.</p>` : null}
+      ${safety ? html`<button class=${`safety-line verdict-${safety.verdict}`} onClick=${() => navigate('#/settings/safety')} data-testid="panel-safety" data-verdict=${safety.verdict}>
+        <${Shield} verdict=${safety.verdict} size=${14} /><span>Setup safety: ${safety.trifecta && !safety.accepted ? 'Lethal trifecta' : safety.summary}</span></button>` : null}
       <div class="panel-actions">
         <button class="btn btn-quiet" onClick=${() => startSession(n.id).catch(() => {})} data-testid="panel-new-session"
           disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> New session</button>

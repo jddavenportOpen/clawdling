@@ -160,7 +160,10 @@ function capsFor(view, { tags = {} } = {}) {
 
   for (const { rule, parsed, layer } of allowed) {
     const where = layer.file;
-    const removeFix = `remove \`${rule}\` from \`allow\` in ${where}`;
+    // A rule from your own (or managed) settings reaches every agent: on an agent, the narrower fix
+    // is a deny rule in its own folder, which wins over an allow from any layer.
+    const shared = (layer.kind === 'user' || layer.kind === 'managed') && !view.isUserRow;
+    const removeFix = shared ? `stop this agent using \`${rule}\`: add it to \`permissions.deny\` in ${view.denyFile}` : `remove \`${rule}\` from \`allow\` in ${where}`;
     if (parsed.tool === 'WebFetch') {
       add('untrusted', `\`${rule}\` allowed`, where, `turn off WebFetch for this agent: add "WebFetch" to \`permissions.deny\` in ${view.denyFile}`);
       add('sends', `\`${rule}\` allowed (a URL is a channel)`, where, `turn off WebFetch for this agent: add "WebFetch" to \`permissions.deny\` in ${view.denyFile}`);
@@ -189,7 +192,7 @@ function capsFor(view, { tags = {} } = {}) {
 
   // Extra folders that are the home folder (or a big folder in it).
   for (const l of view.layers) for (const d of (l.facts && l.facts.home_dirs) || []) add('private', `extra folder ${d} (additionalDirectories)`, l.file, `remove ${d} from \`additionalDirectories\` in ${l.file}`);
-  for (const d of view.homeAddDirs || []) add('private', `\`--add-dir ${d}\``, 'Clawdling', null);
+  for (const d of view.homeAddDirs || []) add('private', `your home folder (\`--add-dir ${d}\`: the org folder is your home folder)`, 'Clawdling', null);
 
   // MCP servers, by name.
   for (const s of view.mcp) {
@@ -269,7 +272,8 @@ function risksFor(view) {
 
 /** One plain sentence: what could happen, naming one item from each leg. */
 function trifectaSentence(chips) {
-  const root = (x) => x.text.replace(/`/g, '').replace(/\s*\(.*\)$/, '').replace(/ allowed$/, '');
+  // "`Bash(curl:*)` allowed (can send data out)" -> "Bash(curl:*)"; "gmail MCP server (mail)" -> "gmail MCP server".
+  const root = (x) => x.text.replace(/\s+\([^()]*\)$/, '').replace(/`/g, '').replace(/ allowed$/, '');
   const used = new Set();
   const pick = (c) => {
     const x = chips[c].find((y) => !used.has(root(y))) || chips[c][0];

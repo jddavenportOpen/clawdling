@@ -10,6 +10,7 @@ import { healthProblems } from '../lib/model.js';
 import { refreshHealth } from '../lib/live.js';
 import { toast } from '../lib/actions.js';
 import { cliCmd } from '../lib/util.js';
+import { load, save } from '../lib/prefs.js';
 
 export const BLOCKED_TITLE = 'Fix the problem above first';
 
@@ -76,5 +77,23 @@ export function HealthBanner() {
       ${problems.map((p) => html`<p key=${p.id} class="hb-line" data-problem=${p.id}><${ProblemText} p=${p} health=${health} /></p>`)}
     </div>
     <button class="btn btn-quiet btn-sm hb-again" onClick=${again} disabled=${busy} data-testid="health-recheck">${busy ? 'Checking…' : 'Check again'}</button>
+  </div>`;
+}
+
+// Claude Code ships about a release a day (1.8). When the installed one is newer than the last
+// version Clawdling checked (server/claude-compat.json maxChecked), say so once per version, and let
+// the owner dismiss it. It is not a problem, so it never blocks starting a session.
+export function CompatNote() {
+  const health = useStore((s) => s.health);
+  const c = health && health.claude_compat;
+  const ver = health && health.claude && health.claude.version ? String(health.claude.version).split(' ')[0] : null;
+  const key = ver ? `compatNoteSeen:${ver}` : null;
+  const [gone, setGone] = useState(() => !!(key && load(key, false)));
+  useEffect(() => { setGone(!!(key && load(key, false))); }, [key]);
+  if (!c || !c.newer || !ver || gone || healthProblems(health).length) return null;
+  const dismiss = () => { save(key, true); setGone(true); };
+  return html`<div class="compat-note" role="status" data-testid="compat-note">
+    <p>Claude Code ${ver} is newer than the last version Clawdling checked (${c.max_checked}). It will probably work. Run Doctor to check: <code>${cliCmd('doctor --contract', health)}</code></p>
+    <button class="btn btn-quiet btn-sm" onClick=${dismiss} data-testid="compat-dismiss" aria-label=${`Dismiss the note about Claude Code ${ver}`}>Dismiss</button>
   </div>`;
 }

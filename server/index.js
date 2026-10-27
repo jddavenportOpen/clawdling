@@ -74,6 +74,8 @@ import {
 import { commandFor, envGet, portablePath, spawnOptions } from './platform.js';
 import { discover, findSubagent, scanSetup } from './discover.js';
 import { PRIVACY as SAFETY_PRIVACY, SafetyChoices, runSafetyAudit } from './safety-run.js';
+import { verdicts } from './safety.js';
+import { COMPAT as CLAUDE_COMPAT, newerThanChecked } from './contract.js';
 import { importGroup, importProject, promoteSubagent } from './importer.js';
 import { SessionManager } from './sessions.js';
 import { claudeConfigDir, findTranscript } from './transcripts.js';
@@ -441,6 +443,23 @@ export async function startServer(opts = {}) {
     sessions.onNeedsYou = (rec) => pinger.onNeedsYou(rec);
     // The report card (1.5): receipts under .clawdling/ledger, written when a session ends.
     const reports = new Reports({ paths, org, sessions, env: cEnv, logger });
+    // The report's setup safety receipts (1.8): one audit per report, by name, from files only.
+    reports.safetyInfo = (() => {
+      let at = 0;
+      let cached = {};
+      return (id) => {
+        if (Date.now() - at > 5000) {
+          try {
+            cached = verdicts(safetyAudit());
+          } catch (err) {
+            logger?.warn?.(`setup safety: ${err.message}`);
+            cached = {};
+          }
+          at = Date.now();
+        }
+        return cached[id] || null;
+      };
+    })();
     donna.reports = reports; // Donna answers "what got done today" from the report card
     sessions.onEnded = (rec) => setImmediate(() => reports.sessionEnded(rec));
     sessions.onTranscriptSwitch = (rec, oldPath) => setImmediate(() => reports.transcriptSwitched(rec, oldPath));
@@ -692,7 +711,7 @@ export async function startServer(opts = {}) {
     /** The setup safety audit (1.8), the GET /api/setup/safety body. */
     function safetyAudit() {
       const o = org.read();
-      const body = runSafetyAudit({ agents: org.agents(), home, userHome, configDir, env: cEnv, channels: { telegram: telegram.status(o), imessage: imessage.status(o) }, choices: safetyChoices });
+      const body = runSafetyAudit({ agents: org.agents(), home, userHome, configDir, env: cEnv, channels: { telegram: telegram.status(o), imessage: imessage.status(o) }, choices: safetyChoices, managed: managedOverride || undefined, accounts: accounts.list().length });
       return { ...body, privacy: SAFETY_PRIVACY };
     }
 
@@ -1291,7 +1310,9 @@ export async function startServer(opts = {}) {
         // Through a remote address, a device that has not signed in learns nothing about this computer.
         if (req.who.remote && !deviceFor(req, url)) return [200, { ok: true, remote: true, signed_in: false }];
         const v = await toolVersions();
-        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, permission_modes: modeChoices, home, cli, platform: process.platform, remote: !!req.who.remote }];
+        // claude_compat (1.8): is this Claude Code newer than the last version Clawdling checked?
+        const compat = { max_checked: CLAUDE_COMPAT.maxChecked, newer: !!(v.claude && v.claude.ok && newerThanChecked(v.claude.version)) };
+        return [200, { ok: true, version: VERSION, backend: backendInfo, tmux: v.tmux, claude: v.claude, claude_compat: compat, permission_modes: modeChoices, home, cli, platform: process.platform, remote: !!req.who.remote }];
       }, { public: true }],
       ['GET', /^\/api\/me$/, () => [200, { ok: true, version: VERSION }]],
       // `clawdling stop`: a clean stop on every OS (Windows has no SIGTERM for another process).

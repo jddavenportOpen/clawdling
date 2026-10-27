@@ -41,6 +41,8 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
     // report card and Timeline read them), and nothing reads the real ~/.claude.
     CLAUDE_CONFIG_DIR: path.join(home, 'claude-config'),
     CLAWDLING_MANAGED_SETTINGS: '',
+    // A Claude Code version the compat file has checked: no "newer than checked" note on every screen.
+    FAKE_CLAUDE_VERSION: '2.1.308',
   });
   // CLAWDLING_E2E_OWNER=<name>: the same default org under a placeholder owner name instead of this
   // computer's user name (for screenshots that may be shown to someone else).

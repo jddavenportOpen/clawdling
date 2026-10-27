@@ -428,7 +428,7 @@ async function main() {
   await drive(ask.sid, { label: 'CTO question 2', done: (s) => s.status === 'ready' && !!s.last_message, timeoutMs: 400000 });
   const a2 = await lastAssistant();
   log(`CTO answered: ${a2.replace(/\s+/g, ' ').slice(0, 400)}`);
-  result.steps.ask = { cites: /R-(session|claim|check|checkup|cost|needs|next|model)-[0-9a-f]{8}/.test(a1), no_receipts: /no receipts/i.test(a2), answer1: a1.slice(0, 1200), answer2: a2.slice(0, 600) };
+  result.steps.ask = { cites: /R-(session|claim|check|checkup|cost|needs|next|model|safety)-[0-9a-f]{8}/.test(a1), no_receipts: /no receipts/i.test(a2), answer1: a1.slice(0, 1200), answer2: a2.slice(0, 600) };
   await shot(page, 'real-cto-ask-1280', `#/s/${ask.sid}`, { wait: 3000 });
   await api('DELETE', `/api/sessions/${ask.sid}`).catch(() => {});
 
