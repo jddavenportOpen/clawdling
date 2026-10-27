@@ -1,5 +1,67 @@
 # Changelog
 
+## 1.7.0 (TBD)
+
+**Clawdling 1.7: your CTO. Every Monday it reads your projects' receipts and asks you three questions.**
+
+- **The CTO seat.** "Add a CTO" on the org map makes a seat beside Donna, from `templates/cto/`: its
+  folder, its CLAUDE.md (editable like any agent's; the CTO cannot change it), `reviews/` and its own
+  narrow settings. Starting it is a normal Claude Code session on your plan.
+- **Run this week's review.** The cost first (a range, list-price equivalent, from the CTO's past
+  sessions or its prompt's size), then one session that reads `clawdling report --all --json`,
+  writes `cto/reviews/<ISO-week>.md` in a fixed format (a headline, a section per agent with cited
+  bullets, the decisions), and asks up to three decisions as question cards, in the chat and in
+  Needs you.
+- **Computed status.** On track, At risk, Stalled or Quiet for every domain and project, worked out
+  by Clawdling from receipts with fixed rules, never by the model. Priority: At risk (an open
+  Contradicted claim, a failed ship check, a check-up score down 20 points, usage up 50% while
+  finished work is not, something waiting on you 48 hours), then Stalled (projects only), then On
+  track, then Quiet. Each label carries its reasons, each with a receipt. Five thresholds are tunable
+  in Settings, including a $1 a week floor so cents doubling is not "usage up".
+- **Receipts or it didn't happen.** Every item in the new report has a stable id,
+  `R-<kind>-<8 hex>`, hashed from what the item is. The review page turns each citation into a link
+  to that session, claim, ship check, check-up or usage row; marks a line with no citation
+  "uncited" and an id that does not exist "no such receipt"; and shows a label the CTO changed as
+  "Overridden by the CTO, here is why: …" beside Clawdling's own. The lint result sits on top ("14
+  findings, all cited"). Each report adds its receipts and labels to a weekly index, so a Monday
+  citation still resolves on Thursday.
+- **Decisions become instructions.** After you answer, the CTO drafts one message per agent and
+  delivers it with `clawdling send` (a live session) or `clawdling spawn`. Both are ask rules in the
+  seat's settings, and the seat's own PreToolUse hook answers "ask" for any command but the report
+  and the session list and for any write outside its reviews, so Claude Code's own prompt shows
+  every time, even over an allow rule from another settings layer or a saved "don't ask again"; the
+  cockpit shows the exact pending command beside it. What was sent, declined or failed is read from the seat's own transcripts, and the CTO
+  notes a declined message in the review.
+- **Ask the CTO anything.** A normal chat answers from the same report, citing receipts, or says
+  "no receipts for that".
+- **`clawdling report --all [--window] [--json]`**: the whole org as `"schema": 2`, each agent's
+  computed status and every item with a receipt id and a cockpit link (`#/s/<sid>` opens a session).
+  Agent-written text in it (titles, last lines, NOW.md) is capped, one line, stripped of control
+  characters, and cannot look like a citation. Its shape has a golden file,
+  `test/fixtures/report-schema2.golden.json`.
+- **Optional, off by default:** a weekly review (Monday 08:00 by default, at most once per ISO week,
+  skipped with a notice when the CTO's spend this week plus the estimate's high end would pass your
+  weekly cap, $2.00 by default; turned on after this week's time, it starts next week), and the
+  CTO's line in the Monday report, its own switch, previewed exactly, with links removed from the
+  headline.
+- **How the seat is locked down.** It starts with its own `--settings` file written into
+  `.clawdling/` (out of agents' reach), `--setting-sources project,local` (your user-level settings
+  do not load), `--strict-mcp-config` (no MCP servers), always the ask-first mode, and without the
+  org folder added. It may run `clawdling report` and `clawdling ls` and write its own `reviews/`
+  without asking; the web, its own CLAUDE.md and its settings are denied; everything else asks.
+  Its hooks report every tool call, and the hook script forwards only the tool's name and id, plus
+  the command of a `clawdling send|spawn`. Adding the seat, starting a review and every CTO setting
+  work only on the computer itself; a paired phone can read reviews and answer the CTO's prompts.
+
+Reviews: TBD.
+
+Tests: TBD. New unit suites `status-rules` (every rule, its window edges, flat cost, a new agent,
+At risk over Stalled, domains never Stalled) and `cto` (receipt ids, agent text, the index, the
+lint, the seat's permissions on POSIX and Windows, the launch settings, the transcript scan, the
+Monday line); integration `cto` (an org in every state, the schema 2 golden shape, Add a CTO, the
+seat's launch flags, a full review with one approved send and one declined spawn, the lint's flags,
+the schedule and its cap). Real run: TBD.
+
 ## 1.6.0 (2026-10-27)
 
 **Verified done: when an agent says it is done, you see whether its record backs that up.**

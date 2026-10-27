@@ -466,3 +466,68 @@ US-75 to US-84, in the same order (brief US-70 = US-75 ... US-79 = US-84).
 - **US-84 (P2, Rin; 1.6)** `clawdling check <agent>` and `clawdling checkup <agent> [--models a,b]
   [--max-cost 2]` run the same from the CLI, with `--json` and exit codes: 0 pass, 1 fail, 2 the cost
   cap was hit or the judge was unreliable.
+
+## New in 1.7: your CTO
+
+The build brief numbered these US-80 to US-85; 1.6 already uses US-80 to US-84, so here they are
+US-85 to US-90, in the same order (brief US-80 = US-85 ... US-85 = US-90).
+
+- **US-85 (P0, Lou; 1.7)** **The CTO seat:** "Add a CTO" on the org map creates a `cto` agent from
+  `templates/cto/`: its folder (`<org>/cto/`), CLAUDE.md, `memory/`, `reviews/` and its own narrow
+  settings. It sits beside Donna, linked to you, above domains and projects. Starting it is a normal
+  Claude Code session.
+  - Accept: one click, under 30 seconds; it appears on the map and in the New session list; one per
+    org (a second "Add a CTO" is refused, and the id `cto` is reserved for other agents); its
+    CLAUDE.md is editable in the Context tab like any agent's, and the CTO itself cannot edit it; the
+    seat starts with its own settings file, without your user-level settings or MCP servers, in the
+    ask-first mode, and without the org folder added.
+- **US-86 (P0, Lou; 1.7)** **"Run this week's review"** on the CTO's Reviews tab first shows the cost
+  estimate (a range, list-price equivalent: from the CTO's past sessions, else from its prompt's
+  size). Then one CTO session:
+  - (a) reads `clawdling report --all --json --window 7d` (schema 2: each agent's computed status
+    with its reasons, and every item with a receipt id and a link);
+  - (b) writes `cto/reviews/<ISO-week>.md` in the fixed format (title, `Headline:`, one
+    `## <agent>: <label>` section per agent with cited bullets, `## Decisions`);
+  - (c) asks up to three decisions in one AskUserQuestion call, shown as question cards in the chat
+    and in Needs you.
+  - Accept (real run): the file exists; it has a section per agent in the report; every bullet cites
+    a receipt id; the lint is clean ("N findings, all cited") and every section's label equals
+    Clawdling's computed one. A second press while a review runs opens that review instead.
+- **US-87 (P0, Rin; 1.7)** **Receipts or it didn't happen:** the review page renders each `[R-…]`
+  citation as a link to its receipt (a session, a claim, a ship check, a check-up, a week's usage,
+  a needs-you item, NOW.md, a cheaper-model run), and the lint result shows at the top.
+  - A bullet with no citation is marked "uncited"; a citation to an id Clawdling does not know for
+    that week is marked "no such receipt".
+  - A label that differs from Clawdling's, with an `Override:` bullet, shows "Overridden by the CTO,
+    here is why: …" beside Clawdling's computed label; without one, it is flagged as a label
+    Clawdling did not compute.
+  - A citation made early in the week still resolves later that week (the weekly receipt index), and
+    the label compared is the one in force when the review was written.
+  - Accept: lint fixtures cover cited, uncited, unknown-id and overridden bullets, a missing section
+    and an unexplained label change; the review is rendered as text, never HTML.
+- **US-88 (P0, Lou; 1.7)** **Decisions become instructions:** when the owner answers a decision card,
+  the CTO drafts one short message to the named agent and delivers it with the existing CLI:
+  `clawdling send <sid> "<message>"` to its live session (found with `clawdling ls --json`), or
+  `clawdling spawn <agent> "<message>"` when it has none.
+  - Both are **ask** rules in the seat's settings, so Claude Code's own permission prompt appears
+    every time, even if another settings layer or a saved "don't ask again" would allow them. The
+    cockpit shows the exact pending command beside the prompt.
+  - The review page lists each message and what became of it (sent, declined, did not go through,
+    waiting for your yes or no), read from the seat's own transcripts; the CTO also writes
+    `Declined: <message>` under Decisions.
+  - Accept: no message reaches another agent without that approval; a declined spawn starts no
+    session; a declined send is noted in the review.
+- **US-89 (P1, Maya; 1.7)** **Optional schedule:** Settings gives "Run the CTO review every Monday at
+  08:00" (day, hour and a weekly cap, $2.00 by default), off by default, with the estimated cost of
+  one review shown before it is turned on. A separate switch, also off by default, adds the CTO's
+  line to the Monday report (1.5): "CTO: <headline>. 3 decisions waiting in Clawdling.", previewed
+  exactly, with links removed from the headline.
+  - Accept: no scheduled run happens without the opt-in; at most one run per ISO week, counted
+    before it starts; turned on after this week's time, the first run is next week; a run whose
+    estimate's high end plus the CTO's spend this week would exceed the weekly cap is skipped, once,
+    with a notice on the CTO page and in Settings; if Clawdling was not running at the time, the
+    review runs at its next start that week. Turning any of this on works only on the computer
+    itself.
+- **US-90 (P1, Dev; 1.7)** **Ask the CTO anything:** "Ask the CTO something…" (or a new session with
+  the CTO) is a normal chat ("should I keep going on the newsletter project?"); it answers from the
+  same report, citing receipts, and says "no receipts for that" when there are none.
