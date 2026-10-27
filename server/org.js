@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { absPathRule, cliAllow, runtimeDeny } from './hooks.js';
+import { cleanInput } from './receipts.js';
 import { PKG_ROOT, runtimePaths } from './paths.js';
 import {
   HttpError,
@@ -481,10 +482,11 @@ export class OrgStore {
   createAgent(input = {}) {
     const kind = input.kind;
     if (kind !== 'domain' && kind !== 'project') throw badRequest('kind must be "domain" or "project"');
-    const name = oneLine(input.name, 60);
+    // Written into the agent's CLAUDE.md, which its sessions load as instructions: nothing hidden.
+    const name = oneLine(cleanInput(input.name ?? ''), 60);
     if (!name) throw badRequest('name is required');
     const owner = this.read().owner || 'the owner';
-    const mission = oneLine(input.mission ?? input.goal, 500) || (kind === 'domain' ? defaultMission(name, owner) : `Ship ${name}`);
+    const mission = oneLine(cleanInput(input.mission ?? input.goal ?? ''), 500) || (kind === 'domain' ? defaultMission(name, owner) : `Ship ${name}`);
     let id = input.id === undefined || input.id === null || input.id === '' ? slugify(name, '') : input.id;
     if (!isValidAgentId(id)) throw badRequest('id must match ^[a-z0-9][a-z0-9-]{0,39}$');
     if (RESERVED_IDS.has(id)) throw conflict(`"${id}" is reserved`);

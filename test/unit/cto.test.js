@@ -363,3 +363,31 @@ test('the hook script answers for the seat on stdout (even with no server), and 
   assert.equal(run(['PostToolUse', 'cto'], send), '');
   fs.rmSync(dir, { recursive: true, force: true });
 });
+
+test('a scheduled review that passes the weekly cap while it works is stopped, with a notice', async () => {
+  const dir = tmp();
+  const ended = [];
+  let status = 'working';
+  const c = new Cto({
+    paths: { rt: dir, home: dir },
+    org: { cto: () => ({ dir }) },
+    sessions: { get: () => ({ status }), end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+    reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
+  });
+  fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, last_run_sid: 'sid-1' }));
+  assert.deepEqual(await c.watchSpend(), { stopped: true });
+  assert.deepEqual(ended, ['sid-1']);
+  assert.match(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).last_skip.why, /was stopped: it had used \$2\.50, past its \$2\.00 weekly cap/);
+  // Under the cap, or once it is not working: nothing.
+  status = 'ready';
+  assert.deepEqual(await c.watchSpend(), { stopped: false });
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('the seat refuses any command or write with characters a person cannot see', () => {
+  const home = '/home/lou/org';
+  const zw = 'hi\u200b';
+  assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: `clawdling new domain X --mission "${zw}"` } }, { home }).decision, 'deny');
+  assert.equal(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, content: `# Review${String.fromCodePoint(0xe0041)}` } }, { home }).decision, 'deny');
+  assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'clawdling ls --json' } }, { home }).decision, 'allow', 'plain text is fine');
+});

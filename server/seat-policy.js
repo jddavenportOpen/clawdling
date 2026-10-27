@@ -10,6 +10,7 @@
 // named as one. Anything the hook cannot read is asked about too.
 import fs from 'node:fs';
 import path from 'node:path';
+import { hasHidden } from './receipts.js';
 
 // Any way of running clawdling's send or spawn: the shim, the .cmd/.ps1 shims, the script by path,
 // inside another command. Shared by the cockpit's display and the review page's list.
@@ -20,13 +21,14 @@ const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 // Every other tool is denied: subagents and workflows (they run beside its own thread), watchers,
 // the web, messages to other sessions (SendMessage), schedules and remote triggers (they would spend
 // the plan on their own), and any tool a later Claude Code adds. Deny by default.
-const PLAIN_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'AskUserQuestion', 'TodoWrite', 'ExitPlanMode']);
+const PLAIN_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'AskUserQuestion', 'TodoWrite', 'ExitPlanMode', 'ToolSearch']);
 const WEEK_FILE = /^\d{4}-W\d{2}\.md$/;
 
 export const ASK_SEND = 'Clawdling: the CTO wants to message another agent. Read the exact message, then say yes or no.';
 export const ASK_OTHER = 'Clawdling: the CTO seat runs only the report and the session list without asking.';
 export const ASK_WRITE = 'Clawdling: the CTO seat writes only its weekly review file without asking.';
 export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it asks.';
+export const DENY_HIDDEN = 'Clawdling: this has characters a person cannot see, so the CTO seat may not run or write it.';
 export const DENY_TOOL = 'Clawdling: the CTO seat uses only its report, its reviews and its questions to you (no subagents, schedules, web or messages outside clawdling send).';
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
@@ -104,6 +106,14 @@ export function seatDecision(payload, { home, now = Date.now() }) {
   const p = payload && typeof payload === 'object' ? payload : {};
   if (typeof p.tool_name !== 'string' || !p.tool_name) return { decision: 'ask', reason: ASK_UNREADABLE };
   const input = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
+  // A command or a write with characters a person cannot see: refused, whatever it is (the owner
+  // could not read what they would be approving, in the cockpit or in the terminal).
+  if ((SHELL_TOOLS.has(p.tool_name) || FILE_TOOLS.has(p.tool_name)) && ['command', 'content', 'new_string', 'old_string', 'new_source'].some((k) => typeof input[k] === 'string' && hasHidden(input[k].replace(/[\t\n\r]/g, '')))) {
+    return { decision: 'deny', reason: DENY_HIDDEN };
+  }
+  if (FILE_TOOLS.has(p.tool_name) && Array.isArray(input.edits) && input.edits.some((e) => e && typeof e.new_string === 'string' && hasHidden(e.new_string.replace(/[\t\n\r]/g, '')))) {
+    return { decision: 'deny', reason: DENY_HIDDEN };
+  }
   if (SHELL_TOOLS.has(p.tool_name)) {
     const cmd = typeof input.command === 'string' ? input.command : '';
     if (CROSS_AGENT_RE.test(cmd.slice(0, 4001))) return { decision: 'ask', reason: ASK_SEND };

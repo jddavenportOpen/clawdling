@@ -650,8 +650,12 @@ tags, variation selectors), not starting with `-` (the CLI would read it as an o
 through `clawdling.cmd` or PowerShell, no `%`, `^` or `!` (which they expand). And whatever is typed
 into any session, by anyone (a message, or a new session's first message), loses its control
 characters (but tab and line breaks) and every invisible character that can hide or reorder words
-(format characters, Unicode tags, private-use and unassigned code points); joiners and variation
-selectors stay, because emoji and some scripts need them and they carry no words. Through PowerShell, any
+(format characters, Unicode tags, private-use and unassigned code points, the supplementary variation
+selectors); a single joiner or emoji variation selector stays (emoji and some scripts need one), and
+a run of them collapses to one, so no run can carry hidden bytes. New agents' names and missions
+(written into their CLAUDE.md) are cleaned the same way. The seat's own check refuses (`deny`) any
+shell command or file write of its own that holds a character a person cannot see: you could not
+read what you would be approving. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
 built so a long run of options cannot make them backtrack without end, and every command is capped
 at 4,001 characters before it is matched. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
@@ -715,6 +719,10 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   price when the seat has no model set) must fit under it, or the week is skipped
   once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
   is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
+- **Within the run too.** An interactive Claude Code turn has no budget flag, so while a scheduled
+  review works, Clawdling checks the CTO's spend this week every minute; past the weekly cap it ends
+  the session (it stays resumable) and says so on the CTO page and in Settings. A review you start
+  yourself is yours to stop.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
   (No check-up runs for the seat: it would run without its own settings and hook.)
   It reads the schedule again after building the estimate, so turning it off (or lowering the cap)

@@ -710,15 +710,44 @@ export class Cto {
     }
   }
 
-  start(intervalMs = CHECK_MS) {
+  /**
+   * A scheduled review runs unattended, and an interactive Claude Code turn has no budget flag: while
+   * it works, its spend is checked every minute, and past the weekly cap the session is ended (it
+   * stays resumable) with a notice. A review you start yourself is yours to stop.
+   */
+  async watchSpend() {
+    const st = this.state();
+    const sid = st.last_run_sid;
+    const rec = sid ? this.sessions.get(sid) : null;
+    if (!rec || !BUSY.has(rec.status)) return { stopped: false };
+    const spent = this.weekSpend();
+    if (!(spent.usd > st.weekly_cap_usd)) return { stopped: false };
+    try {
+      await this.sessions.end(sid);
+    } catch (err) {
+      this.logger?.warn?.(`cto: could not stop the scheduled review: ${err.message}`);
+    }
+    const now = this.state();
+    now.last_skip = { week: isoWeek(this.now()), at: new Date(this.now()).toISOString(), why: `This week's scheduled CTO review was stopped: it had used $${spent.usd.toFixed(2)}, past its $${st.weekly_cap_usd.toFixed(2)} weekly cap. Resume it yourself if you want it to finish.` };
+    this.save(now);
+    this.events?.record?.({ type: 'cto', action: 'stopped-over-cap', sid });
+    this.events?.publish?.('cto', { action: 'stopped', why: now.last_skip.why });
+    return { stopped: true };
+  }
+
+  start(intervalMs = CHECK_MS, spendMs = 60000) {
     const run = () => this.check().catch((err) => this.logger?.warn?.(`cto: ${err.message}`));
     setTimeout(run, 6000).unref?.();
     this.timer = setInterval(run, intervalMs);
     this.timer.unref?.();
+    this.spendTimer = setInterval(() => this.watchSpend().catch((err) => this.logger?.warn?.(`cto: ${err.message}`)), spendMs);
+    this.spendTimer.unref?.();
   }
 
   stop() {
     clearInterval(this.timer);
+    clearInterval(this.spendTimer);
     this.timer = null;
+    this.spendTimer = null;
   }
 }
