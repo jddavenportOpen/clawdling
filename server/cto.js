@@ -19,7 +19,7 @@ import { COST_LABEL } from './report.js';
 import { REVIEW_MAX_BYTES, lintReview } from './review-lint.js';
 import { ReceiptIndex } from './receipts.js';
 import { checkThresholds, normalizeThresholds } from './status-rules.js';
-import { SEND_COMMAND_RE, parseSend } from './seat-policy.js';
+import { isSendCommand, parseSend, plainRead } from './seat-policy.js';
 import { HttpError, badRequest, conflict, notFound, oneLine, readJson, writeJson } from './util.js';
 
 export const CHECK_MS = 10 * 60000;
@@ -70,7 +70,7 @@ const round2 = (x) => Math.round(x * 100) / 100;
  * its answers. Read line by line; nothing else is kept.
  */
 export function scanTranscript(file) {
-  const out = { deliveries: [], decisions: [] };
+  const out = { deliveries: [], decisions: [], commands: [] };
   let text;
   try {
     const st = fs.statSync(file);
@@ -80,6 +80,7 @@ export function scanTranscript(file) {
     return out;
   }
   const sends = new Map();
+  const others = new Map();
   const asks = new Map();
   for (const line of text.split('\n')) {
     if (!line.includes('tool_use') && !line.includes('tool_result')) continue;
@@ -93,15 +94,18 @@ export function scanTranscript(file) {
     for (const c of content) {
       if (o.type === 'assistant' && c.type === 'tool_use' && typeof c.id === 'string') {
         const cmd = typeof c.input?.command === 'string' ? c.input.command : null;
-        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && SEND_COMMAND_RE.test(cmd.slice(0, 4001))) {
+        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && isSendCommand(cmd)) {
           const ps = parseSend(cmd, c.name);
           if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: ps.verb, command: cmd.slice(0, 4000), plain: ps.plain, message: ps.plain ? ps.message : null, state: 'pending', note: null });
+        } else if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && !plainRead(cmd)) {
+          // Any other command it was asked to run (a send in a spelling the page does not read is one).
+          if (!others.has(c.id)) others.set(c.id, { id: c.id, at: o.timestamp || null, command: cmd.slice(0, 4000), state: 'pending', note: null });
         } else if (c.name === 'AskUserQuestion' && Array.isArray(c.input?.questions)) {
           if (!asks.has(c.id)) asks.set(c.id, { id: c.id, at: o.timestamp || null, questions: c.input.questions.slice(0, 4).map((q) => ({ question: oneLine(String(q?.question || ''), 300), options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map((x) => oneLine(String(x?.label || ''), 120)) })), answers: null, state: 'waiting' });
         }
       } else if (o.type === 'user' && c.type === 'tool_result' && typeof c.tool_use_id === 'string') {
         const result = typeof c.content === 'string' ? c.content : Array.isArray(c.content) ? c.content.map((x) => (typeof x?.text === 'string' ? x.text : '')).join('\n') : '';
-        const s = sends.get(c.tool_use_id);
+        const s = sends.get(c.tool_use_id) || others.get(c.tool_use_id);
         if (s) {
           // Claude Code's own rejection texts, at the start of an error result (a sent message whose
           // output mentions "rejected" is still sent).
@@ -122,6 +126,8 @@ export function scanTranscript(file) {
     }
   }
   out.deliveries = [...sends.values()];
+  // "sent" reads as "ran" for these; the page words it so.
+  out.commands = [...others.values()];
   out.decisions = [...asks.values()];
   return out;
 }
@@ -136,6 +142,9 @@ export function plainHeadline(text) {
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
     .replace(/\b[a-z][a-z0-9+.-]{1,20}:(?:\/\/)?[^\s]*/gi, (m) => (/^(?:https?|ftp|file|mailto|tel|sms|javascript|data|tg|imessage|facetime):/i.test(m) || m.includes('//') ? '[link removed]' : m))
     .replace(/[.\u3002\uff0e\uff61](?=\S)/g, '\u2024')
+    // A Telegram @name, a /command (a tap would send it to the bot as you), a #tag; a phone number.
+    .replace(/(^|[^\p{L}\p{N}_])[@/#]+(?=[\p{L}\p{N}_])/gu, '$1')
+    .replace(/\+?\d[\d ().-]{5,}\d/g, (m) => (m.replace(/\D/g, '').length >= 7 && !/^\d{4}-\d{2}-\d{2}$/.test(m) ? '[number removed]' : m))
     .replace(/[<>]/g, '')
     .trim();
 }
@@ -282,7 +291,7 @@ export class Cto {
       if (!m) continue;
       try {
         const st = fs.lstatSync(path.join(dir, n));
-        if (st.isFile()) out.push({ week: m[1], bytes: st.size, updated_at: new Date(st.mtimeMs).toISOString() });
+        if (st.isFile()) out.push({ week: m[1], bytes: st.size, updated_at: new Date(st.mtimeMs).toISOString(), ...(m[1] > isoWeek(this.now()) ? { future: true } : {}) });
       } catch {
         // raced away
       }
@@ -343,6 +352,7 @@ export class Cto {
   activity(week) {
     const decisions = [];
     const deliveries = [];
+    const commands = [];
     const weekOf = (iso) => {
       const t = Date.parse(iso || '');
       return Number.isFinite(t) ? isoWeek(t) : null;
@@ -361,10 +371,11 @@ export class Cto {
       } catch {
         file = null;
       }
-      const scan = file ? this.scan(file) : { deliveries: [], decisions: [] };
+      const scan = file ? this.scan(file) : { deliveries: [], decisions: [], commands: [] };
       const mine = (it) => (titled ? true : weekOf(it.at) === week);
       for (const d of scan.decisions) if (mine(d)) decisions.push({ ...d, sid: s.sid });
       for (const d of scan.deliveries) if (mine(d)) deliveries.push({ ...d, sid: s.sid, to: deliveryTarget(d.command) });
+      for (const d of scan.commands || []) if (mine(d)) commands.push({ ...d, sid: s.sid });
       const nowWeek = isoWeek(this.now()) === week;
       // A question on screen now that the transcript does not have yet (Claude Code writes it once answered).
       const ask = s.status === 'needs_you' && s.asking && s.asking.kind === 'question' && s.asking.card ? s.asking : null;
@@ -389,8 +400,10 @@ export class Cto {
     };
     const allDecisions = merge(decisions, kept.decisions);
     const allDeliveries = merge(deliveries, kept.deliveries);
-    const keep = { decisions: allDecisions.filter((x) => x.id && FINAL.has(x.state)).slice(-50), deliveries: allDeliveries.filter((x) => x.id && FINAL.has(x.state)).slice(-50) };
-    if (keep.decisions.length + keep.deliveries.length > (kept.decisions?.length || 0) + (kept.deliveries?.length || 0) || JSON.stringify(keep) !== JSON.stringify({ decisions: kept.decisions || [], deliveries: kept.deliveries || [] })) {
+    const allCommands = merge(commands, kept.commands);
+    const fin = (list) => list.filter((x) => x.id && FINAL.has(x.state)).slice(-50);
+    const keep = { decisions: fin(allDecisions), deliveries: fin(allDeliveries), commands: fin(allCommands) };
+    if (JSON.stringify(keep) !== JSON.stringify({ decisions: kept.decisions || [], deliveries: kept.deliveries || [], commands: kept.commands || [] })) {
       try {
         fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
         writeJson(file, keep, 0o600);
@@ -398,9 +411,8 @@ export class Cto {
         this.logger?.warn?.(`cto: could not keep the week's activity: ${err.message}`);
       }
     }
-    allDecisions.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
-    allDeliveries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
-    return { decisions: allDecisions, deliveries: allDeliveries };
+    const byAt = (a, b) => String(a.at || '').localeCompare(String(b.at || ''));
+    return { decisions: allDecisions.sort(byAt), deliveries: allDeliveries.sort(byAt), commands: allCommands.sort(byAt) };
   }
 
   /** A transcript's decisions and deliveries, read again only when the file changed. */
@@ -501,7 +513,7 @@ export class Cto {
    * at work, or waiting on the owner, is not doubled; earlier reviews that finished are ended first
    * (they stay resumable), so weekly runs do not pile up idle Claude Code sessions.
    */
-  async startReview({ scheduled = false } = {}) {
+  async startReview({ scheduled = false, week: forWeek = null } = {}) {
     this.require();
     const live = this.busyReview();
     if (live) {
@@ -519,7 +531,7 @@ export class Cto {
         }
       }
     }
-    const week = isoWeek(this.now());
+    const week = forWeek || isoWeek(this.now());
     const s = await this.sessions.spawn({ agent: CTO_ID, prompt: `${REVIEW_PROMPT} The week is ${week}.`, title: `CTO review, ${week}`, reviewWeek: week });
     this.events?.record?.({ type: 'cto', action: scheduled ? 'scheduled-review' : 'review', sid: s.sid, week });
     return s;
@@ -636,6 +648,8 @@ export class Cto {
       const est = await this.estimate();
       // The owner may have changed the schedule while the estimate was built: decide on the fresh state.
       const fresh = this.state();
+      // The week may have turned while the estimate was built: the run belongs to the week it starts in.
+      if (isoWeek(this.now()) !== week) return { ran: false, why: 'the week changed' };
       if (!fresh.enabled || fresh.last_run_week === week || this.now() < weekSendTime(this.now(), fresh)) return { ran: false, why: !fresh.enabled ? 'off' : 'changed' };
       Object.assign(st, fresh);
       const spent = this.weekSpend();
@@ -656,7 +670,7 @@ export class Cto {
         return { ran: false, why: 'cap', notice: st.last_skip.why };
       }
       this.save(st);
-      const s = await this.startReview({ scheduled: true });
+      const s = await this.startReview({ scheduled: true, week });
       const after = this.state();
       after.last_run_sid = s.sid;
       after.last_skip = null;

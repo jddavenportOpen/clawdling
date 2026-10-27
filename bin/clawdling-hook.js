@@ -102,16 +102,17 @@ async function main() {
     const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : null;
     if (event === 'PreToolUse' && input && JSON.stringify(input).length <= 64 * 1024) slim.tool_input = input;
   }
-  // The CTO seat (1.7) reports every tool call: its id and name, and the command only when it is a
-  // cross-agent message (`clawdling send` / `clawdling spawn`), which the cockpit shows beside
-  // Claude Code's own prompt. No other command or input is forwarded.
+  // The CTO seat (1.7) reports every tool call: its id and name, and the command of a shell call,
+  // which the cockpit shows beside Claude Code's own prompt (a message to an agent above all). No
+  // other input is forwarded, and an ordinary session's hooks never see a shell call.
   if ((event === 'PreToolUse' || event === 'PostToolUse') && !slim.tool_name && typeof payload.tool_name === 'string') {
     slim.tool_name = clip(payload.tool_name, 100);
     slim.tool_use_id = clip(payload.tool_use_id, 100);
     const cmd = payload.tool_input && typeof payload.tool_input.command === 'string' ? payload.tool_input.command : '';
     // The same test as server/seat-policy.js CROSS_AGENT_RE (any spelling); 4,001 characters at most,
     // so the server can tell the owner when it was cut.
-    if (event === 'PreToolUse' && (payload.tool_name === 'Bash' || payload.tool_name === 'PowerShell') && /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i.test(cmd)) slim.tool_input = { command: clip(cmd, 4001) };
+    // For the CTO seat, every shell command (so the cockpit can show what a prompt is for).
+    if (event === 'PreToolUse' && (payload.tool_name === 'Bash' || payload.tool_name === 'PowerShell') && (seat === 'cto' || /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i.test(cmd))) slim.tool_input = { command: clip(cmd, 4001) };
   }
   const record = { event, sid, payload: slim, ts: new Date().toISOString(), ...(process.env.CLAWDLING_LAUNCH ? { launch: process.env.CLAWDLING_LAUNCH } : {}) };
   let token = '';

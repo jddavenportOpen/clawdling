@@ -5,7 +5,7 @@
 // WebSocket viewers; input from viewers goes back to the session. Status comes from Claude Code
 // hooks (see hooks.js). With tmux, sessions outlive the Clawdling server: on start we reconcile the
 // registry with `tmux ls` and reattach. With pty, they end when it stops and stay resumable.
-import { CROSS_AGENT_RE, parseSend } from './seat-policy.js';
+import { CROSS_AGENT_RE, isSendCommand, parseSend } from './seat-policy.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -80,7 +80,7 @@ const POINTER = '\u276f'; // the "❯" Claude Code puts in front of the selected
 const KEY = { up: Buffer.from('\x1b[A'), down: Buffer.from('\x1b[B'), enter: Buffer.from('\r') };
 const DIALOG_ARM_MS = 1500; // Claude Code ignores keys for a moment after a dialog opens
 // Claude Code's screen after a "No" stops the turn (2.1.308): no Stop hook follows it.
-const INTERRUPTED_RE = /Interrupted\s*·\s*What should Claude do instead\?/;
+const INTERRUPTED_RE = /^\s*⎿\s+Interrupted\s*·\s*What should Claude do instead\?\s*$/;
 const INTERRUPT_CHECK_MS = [1500, 4000, 8000, 15000];
 // When to look for a question's choices after its Notification (ms): the list may draw late.
 const CHOICE_RETRY_MS = [300, 1000, 2500, 5000, 9000];
@@ -389,7 +389,9 @@ export class SessionManager {
       // The CTO seat's message waiting for the owner's yes or no (shown with Claude Code's prompt).
       pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.command : null,
       // ...and whether it is exactly one message the cockpit can show whole (else: read the terminal).
-      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command, rec.pending_cmd.tool).plain : null,
+      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.send !== false && !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command, rec.pending_cmd.tool).plain : null,
+      // Whether it is a message to another agent at all (the seat's other commands are shown too).
+      pending_cmd_send: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.send !== false : null,
       // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
       background: isLive(rec.status) ? this.runtime.get(rec.sid)?.background ?? null : null,
       resumable: rec.status === 'ended',
@@ -1181,7 +1183,9 @@ export class SessionManager {
     if (event === 'PreToolUse') {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
       // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
-      rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd.slice(0, 4001)) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash' } : null;
+      // For the seat, every shell command it is asked about; for others, only a cross-agent message.
+      const send = !!cmd && (CROSS_AGENT_RE.test(cmd.slice(0, 4001)) || isSendCommand(cmd));
+      rec.pending_cmd = cmd && toolId && (send || rec.kind === 'cto') ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash', send } : null;
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
     }
@@ -1488,9 +1492,10 @@ export class SessionManager {
         if (rec.status !== 'working' || rec.launch_id !== launch) return;
         try {
           const text = await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`);
-          // Only the bottom of the screen: an older "Interrupted" further up is history.
-          const tail = String(text).split('\n').filter((l) => l.trim()).slice(-8).join(' ').replace(/\s+/g, ' ');
-          if (rec.status === 'working' && rec.launch_id === launch && INTERRUPTED_RE.test(tail)) {
+          // Only the bottom of the screen, and only Claude Code's own line ("  ⎿  Interrupted · ..."
+          // at the start of a line): an older one further up is history.
+          const tail = String(text).split('\n').filter((l) => l.trim()).slice(-8);
+          if (rec.status === 'working' && rec.launch_id === launch && tail.some((l) => INTERRUPTED_RE.test(l))) {
             rec.status = 'ready';
             rec.waiting_on = null;
             rec.notification = null;
@@ -1640,7 +1645,11 @@ export class SessionManager {
     if (!rec || !rt?.control || rt.control.closed || !data) return;
     rt.control.sendBytes(Buffer.from(data.slice(0, 65536), 'utf8'));
     if (rec.status === 'needs_you' && (rec.waiting_on === 'permission_prompt' || rec.waiting_on === 'elicitation_dialog') && /\r|^[1-9]$|^\x1b$/.test(data)) {
-      const wasPermission = rec.waiting_on === 'permission_prompt' && rec.asking?.kind !== 'plan';
+      // Esc, or the digit of a choice that says No (the choices read off the screen). An Enter is
+      // not counted: the highlighted choice is usually Yes, and a Yes must never read as a No.
+      const label = /^[1-9]$/.test(data) ? (rec.choices || []).find((c) => c.option === Number(data))?.label : null;
+      const saidNo = data === '\x1b' || (!!label && /^\s*(?:\d+[.)]\s*)?no\b/i.test(label));
+      const wasPermission = rec.waiting_on === 'permission_prompt' && rec.asking?.kind !== 'plan' && saidNo;
       rec.status = 'working';
       rec.notification = null;
       rec.waiting_on = null;

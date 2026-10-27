@@ -15,8 +15,6 @@ import path from 'node:path';
 export const CROSS_AGENT_RE = /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
-const WINDOW = new Set(['today', '7d', '30d']);
-const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
 const WEEK_FILE = /^\d{4}-W\d{2}\.md$/;
 
 export const ASK_SEND = 'Clawdling: the CTO wants to message another agent. Read the exact message, then say yes or no.';
@@ -26,8 +24,8 @@ export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it as
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
 /**
- * True for one plain `clawdling report ...` / `clawdling ls ...` with only these options:
- *   report [--all] [--json] [--window today|7d|30d | --window=...] [<agent id>]
+ * True for one plain read the CTO's template uses, with only these options, in any order:
+ *   report --all [--json] [--window 7d | --window=7d]   (the sanitized whole-org report only)
  *   ls [--all] [--json]
  */
 export function plainRead(cmd) {
@@ -49,14 +47,13 @@ export function plainRead(cmd) {
     if (a === '--all' || a === '--json') {
       if (!once(a)) return false;
     } else if (a === '--window') {
-      if (!once(a) || !WINDOW.has(rest[++i])) return false;
-    } else if (a.startsWith('--window=')) {
-      if (!once('--window') || !WINDOW.has(a.slice(9))) return false;
-    } else if (AGENT_ID.test(a)) {
-      if (!once('agent')) return false;
+      if (!once(a) || rest[++i] !== '7d') return false;
+    } else if (a === '--window=7d') {
+      if (!once('--window')) return false;
     } else return false;
   }
-  return true;
+  // Only the whole-org report: its agent-written text is capped and cleaned (receipts.js agentText).
+  return seen.has('--all');
 }
 
 /** "2026-W44": the ISO week (Monday first) of a time, in local time (as digest.js isoWeek). */
@@ -116,7 +113,20 @@ export function decisionOutput(d) {
 // page's list and the cockpit's banner use it, so `clawdling report send-x` is not a message.
 // (An option's value may not start with "-": otherwise "--a --a --a ..." splits in exponentially
 // many ways and a failing match never ends. Callers also cap the input at 4,001 characters.)
-export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?(?:\s|\\\r?\n|`\r?\n)+(?:--[a-z-]+(?:[ =](?:"[^"]*"|'[^']*'|[^\s"';&|-][^\s"';&|]*))?(?:\s|\\\r?\n|`\r?\n)+)*(?:send|spawn)(?=\s|$)/i;
+// Match it on sendCommandText(cmd): line continuations (backslash or backtick, then a line break)
+// become spaces first, so separators are only whitespace, and an option value (at most one leading
+// "-") can never be read as a separator: one way to split, no runaway backtracking.
+export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?\s+(?:--[a-z-]+(?:[ =](?:"[^"]*"|'[^']*'|-?[^\s"';&|-][^\s"';&|]*))?\s+)*(?:send|spawn)(?=\s|$)/i;
+
+/** A command made ready for SEND_COMMAND_RE: capped, continuations turned into spaces. */
+export function sendCommandText(cmd) {
+  return String(cmd || '').slice(0, 4001).replace(/[\\`]\r?\n/g, ' ');
+}
+
+/** True when a command sends or spawns, as the review page and the cockpit count it. */
+export function isSendCommand(cmd) {
+  return SEND_COMMAND_RE.test(sendCommandText(cmd));
+}
 
 // The CLI's own options for send and spawn, with the shape of their values.
 const SEND_OPTIONS = { '--model': /^[A-Za-z0-9._:\[\]-]{1,80}$/, '--effort': /^[a-z]{1,10}$/, '--account': /^[A-Za-z0-9._-]{1,60}$/, '--cols': /^\d{1,4}$/, '--rows': /^\d{1,4}$/ };

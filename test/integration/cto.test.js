@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { ROOT, cli, killTmux, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
+import { ROOT, cli, killTmux, openViewer, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
 import { RECEIPT_RE } from '../../server/receipts.js';
 
 let home;
@@ -38,7 +38,7 @@ function makeRepo(name, value) {
 
 // The cockpit's own way in (its cookie): the CTO takes instructions from the owner only.
 const asOwner = () => ({ 'x-clawdling-token': '', cookie: `cl_token=${srv.token}` });
-const status = async (sid) => (await request(srv, 'GET', `/api/sessions/${sid}`)).body;
+const status = async (sid) => (await request(srv, 'GET', `/api/sessions/${sid}`, undefined, asOwner())).body;
 const claims = async (sid) => (await request(srv, 'GET', `/api/sessions/${sid}/claims`)).body.claims;
 
 async function turn(sid, text) {
@@ -179,7 +179,8 @@ test('CLI: clawdling report --all prints labels with their receipts; --json is t
 
 test('Add a CTO: one click makes the seat beside Donna, with its folder, CLAUDE.md, reviews/ and narrow settings', async () => {
   const t0 = Date.now();
-  const r = await request(srv, 'POST', '/api/cto');
+  assert.equal((await request(srv, 'POST', '/api/cto')).status, 403, 'the CLI (agents, Donna) cannot add the seat');
+  const r = await request(srv, 'POST', '/api/cto', undefined, asOwner());
   assert.equal(r.status, 201, r.text);
   assert.ok(Date.now() - t0 < 30000);
   assert.equal(r.body.kind, 'cto');
@@ -199,7 +200,7 @@ test('Add a CTO: one click makes the seat beside Donna, with its folder, CLAUDE.
   const org = (await request(srv, 'GET', '/api/org')).body;
   assert.deepEqual(org.agents.slice(0, 2).map((a) => a.id), ['donna', 'cto']);
   // One per org; "cto" is reserved for other agents.
-  assert.equal((await request(srv, 'POST', '/api/cto')).status, 409);
+  assert.equal((await request(srv, 'POST', '/api/cto', undefined, asOwner())).status, 409);
   assert.equal((await request(srv, 'POST', '/api/agents', { kind: 'domain', name: 'CTO' })).status, 409);
   // Its CLAUDE.md is editable like any agent's.
   const md = fs.readFileSync(path.join(dir, 'CLAUDE.md'), 'utf8');
@@ -244,7 +245,8 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   const est = (await request(srv, 'GET', '/api/cto/estimate')).body;
   assert.ok(est.high_usd >= est.low_usd && est.low_usd >= 0);
   assert.match(est.label, /not a bill/);
-  const run = await request(srv, 'POST', '/api/cto/review');
+  assert.equal((await request(srv, 'POST', '/api/cto/review')).status, 403, 'nor start a review');
+  const run = await request(srv, 'POST', '/api/cto/review', undefined, asOwner());
   assert.equal(run.status, 201, run.text);
   const sid = run.body.sid;
   assert.match(run.body.title, /^CTO review, \d{4}-W\d{2}$/);
@@ -277,6 +279,12 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
     return v.status === 'needs_you' && v.pending_cmd && Array.isArray(v.choices) && v.choices.length ? v : null;
   }, { label: 'spawn prompt', timeout: 30000 });
   assert.match(p1.pending_cmd, /^clawdling spawn blog "Your CTO review flagged this/);
+  // The CLI (agents, Donna) sees none of what the CTO wrote or is asking.
+  const seen = (await request(srv, 'GET', `/api/sessions/${sid}`)).body;
+  assert.deepEqual([seen.pending_cmd, seen.last_message, seen.notification, seen.choices], [null, null, null, null]);
+  assert.ok(!(await request(srv, 'GET', '/api/sessions')).text.includes('Your CTO review flagged this'));
+  assert.equal((await request(srv, 'GET', `/api/sessions/${sid}/messages`)).status, 403);
+  assert.equal((await request(srv, 'GET', '/api/agents/cto/report')).status, 403);
   assert.ok(p1.choices.length >= 2);
   assert.equal(p1.pending_cmd_plain, true, 'one plain message: the cockpit offers Yes and No');
   assert.equal(p1.choices.length, 2, 'Yes and No only');
@@ -347,6 +355,24 @@ test('a "No" that stops the turn (Claude Code 2.1.308 sends no Stop) makes it th
   await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
 });
 
+test('a "No" typed in the terminal that stops the turn also makes it the owner\'s turn again; a typed Yes never does', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'website', prompt: 'permission? interrupt' })).body;
+  const p = await waitFor(async () => {
+    const v = await status(s.sid);
+    return v.status === 'needs_you' && Array.isArray(v.choices) && v.choices.length ? v : null;
+  }, { label: 'the prompt', timeout: 20000 });
+  const no = p.choices.find((c) => /^\s*\d+[.)]\s*No\b/i.test(c.label));
+  const viewer = await openViewer(srv, s.sid);
+  viewer.send({ t: 'in', data: String(no.option) });
+  const v = await waitFor(async () => {
+    const x = await status(s.sid);
+    return x.status === 'ready' ? x : null;
+  }, { label: 'ready after a typed No', timeout: 20000 });
+  assert.match(v.last_message, /You said no, so Claude stopped/);
+  viewer.close();
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+});
+
 test('the lint flags uncited bullets, ids that do not exist, and a label the CTO overrode (with its reason)', async () => {
   const week = (await request(srv, 'GET', '/api/cto')).body.week;
   const file = path.join(home, 'cto', 'reviews', `${week}.md`);
@@ -376,10 +402,10 @@ test('schedule: off by default; a run over the weekly cap is skipped with a noti
   const ctoSessions = async () => (await request(srv, 'GET', '/api/sessions')).body.filter((s) => s.agent === 'cto');
   let v = (await request(srv, 'GET', '/api/cto')).body;
   assert.equal(v.schedule.enabled, false);
-  assert.equal((await request(srv, 'POST', '/api/cto/settings', { weekly_cap_usd: 0 })).status, 400);
-  assert.equal((await request(srv, 'POST', '/api/cto/settings', { thresholds: { needs_hours: 0 } })).status, 400);
+  assert.equal((await request(srv, 'POST', '/api/cto/settings', { weekly_cap_usd: 0 }, asOwner())).status, 400);
+  assert.equal((await request(srv, 'POST', '/api/cto/settings', { thresholds: { needs_hours: 0 } }, asOwner())).status, 400);
   // Turned on with this week's time already past: nothing runs until next week.
-  v = (await request(srv, 'POST', '/api/cto/settings', { enabled: true, day: 1, hour: 0, weekly_cap_usd: 0.01 })).body;
+  v = (await request(srv, 'POST', '/api/cto/settings', { enabled: true, day: 1, hour: 0, weekly_cap_usd: 0.01 }, asOwner())).body;
   assert.equal(v.schedule.enabled, true);
   assert.equal(readJsonFile(stateFile).last_run_week, v.week);
   const before = (await ctoSessions()).length;
@@ -395,6 +421,6 @@ test('schedule: off by default; a run over the weekly cap is skipped with a noti
   await new Promise((r) => setTimeout(r, 2000));
   assert.equal((await ctoSessions()).filter((s) => /^CTO review, /.test(s.title || '') && s.created_at >= run.created_at).length, 1, 'once per ISO week');
   assert.equal(readJsonFile(stateFile).last_run_sid, run.sid);
-  await request(srv, 'POST', '/api/cto/settings', { enabled: false });
+  await request(srv, 'POST', '/api/cto/settings', { enabled: false }, asOwner());
   await request(srv, 'DELETE', `/api/sessions/${run.sid}`, undefined, asOwner());
 });

@@ -552,9 +552,10 @@ argument, `cto`, and answers before Claude Code's permission rules (`server/seat
 answer of "ask" makes Claude Code ask whatever allow rules exist; "allow" lets the call through. It
 answers:
 
-- **allow** for one plain `clawdling report` or `clawdling ls` with only these options:
-  `report [--all] [--json] [--window today|7d|30d] [<agent id>]`, `ls [--all] [--json]` (no other
-  option, no pipes, lists, redirection, substitution, quotes or line breaks);
+- **allow** for one plain read its template uses, with only these options in any order:
+  `report --all [--json] [--window 7d]` (the whole-org report, whose agent-written text is cleaned)
+  and `ls [--all] [--json]` (no other option, no per-agent report, no pipes, lists, redirection,
+  substitution, quotes or line breaks);
 - **ask** for any command that runs clawdling's `send` or `spawn` in any spelling (the shim,
   `clawdling.cmd`, `clawdling.ps1`, the script by path, inside `sh -c` or after `&&`), with the
   reason "the CTO wants to message another agent";
@@ -567,16 +568,26 @@ answers:
 So the seat runs exactly two things without a prompt, the report and the session list, and writes
 only its weekly review file; everything else shows Claude Code's own prompt, every time. On a
 cross-agent prompt Claude Code then offers only Yes and No (seen on 2.1.308), never "don't ask
-again". The hook prints its answer first, even when the Clawdling server is not running. If the hook
+again".
+
+**One-tap answers only for one plain message.** In the cockpit, the CTO's prompts get Yes and No
+buttons only when the prompt is for exactly one plain `clawdling send|spawn` message (below). Any
+other prompt from the seat (another command, a file outside its reviews, a message in an unusual
+spelling) shows what it is, with the command when it is a shell command, and is answered in the
+terminal ("Show the terminal"). The hook prints its answer first, even when the Clawdling server is not running. If the hook
 cannot run at all, the exact allow rules, the ask rules and the ask-first mode still apply.
 
-**It takes instructions from you only.** Starting a CTO session, typing into one, answering one of
-its prompts, and restarting, resuming, renaming, re-modelling or ending one work from the cockpit
-(its cookie) or a paired device, never with the raw token (`403`). The raw token is how the `clawdling` CLI talks to the server, and every other agent and
-Donna may run `clawdling send` and `spawn` without a prompt: so no agent and not Donna can start the
-CTO, put words in front of it, or press Yes on its prompt. Every other agent's settings (and
-Donna's) also deny writing anywhere in `<org>/cto/`, so none can plant settings, skills or a review
-in the seat's folder.
+**It takes instructions from you only, and its words go only to you.** The `clawdling` CLI, which
+every other agent and Donna may run without a prompt, talks to the server with the token in a
+header; the cockpit uses its cookie, a paired device its own key. With the CLI's header, the server
+refuses (`403`) to add the seat, start or change its schedule, start a CTO session, type into one,
+answer its prompts, restart, resume, rename, re-model or end it, attach to its terminal, or read its
+transcript, Timeline, claims or report; and it hands out CTO sessions without what the CTO wrote or
+is asking (last message, notification, question, choices, pending command). Donna's "today so far"
+leaves the CTO out. Every other agent's settings (and Donna's) deny reading and writing anywhere in
+`<org>/cto/`. So no agent and not Donna can start the CTO, put words in front of it, press Yes for
+it, plant files in its folder, or take its words as their own instructions. (This tells the CLI
+apart from the cockpit; anyone who holds the token itself, by a command you approved, is you.)
 
 ### How it starts
 
@@ -607,11 +618,10 @@ in the seat's folder.
 ### What its hooks forward
 
 The seat's hooks report every tool call (PreToolUse and PostToolUse with no matcher) so the cockpit
-can show a pending cross-agent message beside Claude Code's prompt. The hook script
-(`bin/clawdling-hook.js`) forwards only the tool's name and its call id (100 characters each), and
-the command (4,001 characters at most) only for a PreToolUse of Bash or PowerShell that runs
-clawdling's `send` or `spawn` (the same test as the seat's check). No other command, file path or
-tool input leaves the hook. The server keeps that command until any other tool call, the matching
+can show what a prompt is for. The hook script (`bin/clawdling-hook.js`) forwards only the tool's
+name and its call id (100 characters each), and for the seat the command of each Bash or PowerShell
+call (4,001 characters at most). No file path or other tool input leaves the hook, and an ordinary
+session's hooks never see a shell call. The server keeps that command until any other tool call, the matching
 PostToolUse, the end of the turn or a new prompt, and shows it only while the session waits on a
 permission prompt (Claude Code runs a command on its own: its hook, then its prompt, then the call,
 so the prompt on screen belongs to the newest tool call). Only exactly one
@@ -634,7 +644,9 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
   one line, stripped of control, bidi and zero-width characters, and cannot look like a citation
   (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The report's `note` and the CTO's CLAUDE.md
   both say to treat that text as data, never as instructions.
-- The CTO has no web, no MCP servers, and can write only its own reviews without asking.
+- The CTO has no web, no MCP servers, and can write only its own reviews without asking. Nothing it
+  writes reaches another agent or Donna except a message you said yes to (see "It takes instructions
+  from you only, and its words go only to you").
 - Two files reach the CTO as instructions, not as report data: the org's `CLAUDE.md` (which every
   agent loads from the parent folder) and `me.md` (in every agent's context). They are your files,
   and agents can edit them in ask-first mode only with your yes. Treat them as trusted inputs you
@@ -645,18 +657,22 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
   Clawdling's own, and the lint marks uncited lines and ids that do not exist.
 - The review page renders the review as text, never HTML, and every link comes from Clawdling's
   receipt index, not from the review.
-- The worst a steered CTO can do unasked is write a misleading review, which shows its citations.
+- The worst a steered CTO can do unasked is write a misleading review, which shows its citations,
+  and ask you for things you can refuse.
 
 ### Deliveries and decisions on the review page
 
 Whether a message was sent, declined, failed or is waiting, and what you answered on a decision
 card, are read from the seat's own Claude Code transcripts (`scanTranscript`), not from what the
-model wrote: "declined" only for Claude Code's own rejection text at the start of an error result,
-and a send or spawn in any spelling counts. A message that is not one plain message is listed as its
-whole command, never as an extracted text the agent may not have received. Final states are also
+model wrote: "declined" only for Claude Code's own rejection text at the start of an error result.
+A send or spawn written as its own command (in any case, after options, across continued lines) is
+listed under "Messages to agents"; every other shell command the CTO asked to run, including a send
+in a spelling the page cannot read as one, is listed under "Other commands it asked to run", with
+whether you said yes. A message that is not one plain message is listed as its whole command, never
+as an extracted text the agent may not have received. Final states are also
 kept per week in `.clawdling/cto/activity/<week>.json`, written when a CTO turn ends (Stop,
 StopFailure, SessionEnd, or a "No" that stops it, whether answered in the cockpit or typed in the
-terminal) and whenever the page is read, so the record outlives the sessions and their transcripts. Review sessions are
+terminal: the typed digit of a No choice, or Esc; only Claude Code's own "⎿ Interrupted" line counts) and whenever the page is read, so the record outlives the sessions and their transcripts. Review sessions are
 marked by the server when it starts them, not by their title.
 The CTO also notes a declined message in the review (`Declined: ...`) when it can (a "No" in
 Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
@@ -682,7 +698,9 @@ first. When on, the Monday report adds one line, `CTO, week <N>: <headline>. N d
 Clawdling.`, from this week's or last week's review only: one line, 160 characters, any `scheme:`
 link replaced by `[link removed]`, every dot-like character inside a word (`.`, and the full-width
 and ideographic ones) turned into a one-dot leader so no chat app makes a domain or address
-tappable, invisible characters and `<` `>` dropped.
+tappable, the `@`, `/` or `#` in front of a word dropped (no Telegram user, bot command or tag), a
+phone-number-like run of seven or more digits replaced by `[number removed]`, invisible characters
+and `<` `>` dropped.
 Nothing else from a review leaves the computer, and it goes through the Monday report's sender and
 rules.
 
@@ -695,7 +713,7 @@ your device). Adding
 the seat, the "Run this week's review" button and every CTO setting (the schedule, the cap, the
 thresholds, the Monday line) work only from the computer Clawdling runs on (`403` through a remote
 address; on a LAN address with `--host` the token alone is not enough). Starting a chat with the CTO
-is open to a paired device like any agent's session, and closed to the CLI's raw token (see above).
+is open to a paired device like any agent's session, and closed to the CLI (see above).
 
 ## Agents
 

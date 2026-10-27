@@ -63,7 +63,8 @@ export function CtoPage({ id }) {
     const t = setInterval(() => setTick((x) => x + 1), REFRESH_MS);
     return () => clearInterval(t);
   }, [running && running.sid, running && running.status]);
-  const shown = week || (v && v.reviews[0] && v.reviews[0].week) || null;
+  // A week later than this one is never the default (a steered CTO could name one).
+  const shown = week || (v && (v.reviews.find((r) => !r.future) || v.reviews[0])?.week) || null;
 
   if (err) return html`<p class="form-error" role="alert">Could not load the CTO: ${err}</p>`;
   if (!v) return html`<div class="panel-skel tall" aria-label="Loading"></div>`;
@@ -155,6 +156,7 @@ function ReviewView({ week, tick, now }) {
     ${l.missing.length ? html`<p class="rc-note" data-testid="cto-missing">No section for ${l.missing.map((m) => `${m.name} (${LABEL_TEXT[m.label] || m.label})`).join(', ')}.</p>` : null}
     <${Decisions} r=${r} />
     <${Deliveries} list=${r.deliveries} />
+    <${Commands} list=${r.commands} />
     <p class="cto-raw"><button class="link-btn" onClick=${() => setRaw(!raw)} aria-expanded=${raw ? 'true' : 'false'}>${raw ? 'Hide the file' : 'Show the file'}</button> <span class="rc-label">cto/reviews/${week}.md</span></p>
     ${raw ? html`<pre class="cto-file" data-testid="cto-file">${r.text}</pre>` : null}
   </article>`;
@@ -199,6 +201,23 @@ function Decisions({ r }) {
         : html`<p class="cto-dec-a"><span class="tone-amber-text">Waiting for you.</span> <button class="btn btn-quiet btn-sm" onClick=${() => focusSession(d.sid)} data-testid="cto-answer">Answer it</button></p>`}
     </li>`)}</ul>`
       : html`<ol class="cto-dec-list">${r.lint.decisions.map((d) => html`<li class="cto-dec"><p class="cto-dec-q">${d.text}</p></li>`)}</ol>`}
+  </section>`;
+}
+
+const COMMAND_STATE = { sent: ['ok', 'You said yes: it ran'], declined: ['bad', 'You said no: it did not run'], failed: ['bad', 'It ran and failed'], pending: ['wait', 'Not answered'] };
+
+/** Every other shell command the CTO asked to run (not a message the page can read as one). */
+function Commands({ list }) {
+  if (!list || !list.length) return null;
+  return html`<section class="cto-sec" aria-labelledby="cto-cmd-h" data-testid="cto-commands">
+    <h3 id="cto-cmd-h" class="cto-sec-h">Other commands it asked to run</h3>
+    <ul class="cto-del-list">${list.map((d, i) => {
+      const [tone, text] = COMMAND_STATE[d.state] || COMMAND_STATE.pending;
+      return html`<li key=${d.id || i} class=${`cto-del tone-${tone}`} data-state=${d.state}>
+        <p class="cto-del-top"><span class=${`pill pill-${tone === 'ok' ? 'ok' : tone === 'wait' ? 'wait' : 'bad'}`}><span class="pill-dot"></span>${text}</span></p>
+        <code class="cto-del-msg cto-del-cmd">${d.command}</code>
+      </li>`;
+    })}</ul>
   </section>`;
 }
 

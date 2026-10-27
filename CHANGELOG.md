@@ -49,7 +49,7 @@
   settings nor a saved "don't ask again" load), `--strict-mcp-config` (no MCP servers), always the
   ask-first mode, and without the org folder added. Its own hook check lets it run only plain
   `clawdling report` and `clawdling ls` (exact options, never `--home` or `--port`) and write only
-  `reviews/<week>.md` without asking; it takes instructions from you only (agents and Donna cannot start it, type into it or answer for it, nor write in its folder); the web, its own CLAUDE.md and its settings are denied; everything else asks.
+  `reviews/<week>.md` without asking; it takes instructions from you only, and its words go only to you (agents and Donna cannot start, message, answer for or read it, nor touch its folder; the cockpit offers one-tap answers only for one plain message); the web, its own CLAUDE.md and its settings are denied; everything else asks.
   Its hooks report every tool call, and the hook script forwards only the tool's name and id, plus
   the command of a `clawdling send|spawn`. Adding the seat, starting a review and every CTO setting
   work only on the computer itself; a paired phone can read reviews and answer the CTO's prompts.

@@ -1264,9 +1264,14 @@ export async function startServer(opts = {}) {
     // The CTO seat (1.7) takes instructions from the owner only: the cockpit (its cookie) or a paired
     // device. A request with the raw token is the CLI, which every agent and Donna can run without a
     // prompt (`clawdling send`, `spawn`): it may not start the CTO, type into it or answer for it.
+    const rawToken = (req) => !req.who.remote && typeof req.headers[TOKEN_HEADER] === 'string' && !!req.headers[TOKEN_HEADER];
+    // What the CTO wrote or was asked stays out of what the CLI (agents, Donna) can read: a steered
+    // CTO's words must never become another agent's instructions.
+    const CTO_HIDDEN = { last_message: null, notification: null, asking: null, choices: null, pending_cmd: null, pending_cmd_plain: null, pending_cmd_send: null };
+    const forCaller = (req, v) => (v && v.kind === 'cto' && rawToken(req) ? { ...v, ...CTO_HIDDEN } : v);
     const ownerOnlyCto = (req, sid) => {
       const rec = sid ? sessions.get(sid) : null;
-      if ((sid ? rec && rec.kind === 'cto' : true) && !req.who.remote && typeof req.headers[TOKEN_HEADER] === 'string' && req.headers[TOKEN_HEADER]) {
+      if ((sid ? rec && rec.kind === 'cto' : true) && rawToken(req)) {
         throw new HttpError(403, 'Only you can talk to the CTO, from the cockpit: agents and Donna cannot start, message, answer for, restart or end it.');
       }
     };
@@ -1297,7 +1302,7 @@ export async function startServer(opts = {}) {
         const a = org.require(id);
         const ctx = org.context(id);
         const stats = sessions.agentStats()[id] || {};
-        return [200, { ...a, live: stats.live || 0, needs_you: stats.needs_you || 0, last_activity_at: stats.last_activity_at || null, ...ctx, sessions: sessions.list().filter((s) => s.agent === id) }];
+        return [200, { ...a, live: stats.live || 0, needs_you: stats.needs_you || 0, last_activity_at: stats.last_activity_at || null, ...ctx, sessions: sessions.list().filter((s) => s.agent === id).map((v) => forCaller(req, v)) }];
       }],
       ['PUT', /^\/api\/agents\/([^/]+)\/context$/, async (req, m) => {
         const id = agentParam(m);
@@ -1344,7 +1349,7 @@ export async function startServer(opts = {}) {
         publishOrg('agent_created', agent.id);
         return [201, { ...agent, live: 0, needs_you: 0, last_activity_at: null }];
       }],
-      ['GET', /^\/api\/sessions$/, () => [200, sessions.list()]],
+      ['GET', /^\/api\/sessions$/, (req) => [200, sessions.list().map((v) => forCaller(req, v))]],
       ['POST', /^\/api\/sessions$/, async (req) => {
         const b = await jsonBody(req);
         if (b.agent === 'cto' && org.cto()) ownerOnlyCto(req, null);
@@ -1392,7 +1397,7 @@ export async function startServer(opts = {}) {
         const b = await jsonBody(req).catch(() => ({}));
         return [200, await sessions.restart(sid, { cols: b.cols, rows: b.rows })];
       }],
-      ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, sessions.view(sessions.require(sidParam(m)))]],
+      ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, forCaller(req, sessions.view(sessions.require(sidParam(m))))]],
       ['PATCH', /^\/api\/sessions\/([^/]+)$/, async (req, m) => {
         const sid = sidParam(m);
         ownerOnlyCto(req, sid);
@@ -1439,6 +1444,7 @@ export async function startServer(opts = {}) {
         return null;
       }],
       ['GET', /^\/api\/sessions\/([^/]+)\/messages$/, (req, m, res, url) => {
+        ownerOnlyCto(req, sidParam(m));
         const rec = sessions.require(sidParam(m));
         const afterRaw = url.searchParams.get('after');
         const after = afterRaw === null || afterRaw === '' ? -1 : Number(afterRaw);
@@ -1457,7 +1463,10 @@ export async function startServer(opts = {}) {
         return [200, { messages: page, next, more: all.length > 0 && all[all.length - 1].n > next, status: rec.status }];
       }],
       // The report card (1.5), read-only: an agent's four blocks, the org's totals, a session's Timeline.
-      ['GET', /^\/api\/agents\/([^/]+)\/report$/, async (req, m, res, url) => [200, await reports.agentReport(agentParam(m), { window: url.searchParams.get('window') || '7d' })]],
+      ['GET', /^\/api\/agents\/([^/]+)\/report$/, async (req, m, res, url) => {
+        if (org.agent(agentParam(m))?.kind === 'cto') ownerOnlyCto(req, null);
+        return [200, await reports.agentReport(agentParam(m), { window: url.searchParams.get('window') || '7d' })];
+      }],
       ['GET', /^\/api\/org\/report$/, (req, m, res, url) => [200, reports.orgReport({ window: url.searchParams.get('window') || '7d' })]],
       // Verified done (1.6). Approving commands, running them and spending the plan happen only from
       // the computer itself (a paired device can read results and send "fix it", nothing more).
@@ -1491,7 +1500,10 @@ export async function startServer(opts = {}) {
       ['PUT', /^\/api\/agents\/([^/]+)\/evals\/([a-z0-9][a-z0-9-]{0,59})$/, async (req, m) => [200, evals.saveCase(agentParam(m), m[2], await jsonBody(req))], { local: true }],
       ['DELETE', /^\/api\/agents\/([^/]+)\/evals\/([a-z0-9][a-z0-9-]{0,59})$/, (req, m) => [200, evals.removeCase(agentParam(m), m[2])], { local: true }],
       // Claim receipts for one session's chat, and "Ask the agent to fix it" (the exact text shown).
-      ['GET', /^\/api\/sessions\/([^/]+)\/claims$/, (req, m) => [200, reports.sessionClaims(sessions.require(sidParam(m)))]],
+      ['GET', /^\/api\/sessions\/([^/]+)\/claims$/, (req, m) => {
+        ownerOnlyCto(req, sidParam(m));
+        return [200, reports.sessionClaims(sessions.require(sidParam(m)))];
+      }],
       ['POST', /^\/api\/sessions\/([^/]+)\/fix$/, async (req, m) => {
         ownerOnlyCto(req, sidParam(m));
         const rec = sessions.require(sidParam(m));
@@ -1508,6 +1520,7 @@ export async function startServer(opts = {}) {
       }],
       ['GET', /^\/api\/sessions\/([^/]+)\/timeline$/, (req, m, res, url) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const afterRaw = url.searchParams.get('after');
         const after = afterRaw === null || afterRaw === '' ? -1 : Number(afterRaw);
         if (!Number.isInteger(after) || after < -1) throw badRequest('after must be an integer >= -1');
@@ -1529,15 +1542,20 @@ export async function startServer(opts = {}) {
       // The CTO seat. Adding it, running a review (it spends the plan) and its schedule work only on
       // the computer itself; a paired device can read reviews.
       ['GET', /^\/api\/cto$/, async () => [200, await cto.view()]],
-      ['POST', /^\/api\/cto$/, () => {
+      ['POST', /^\/api\/cto$/, (req) => {
+        ownerOnlyCto(req, null);
         const a = cto.create();
         publishOrg('agent_created', a.id);
         return [201, a];
       }, { local: true }],
       ['GET', /^\/api\/cto\/estimate$/, async () => [200, await cto.estimate()]],
-      ['POST', /^\/api\/cto\/review$/, async () => [201, await cto.startReview()], { local: true }],
+      ['POST', /^\/api\/cto\/review$/, async (req) => {
+        ownerOnlyCto(req, null);
+        return [201, await cto.startReview()];
+      }, { local: true }],
       ['GET', /^\/api\/cto\/reviews\/(\d{4}-W\d{2})$/, (req, m) => [200, cto.review(m[1])]],
       ['POST', /^\/api\/cto\/settings$/, async (req) => {
+        ownerOnlyCto(req, null);
         cto.configure(await jsonBody(req));
         return [200, await cto.view()];
       }, { local: true }],
@@ -1842,6 +1860,8 @@ export async function startServer(opts = {}) {
         }
         const m = url.pathname.match(/^\/ws\/term\/([^/]+)$/);
         if (!m || !isUuid(m[1]) || !sessions.get(m[1])) return reject(404, 'Not Found');
+        // The CTO's terminal: the cockpit (its cookie) or a paired device only, never the CLI's token.
+        if (sessions.get(m[1]).kind === 'cto' && !who.remote && ((typeof req.headers[TOKEN_HEADER] === 'string' && req.headers[TOKEN_HEADER]) || url.searchParams.get('t'))) return reject(403, 'Forbidden');
         const size = { cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
         wss.handleUpgrade(req, sock, head, (ws) => {
           if (who.remote) trackRemote(who, () => ws.terminate(), ws);

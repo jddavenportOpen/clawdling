@@ -229,7 +229,8 @@ export class DonnaRouter {
     if (!this.reports) return null;
     try {
       const org = this.reports.orgReport({ window: 'today' });
-      const busy = org.agents.filter((a) => a.done > 0 || a.needs > 0).slice(0, 8);
+      // Never the CTO's own words: Donna sends without a prompt, and they must not become instructions.
+      const busy = org.agents.filter((a) => a.kind !== 'cto' && (a.done > 0 || a.needs > 0)).slice(0, 8);
       const agents = [];
       for (const a of busy) {
         const r = await this.reports.agentReport(a.id, { window: 'today', git: false });

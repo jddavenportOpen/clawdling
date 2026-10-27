@@ -97,11 +97,12 @@ export function runtimeDeny(home, platform = process.platform) {
   return ['Read', 'Edit'].map((t) => absPathRule(t, rt, platform)).filter(Boolean);
 }
 
-/** Write and Edit of <org>/cto/ (the CTO seat's folder), for every other agent. */
+/** Read, Write and Edit of <org>/cto/ (the CTO seat's folder), for every other agent and Donna:
+ * no agent plants files in it, and none takes the CTO's words in it as its own instructions. */
 export function ctoDeny(home, platform = process.platform) {
   if (!home) return [];
   const dir = `${String(home).replace(/[\\/]+$/, '')}${platform === 'win32' ? '\\' : '/'}cto`;
-  return ['Write', 'Edit'].map((t) => absPathRule(t, dir, platform)).filter(Boolean);
+  return ['Read', 'Write', 'Edit'].map((t) => absPathRule(t, dir, platform)).filter(Boolean);
 }
 
 /**

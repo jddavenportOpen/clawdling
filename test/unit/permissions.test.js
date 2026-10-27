@@ -96,7 +96,7 @@ test('agents\' file tools cannot read or edit <org>/.clawdling (the owner token,
   const { buildDonnaArgs } = await import('../../server/channels/donna.js');
   const s = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/app/bin/clawdling-hook.js', platform: 'linux', home: '/home/sam/clawdling' });
   // ...and, since 1.7, out of the CTO seat's folder (writes).
-  assert.deepEqual(s.permissions.deny, ['Read(//home/sam/clawdling/.clawdling/**)', 'Edit(//home/sam/clawdling/.clawdling/**)', 'Write(//home/sam/clawdling/cto/**)', 'Edit(//home/sam/clawdling/cto/**)']);
+  assert.deepEqual(s.permissions.deny, ['Read(//home/sam/clawdling/.clawdling/**)', 'Edit(//home/sam/clawdling/.clawdling/**)', 'Read(//home/sam/clawdling/cto/**)', 'Write(//home/sam/clawdling/cto/**)', 'Edit(//home/sam/clawdling/cto/**)']);
   assert.ok(s.permissions.allow.includes('Bash(clawdling spawn *)'), 'the allow-list is unchanged');
   assert.deepEqual(runtimeDeny('C:\\Users\\Sam\\clawdling', 'win32'), ['Read(//c/Users/Sam/clawdling/.clawdling/**)', 'Edit(//c/Users/Sam/clawdling/.clawdling/**)']);
   assert.deepEqual(runtimeDeny('/weird(path)/x', 'linux'), [], 'no rule for a path with rule syntax');
@@ -105,7 +105,7 @@ test('agents\' file tools cannot read or edit <org>/.clawdling (the owner token,
     const a = buildDonnaArgs({ sessionId: 'S', resume: false, home: '/h' });
     const d = a.indexOf('--disallowedTools');
     assert.ok(d > 0 && d < a.indexOf('--allowedTools'), 'before the last variadic');
-    assert.deepEqual(a.slice(d + 1, d + 5), ['Read(//h/.clawdling/**)', 'Edit(//h/.clawdling/**)', 'Write(//h/cto/**)', 'Edit(//h/cto/**)']);
+    assert.deepEqual(a.slice(d + 1, d + 6), ['Read(//h/.clawdling/**)', 'Edit(//h/.clawdling/**)', 'Read(//h/cto/**)', 'Write(//h/cto/**)', 'Edit(//h/cto/**)']);
   }
   const home = tempHome();
   try {

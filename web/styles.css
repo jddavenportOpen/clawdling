@@ -1687,3 +1687,4 @@ ol.cto-dec-list { list-style: decimal; padding-left: 20px; }
 .cto-flag.is-none { color: var(--text-2); background: var(--surface-3); }
 .dialog-cmd-warn { flex: 1 1 100%; order: 2; color: var(--needs-text); font-size: 12.5px; }
 .hero-meta .mono { overflow-wrap: anywhere; word-break: break-all; }
+.cto-del-cmd { display: block; font: 12.5px/1.45 var(--font-mono); white-space: pre-wrap; }

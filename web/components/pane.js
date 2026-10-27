@@ -321,13 +321,25 @@ function QuestionBanner({ s, mobile, accent, onTerminal }) {
     await answerDialog(s.sid, option, { focus: !mobile });
     setBusy(0);
   };
+  // The CTO seat: a one-tap answer only for exactly one plain message to an agent. Anything else
+  // it asks for (another command, a file outside its reviews) is shown and answered in the terminal.
+  const cto = s.kind === 'cto';
+  const plainSend = !!s.pending_cmd && s.pending_cmd_send !== false && s.pending_cmd_plain === true;
+  const terminalOnly = cto ? !plainSend : !!s.pending_cmd && s.pending_cmd_plain === false;
+  const heading = s.pending_cmd && s.pending_cmd_send !== false ? 'Send this message to another agent?'
+    : s.pending_cmd ? 'The CTO wants to run this command:'
+    : cto ? `The CTO is asking: ${s.notification || 'for your permission'}`
+    : s.notification || 'Claude Code is asking for your permission.';
+  const warn = !terminalOnly ? null
+    : s.pending_cmd && s.pending_cmd_send !== false ? 'This is more than one plain message, or too long to show whole. Read it in the terminal, and answer it there.'
+    : 'Read exactly what it asks in the terminal, and answer it there. The cockpit offers one-tap answers to the CTO only for one plain message to an agent.';
   return html`<div class="pane-dialog pane-question" role="group" aria-label="Claude Code is asking" data-testid="pane-question" data-dialog=${s.waiting_on}>
     <${StatusGlyph} status="needs_you" label=${false} />
-    <span class="dialog-text" data-testid="pane-question-text">${s.pending_cmd ? 'Send this message to another agent?' : s.notification || 'Claude Code is asking for your permission.'}</span>
+    <span class="dialog-text" data-testid="pane-question-text">${heading}</span>
     ${s.pending_cmd ? html`<code class="dialog-cmd" data-testid="pane-pending-cmd">${s.pending_cmd}</code>` : null}
-    ${s.pending_cmd && s.pending_cmd_plain === false ? html`<span class="dialog-cmd-warn" data-testid="pane-pending-warn">This is more than one plain message, or too long to show whole. Read it in the terminal, and answer it there.</span>
-      <span class="dialog-actions"><button class=${`btn ${accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${onTerminal} data-testid="pane-pending-terminal">Show the terminal</button></span>` : null}
-    ${s.pending_cmd && s.pending_cmd_plain === false ? null : html`<span class="dialog-actions">
+    ${terminalOnly ? html`<span class="dialog-cmd-warn" data-testid="pane-pending-warn">${warn}</span>
+      <span class="dialog-actions"><button class=${`btn ${accent ? 'btn-primary' : 'btn-quiet'} btn-sm`} onClick=${onTerminal} data-testid="pane-pending-terminal">Show the terminal</button></span>`
+    : html`<span class="dialog-actions">
       ${shown.map((c, i) => html`<button key=${c.option} class=${`btn ${i === 0 && accent ? 'btn-primary' : 'btn-quiet'} btn-sm dialog-choice`} title=${choiceLabel(c)}
         onClick=${() => answer(c.option)} disabled=${!!busy} data-option=${c.option} data-testid="question-choice">
         <span class="choice-label">${busy === c.option ? 'Answering…' : choiceLabel(c)}</span></button>`)}

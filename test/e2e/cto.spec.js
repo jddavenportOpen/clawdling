@@ -114,7 +114,9 @@ test.describe('the CTO seat (real server)', () => {
     const cmd = p.getByTestId('pane-pending-cmd');
     await expect(cmd).toHaveText(/^clawdling (send|spawn) \S+ "Your CTO review flagged this: .+"$/);
     const command = await cmd.innerText();
-    expect(command).toBe((await sessionBySid(sid)).pending_cmd);
+    expect(command).toContain('Your CTO review flagged this');
+    // The CLI (what agents and Donna use) never sees what the CTO is asking.
+    expect((await sessionBySid(sid)).pending_cmd).toBe(null);
     await shot(p, '04-permission-banner');
     await banner.getByTestId('question-choice').filter({ hasText: /^No\b/ }).click();
     await until(async () => (await sessionBySid(sid))?.status === 'ready', { label: 'the review to finish' });
