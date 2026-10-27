@@ -45,7 +45,8 @@ function results() {
 
 const r = results();
 const oses = Object.keys(r);
-const allOk = RESULT === 'success' && oses.length === 3 && oses.every((o) => r[o].ok === true);
+// A bump needs every surface checked on every OS, not only "nothing failed".
+const allOk = RESULT === 'success' && oses.length === 3 && oses.every((o) => r[o].ok === true && r[o].summary && r[o].summary.checked_all === true);
 
 if (allOk) {
   if (cmp(VERSION, CHECKED) <= 0) {
@@ -80,9 +81,9 @@ if (allOk) {
   const url = sh('gh', ['pr', 'create', '--base', BASE, '--head', branch, '--title', `${DRY ? '[dry run] ' : ''}Claude Code ${VERSION}: checked, bump maxChecked`, '--body', body]);
   console.log(`Opened ${url}`);
   // At most one bump open at a time: an older one is superseded by this one.
-  const open = JSON.parse(sh('gh', ['pr', 'list', '--state', 'open', '--json', 'number,headRefName', '--limit', '50']));
+  const open = JSON.parse(sh('gh', ['pr', 'list', '--state', 'open', '--author', 'app/github-actions', '--json', 'number,headRefName,isCrossRepository', '--limit', '50']));
   for (const p of open) {
-    if (p.headRefName.startsWith('claude-compat/') && p.headRefName !== branch) {
+    if (!p.isCrossRepository && p.headRefName.startsWith('claude-compat/') && p.headRefName !== branch) {
       sh('gh', ['pr', 'close', String(p.number), '--delete-branch', '--comment', `Superseded by ${url} (Claude Code ${VERSION}).`]);
     }
   }
@@ -94,7 +95,7 @@ const failing = [];
 for (const o of oses.sort()) {
   const res = r[o];
   if (res.error) failing.push({ os: o, id: 'run', text: res.error });
-  for (const l of res.lines || []) if (l.status === 'fail') failing.push({ os: o, id: l.id, text: l.text });
+  for (const l of res.lines || []) if (l.status === 'fail' || (l.status === 'unchecked' && l.id !== 'transcript')) failing.push({ os: o, id: l.id, text: l.text });
 }
 const ids = [...new Set(failing.map((f) => f.id).filter((id) => WORDS[id]))];
 const what = ids.length ? ids.map((id) => WORDS[id]).join(', ') : 'the contract checks';

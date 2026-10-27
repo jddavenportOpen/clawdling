@@ -937,7 +937,10 @@ folder only, not from the folders above it; checked with `claude doctor` on 2.1.
   agent), MCP servers from `~/.claude.json` (`mcpServers`, and this folder's own entry) and the
   folder's `.mcp.json`, and the user's enabled plugins. Its permission mode is Clawdling's
   (`--permission-mode`), unless it uses "Your Claude Code setting"; then the settings' `defaultMode`
-  (managed, local, project, user, in that order).
+  (managed, local, project, user, in that order), and when none sets one, Claude Code's own default,
+  auto mode on current versions (permissions.js). It also gets the org folder (`--add-dir`), which
+  holds `me.md` and every agent's notes: private data, on every row but Donna's and the CTO's (they
+  have their own entries).
 - Donna: managed settings and her folder's (`--setting-sources project,local`), no MCP server at all
   (`--strict-mcp-config`), `dontAsk` with her allow-list, and her channel: Telegram (sends: replies)
   and iMessage (private: it reads Messages; sends: replies). Her inbound is the paired owner only, so
@@ -955,13 +958,21 @@ databases and payments are private (payments also send); browsers and fetchers a
 send; search is untrusted; a short list of local helpers is known and harmless. A name that matches
 nothing is **unknown: review**, never safe. Permission rules: `WebFetch` (untrusted and sends: a URL
 is a channel), `WebSearch` (untrusted), `Read(//…)` and `Read(~/…)` outside the agent's folder
-(private), and shell rules that can send: unrestricted Bash (`Bash`, `Bash(*)`, `Bash(:*)`), a
-wildcard for a network tool (`curl`, `wget`, `nc`, `ssh`, `scp`, `rsync`…), `git push`, a publish
-or deploy verb, and an interpreter with a wildcard (`python3:*`, `node -e *`). `Bash(git status:*)`,
-`Bash(npm test)` and a fixed `curl https://host/health` do not send. A deny rule in any layer that
-covers an allow takes it away (Claude Code's own rule), and `mcp__<server>` denies a server. Bypass
-permissions mode and auto mode, when the sessions really run in them, are sends (and untrusted,
-unless WebFetch is denied). Plugins are classified by their names, like servers.
+(private), a bare `Read`, `Grep` or `Glob` (private: any file without asking), and shell rules from
+the command table: unrestricted Bash (`Bash`, `Bash(*)`, `Bash(:*)`: all three), a wildcard for a
+network tool (`curl`, `wget`, `nc`, `ssh`, `rsync`, `open`, `Invoke-WebRequest`…: sends and
+untrusted), a file reader (`cat`, `grep`, `find`, `sqlite3`, `security`…: private), `git push`, a
+publish or deploy verb (sends), a package runner (`npm run:*`, `npx *`, `uv run:*`, `pip install:*`:
+all three) and an interpreter with a wildcard (`python3:*`, `node -e *`: all three). Wrappers
+(`sudo`, `env A=b`, `timeout 30`, `nice`…) are skipped first. `Bash(git status:*)`, `Bash(npm test)`,
+`Bash(npm run test:*)` and a fixed `curl https://host/health` give nothing. A deny rule in any layer
+takes an allow away the way Claude Code matches it (`cmd:*` takes `cmd` and `cmd …`, `cmd *` takes
+`cmd …`, `cm*` takes anything starting `cm`, anything else only the identical rule; a deny whose text
+was redacted is never assumed to match), and `mcp__<server>` or `mcp__<server>__*` denies a server.
+Bypass permissions mode is all three; auto mode (set, or Claude Code's default) is sends and
+untrusted, unless every way to the web is denied. Plugins, yours and the ones a folder's own settings
+turn on, are classified by their names, like servers. A shell command that is not in the table is not
+classified, and one agent asking another through `clawdling send` is not followed: names only.
 
 **The verdict per agent:** `{id, name, kind, folder, mode, loads[], chips{private[], untrusted[],
 sends[]} (each {text, source}), unknown[], trifecta, risks[] ({id, text, file}), fixes[], sentence,
@@ -984,7 +995,9 @@ A user-level mode switch shows on an agent only when it applies to that agent's 
 reason of at least three characters, redacted and kept to one line; a red row becomes amber) and
 `tags{name: caps[]}` (what an unknown MCP server or plugin can do). Written only through the cockpit:
 `POST /api/setup/safety/accept {agent, reason|null}` and `POST /api/setup/safety/tag {server,
-caps|null}` refuse the CLI token (every agent and Donna can run the CLI).
+caps|null}` refuse a request carrying the CLI's token header (every agent and Donna can run the CLI).
+`GET /api/setup/safety` does too, since it lists rule text, and `clawdling discover --setup --safety`
+refuses inside an agent session or a Donna turn (`CLAWDLING_SID`, `CLAWDLING_DONNA`).
 
 **Where it shows:** `GET /api/setup/safety` (`{took_ms, rows, privacy}`, the user level first); the
 Safety section on Settings' setup card (`#/settings/safety`); a shield on every org-map node (the
@@ -1014,10 +1027,13 @@ stay where they are.
 - (e) the `-p` flags check-ups use.
 
 `--live` (asks first, or `--yes`) adds one real session, `claude -p "Reply with OK" --model haiku`,
-in a temporary folder, with hooks registered the way Clawdling registers them (a recorder script in
-place of Clawdling's): SessionStart, UserPromptSubmit and Stop must arrive, and the transcript must
-have user and assistant records and a cost-state or usage. Then `claude purge <folder> --yes`
-(Claude Code's own command) deletes that folder's transcript and config entry, and the folder goes.
+in a temporary folder, with the two hidden flags passed for real and hooks registered the way
+Clawdling registers them (a recorder script in place of Clawdling's): SessionStart, UserPromptSubmit
+and Stop must arrive, and the transcript must have user and assistant records and a cost-state or
+usage. Then, in a `finally` whatever happened, `claude purge <folder> --yes` (Claude Code's own
+command) deletes that folder's transcript and config entry, and the folder goes; a purge that fails
+is a failed line, never ok. The JSON summary has `checked_all`: no failure and no unchecked line
+(the transcript aside, which a fresh computer does not have).
 
 **The health check** (`GET /api/health`) adds `claude_compat: {max_checked, newer}`; the cockpit shows
 "Claude Code <ver> is newer than the last version Clawdling checked (<maxChecked>). It will probably
@@ -1028,7 +1044,7 @@ work. Run Doctor to check." once per version, dismissible, never blocking a star
 on ubuntu, macOS and Windows: `doctor --contract --json` plus the contract fixture suites
 (`test/unit/claude-contract.test.js`, `test/unit/contract.test.js`). The report job, the only one with
 a write token (`contents`, `pull-requests`, `issues`; no other secret), opens a pull request that bumps
-`maxChecked` (at most one open at a time) or an issue titled "Claude Code <ver> breaks <check>" (a
+`maxChecked` only when every OS reports `checked_all` (at most one of its own open at a time) or an issue titled "Claude Code <ver> breaks <check>" (a
 comment when it is already open). Branches named `guard-dryrun/pass` and `guard-dryrun/break` (a
 planted flag) run it as a dry run against that branch.
 

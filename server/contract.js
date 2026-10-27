@@ -76,7 +76,7 @@ export function hiddenFlagsCheck(stderr, compat = COMPAT) {
   const names = compat.hiddenFlags.map((h) => h[0]);
   if (m && m[1] === SENTINEL_FLAG) return line('hidden_flags', 'ok', `claude still accepts ${names.join(' and ')} (not listed in --help)`);
   if (m && names.includes(m[1])) return line('hidden_flags', 'fail', `claude no longer accepts ${m[1]}, which Clawdling passes: check for a Clawdling update, or tell us at ${ISSUES_URL}.`);
-  return line('hidden_flags', 'unchecked', `${names.join(' and ')}: not checkable offline on this version (its argument parser did not name a made-up flag). \`--live\` checks them with one real session.`);
+  return line('hidden_flags', 'unchecked', `${names.join(' and ')}: not checkable offline on this version (its argument parser did not name a made-up flag). \`--live\` passes both in one real session.`);
 }
 
 /** (e) the `-p` flags check-ups (1.6) use. */
@@ -95,7 +95,7 @@ export function hookEventsCheck(doctorOut, compat = COMPAT) {
   const text = String(doctorOut || '').replace(ANSI, '');
   const unknown = new Set([...text.matchAll(/Unknown hook event "([A-Za-z]+)"/g)].map((m) => m[1]));
   if (!unknown.has(SENTINEL_EVENT)) {
-    return line('hook_events', 'unchecked', 'Hook events: not checkable offline on this version (`claude doctor` did not report a made-up hook event). `--live` checks them with one real session.');
+    return line('hook_events', 'unchecked', 'Hook events: not checkable offline on this version (`claude doctor` did not report a made-up hook event). `--live` checks the ones every session sends (SessionStart, UserPromptSubmit, Stop).');
   }
   const bad = compat.hookEvents.filter((e) => unknown.has(e));
   if (!bad.length) return line('hook_events', 'ok', `claude accepts the ${compat.hookEvents.length} hook events Clawdling registers`);
@@ -192,6 +192,7 @@ export async function liveCheck({ run, nodePath = process.execPath, configDir, p
   const work = path.join(dir, 'work');
   fs.mkdirSync(work);
   const sid = crypto.randomUUID();
+  let started = false;
   try {
     const recorder = path.join(dir, 'record.mjs');
     fs.writeFileSync(recorder, RECORDER);
@@ -199,16 +200,23 @@ export async function liveCheck({ run, nodePath = process.execPath, configDir, p
     delete settings.permissions; // only the hooks: this session has no tools at all
     const settingsFile = path.join(dir, 'settings.json');
     fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
-    const r = await run(['-p', '--model', model, '--session-id', sid, '--settings', settingsFile, '--tools', '', '--strict-mcp-config', '--disable-slash-commands', '--output-format', 'json', '--', LIVE_PROMPT], { cwd: work, timeout: 120000 });
+    // The flags --help hides, passed for real: a version that dropped one fails here.
+    const promptFile = path.join(dir, 'append.md');
+    fs.writeFileSync(promptFile, 'Answer in one word.\n');
+    const hidden = compat.hiddenFlags.flatMap(([f]) => [f, f === '--append-system-prompt-file' ? promptFile : f === '--max-turns' ? '2' : 'x']);
+    started = true;
+    const r = await run(['-p', '--model', model, '--session-id', sid, '--settings', settingsFile, '--tools', '', '--strict-mcp-config', '--disable-slash-commands', ...hidden, '--output-format', 'json', '--', LIVE_PROMPT], { cwd: work, timeout: 120000 });
     let result = null;
     try {
       result = JSON.parse(r.stdout);
     } catch {
       result = null;
     }
-    if (r.code !== 0 || !result) {
+    const unknownFlag = /unknown option '([^']+)'/.exec(`${r.stderr}\n${r.stdout}`);
+    if (unknownFlag) out.push(line('live_session', 'fail', `claude no longer accepts ${unknownFlag[1]}, which Clawdling passes: check for a Clawdling update, or tell us at ${ISSUES_URL}.`));
+    else if (r.code !== 0 || !result) {
       out.push(line('live_session', 'fail', `the live session did not finish (${(result && result.result) || r.stderr.trim().split('\n').pop() || `exit ${r.code}`}): run \`claude\` once to check you are signed in.`));
-    } else out.push(line('live_session', 'ok', `one real session answered ("${String(result.result || '').trim().slice(0, 40)}")`));
+    } else out.push(line('live_session', 'ok', `one real session answered ("${String(result.result || '').trim().slice(0, 40)}"), with ${compat.hiddenFlags.map((h) => h[0]).join(' and ')}`));
     let events = [];
     try {
       events = fs.readFileSync(path.join(dir, 'events.txt'), 'utf8').split('\n').filter(Boolean);
@@ -223,18 +231,33 @@ export async function liveCheck({ run, nodePath = process.execPath, configDir, p
     const tfile = findLiveTranscript(configDir, sid);
     if (!tfile) out.push(line('live_transcript', 'fail', 'no transcript was written for the live session: the report card cannot count work or cost until Clawdling is updated.'));
     else {
-      const s = parse(tfile);
-      const types = compat.transcriptTypes.filter((t) => !s.types.includes(t));
-      if (!s.costState && !s.usage) out.push(line('live_transcript', 'fail', 'the live transcript has no cost-state and no usage: the report card cannot show what work cost.'));
-      else if (!s.format.ok || types.length) out.push(line('live_transcript', 'fail', `the live transcript is missing ${[...types, ...s.format.issues].join('; ')}: the report card may be incomplete.`));
-      else out.push(line('live_transcript', 'ok', `the transcript has ${compat.transcriptTypes.join(' and ')} records and ${s.costState ? 'a cost-state' : 'usage (no cost-state: the report card reprices it at list prices)'}, and parses with the report card's contract`));
+      let s = null;
+      try {
+        s = parse(tfile);
+      } catch (err) {
+        out.push(line('live_transcript', 'fail', `the live transcript could not be read (${String(err.message).slice(0, 120)}): the report card may be incomplete.`));
+      }
+      if (s) {
+        const types = compat.transcriptTypes.filter((t) => !s.types.includes(t));
+        if (!s.costState && !s.usage) out.push(line('live_transcript', 'fail', 'the live transcript has no cost-state and no usage: the report card cannot show what work cost.'));
+        else if (!s.format.ok || types.length) out.push(line('live_transcript', 'fail', `the live transcript is missing ${[...types, ...s.format.issues].join('; ')}: the report card may be incomplete.`));
+        else out.push(line('live_transcript', 'ok', `the transcript has ${compat.transcriptTypes.join(' and ')} records and ${s.costState ? 'a cost-state' : 'usage (no cost-state: the report card reprices it at list prices)'}, and parses with the report card's contract`));
+      }
     }
-    const purge = await run(['purge', work, '--yes'], { cwd: dir, timeout: 30000 });
-    const left = findLiveTranscript(configDir, sid);
-    out.push(left
-      ? line('live_cleanup', 'fail', `\`claude purge\` did not remove the live session (exit ${purge.code}); delete ${left} by hand.`)
-      : line('live_cleanup', 'ok', 'the live session is gone (`claude purge` removed its transcript and config entry) and its folder is removed'));
   } finally {
+    // Whatever happened above, once a session may have started, Claude Code deletes what it left.
+    if (started) {
+      let purge;
+      try {
+        purge = await run(['purge', work, '--yes'], { cwd: dir, timeout: 30000 });
+      } catch (err) {
+        purge = { code: null, stderr: String(err && err.message) };
+      }
+      const left = findLiveTranscript(configDir, sid);
+      if (purge.code !== 0) out.push(line('live_cleanup', 'fail', `\`claude purge\` did not finish (exit ${purge.code}): its folder entry may be left in Claude Code's config${left ? `, and its transcript is at ${left}` : ''}. Run \`claude purge --dry-run\` to see it.`));
+      else if (left) out.push(line('live_cleanup', 'fail', `\`claude purge\` did not remove the live session; delete ${left} by hand.`));
+      else out.push(line('live_cleanup', 'ok', 'the live session is gone (`claude purge` removed its transcript and config entry) and its folder is removed'));
+    }
     fs.rmSync(dir, { recursive: true, force: true });
   }
   return out;
@@ -261,5 +284,8 @@ function findLiveTranscript(configDir, sid) {
 export function summary(lines) {
   const fail = lines.filter((l) => l.status === 'fail').length;
   const unchecked = lines.filter((l) => l.status === 'unchecked').length;
-  return { ok: fail === 0, fail, unchecked };
+  // Every surface really checked (the transcript line aside: a fresh computer has none). The nightly
+  // bumps maxChecked only on this, never on "nothing failed".
+  const checkedAll = fail === 0 && lines.every((l) => l.status !== 'unchecked' || l.id === 'transcript');
+  return { ok: fail === 0, fail, unchecked, checked_all: checkedAll };
 }

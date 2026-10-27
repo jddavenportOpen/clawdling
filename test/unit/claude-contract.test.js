@@ -167,10 +167,11 @@ test('contractChecks: no claude at all is one plain line', async () => {
 });
 
 /** A fake live session: hooks fire, a transcript is written (or not), purge deletes it (or not). */
-function fakeLive({ cfg, transcript = 'ok', hooks = ['SessionStart', 'UserPromptSubmit', 'Stop'], purge = true }) {
+function fakeLive({ cfg, transcript = 'ok', hooks = ['SessionStart', 'UserPromptSubmit', 'Stop'], purge = true, purgeCode = 0, seen = [] }) {
   let tfile = null;
   return async (args, opts) => {
     if (args[0] === '-p') {
+      seen.push(args);
       const settings = args[args.indexOf('--settings') + 1];
       const dir = path.dirname(settings);
       assert.ok(JSON.parse(fs.readFileSync(settings, 'utf8')).hooks.Stop, 'hooks registered the way Clawdling registers them');
@@ -191,7 +192,7 @@ function fakeLive({ cfg, transcript = 'ok', hooks = ['SessionStart', 'UserPrompt
     if (args[0] === 'purge') {
       assert.equal(args.at(-1), '--yes');
       if (purge && tfile) fs.rmSync(path.dirname(tfile), { recursive: true, force: true });
-      return { code: 0, stdout: '', stderr: '' };
+      return { code: purgeCode, stdout: '', stderr: '' };
     }
     return { code: 1, stdout: '', stderr: '' };
   };
@@ -205,7 +206,7 @@ const parse = async (f) => {
   return { types, format: s.format, costState: types.includes('cost-state'), usage: recs.some((r) => r.type === 'assistant' && r.message && r.message.usage) };
 };
 
-async function live(opts) {
+async function live(opts, { parseThrows = false } = {}) {
   const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'cl-live-cfg-'));
   const p = new Map();
   const before = new Set(fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('clawdling-live-')));
@@ -219,7 +220,10 @@ async function live(opts) {
         return r;
       },
       configDir: cfg,
-      parse: (f) => p.get(f),
+      parse: (f) => {
+        if (parseThrows) throw new Error('EACCES');
+        return p.get(f);
+      },
     });
     const after = fs.readdirSync(os.tmpdir()).filter((d) => d.startsWith('clawdling-live-') && !before.has(d));
     assert.deepEqual(after, [], 'the temporary folder is removed');
@@ -254,4 +258,27 @@ test('liveCheck: a missing hook event, no transcript, a purge that did nothing: 
   assert.equal(b.find((l) => l.id === 'live_transcript').status, 'fail');
   const c = await live({ purge: false });
   assert.match(c.find((l) => l.id === 'live_cleanup').text, /did not remove the live session/);
+});
+
+test('liveCheck: the hidden flags go into the real session; purge runs even when parsing throws, and a failed purge is never "ok"', async () => {
+  const seen = [];
+  const a = await live({ seen });
+  const args = seen[0];
+  assert.ok(args.includes('--append-system-prompt-file') && args.includes('--max-turns'), 'both hidden flags are passed for real');
+  assert.match(a.find((l) => l.id === 'live_session').text, /with --append-system-prompt-file and --max-turns/);
+  const b = await live({}, { parseThrows: true });
+  assert.equal(b.find((l) => l.id === 'live_transcript').status, 'fail');
+  assert.equal(b.find((l) => l.id === 'live_cleanup').status, 'ok', 'purge still ran and removed it');
+  const c = await live({ transcript: 'none', purgeCode: 1 });
+  const cl = c.find((l) => l.id === 'live_cleanup');
+  assert.equal(cl.status, 'fail');
+  assert.match(cl.text, /did not finish \(exit 1\)/);
+});
+
+test('summary: checked_all only when every surface was really checked (the transcript aside)', () => {
+  const L = (id, status) => ({ id, status, text: '' });
+  assert.equal(summary([L('version', 'note'), L('flags', 'ok'), L('transcript', 'unchecked')]).checked_all, true);
+  const u = summary([L('flags', 'ok'), L('hook_events', 'unchecked')]);
+  assert.equal(u.ok, true, 'nothing failed');
+  assert.equal(u.checked_all, false, 'but the nightly will not bump on it');
 });

@@ -55,27 +55,47 @@ export function classifyName(...names) {
 
 /** `Bash(curl:*)` -> {tool: 'Bash', content: 'curl:*'}; `WebFetch` -> {tool: 'WebFetch', content: null}. */
 export function parseRule(rule) {
-  const m = /^\s*([A-Za-z_][\w-]*)\s*(?:\((.*)\))?\s*$/s.exec(String(rule || ''));
+  const m = /^\s*([A-Za-z_][\w*-]*)\s*(?:\((.*)\))?\s*$/s.exec(String(rule || ''));
   if (!m) return null;
   return { tool: m[1], content: m[2] === undefined ? null : m[2] };
 }
 
 const SHELLS = new Set(['Bash', 'PowerShell']);
+const ALL = ['private', 'untrusted', 'sends'];
+const WRAPPERS = new Set(TABLE.wrappers || []);
+
+/** The words of one command, with wrappers (sudo, env A=b, timeout 30, nice -n 5) skipped. */
+function unwrap(toks) {
+  let i = 0;
+  while (i < toks.length - 1 && WRAPPERS.has(toks[i].split(/[\\/]/).pop().toLowerCase())) {
+    i++;
+    while (i < toks.length - 1 && (/^-/.test(toks[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || /^\d+[smhd]?$/.test(toks[i]))) i++;
+  }
+  return toks.slice(i);
+}
 
 /**
- * Does a Bash/PowerShell rule let the agent send data out? `{why}` or null. A rule with no command
- * (`Bash`, `Bash(*)`, `Bash(:*)`) is unrestricted.
+ * What a Bash/PowerShell allow rule lets the agent do without asking: `{caps: [..], why}` or null.
+ * A rule with no command (`Bash`, `Bash(*)`, `Bash(:*)`) is unrestricted: all three. Only commands in
+ * capabilities.json are classified (names only); a fixed command with no wildcard is what it says.
  */
-export function shellRuleSends(content) {
-  if (content === null || /^\s*:?\*?\s*$/.test(content)) return { why: 'runs any command' };
+export function shellRuleCaps(content) {
+  if (content === null || /^\s*:?\*?\s*$/.test(content)) return { caps: [...ALL], why: 'runs any command' };
   const raw = content.trim();
+  const caps = new Set();
+  let why = null;
+  const hit = (list, w) => {
+    for (const c of list) caps.add(c);
+    if (!why) why = w;
+  };
   // `cur*` (no space or colon before the star): every command whose name starts with "cur".
   const partial = /^[^\s:*]+\*$/.test(raw) ? raw.slice(0, -1).split(/[\\/]/).pop().toLowerCase() : null;
   if (partial !== null) {
     for (const e of TABLE.commands) {
-      const hit = e.match !== 'verbs' && e.words.find((w) => w.startsWith(partial));
-      if (hit) return { why: `${e.why} (covers ${hit})` };
+      const w = e.match !== 'verbs' && e.words.find((x) => x.startsWith(partial));
+      if (w) hit(e.caps, `${e.why} (covers ${w})`);
     }
+    if (WRAPPERS.has(partial) || [...WRAPPERS].some((x) => x.startsWith(partial))) hit(ALL, 'runs any command');
   }
   let c = raw;
   let wildcard = false;
@@ -86,18 +106,37 @@ export function shellRuleSends(content) {
   if (c.includes('*')) wildcard = true;
   // Command chains inside one rule: judge every part.
   for (const part of c.split(/\s*(?:&&|\|\||;|\|)\s*/).filter(Boolean)) {
-    const toks = part.replace(/\*/g, ' ').trim().split(/\s+/).filter(Boolean);
-    if (!toks.length) return wildcard ? { why: 'runs any command' } : null;
-    const word = toks[0].split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+    const all = part.replace(/\*/g, ' ').trim().split(/\s+/).filter(Boolean);
+    if (!all.length) {
+      if (wildcard) hit(ALL, 'runs any command');
+      continue;
+    }
+    const toks = unwrap(all);
+    const first = toks[0].split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
+    // A wrapper with nothing after it but the wildcard (`sudo:*`, `env *`): any command.
+    if (toks.length === 1 && WRAPPERS.has(first) && wildcard) {
+      hit(ALL, 'runs any command');
+      continue;
+    }
     const rest = toks.slice(1).map((t) => t.toLowerCase());
     for (const e of TABLE.commands) {
-      if (!e.words.includes(word)) continue;
-      if (e.match === 'any' && wildcard) return { why: e.why };
-      if (e.match === 'verbs' && ((wildcard && rest.length === 0) || rest.some((r) => e.verbs.includes(r)))) return { why: e.why };
-      if (e.match === 'bare' && wildcard && (rest.length === 0 || (e.flags || []).includes(rest[0]))) return { why: e.why };
+      if (!e.words.includes(first)) continue;
+      if (e.match === 'any' && wildcard) hit(e.caps, e.why);
+      else if (e.match === 'verbs') {
+        if (e.wildcard) {
+          if (wildcard && rest.length === 1 && e.verbs.includes(rest[0])) hit(e.caps, e.why);
+        } else if (wildcard && rest.length === 0) hit(e.bare_caps || e.caps, e.why);
+        else if (rest.some((r) => e.verbs.includes(r))) hit(e.caps, e.why);
+      } else if (e.match === 'bare' && wildcard && (rest.length === 0 || (e.flags || []).includes(rest[0]))) hit(e.caps, e.why);
     }
   }
-  return null;
+  return caps.size ? { caps: ALL.filter((x) => caps.has(x)), why } : null;
+}
+
+/** Does a Bash/PowerShell rule let the agent send data out? `{why}` or null. */
+export function shellRuleSends(content) {
+  const r = shellRuleCaps(content);
+  return r && r.caps.includes('sends') ? { why: r.why } : null;
 }
 
 /** Is an absolute or home Read rule (`Read(//x/**)`, `Read(~/**)`) outside the agent's folder? */
@@ -119,15 +158,27 @@ function readOutside(content, folder, home, orgHome) {
   return { text: `\`Read(${c})\` allowed (files outside this agent's folder)` };
 }
 
-/** Does deny rule `d` take away allow rule `a`? Same tool, and the deny covers the allow's content. */
-function denies(d, a) {
+/**
+ * Does deny rule `d` take away allow rule `a`? Claude Code's own matching: a deny with no content (or
+ * `*`) takes the whole tool; `cmd:*` takes `cmd` and `cmd ...`; `cmd *` takes `cmd ...`; `cm*` takes
+ * anything starting `cm`; anything else takes only the identical rule. A deny whose text was redacted
+ * is never assumed to match (two different rules can redact to the same text): the allow stays.
+ */
+export function denies(d, a) {
   if (!d || !a || d.tool !== a.tool) return false;
   if (d.content === null || /^\s*:?\*\s*$/.test(d.content)) return true;
   if (a.content === null) return false;
-  const strip = (s) => s.trim().replace(/:\*$/, '').replace(/\s*\*$/, '');
-  const dc = strip(d.content);
-  const ac = strip(a.content);
-  return ac === dc || ac.startsWith(`${dc} `) || (/\*$/.test(d.content.trim()) && ac.startsWith(dc));
+  const dr = d.content.trim();
+  const ar = a.content.trim();
+  if (dr.includes('[redacted]')) return false;
+  if (dr === ar) return true;
+  const base = ar.replace(/:\*$/, '').replace(/\s+\*$/, '');
+  if (/:\*$/.test(dr) || /\s\*$/.test(dr)) {
+    const p = dr.replace(/:\*$/, '').replace(/\s+\*$/, '');
+    return (/:\*$/.test(dr) && base === p) || base.startsWith(`${p} `);
+  }
+  if (/\*$/.test(dr)) return ar.startsWith(dr.slice(0, -1));
+  return false;
 }
 
 /** Is MCP server `name` denied by a rule like `mcp__name` or `mcp__name__*`? */
@@ -170,8 +221,10 @@ function capsFor(view, { tags = {} } = {}) {
     } else if (parsed.tool === 'WebSearch') {
       add('untrusted', `\`${rule}\` allowed`, where, `turn off WebSearch for this agent: add "WebSearch" to \`permissions.deny\` in ${view.denyFile}`);
     } else if (SHELLS.has(parsed.tool)) {
-      const s = shellRuleSends(parsed.content);
-      if (s) add('sends', `\`${rule}\` allowed (${s.why})`, where, removeFix);
+      const s = shellRuleCaps(parsed.content);
+      if (s) for (const c of s.caps) add(c, `\`${rule}\` allowed (${s.why})`, where, removeFix);
+    } else if ((parsed.tool === 'Read' || parsed.tool === 'Grep' || parsed.tool === 'Glob') && (parsed.content === null || /^\s*\*?\s*$/.test(parsed.content))) {
+      add('private', `\`${rule}\` allowed (reads any file without asking)`, where, removeFix);
     } else if (parsed.tool === 'Read') {
       const r = readOutside(parsed.content, view.folderPosix, view.homePosix, view.orgPosix);
       if (r) add('private', r.text, where, removeFix);
@@ -182,13 +235,21 @@ function capsFor(view, { tags = {} } = {}) {
 
   // The permission mode the sessions run in.
   const mode = view.mode;
+  // The web is closed only when every way to it is denied.
+  const webClosed = toolDenied('WebFetch') && toolDenied('WebSearch') && toolDenied('Bash') && toolDenied('PowerShell');
   if (mode && mode.name === 'bypassPermissions') {
+    // Nothing asks: every tool, every file, every command.
+    add('private', 'Bypass permissions mode (any file is read without asking)', mode.source, mode.fix);
+    if (!webClosed) add('untrusted', 'Bypass permissions mode (the web is read without asking)', mode.source, mode.fix);
     add('sends', 'Bypass permissions mode (any command runs without asking)', mode.source, mode.fix);
-    if (!toolDenied('WebFetch')) add('untrusted', 'Bypass permissions mode (WebFetch runs without asking)', mode.source, mode.fix);
   } else if (mode && mode.name === 'auto') {
-    add('sends', 'Auto mode (commands run when its classifier allows them)', mode.source, mode.fix);
-    if (!toolDenied('WebFetch')) add('untrusted', 'Auto mode (WebFetch can run without asking)', mode.source, mode.fix);
+    const what = mode.isDefault ? "Auto mode, Claude Code's default" : 'Auto mode';
+    add('sends', `${what} (commands run when its classifier allows them)`, mode.source, mode.fix);
+    if (!webClosed) add('untrusted', `${what} (the web can be read without asking)`, mode.source, mode.fix);
   }
+
+  // Every agent but Donna and the CTO also gets the org folder (--add-dir): you, and every agent's notes.
+  if (view.orgFolder) add('private', 'the org folder: your me.md and every agent\'s notes (`--add-dir`, Clawdling)', 'Clawdling', null);
 
   // Extra folders that are the home folder (or a big folder in it).
   for (const l of view.layers) for (const d of (l.facts && l.facts.home_dirs) || []) add('private', `extra folder ${d} (additionalDirectories)`, l.file, `remove ${d} from \`additionalDirectories\` in ${l.file}`);
@@ -197,7 +258,7 @@ function capsFor(view, { tags = {} } = {}) {
   // MCP servers, by name.
   for (const s of view.mcp) {
     if (mcpDenied(s.name, deny)) continue;
-    const tagged = Array.isArray(tags[s.name]) ? tags[s.name].filter((c) => CAPS.includes(c)) : null;
+    const tagged = Object.hasOwn(tags, s.name) && Array.isArray(tags[s.name]) ? tags[s.name].filter((c) => CAPS.includes(c)) : null;
     const k = tagged ? { known: true, caps: new Set(tagged), labels: ['tagged by you'] } : classifyName(s.name, s.command, s.package, s.host);
     const what = `${s.name} MCP server${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
     const fix = view.isUserRow
@@ -213,12 +274,12 @@ function capsFor(view, { tags = {} } = {}) {
   }
 
   // Plugins (user level): by name, the same table. A plugin can bring its own MCP servers and hooks.
-  for (const p of view.plugins) {
+  for (const p of [...view.plugins, ...(view.folderPlugins || [])]) {
     if (!p.enabled) continue;
-    const ptag = Array.isArray(tags[p.name]) ? tags[p.name].filter((c) => CAPS.includes(c)) : null;
+    const ptag = Object.hasOwn(tags, p.name) && Array.isArray(tags[p.name]) ? tags[p.name].filter((c) => CAPS.includes(c)) : null;
     const k = ptag ? { known: true, caps: new Set(ptag), labels: ['tagged by you'] } : classifyName(p.name);
     const what = `${p.name} plugin${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
-    const src = view.pluginSource;
+    const src = p.source || view.pluginSource;
     if (!k.known) {
       unknown.push({ text: what, source: src, why: 'unknown: a plugin can add MCP servers and hooks' });
       continue;
@@ -257,6 +318,13 @@ function risksFor(view) {
       if (ss) add('session_start', `This repo runs ${ss.count === 1 ? 'a command' : `${ss.count} commands`} whenever a session starts (a SessionStart hook in its own settings), before you type anything. A package or a pull request can plant one: read it before you trust the folder.`, l.file);
     }
   }
+  if (view.mode && view.mode.isDefault && (view.isUserRow || view.inheritsMode)) {
+    add('auto_mode', "No settings file picks a permission mode, so Claude Code uses its own default: auto mode on current versions. Commands run when its classifier allows them, and prompt injection has beaten it in public tests.", view.mode.source);
+  }
+  for (const p of view.folderPlugins || []) {
+    if (p.official) continue;
+    add('marketplace', `This folder's settings turn on the ${p.name} plugin, from ${p.marketplace ? `the "${p.marketplace}" marketplace` : 'a marketplace Clawdling could not name'}, not Anthropic's official one.`, p.source);
+  }
   for (const s of view.mcp) {
     if (s.scope === 'project') add('repo_mcp', `This repo defines the ${s.name} MCP server in .mcp.json: code the repo controls, which runs once you approve it.`, s.source);
   }
@@ -292,20 +360,19 @@ function trifectaSentence(chips, who = 'this agent') {
   return `Text ${who} reads through ${u} could tell it to take your data from ${p} and send it out with ${out}.`;
 }
 
-/** Up to three fixes, from the leg that is cheapest to remove (the fewest items). */
+/**
+ * Up to three fixes, from the leg that is cheapest to cut: the fewest items, among legs whose every
+ * item has a text fix (the org folder, Donna's channel and the CTO's report have none). A leg with more
+ * than three gets two fixes and a line for the rest.
+ */
 function fixesFor(chips) {
+  const cap = (f) => f.charAt(0).toUpperCase() + f.slice(1);
   const legs = [...CAPS].sort((a, b) => chips[a].length - chips[b].length || CAPS.indexOf(b) - CAPS.indexOf(a));
-  for (const leg of legs) {
-    const fixes = [...new Set(chips[leg].map((x) => x.fix).filter(Boolean))];
-    // Only a leg whose every item has a fix can be cut with text alone.
-    if (fixes.length && fixes.length <= MAX_FIXES && chips[leg].every((x) => x.fix)) {
-      return fixes.map((f) => f.charAt(0).toUpperCase() + f.slice(1));
-    }
-  }
-  const leg = legs[0];
-  const out = [...new Set(chips[leg].map((x) => x.fix).filter(Boolean))].slice(0, MAX_FIXES - 1);
-  out.push(`Or start this agent in a folder without ${CAP_LABEL[leg].toLowerCase()} (${chips[leg].length} sources): give it only what this job needs`);
-  return out.map((f) => f.charAt(0).toUpperCase() + f.slice(1));
+  const leg = legs.find((l) => chips[l].length && chips[l].every((x) => x.fix));
+  if (!leg) return [...new Set(CAPS.flatMap((l) => chips[l].map((x) => x.fix)).filter(Boolean))].slice(0, MAX_FIXES).map(cap);
+  const fixes = [...new Set(chips[leg].map((x) => x.fix))];
+  if (fixes.length <= MAX_FIXES) return fixes.map(cap);
+  return [...fixes.slice(0, MAX_FIXES - 1).map(cap), `And ${fixes.length - (MAX_FIXES - 1)} more like these: cut every "${CAP_LABEL[leg].toLowerCase()}" source above and the trifecta is gone`];
 }
 
 function verdictOf(row) {
@@ -324,7 +391,7 @@ function finish(base, view, opts) {
   const { chips, unknown } = capsFor(view, opts);
   const trifecta = CAPS.every((c) => chips[c].length > 0);
   const risks = risksFor(view);
-  const accepted = opts.accepted && opts.accepted[base.id] ? { reason: String(opts.accepted[base.id].reason || ''), at: opts.accepted[base.id].at || null } : null;
+  const accepted = opts.accepted && Object.hasOwn(opts.accepted, base.id) && opts.accepted[base.id] ? { reason: String(opts.accepted[base.id].reason || ''), at: opts.accepted[base.id].at || null } : null;
   const row = {
     ...base,
     mode: view.mode ? view.mode.label : null,
@@ -347,12 +414,15 @@ function finish(base, view, opts) {
 
 const posix = (p) => (p ? String(p).replace(/\\/g, '/').replace(/^([A-Za-z]):/, (m, d) => `/${d.toLowerCase()}`).replace(/\/+$/, '') : null);
 
-function modeFrom(layers) {
+// What Claude Code runs in when nothing picks a mode: auto mode on current versions (permissions.js).
+export const CLI_DEFAULT_MODE = 'auto';
+
+function modeFrom(layers, userFile) {
   // Claude Code's precedence: managed, then local, then project, then user.
   for (const kind of ['managed', 'local', 'project', 'user']) {
     for (const l of layers) if (l.kind === kind && l.facts && l.facts.default_mode) return { name: l.facts.default_mode, source: l.file, fix: `remove \`defaultMode\` from ${l.file}, or pick a mode for this agent in Clawdling` };
   }
-  return null;
+  return { name: CLI_DEFAULT_MODE, isDefault: true, source: "Claude Code's default (no settings file picks a mode)", fix: `set \`"defaultMode": "default"\` in ${userFile}, or pick a mode for this agent in Clawdling` };
 }
 
 /**
@@ -382,6 +452,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   const userMcp = (u.mcp || []).map((s) => ({ ...s, scope: 'user', source: '~/.claude.json (mcpServers)' }));
   const homePosix = posix(home);
   const orgPosix = posix(org.home);
+  const userFile = u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}${platform === 'win32' ? '\\' : '/'}settings.json`;
   const rows = [];
 
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
@@ -389,8 +460,8 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
     layers: userLayers, mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
-      const m = modeFrom(userLayers);
-      return m ? { ...m, label: m.name } : null;
+      const m = modeFrom(userLayers, userFile);
+      return { ...m, label: m.isDefault ? `${m.name} (Claude Code's default)` : m.name };
     })(),
   };
   rows.push(finish({ id: USER_ROW, name: 'Everything (user level)', kind: 'user', folder: u.config_dir || null }, userView, opts));
@@ -449,15 +520,26 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
       let mode;
       let overridesMode = null;
       if (setting === 'inherit') {
-        const m = modeFrom(layers);
-        mode = m ? { ...m, label: `${PERMISSION_LABEL.inherit}: ${m.name}` } : { name: 'default', label: PERMISSION_LABEL.inherit, source: 'Claude Code' };
+        const m = modeFrom(layers, userFile);
+        mode = { ...m, label: `${PERMISSION_LABEL.inherit}: ${m.name}${m.isDefault ? " (Claude Code's default)" : ''}` };
       } else {
         mode = { name: setting === 'ask' ? 'default' : setting, label: PERMISSION_LABEL[setting], source: 'Clawdling', clawdling: true };
         overridesMode = PERMISSION_LABEL[setting];
       }
       const homeAddDirs = (a.addDirs || []).filter((x) => x && home && posix(x) === homePosix).map(() => '~');
+      // Plugins this folder's own settings turn on (a repo can enable one for its sessions).
+      const folderPlugins = folderLayers.flatMap((l) => (l.facts.plugins || []).map(([key, on]) => {
+        const at = key.lastIndexOf('@');
+        const name = at > 0 ? key.slice(0, at) : key;
+        const mk = at > 0 ? key.slice(at + 1) : null;
+        const repo = mk ? repoOf.get(mk) : null;
+        const named = !!mk && official.has(mk);
+        const ownerOk = !repo || TABLE.official_owners.includes(String(repo).split('/')[0].toLowerCase());
+        return { name, marketplace: mk, enabled: on, official: named && ownerOk, source: `${l.file} (plugins)` };
+      })).filter((x) => !plugins.some((p) => p.name === x.name && p.marketplace === x.marketplace && p.enabled));
       view = {
-        layers, mcp: [...userMcp, ...folderMcp], plugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
+        layers, mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
+        orgFolder: !!org.home && (a.addDirs || []).some((x) => posix(x) === orgPosix),
         notes: ['It also loads everything at the user level (the first row).'],
         localNotIgnored: isRepo && d.local_not_ignored ? d.local ? d.local.file : `${d.path}/.claude/settings.local.json` : null,
       };

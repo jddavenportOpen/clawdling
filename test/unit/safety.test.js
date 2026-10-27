@@ -158,7 +158,7 @@ test('the union of user, agent folder and repo: a project agent is red, a domain
     claudeJson: { mcpServers: { gmail: { command: 'npx', args: ['@acme/gmail-mcp'] } } },
     agents: [
       { id: 'site', kind: 'project', repo: { '.claude/settings.json': { permissions: { allow: ['Bash(curl:*)'] } } } },
-      { id: 'health', kind: 'domain', folder: { permissions: { deny: ['mcp__gmail'] } } },
+      { id: 'health', kind: 'domain', folder: { permissions: { deny: ['mcp__gmail', 'WebFetch'] } } },
     ],
   });
   const a = w.run();
@@ -174,7 +174,8 @@ test('the union of user, agent folder and repo: a project agent is red, a domain
   assert.ok(site.fixes.length >= 1 && site.fixes.length <= 3);
   assert.ok(site.fixes.every((f) => typeof f === 'string'), 'fixes are text');
   const health = row(a, 'health');
-  assert.equal(health.chips.private.length, 0, 'a deny rule in its folder takes gmail away');
+  assert.deepEqual(texts(health, 'private'), ["the org folder: your me.md and every agent's notes (`--add-dir`, Clawdling)"], 'a deny rule in its folder takes gmail away; the org folder stays');
+  assert.equal(health.chips.untrusted.length, 0, 'and WebFetch');
   assert.equal(health.trifecta, false);
   assert.equal(health.verdict, 'green');
   assert.equal(health.summary, 'No trifecta found by name');
@@ -184,15 +185,16 @@ test('the union of user, agent folder and repo: a project agent is red, a domain
 
 test('fixes come from the cheapest leg and say exactly what to change', () => {
   const w = world({
-    user: { permissions: { allow: ['WebFetch', 'WebSearch', 'Bash(curl:*)', 'Bash(wget:*)'] } },
+    user: { permissions: { allow: ['WebSearch', 'Bash(curl:*)'] } },
     claudeJson: { mcpServers: { gmail: { command: 'npx', args: ['@acme/gmail-mcp'] } } },
     agents: [{ id: 'work', kind: 'domain' }],
   });
   const r = row(w.run(), 'work');
   assert.equal(r.trifecta, true);
-  // private has one item (gmail): one deny rule cuts the trifecta.
-  assert.equal(r.fixes.length, 1);
-  assert.match(r.fixes[0], /^Stop this agent using the gmail MCP server: add "mcp__gmail" to `permissions\.deny` in .*work.*settings\.json$/);
+  // private (gmail and the org folder) has an item no text can cut; sends has two that can.
+  assert.equal(r.fixes.length, 2);
+  assert.match(r.fixes[0], /^Stop this agent using `Bash\(curl:\*\)`: add it to `permissions\.deny` in .*work.*settings\.json$/);
+  assert.match(r.fixes[1], /^Stop this agent using the gmail MCP server: add "mcp__gmail" to `permissions\.deny` in .*work.*settings\.json$/);
 });
 
 test('Donna: owner-only inbound is not untrusted, and the UI says why', () => {
@@ -470,4 +472,89 @@ test('scanSafety: managed settings are read; a missing file is just absent', () 
   assert.equal(s.user.settings, null);
   assert.deepEqual(s.user.mcp, []);
   assert.deepEqual(Object.keys(s.dirs), []);
+});
+
+// ------------------------------------------------------------------------------ review round 1
+
+test('a hostile .gitignore line of stars cannot hang the audit (no regular expression)', () => {
+  const home = tmp();
+  const repo = makeRepo(path.join(home, 'r'));
+  write(path.join(repo, '.gitignore'), `${'*'.repeat(50)}j\n${'*/'.repeat(200)}x\n${'**/'.repeat(100)}y\n`);
+  const t0 = performance.now();
+  assert.equal(gitIgnored(repo, '.claude/settings.local.json', { home, env: {} }), false);
+  assert.ok(performance.now() - t0 < 500, `${Math.round(performance.now() - t0)} ms`);
+  write(path.join(repo, '.gitignore'), '.cl?ude/**/*.local.json\n');
+  assert.equal(gitIgnored(repo, '.claude/settings.local.json', { home, env: {} }), true);
+  write(path.join(repo, '.gitignore'), 'settings.local.json/\n');
+  assert.equal(gitIgnored(repo, '.claude/settings.local.json', { home, env: {} }), false, 'a folder-only rule does not match the file');
+});
+
+test('deny rules match the way Claude Code matches them', async () => {
+  const { denies } = await import('../../server/safety.js');
+  const d = (deny, allow) => denies(parseRule(`Bash(${deny})`), parseRule(`Bash(${allow})`));
+  assert.equal(d('curl', 'curl:*'), false, 'an exact deny takes only the identical rule');
+  assert.equal(d('git', 'git push:*'), false);
+  assert.equal(d('http *', 'https:*'), false);
+  assert.equal(d('nc *', 'ncat:*'), false);
+  assert.equal(d('curl:*', 'curl -X POST:*'), true);
+  assert.equal(d('curl:*', 'curl:*'), true);
+  assert.equal(d('cur*', 'curl:*'), true);
+  assert.equal(d('[redacted]', '[redacted]'), false, 'a redacted deny never assumed to match');
+  const w = world({ claudeJson: { mcpServers: { gmail: { command: 'gmail-mcp' } } }, agents: [{ id: 'a', kind: 'domain', folder: { permissions: { deny: ['mcp__gmail__*'] } } }] });
+  assert.ok(!texts(row(w.run(), 'a'), 'private').some((t) => t.startsWith('gmail')), 'mcp__server__* denies the server');
+});
+
+test('modes: Claude Code\'s own default (auto) when nothing picks one; bypass is all three', () => {
+  const clean = world({ agents: [{ id: 'asks', kind: 'domain' }, { id: 'inherits', kind: 'domain', mode: 'inherit' }] });
+  const a = clean.run();
+  const u = row(a, USER_ROW);
+  assert.equal(u.verdict, 'amber', 'a clean computer: amber, never red');
+  assert.match(u.mode, /auto \(Claude Code's default\)/);
+  assert.ok(u.risks.some((r) => r.id === 'auto_mode' && /own default: auto mode/.test(r.text)));
+  assert.ok(texts(u, 'sends').some((t) => t.startsWith("Auto mode, Claude Code's default")));
+  assert.equal(row(a, 'asks').verdict, 'green', 'Clawdling starts it asking first');
+  const inh = row(a, 'inherits');
+  assert.equal(inh.verdict, 'red', 'auto by default, plus the org folder');
+  assert.ok(inh.risks.some((r) => r.id === 'auto_mode'));
+  const by = world({ agents: [{ id: 'b', kind: 'domain', mode: 'inherit', folder: { permissions: { defaultMode: 'bypassPermissions' } } }] });
+  const b = row(by.run(), 'b');
+  for (const c of ['private', 'untrusted', 'sends']) assert.ok(texts(b, c).some((t) => t.startsWith('Bypass permissions mode')), c);
+});
+
+test('the private and untrusted legs: bare Read, file readers, network tools, wrappers, package runners', () => {
+  const w = world({
+    user: { defaultMode: 'default', permissions: { allow: ['Read', 'Bash(grep:*)', 'Bash(sudo curl:*)', 'Bash(npm run:*)', 'PowerShell(Invoke-WebRequest *)', 'Bash(npm run test:*)', 'Bash(curl -u admin:hunter2pass https://h/:*)'] } },
+  });
+  const u = row(w.run(), USER_ROW);
+  assert.ok(texts(u, 'private').some((t) => t.startsWith('`Read` allowed (reads any file without asking)')));
+  assert.ok(texts(u, 'private').some((t) => t.startsWith('`Bash(grep:*)`')));
+  assert.ok(texts(u, 'untrusted').some((t) => t.startsWith('`Bash(sudo curl:*)`')));
+  assert.ok(texts(u, 'sends').some((t) => t.startsWith('`Bash(npm run:*)`')));
+  assert.ok(texts(u, 'sends').some((t) => t.startsWith('`PowerShell(Invoke-WebRequest *)`')));
+  assert.ok(!JSON.stringify(u).includes('npm run test'), 'a named script with arguments is not "any code"');
+  assert.ok(!JSON.stringify(u).includes('hunter2pass'), 'a short password after -u is redacted');
+});
+
+test('ruleText: credential flags of any length; ports and paths stay', () => {
+  assert.equal(ruleText('Bash(curl -u admin:pw https://h/:*)'), 'Bash(curl -u [redacted] https://h/:*)');
+  assert.equal(ruleText('Bash(mysql --password=s3cr3t -h db:*)'), 'Bash(mysql --password=[redacted] -h db:*)');
+  assert.equal(ruleText('Bash(ssh -p 22 host:*)'), 'Bash(ssh -p 22 host:*)');
+  assert.equal(ruleText('Bash(/opt/homebrew/bin/python3:*)'), 'Bash(/opt/homebrew/bin/python3:*)');
+});
+
+test('names that are tokens are redacted; a repo can turn on a plugin for its own sessions', () => {
+  const f = mcpFacts({ ghp_abcdefghijklmnopqrstuvwxyz0123456789: { command: 'x' } });
+  assert.equal(f[0].name, '[redacted]');
+  const w = world({ agents: [{ id: 'p', kind: 'project', repo: { '.claude/settings.json': { enabledPlugins: { 'gmail-tools@someone': true } } } }] });
+  const p = row(w.run(), 'p');
+  assert.ok(texts(p, 'private').some((t) => t.startsWith('gmail-tools plugin (mail)')));
+  assert.ok(p.risks.some((r) => r.id === 'marketplace' && /This folder's settings turn on the gmail-tools plugin/.test(r.text)));
+});
+
+test('an agent called "constructor" is not "accepted" by the prototype', () => {
+  const w = world({ user: { permissions: { allow: ['WebFetch'] } }, agents: [{ id: 'constructor', kind: 'domain' }] });
+  const r = row(w.run({ choices: new SafetyChoices(path.join(w.org, '.clawdling', 'safety.json')) }), 'constructor');
+  assert.equal(r.trifecta, true);
+  assert.equal(r.accepted, null);
+  assert.equal(r.verdict, 'red');
 });

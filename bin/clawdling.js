@@ -448,7 +448,13 @@ async function cmdDiscover(args) {
 // The setup safety audit (1.8): offline, from files only. It never asks gh or the cockpit.
 async function cmdSafety(ctx, flags) {
   if (!flags.setup) throw new CliError('the safety audit is part of the setup scan: `discover --setup --safety`');
+  // It lists permission rules from your settings and every repo's: yours to read, not an agent's
+  // (every agent may run `clawdling discover` without asking).
+  if (process.env.CLAWDLING_SID || process.env.CLAWDLING_DONNA === '1') {
+    throw new CliError('the setup safety audit is yours: open Settings in the cockpit, or run `clawdling discover --setup --safety` in your own terminal');
+  }
   const { runSafetyAudit, offlineChannels, SafetyChoices, PRIVACY } = await import('../server/safety-run.js');
+  const { Accounts } = await import('../server/accounts.js');
   let agents = [];
   let o = null;
   try {
@@ -460,7 +466,8 @@ async function cmdSafety(ctx, flags) {
   } catch {
     // an unreadable org: the user level only
   }
-  const audit = runSafetyAudit({ agents, home: ctx.home, userHome: os.homedir(), env: childEnv(), channels: offlineChannels(o), choices: new SafetyChoices(path.join(ctx.paths.rt, 'safety.json')) });
+  const accounts = new Accounts({ env: process.env }).list().filter((a) => !a.default).length;
+  const audit = runSafetyAudit({ agents, home: ctx.home, userHome: os.homedir(), env: childEnv(), channels: offlineChannels(o), choices: new SafetyChoices(path.join(ctx.paths.rt, 'safety.json')), accounts });
   if (flags.json) return console.log(JSON.stringify({ ...audit, privacy: PRIVACY }, null, 2));
   printSafety(audit);
   console.log(`\n${PRIVACY}`);
@@ -1434,15 +1441,18 @@ async function cmdContract(ctx, flags) {
   const bin = which(name, env.PATH || '') || name;
   const run = (a, o = {}) => runClaudeOut(bin, a, { cwd: o.cwd, env: { ...env, ...(o.env || {}) }, timeout: o.timeout });
   let lines = await contractChecks({ run, transcript: transcriptFormat(ctx.paths) });
+  if (flags.live && lines.length === 1 && lines[0].status === 'fail') {
+    console.log(`  FIX   ${lines[0].text}`);
+    throw new CliError('--live needs a claude that runs: nothing was started');
+  }
   if (flags.live) {
     if (!flags.yes && !flags.json) {
       if (!process.stdin.isTTY) throw new CliError(`--live runs one real session (${LIVE_COST}): add --yes to run it without asking`);
       const yes = await askYesNo(`--live runs one real Claude Code session ("${LIVE_PROMPT}", model haiku) in a temporary folder: ${LIVE_COST}. Run it? [y/N] `);
       if (!yes) throw new CliError('stopped: nothing was run');
     } else if (flags.json && !flags.yes) throw new CliError(`--live runs one real session (${LIVE_COST}): add --yes`);
-    const v = lines.find((l) => l.id === 'version');
     const ver = (await run(['--version'])).stdout;
-    lines = lines.concat(await liveCheck({ run, configDir: claudeConfigDirOf(env), parse: liveTranscriptFacts, supportsStopFailure: supportsStopFailure(ver) && v && v.status !== 'fail' }));
+    lines = lines.concat(await liveCheck({ run, configDir: claudeConfigDirOf(env), parse: liveTranscriptFacts, supportsStopFailure: supportsStopFailure(ver) }));
   }
   const sum = summary(lines);
   if (flags.json) {
@@ -1468,10 +1478,14 @@ function askYesNo(q) {
   return new Promise((resolve) => {
     process.stdout.write(q);
     process.stdin.setEncoding('utf8');
-    process.stdin.once('data', (d) => {
+    const done = (yes) => {
       process.stdin.pause();
-      resolve(/^y(es)?$/i.test(String(d).trim()));
-    });
+      process.stdin.removeAllListeners('data');
+      process.stdin.removeAllListeners('end');
+      resolve(yes);
+    };
+    process.stdin.once('data', (d) => done(/^y(es)?$/i.test(String(d).trim())));
+    process.stdin.once('end', () => done(false)); // Ctrl-D: no
     process.stdin.resume();
   });
 }

@@ -325,13 +325,71 @@
         "scp",
         "ssh",
         "rsync",
+        "open",
+        "xdg-open",
+        "dig",
+        "nslookup",
+        "invoke-webrequest",
+        "iwr",
+        "invoke-restmethod",
+        "irm",
+        "start-bitstransfer"
+      ],
+      "caps": [
+        "sends",
+        "untrusted"
+      ],
+      "why": "can send data out and read what comes back"
+    },
+    {
+      "match": "any",
+      "words": [
         "mail",
         "mailx",
         "sendmail",
         "mutt",
-        "osascript"
+        "send-mailmessage"
       ],
-      "why": "can send data out"
+      "caps": [
+        "sends"
+      ],
+      "why": "can send mail"
+    },
+    {
+      "match": "any",
+      "words": [
+        "cat",
+        "head",
+        "tail",
+        "less",
+        "more",
+        "grep",
+        "rg",
+        "egrep",
+        "fgrep",
+        "find",
+        "fd",
+        "strings",
+        "xxd",
+        "od",
+        "hexdump",
+        "base64",
+        "sqlite3",
+        "security",
+        "awk",
+        "sed",
+        "jq",
+        "tar",
+        "zip",
+        "cp",
+        "get-content",
+        "gc",
+        "select-string"
+      ],
+      "caps": [
+        "private"
+      ],
+      "why": "reads any file"
     },
     {
       "match": "verbs",
@@ -342,6 +400,13 @@
         "push",
         "send-email",
         "request-pull"
+      ],
+      "caps": [
+        "sends"
+      ],
+      "bare_caps": [
+        "sends",
+        "untrusted"
       ],
       "why": "sends this folder's content out"
     },
@@ -363,7 +428,46 @@
         "upload",
         "push"
       ],
+      "caps": [
+        "sends"
+      ],
       "why": "publishes this folder's content"
+    },
+    {
+      "match": "verbs",
+      "wildcard": true,
+      "words": [
+        "npm",
+        "yarn",
+        "pnpm",
+        "bun",
+        "pip",
+        "pip3",
+        "pipx",
+        "uv",
+        "poetry",
+        "go",
+        "cargo",
+        "deno",
+        "gem",
+        "bundle",
+        "composer"
+      ],
+      "verbs": [
+        "run",
+        "exec",
+        "x",
+        "dlx",
+        "install",
+        "add",
+        "i"
+      ],
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ],
+      "why": "runs package code, which can do anything"
     },
     {
       "match": "verbs",
@@ -408,6 +512,13 @@
         "exec",
         "ssh"
       ],
+      "caps": [
+        "sends"
+      ],
+      "bare_caps": [
+        "sends",
+        "untrusted"
+      ],
       "why": "can send data to a service"
     },
     {
@@ -437,7 +548,11 @@
         "make",
         "sudo",
         "exec",
-        "source"
+        "source",
+        "osascript",
+        "invoke-expression",
+        "iex",
+        "start-process"
       ],
       "flags": [
         "-c",
@@ -447,10 +562,29 @@
         "--print",
         "run",
         "-x",
-        "x"
+        "x",
+        "-command",
+        "-encodedcommand"
       ],
-      "why": "runs any code, which can send data out"
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ],
+      "why": "runs any code"
     }
   ],
-  "commands_note": "A Bash or PowerShell allow rule gives 'sends' when it lets the agent run one of these. match 'any': a wildcard rule for the command (any arguments can carry data). match 'verbs': the rule names one of the verbs, or is a bare wildcard for the command. match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags."
+  "commands_note": "A Bash or PowerShell allow rule gives the caps of the first entries it matches (all of them, unioned). Words are matched after wrappers (sudo, env, timeout, nohup, nice, time, command) are skipped. match 'any': a wildcard rule for the command. match 'verbs': the rule names one of the verbs (with 'wildcard': true, only a wildcard rule ending right after the verb, like `npm run:*`), or is a bare wildcard for the command (then 'bare_caps'). match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags. Commands not listed here are not classified: names only.",
+  "wrappers": [
+    "sudo",
+    "env",
+    "timeout",
+    "nohup",
+    "nice",
+    "time",
+    "command",
+    "stdbuf",
+    "caffeinate",
+    "doas"
+  ]
 }

@@ -63,7 +63,9 @@ after(async () => {
 });
 
 test('GET /api/setup/safety: every agent and the user level, by name, with no secret anywhere', async () => {
-  const r = await request(srv, 'GET', '/api/setup/safety');
+  const cli = await request(srv, 'GET', '/api/setup/safety');
+  assert.equal(cli.status, 403, 'the CLI token (any agent, Donna) cannot read the rules');
+  const r = await request(srv, 'GET', '/api/setup/safety', undefined, asOwner());
   assert.equal(r.status, 200, r.text);
   noSecrets(r.text, 'GET /api/setup/safety');
   assert.ok(!r.text.includes('owner@example.invalid'));
@@ -117,6 +119,14 @@ test('the health check says when Claude Code is newer than the last version chec
   const h = await request(srv, 'GET', '/api/health');
   assert.equal(h.body.claude_compat.newer, true, 'the fake claude is 2.1.999');
   assert.match(h.body.claude_compat.max_checked, /^\d+\.\d+\.\d+$/);
+});
+
+test('the CLI: inside an agent session or a Donna turn, the audit is refused', () => {
+  for (const extra of [{ CLAWDLING_SID: '00000000-0000-4000-8000-000000000000' }, { CLAWDLING_DONNA: '1' }]) {
+    const r = cliResult(['discover', '--setup', '--safety'], { env: { ...env, ...extra, CLAWDLING_HOME: home }, home });
+    assert.notEqual(r.code, 0);
+    assert.match(r.stderr, /the setup safety audit is yours/);
+  }
 });
 
 test('the CLI: discover --setup --safety prints the same audit, offline, with no secret', () => {

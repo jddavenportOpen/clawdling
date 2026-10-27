@@ -1358,7 +1358,12 @@ export async function startServer(opts = {}) {
       ['GET', /^\/api\/discover$/, async (req, m, res, url) => [200, await discovery({ github: url.searchParams.get('github') !== '0', refresh: url.searchParams.get('refresh') === '1' })]],
       ['GET', /^\/api\/setup$/, () => [200, scanSetup({ configDir, agents: org.agents(), homedir: userHome, env: cEnv })]],
       // The setup safety audit (1.8): names only, read from files; no process, no socket, no change.
-      ['GET', /^\/api\/setup\/safety$/, () => [200, safetyAudit()]],
+      ['GET', /^\/api\/setup\/safety$/, (req) => {
+        // It lists permission rules from your settings and every repo's: the cockpit's, not the CLI's
+        // (every agent and Donna can use the CLI's token). The report's verdicts carry no rule text.
+        if (rawToken(req)) throw new HttpError(403, 'The setup safety audit is yours, in the cockpit (or `clawdling discover --setup --safety` in your own terminal).');
+        return [200, safetyAudit()];
+      }],
       // The owner's own choices, kept in .clawdling (no agent can read or write it): from the cockpit
       // only, never through the CLI, which every agent and Donna can run.
       ['POST', /^\/api\/setup\/safety\/accept$/, async (req) => {

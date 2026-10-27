@@ -790,8 +790,10 @@ credentials, so it reads names only:
 | `.gitignore`, `.claude/.gitignore`, `.git/info/exclude`, your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) | the ignore rules, to see whether `.claude/settings.local.json` is ignored | nothing else; no `git` process is started |
 | Clawdling's own state | Donna's channel (Telegram or iMessage, paired or not), each agent's permission mode, Donna's and the CTO seat's rules, your choices in `.clawdling/safety.json` | tokens, chat content |
 
-Every rule's text passes `redactSecrets()` **before** it is classified or shown, and then any run of
-20 or more letters and digits that mixes both is replaced too, whatever its format:
+Every rule's text passes `redactSecrets()` **before** it is classified or shown; then the value after a
+credential flag (`-u`, `--user`, `--password`, `--token`, `--api-key`, `-p` unless it is a number) is
+replaced whatever its length, and so is any run of 20 or more letters and digits that mixes both,
+whatever its format:
 `Bash(curl -H "Authorization: Bearer …")` is shown as `Bash(curl -H "Authorization: Bearer
 [redacted]")`. A package or a host label that looks like a token is dropped. Inside a repo a file is
 read only when its real path is inside the repo (a `.mcp.json` or `.claude/settings.json` linked to
@@ -807,7 +809,8 @@ the server's output or `safety.json`; another runs the audit with sockets, DNS, 
 ### What the verdict means, and does not
 
 Green is "no trifecta found **by name**", never "secure": the audit sees names, not what a server or
-a script really does. A name it does not know is "unknown: review", which is never green (amber at
+a script really does. A shell command that is not in its table (`capabilities.json`) is not
+classified, and it does not follow one agent asking another (`clawdling send`) to act for it. A name it does not know is "unknown: review", which is never green (amber at
 least). A custom server called `helper` that sends mail is exactly the case it can miss; that is why
 unknowns are shown, and why you can say what one does. The fixes are text: Clawdling changes no
 settings file, yours or a repo's.
@@ -818,8 +821,14 @@ settings file, yours or a repo's.
 - **Say what an unknown MCP server or plugin can do** (private data, untrusted input, sends out).
 
 Both are kept in `.clawdling/safety.json` (mode 600), which no agent can read or write (the runtime
-folder's deny rules), and both routes refuse the CLI's token, which every agent and Donna can use: an
-agent cannot accept its own risk. The cockpit (the computer itself, or a paired device) can.
+folder's deny rules), and both routes refuse a request that carries the CLI's token header, which
+every agent and Donna can use: an agent cannot accept its own risk. The cockpit (the computer itself,
+or a paired device) can. Reading the audit is the owner's too: `GET /api/setup/safety` refuses that
+header, and `clawdling discover --setup --safety` refuses inside an agent session or a Donna turn, so
+an agent cannot list the permission rules of your settings and other repos without asking. (Someone
+who already holds the token file can present it as a cookie; that is reading `.clawdling/token`,
+which the "Not in scope" section already counts as running as you.) The CTO's report carries only
+each agent's verdict and risk ids, never rule text.
 
 ### The update guard
 

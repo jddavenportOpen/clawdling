@@ -1401,9 +1401,11 @@ function listPlugins(cfg, enabled) {
   const out = [];
   for (const k of keys) {
     const at = k.lastIndexOf('@');
-    const name = cleanName(at > 0 ? k.slice(0, at) : k);
+    const raw = at > 0 ? k.slice(0, at) : k;
+    const name = tokenish(raw) ? REDACTED : cleanName(raw);
     if (!name) continue;
-    out.push({ name, marketplace: at > 0 ? cleanName(k.slice(at + 1)) : null, enabled: flags.get(k) === true });
+    const mk = at > 0 ? k.slice(at + 1) : null;
+    out.push({ name, marketplace: mk === null ? null : tokenish(mk) ? REDACTED : cleanName(mk), enabled: flags.get(k) === true });
   }
   return out.sort((a, b) => a.name.localeCompare(b.name) || String(a.marketplace).localeCompare(String(b.marketplace)));
 }
@@ -1489,7 +1491,7 @@ const VALUE_FLAGS = new Set(['-e', '--env', '--env-file', '-v', '--volume', '-H'
 const RUNNER_WORDS = new Set(['run', 'exec', 'x', 'dlx', 'tool', '--']);
 
 /** A run of 20+ letters and digits, both present: a token, whatever its format. */
-const LONG_TOKEN_RE = /[A-Za-z0-9+/=_-]{20,}/g;
+const LONG_TOKEN_RE = /[A-Za-z0-9+=_-]{20,}/g;
 function scrubTokens(s) {
   return s.replace(LONG_TOKEN_RE, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) && !/^[a-z]+(?:-[a-z]+)*$/.test(m) ? REDACTED : m));
 }
@@ -1499,9 +1501,16 @@ function scrubTokens(s) {
  * `Bash(curl -H "Authorization: Bearer abc")` comes back as `Bash(curl -H "Authorization: Bearer
  * [redacted]")`. The audit classifies this text, never the raw rule.
  */
+// A value after a credential flag (`curl -u admin:pw`, `--password pw`, `--token x`), whatever its
+// length; `-p` only when it is not a number (`ssh -p 22` keeps its port).
+const CRED_FLAG_RE = /(^|[\s(])(-u|--user|--password|--passwd|--pass|--token|--api-key|--apikey|--secret|--auth|-p)(\s+|=)(["']?)([^\s"')]+)\4/g;
+function redactFlagValues(s) {
+  return s.replace(CRED_FLAG_RE, (m, pre, flag, sep, q, val) => (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || /^\$/.test(val) ? m : `${pre}${flag}${sep}${q}${REDACTED}${q}`));
+}
+
 export function ruleText(rule) {
   if (typeof rule !== 'string' || !rule) return null;
-  return cleanText(scrubTokens(redactSecrets(rule.slice(0, RULE_CHARS))), 200);
+  return cleanText(scrubTokens(redactFlagValues(redactSecrets(rule.slice(0, RULE_CHARS)))), 200);
 }
 
 /** Is a word (a package, a host label) a pasted token rather than a name? */
@@ -1553,8 +1562,9 @@ export function mcpFacts(servers) {
   if (!isObj(servers)) return [];
   const out = [];
   for (const [key, v] of Object.entries(servers).slice(0, LIST_MAX)) {
-    const name = cleanName(key);
-    if (!name || FORBIDDEN_KEYS.has(key)) continue;
+    if (FORBIDDEN_KEYS.has(key)) continue;
+    const name = tokenish(String(key)) ? REDACTED : cleanName(key);
+    if (!name) continue;
     const s = isObj(v) ? v : {};
     const type = typeof s.type === 'string' && /^(stdio|http|sse|ws|sdk)$/.test(s.type) ? s.type : typeof s.url === 'string' ? 'http' : 'stdio';
     out.push({
@@ -1608,7 +1618,7 @@ export function settingsFacts(file, scope = LENIENT, { home } = {}) {
         home_dirs: homeDirs.filter(Boolean),
         hooks,
         all_project_mcp: s.enableAllProjectMcpServers === true,
-        plugins: isObj(s.enabledPlugins) ? Object.entries(s.enabledPlugins).slice(0, LIST_MAX).map(([k, v]) => [cleanName(k), v === true]).filter(([k]) => k) : [],
+        plugins: isObj(s.enabledPlugins) ? Object.entries(s.enabledPlugins).slice(0, LIST_MAX).map(([k, v]) => [tokenish(k) ? REDACTED : cleanName(k), v === true]).filter(([k]) => k) : [],
       };
     },
     scope
@@ -1626,10 +1636,17 @@ function homeLevel(p, home) {
 
 // ---- .gitignore, read as files (the audit starts no process, so no `git check-ignore`)
 
-/** A gitignore pattern as a RegExp over a path relative to the ignore file's folder, or null. */
-function ignoreRe(pattern) {
-  let p = pattern.replace(/\s+$/, '');
-  if (!p || p.startsWith('#')) return null;
+const IGNORE_PATTERN_MAX = 512;
+
+/**
+ * A gitignore pattern, parsed: `{neg, dirOnly, anchored, parts}` where parts are literal characters,
+ * '*' (any run without "/"), '**' (any run), '?' (one character but "/") or {set, not} (a [...]
+ * class), or null for a comment, a blank or an over-long line. Matching (globMatch) is a table over
+ * pattern x path, never a regular expression: a hostile line of 50 stars costs microseconds.
+ */
+function ignorePattern(line) {
+  let p = String(line).replace(/\s+$/, '');
+  if (!p || p.startsWith('#') || p.length > IGNORE_PATTERN_MAX) return null;
   let neg = false;
   if (p.startsWith('!')) {
     neg = true;
@@ -1640,32 +1657,92 @@ function ignoreRe(pattern) {
   if (dirOnly) p = p.slice(0, -1);
   const anchored = p.includes('/');
   if (p.startsWith('/')) p = p.slice(1);
-  let re = '';
+  if (!p) return null;
+  const parts = [];
   for (let i = 0; i < p.length; i++) {
     const c = p[i];
     if (c === '*') {
-      if (p[i + 1] === '*') {
-        const slash = p[i + 2] === '/';
-        re += slash ? '(?:.*/)?' : '.*';
-        i += slash ? 2 : 1;
-      } else re += '[^/]*';
-    } else if (c === '?') re += '[^/]';
+      let j = i;
+      while (p[j + 1] === '*') j++;
+      const dbl = j > i;
+      if (dbl && p[j + 1] === '/') {
+        parts.push('**/');
+        i = j + 1;
+      } else {
+        parts.push(dbl ? '**' : '*');
+        i = j;
+      }
+    } else if (c === '?') parts.push('?');
     else if (c === '[') {
-      const end = p.indexOf(']', i + 1);
-      if (end === -1) re += '\\[';
+      const end = p.indexOf(']', i + 2);
+      if (end === -1) parts.push({ lit: '[' });
       else {
-        re += `[${p.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+        let body = p.slice(i + 1, end);
+        const not = body.startsWith('!') || body.startsWith('^');
+        if (not) body = body.slice(1);
+        parts.push({ set: body, not });
         i = end;
       }
-    } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+    } else parts.push({ lit: c === '\\' && i + 1 < p.length ? p[++i] : c });
   }
-  // A pattern matches the path itself or any folder above it (`.claude/` ignores what is inside).
-  const body = `${anchored ? '^' : '(?:^|/)'}${re}`;
-  try {
-    return { neg, dirOnly, re: new RegExp(`${body}${dirOnly ? '/' : '(?:$|/)'}`) };
-  } catch {
-    return null;
+  return { neg, dirOnly, anchored, parts };
+}
+
+function inSet(set, ch) {
+  for (let i = 0; i < set.length; i++) {
+    if (set[i + 1] === '-' && i + 2 < set.length) {
+      if (ch >= set[i] && ch <= set[i + 2]) return true;
+      i += 2;
+    } else if (set[i] === ch) return true;
   }
+  return false;
+}
+
+/** Does the whole of `str` match `parts`? A (pattern x string) table: O(len(parts) x len(str)). */
+function globMatch(parts, str) {
+  const n = str.length;
+  let cur = new Array(n + 1).fill(false);
+  cur[0] = true;
+  for (const t of parts) {
+    const next = new Array(n + 1).fill(false);
+    if (t === '*' || t === '**') {
+      for (let j = 0; j <= n; j++) {
+        if (!cur[j]) continue;
+        next[j] = true;
+        for (let k = j; k < n && (t === '**' || str[k] !== '/'); k++) next[k + 1] = true;
+      }
+    } else if (t === '**/') {
+      // Zero or more whole folders.
+      for (let j = 0; j <= n; j++) {
+        if (!cur[j]) continue;
+        next[j] = true;
+        for (let k = j; k < n; k++) if (str[k] === '/') next[k + 1] = true;
+      }
+    } else {
+      for (let j = 0; j < n; j++) {
+        if (!cur[j]) continue;
+        const ch = str[j];
+        const ok = t === '?' ? ch !== '/' : t.lit !== undefined ? t.lit === ch : ch !== '/' && inSet(t.set, ch) !== t.not;
+        if (ok) next[j + 1] = true;
+      }
+    }
+    cur = next;
+  }
+  return cur[n];
+}
+
+/**
+ * Does a parsed pattern match `rel` (or a folder above it, which ignores what is inside)? Unanchored
+ * patterns may start after any "/"; a dirOnly pattern must end at a "/" of the path.
+ */
+function ignoreMatches(pat, rel) {
+  const starts = [0];
+  if (!pat.anchored) for (let i = 0; i < rel.length; i++) if (rel[i] === '/') starts.push(i + 1);
+  const ends = [];
+  for (let i = 0; i < rel.length; i++) if (rel[i] === '/') ends.push(i);
+  if (!pat.dirOnly) ends.push(rel.length);
+  for (const s of starts) for (const e of ends) if (e > s && globMatch(pat.parts, rel.slice(s, e))) return true;
+  return false;
 }
 
 function ignoreLines(file, scope) {
@@ -1703,11 +1780,11 @@ export function gitIgnored(repo, rel, { home = os.homedir(), env = process.env }
   let ignored = false;
   for (const [file, prefix, scope] of sources) {
     for (const line of ignoreLines(file, scope)) {
-      const r = ignoreRe(line);
+      const r = ignorePattern(line);
       if (!r) continue;
       const sub = prefix ? (rel.startsWith(prefix) ? rel.slice(prefix.length) : null) : rel;
       if (sub === null) continue;
-      if (r.re.test(sub) || (r.dirOnly && r.re.test(`${sub}/`))) ignored = !r.neg;
+      if (ignoreMatches(r, sub)) ignored = !r.neg;
     }
   }
   return ignored;

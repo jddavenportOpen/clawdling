@@ -23,15 +23,20 @@ const LINK = 'https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/';
 // ---- data: one read shared by Settings, the map and the report cards
 let cache = null;
 let inflight = null;
+let seq = 0; // every read and every change gets a number: an older answer never replaces a newer one
+let shown = 0;
 const listeners = new Set();
-function publish(d) {
+function publish(d, n = ++seq) {
+  if (n < shown) return;
+  shown = n;
   cache = d;
   for (const fn of listeners) fn(d);
 }
 export function loadSafety({ force = false } = {}) {
   if (inflight && !force) return inflight;
+  const n = ++seq;
   const p = api.safety().then((d) => {
-    publish(d && typeof d === 'object' ? d : { rows: [] });
+    publish(d && typeof d === 'object' ? d : { rows: [] }, n);
     return cache;
   }).finally(() => { if (inflight === p) inflight = null; });
   inflight = p;

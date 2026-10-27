@@ -410,7 +410,7 @@ const SAFETY_SCAN = (agents) => {
     let d = { path: show, in_repo: !!a.repo, settings: null, local: null, mcp_json: [], mcp_local: [], local_not_ignored: false };
     if (a.kind === 'domain' || (a.kind === 'project' && !a.repo)) d.settings = safetyFacts(`${show}/.claude/settings.json`, { deny: ['mcp__github', 'mcp__linear'] });
     if (a.repo === `${CODE}/site`) {
-      d.settings = safetyFacts(`${show}/.claude/settings.json`, { allow: ['Bash(curl:*)', 'Bash(npm test)'] });
+      d.settings = safetyFacts(`${show}/.claude/settings.json`, { allow: ['WebFetch', 'Bash(curl:*)', 'Bash(npm test)'] });
       d.mcp_json = [{ name: 'figma', type: 'stdio', command: 'npx', package: 'figma-developer-mcp', host: null }];
     }
     if (a.repo === `${CODE}/shop`) {
@@ -424,7 +424,7 @@ const SAFETY_SCAN = (agents) => {
   return {
     user: {
       config_dir: '~/.claude',
-      settings: safetyFacts('~/.claude/settings.json', { allow: ['WebSearch', 'WebFetch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
+      settings: safetyFacts('~/.claude/settings.json', { default_mode: 'default', allow: ['WebSearch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
       managed: [],
       mcp: [{ name: 'github', type: 'http', command: null, package: null, host: 'api.githubcopilot.com' }, { name: 'linear', type: 'http', command: null, package: null, host: 'mcp.linear.app' }],
       plugins: [{ name: 'frontend-design', marketplace: 'claude-plugins', enabled: false }, { name: 'superpowers', marketplace: 'obra', enabled: true }],
@@ -1181,7 +1181,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function safetyBody() {
     const placed = st.agents.map((a) => ({ ...a, dir: a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`,
-      cwd: a.kind === 'project' && a.repo ? a.repo : a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`, addDirs: [] }));
+      cwd: a.kind === 'project' && a.repo ? a.repo : a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`, addDirs: a.kind === 'chief' || a.kind === 'cto' ? [] : [HOME] }));
     const channels = { telegram: { configured: !!st.channels.telegram.configured, enabled: !!st.channels.telegram.enabled, paired: !!st.channels.telegram.paired }, imessage: { enabled: !!st.channels.imessage.enabled, saved: !!st.channels.imessage.handle } };
     const out = auditSafety({ scan: SAFETY_SCAN(placed), agents: placed, org: { home: HOME, channels, donnaTools: ['Bash(clawdling spawn *)', 'Bash(clawdling send *)', 'Bash(clawdling ls)', `Read(/${HOME}/**)`], cto: { allow: ['Bash(clawdling report --all --json)'], ask: ['Bash(clawdling send *)'], deny: ['WebFetch', 'WebSearch'] } },
       accepted: st.safetyAccepted || {}, tags: st.safetyTags || {}, home: '/Users/ada', platform: 'darwin' });

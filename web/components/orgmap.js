@@ -458,7 +458,7 @@ export function OrgMap() {
       </div>
       ${setupSel && sdata ? html`<${SetupPanel} kind=${setupSel} data=${sdata} onClose=${() => setSel(null)} />`
         : selNode ? html`<${MapPanel} n=${selNode} rep=${repById[selNode.id]} sessions=${sessions} onClose=${() => setSel(null)} agents=${agents} ownerName=${ownerName}
-          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} setupBusy=${layer && setup.refreshing} safety=${rowFor(safety.data, selNode.id)} />` : null}
+          repoSetup=${layer ? (sdata ? adds[selNode.id] || [] : null) : undefined} setupBusy=${layer && setup.refreshing} safety=${rowFor(safety.data, selNode.kind === 'owner' ? '_user' : selNode.id)} />` : null}
     </div>
   </div>`;
 }
@@ -466,7 +466,7 @@ export function OrgMap() {
 function MapNode({ n, st, rep, now, selected, dim, reduced, adds, shield, onSelect, onHover }) {
   const iconSize = n.kind === 'project' ? 14 : n.kind === 'owner' ? 18 : 16;
   const use = usageLine(rep, now);
-  const label = n.kind === 'owner' ? `${n.label} (you)` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${use ? `, ${use.long}` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}${shield ? `, setup safety: ${SHIELD_WORD[shield]}` : ''}`;
+  const label = n.kind === 'owner' ? `${n.label} (you)${shield ? `, setup safety of everything at the user level: ${SHIELD_WORD[shield]}` : ''}` : `${n.label}, ${n.kind === 'cluster' ? 'projects without a domain' : KIND_LABEL[n.kind]}${st.live ? `, ${st.live} live` : ''}${st.needs ? `, ${st.needs} need you` : ''}${use ? `, ${use.long}` : ''}${adds ? ', its repo adds its own Claude Code setup' : ''}${shield ? `, setup safety: ${SHIELD_WORD[shield]}` : ''}`;
   // The usage line sits on the far side of the label from the node (below a label under it, above
   // one over it, under a label beside it).
   const below = n.base === 'hanging';

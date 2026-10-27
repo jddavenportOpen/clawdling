@@ -29,15 +29,17 @@ test.describe('setup safety', () => {
     await expect(site.locator('[data-cap="sends"]')).toContainText('~/code/site/.claude/settings.json');
     await expect(site.getByTestId('safety-sentence')).toContainText(/^Lethal trifecta\. Text this agent reads through .+ could tell it to take your data from .+ and send it out with .+\.$/);
     const fixes = site.getByTestId('safety-fixes');
-    await expect(fixes.locator('li')).toHaveCount(2);
-    await expect(fixes).toContainText('add "mcp__github" to permissions.deny');
+    await expect(fixes.locator('li')).toHaveCount(3);
+    await expect(fixes).toContainText('Remove Bash(curl:*) from allow in ~/code/site/.claude/settings.json');
+    await expect(fixes.locator('li').nth(2)).toContainText('And 2 more like these');
     await expect(fixes).toContainText('Clawdling changes nothing');
     // A green agent stays folded; opening it shows its three chips and "nothing by name".
     const health = rowOf(page, 'health');
     await expect(health).toHaveAttribute('data-verdict', 'green');
     await expect(health).toContainText('No trifecta found by name');
     await health.locator('.safety-row-head').click();
-    await expect(health.locator('[data-cap="private"]')).toContainText('nothing by name');
+    await expect(health.locator('[data-cap="private"]')).toContainText('the org folder');
+    await expect(health.locator('[data-cap="sends"]')).toContainText('nothing by name');
     // Donna: her inbound is the owner's own, and the UI says why.
     await rowOf(page, 'donna').locator('.safety-row-head').click();
     await expect(rowOf(page, 'donna')).toContainText('Your own Claude Code settings and MCP servers do not load in her text-message turns.');
@@ -130,7 +132,7 @@ test.describe('setup safety', () => {
     const note = page.getByTestId('compat-note');
     await expect(note).toHaveText(/Claude Code 2\.1\.320 is newer than the last version Clawdling checked \(2\.1\.308\)\. It will probably work\. Run Doctor to check: .*doctor --contract/);
     await expect(page.getByTestId('health-banner')).toHaveCount(0);
-    await expect(page.getByTestId('panel-new-session').or(page.locator('[data-node="site"]')).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'New session' }).first()).toBeEnabled(); // a note, never a block
     await note.getByTestId('compat-dismiss').click();
     await expect(note).toHaveCount(0);
     await page.reload();
