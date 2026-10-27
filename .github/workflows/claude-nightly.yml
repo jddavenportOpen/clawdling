@@ -1,0 +1,132 @@
+name: claude-nightly
+
+# The update guard (SPEC-1.8): every day, the newest Claude Code from npm against what Clawdling
+# relies on (server/claude-compat.json), on Linux, macOS and Windows. `clawdling doctor --contract`
+# makes no model call, and claude never runs with a login here: no secrets but the job's own token.
+#   - A new version that passes everywhere: a pull request that bumps maxChecked (at most one a day;
+#     an older open bump is closed as superseded). Pull requests opened with the job's token do not
+#     start other workflows: this run is their check.
+#   - A failure: an issue titled "Claude Code <version> breaks <check>" with the failing lines (a
+#     comment on it instead, when it is already open).
+# Dry runs: push a branch named guard-dryrun/pass or guard-dryrun/break (the second plants a flag
+# Claude Code does not have, so the check fails) and read what it opens, against that branch.
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Claude Code version to check (default: the newest on npm)'
+        required: false
+  push:
+    branches: ['guard-dryrun/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: claude-nightly-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: newest Claude Code
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      checked: ${{ steps.v.outputs.checked }}
+      skip: ${{ steps.v.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: v
+        env:
+          WANT: ${{ inputs.version }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          V="${WANT:-$(npm view @anthropic-ai/claude-code version)}"
+          echo "$V" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "not a version: $V"; exit 1; }
+          M=$(node -p "require('./server/claude-compat.json').maxChecked")
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "checked=$M" >> "$GITHUB_OUTPUT"
+          # The daily run skips a version already checked; a manual run or a dry run never skips.
+          if [ "$EVENT" = schedule ] && [ "$V" = "$M" ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; else echo "skip=false" >> "$GITHUB_OUTPUT"; fi
+          echo "Claude Code $V (last checked: $M)"
+
+  check:
+    name: contract · ${{ matrix.os }}
+    needs: version
+    if: needs.version.outputs.skip != 'true'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      # Only on this throwaway runner: never on a user's computer, and never in Clawdling's docs.
+      - name: Install Claude Code ${{ needs.version.outputs.version }} (this runner only)
+        run: npm install -g "@anthropic-ai/claude-code@${{ needs.version.outputs.version }}"
+      - name: Plant a break (guard-dryrun/break only)
+        if: github.ref == 'refs/heads/guard-dryrun/break'
+        shell: bash
+        run: node -e "const f='server/claude-compat.json';const j=JSON.parse(require('fs').readFileSync(f));j.flags.push('--clawdling-seeded-break');require('fs').writeFileSync(f,JSON.stringify(j,null,2))"
+      - name: clawdling doctor --contract
+        id: contract
+        shell: bash
+        env:
+          DISABLE_AUTOUPDATER: '1'
+          CLAWDLING_HOME: ${{ runner.temp }}/no-org
+        run: |
+          set +e
+          node bin/clawdling.js doctor --contract --json > "contract-${{ runner.os }}.json"
+          code=$?
+          cat "contract-${{ runner.os }}.json"
+          exit $code
+      - name: Contract fixture suites
+        if: ${{ !cancelled() }}
+        run: node --test test/unit/claude-contract.test.js test/unit/contract.test.js
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: contract-${{ runner.os }}
+          path: contract-${{ runner.os }}.json
+          if-no-files-found: warn
+
+  report:
+    name: open the bump or the issue
+    needs: [version, check]
+    if: ${{ !cancelled() && needs.version.outputs.skip != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # The only write token in Clawdling's CI, scoped to this job: the bump pull request (contents,
+    # pull-requests) and the break issue (issues). Nothing else is granted, and no secret is used.
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+      - name: Bump maxChecked, or open the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+          CHECKED: ${{ needs.version.outputs.checked }}
+          RESULT: ${{ needs.check.result }}
+          BASE: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .github/scripts/claude-nightly-report.mjs
