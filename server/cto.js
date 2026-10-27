@@ -176,6 +176,7 @@ export class Cto {
       last_run_at: typeof st.last_run_at === 'string' ? st.last_run_at : null,
       last_run_sid: typeof st.last_run_sid === 'string' ? st.last_run_sid : null,
       last_skip: st.last_skip && typeof st.last_skip === 'object' ? st.last_skip : null,
+      watch_sid: typeof st.watch_sid === 'string' ? st.watch_sid : null,
       thresholds: normalizeThresholds(st.thresholds),
       headline_in_digest: st.headline_in_digest === true,
     };
@@ -271,7 +272,8 @@ export class Cto {
     // No model set: the account's own default, which may be the top tier; price it as the top tier.
     const model = (a && a.model) || 'opus';
     const alias = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-4-5' };
-    const p = priceFor(alias[model] || model) || priceFor('claude-sonnet-5-5');
+    // A model missing from the price table is priced as the top tier (never below what it may cost).
+    const p = priceFor(alias[model] || model) || priceFor('claude-opus-5-5');
     const base = 25000; // Claude Code's own system prompt and tools, roughly
     const ctx = base + Math.ceil((reportBytes + mdBytes) / 3.5);
     const turns = 6;
@@ -562,7 +564,7 @@ export class Cto {
   weekSpend() {
     try {
       const c = this.reports.costOf(this.reports.summaries({ agent: CTO_ID }), isoWeekRange(this.now()));
-      return { usd: c.total_usd, complete: c.complete };
+      return { usd: c.total_usd, complete: c.complete, unknown_models: c.unknown_models || [], partly: (c.sessions_partly_unknown || 0) + (c.sessions_counting || 0), missing: c.sessions_without_cost || 0 };
     } catch {
       return { usd: 0, complete: false, error: true };
     }
@@ -695,6 +697,7 @@ export class Cto {
       const s = await this.startReview({ scheduled: true, week });
       const after = this.state();
       after.last_run_sid = s.sid;
+      after.watch_sid = s.sid; // its spend is watched while it runs unattended (watchSpend)
       after.last_skip = null;
       this.save(after);
       return { ran: true, sid: s.sid };
@@ -717,18 +720,34 @@ export class Cto {
    */
   async watchSpend() {
     const st = this.state();
-    const sid = st.last_run_sid;
+    const sid = st.watch_sid;
     const rec = sid ? this.sessions.get(sid) : null;
-    if (!rec || !BUSY.has(rec.status)) return { stopped: false };
+    if (!rec) return { stopped: false };
+    // Only the unattended part: once it waits on the owner (or ends), the session is theirs.
+    if (rec.status !== 'working' && rec.status !== 'starting') {
+      const cur = this.state();
+      if (cur.watch_sid === sid) {
+        cur.watch_sid = null;
+        this.save(cur);
+      }
+      return { stopped: false };
+    }
     const spent = this.weekSpend();
-    if (!(spent.usd > st.weekly_cap_usd)) return { stopped: false };
+    // Spend that cannot be counted (a model missing from the price table, unreadable usage) stops it
+    // too: unpriced usage adds $0 and would never pass the cap. A fresh session gets two minutes.
+    const age = this.now() - Date.parse(rec.launched_at || rec.created_at || 0);
+    const uncounted = spent.error || spent.unknown_models.length > 0 || spent.partly > 0 || (spent.missing > 0 && age > 2 * 60000);
+    if (!(spent.usd > st.weekly_cap_usd) && !uncounted) return { stopped: false };
     try {
       await this.sessions.end(sid);
     } catch (err) {
       this.logger?.warn?.(`cto: could not stop the scheduled review: ${err.message}`);
     }
     const now = this.state();
-    now.last_skip = { week: isoWeek(this.now()), at: new Date(this.now()).toISOString(), why: `This week's scheduled CTO review was stopped: it had used $${spent.usd.toFixed(2)}, past its $${st.weekly_cap_usd.toFixed(2)} weekly cap. Resume it yourself if you want it to finish.` };
+    now.watch_sid = null;
+    now.last_skip = { week: isoWeek(this.now()), at: new Date(this.now()).toISOString(), why: uncounted && !(spent.usd > st.weekly_cap_usd)
+      ? "This week's scheduled CTO review was stopped: Clawdling could not count what it was using (a model it has no price for?), so it could not hold the weekly cap. Resume it yourself if you want it to finish."
+      : `This week's scheduled CTO review was stopped: it had used $${spent.usd.toFixed(2)}, past its $${st.weekly_cap_usd.toFixed(2)} weekly cap. Resume it yourself if you want it to finish.` };
     this.save(now);
     this.events?.record?.({ type: 'cto', action: 'stopped-over-cap', sid });
     this.events?.publish?.('cto', { action: 'stopped', why: now.last_skip.why });

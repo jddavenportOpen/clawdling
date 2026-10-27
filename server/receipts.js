@@ -32,22 +32,36 @@ export function citedIds(text) {
 // Unicode tags, variation selectors, private-use and unassigned code points, line separators.
 export const INVISIBLE_RE = /[\p{Cf}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/gu;
 
-// What is removed from text typed into any session, by anyone: control characters (but tab and line
-// breaks), and the invisible characters that can hide or reorder words (format characters, Unicode
-// tags, private-use and unassigned code points). Joiners (ZWJ, ZWNJ) and variation selectors stay:
-// emoji sequences and Persian or Indic spelling need them, and they carry no words.
-const INPUT_STRIP_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}\p{Co}\p{Cn}]|(?![\u200c\u200d])\p{Cf}/gu;
+// What can hide or reorder words, for text typed into any session (cleanInput) and for what the CTO
+// seat may run or write (hiddenAt): control characters (but tab and line breaks), Unicode tags,
+// bidi controls, private-use characters, the variation selectors no emoji uses, and every other
+// format or default-ignorable character except the four real text needs one of at a time: the
+// joiners (ZWJ, ZWNJ: emoji sequences, Persian, Indic scripts) and the emoji selectors (U+FE0E/F).
+const KEEP = new Set(['‌', '‍', '︎', '️']);
+const HIDE_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u{E0000}-\u{E007F}\u{E0100}-\u{E01EF}︀-︍\p{Co}\p{Cf}\p{Default_Ignorable_Code_Point}]/u;
+const HIDE_RE_G = new RegExp(HIDE_RE.source, 'gu');
+// More than two joiners or selectors in a row carry bits, not text.
+const RUN_RE = /[‌‍︎️]{3,}/u;
+
 export function cleanInput(text) {
   return String(text ?? '')
-    .replace(INPUT_STRIP_RE, '')
-    // A run of selectors or joiners can carry bytes no one sees: one at a time is all text needs.
-    .replace(/([\uFE00-\uFE0F])[\uFE00-\uFE0F]+/g, '$1')
-    .replace(/([\u200c\u200d])[\u200c\u200d]+/g, '$1');
+    .replace(HIDE_RE_G, (c) => (KEEP.has(c) ? c : ''))
+    .replace(new RegExp(RUN_RE.source, 'gu'), (m) => m.slice(0, 2));
 }
 
-/** True when a string holds a character a person cannot see (or a control character but tab/LF/CR). */
+/** The first character a person cannot see (or a hiding run), {index, code} or null. Tab and line breaks are fine. */
+export function hiddenAt(text) {
+  const s = String(text ?? '');
+  for (const m of s.matchAll(HIDE_RE_G)) {
+    if (KEEP.has(m[0])) continue;
+    return { index: m.index, code: `U+${m[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}` };
+  }
+  const run = RUN_RE.exec(s);
+  return run ? { index: run.index, code: 'a run of joiners or selectors' } : null;
+}
+
 export function hasHidden(text) {
-  return /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\p{Cf}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/u.test(String(text ?? ''));
+  return hiddenAt(text) !== null;
 }
 
 /**

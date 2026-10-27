@@ -568,7 +568,8 @@ answers:
 - **ask** for a tool call it cannot read (no tool name, unreadable input), even with no session; a
   read in the background asks too;
 - **deny** for every other tool (deny by default). The seat uses only its shell, file tools, `Read`,
-  `Grep`, `Glob`, `LS`, `AskUserQuestion`, `TodoWrite` and `ExitPlanMode`. So no subagents or
+  `Grep`, `Glob`, `LS`, `AskUserQuestion`, `TodoWrite`, `ExitPlanMode` and `ToolSearch` (which
+  only loads tool schemas). So no subagents or
   workflows (they would run beside its own thread, so a prompt on screen might not belong to the
   newest tool call), no watchers, no web, no `SendMessage` to other sessions, no schedules or remote
   triggers (they would spend the plan on their own), and no tool a later Claude Code adds. The
@@ -649,13 +650,13 @@ expand, nothing a person cannot see (control characters, bidi and zero-width cha
 tags, variation selectors), not starting with `-` (the CLI would read it as an option), and,
 through `clawdling.cmd` or PowerShell, no `%`, `^` or `!` (which they expand). And whatever is typed
 into any session, by anyone (a message, or a new session's first message), loses its control
-characters (but tab and line breaks) and every invisible character that can hide or reorder words
-(format characters, Unicode tags, private-use and unassigned code points, the supplementary variation
-selectors); a single joiner or emoji variation selector stays (emoji and some scripts need one), and
-a run of them collapses to one, so no run can carry hidden bytes. New agents' names and missions
-(written into their CLAUDE.md) are cleaned the same way. The seat's own check refuses (`deny`) any
-shell command or file write of its own that holds a character a person cannot see: you could not
-read what you would be approving. Through PowerShell, any
+characters (but tab and line breaks) and every character that can hide or reorder words: Unicode
+tags, bidi controls, private-use characters, the variation selectors no emoji uses, and every other
+format or default-ignorable character, except the four real text needs one at a time (the joiners
+ZWJ and ZWNJ, and the emoji selectors U+FE0E and U+FE0F); more than two of those in a row are cut to
+two. New agents' names and missions (written into their CLAUDE.md) are cleaned the same way. The
+seat's own check refuses (`deny`) any shell command, file write or file path of its own holding one
+of those characters (or such a run), and names it: you could not read what you would be approving. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
 built so a long run of options cannot make them backtrack without end, and every command is capped
 at 4,001 characters before it is matched. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
@@ -720,9 +721,11 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
   is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - **Within the run too.** An interactive Claude Code turn has no budget flag, so while a scheduled
-  review works, Clawdling checks the CTO's spend this week every minute; past the weekly cap it ends
-  the session (it stays resumable) and says so on the CTO page and in Settings. A review you start
-  yourself is yours to stop.
+  review works unattended (until it first waits on you), Clawdling checks the CTO's spend this week
+  every minute; past the weekly cap, or when the spend cannot be counted (a model missing from the
+  price table, whose usage would count as $0), it ends the session (it stays resumable) and says so
+  on the CTO page and in Settings. Once it waits on you, or you resume it, it is yours: a review you
+  start or take over yourself is yours to stop.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
   (No check-up runs for the seat: it would run without its own settings and hook.)
   It reads the schedule again after building the estimate, so turning it off (or lowering the cap)
