@@ -810,7 +810,10 @@ the server's output or `safety.json`; another runs the audit with sockets, DNS, 
 
 Green is "no trifecta found **by name**", never "secure": the audit sees names, not what a server or
 a script really does. A shell command that is not in its table (`capabilities.json`) is not
-classified, and it does not follow one agent asking another (`clawdling send`) to act for it. A name it does not know is "unknown: review", which is never green (amber at
+classified, and it does not follow one agent asking another (`clawdling send`) to act for it. What it
+does follow is text: what one agent writes (its notes, its last lines in the report, Donna's "today so
+far") counts as untrusted input for every other agent once the agent that wrote it reads untrusted
+input itself. A name it does not know is "unknown: review", which is never green (amber at
 least). A custom server called `helper` that sends mail is exactly the case it can miss; that is why
 unknowns are shown, and why you can say what one does. The fixes are text: Clawdling changes no
 settings file, yours or a repo's.

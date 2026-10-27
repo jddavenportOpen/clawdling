@@ -53,9 +53,9 @@ test.describe('setup safety', () => {
     await api('POST', '/api/agents', { kind: 'project', name: 'Shop', repo: '/Users/ada/code/shop' });
     await login(page, '#/settings/safety');
     const shop = rowOf(page, 'shop');
-    await expect(shop).toHaveAttribute('data-verdict', 'amber');
-    await expect(shop).toContainText('4 setup risks'); // SessionStart, two .mcp.json servers, settings.local.json
-    await shop.locator('.safety-row-head').click();
+    // db and stripe (private), the site agent's words (untrusted), stripe (sends): red, so it opens.
+    await expect(shop).toHaveAttribute('data-verdict', 'red');
+    await expect(shop.locator('.safety-row-head')).toHaveAttribute('aria-expanded', 'true');
     const risks = shop.getByTestId('safety-risks');
     await expect(risks.locator('[data-risk="session_start"]')).toContainText('~/code/shop/.claude/settings.json');
     await expect(risks.locator('[data-risk="repo_mcp"]')).toHaveCount(2);

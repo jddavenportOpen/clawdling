@@ -1452,7 +1452,7 @@ async function cmdContract(ctx, flags) {
       if (!yes) throw new CliError('stopped: nothing was run');
     } else if (flags.json && !flags.yes) throw new CliError(`--live runs one real session (${LIVE_COST}): add --yes`);
     const ver = (await run(['--version'])).stdout;
-    lines = lines.concat(await liveCheck({ run, configDir: claudeConfigDirOf(env), parse: liveTranscriptFacts, supportsStopFailure: supportsStopFailure(ver) }));
+    lines = lines.concat(await liveCheck({ run, configDir: claudeConfigDirOf(env), parse: liveTranscriptFacts, supportsStopFailure: supportsStopFailure(ver), bin, env, interruptible: true }));
   }
   const sum = summary(lines);
   if (flags.json) {

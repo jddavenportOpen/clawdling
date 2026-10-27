@@ -13,7 +13,7 @@ import path from 'node:path';
 import tls from 'node:tls';
 import { after, test } from 'node:test';
 import { gitIgnored, mcpFacts, ruleText, scanSafety } from '../../server/discover.js';
-import { auditSafety, classifyName, parseRule, shellRuleSends, USER_ROW, verdicts } from '../../server/safety.js';
+import { auditSafety, classifyName, parseRule, shellRuleCaps as shellRuleCapsOf, shellRuleSends, USER_ROW, verdicts } from '../../server/safety.js';
 import { SafetyChoices, offlineChannels, runSafetyAudit } from '../../server/safety-run.js';
 import { rmrf, tempHome } from '../helpers.mjs';
 
@@ -175,7 +175,7 @@ test('the union of user, agent folder and repo: a project agent is red, a domain
   assert.ok(site.fixes.every((f) => typeof f === 'string'), 'fixes are text');
   const health = row(a, 'health');
   assert.deepEqual(texts(health, 'private'), ["the org folder: your me.md and every agent's notes (`--add-dir`, Clawdling)"], 'a deny rule in its folder takes gmail away; the org folder stays');
-  assert.equal(health.chips.untrusted.length, 0, 'and WebFetch');
+  assert.deepEqual(texts(health, 'untrusted'), ['text written by agents that read untrusted input (site), in the org folder\'s notes and `clawdling report`'], 'its own WebFetch is denied; the site agent\'s words still reach it');
   assert.equal(health.trifecta, false);
   assert.equal(health.verdict, 'green');
   assert.equal(health.summary, 'No trifecta found by name');
@@ -557,4 +557,59 @@ test('an agent called "constructor" is not "accepted" by the prototype', () => {
   assert.equal(r.trifecta, true);
   assert.equal(r.accepted, null);
   assert.equal(r.verdict, 'red');
+});
+
+// ------------------------------------------------------------------------------ review round 2
+
+test('package managers, gh and aws: a bare or group wildcard is as wide as the command; read verbs are untrusted', () => {
+  const caps = (r) => (shellRuleCapsOf(r) || { caps: [] }).caps.join(',');
+  assert.equal(caps('npm:*'), 'private,untrusted,sends', 'npm:* is at least as wide as npm run:*');
+  assert.equal(caps('pip:*'), 'private,untrusted,sends');
+  assert.equal(caps('go:*'), 'private,untrusted,sends');
+  assert.equal(caps('gh issue view:*'), 'untrusted');
+  assert.equal(caps('gh api:*'), 'untrusted,sends');
+  assert.equal(caps('gh pr:*'), 'private,untrusted,sends');
+  assert.equal(caps('aws s3:*'), 'private,untrusted,sends');
+  assert.equal(caps('find:*'), 'private,untrusted,sends', 'find -exec runs anything');
+  assert.equal(caps('GH_TOKEN=x gh api:*'), 'untrusted,sends');
+  assert.equal(caps('sudo -u root curl:*'), 'untrusted,sends');
+  assert.equal(caps('git status:*'), '');
+  assert.equal(caps('npm run test:*'), '');
+});
+
+test('text one agent writes is untrusted input for the others, when that agent reads untrusted input', () => {
+  const quiet = world({ agents: [{ id: 'a', kind: 'domain', folder: { permissions: { allow: ['Bash(git push:*)'] } } }, { id: 'b', kind: 'domain' }] });
+  assert.equal(row(quiet.run(), 'a').verdict, 'green', 'nobody reads the web: no taint');
+  const w = world({
+    agents: [
+      { id: 'reader', kind: 'domain', folder: { permissions: { allow: ['WebFetch'], deny: [] } } },
+      { id: 'pusher', kind: 'domain', folder: { permissions: { allow: ['Bash(git push:*)'] } } },
+    ],
+  });
+  const a = w.run({ channels: { telegram: { configured: true, enabled: true, paired: true } } });
+  const p = row(a, 'pusher');
+  assert.equal(p.trifecta, true);
+  assert.ok(texts(p, 'untrusted').some((t) => /text written by agents that read untrusted input \(reader\)/.test(t)));
+  const d = row(a, 'donna');
+  assert.ok(texts(d, 'untrusted').some((t) => /in her "today so far" context/.test(t)));
+  assert.ok(d.notes.some((n) => /what other agents wrote reaches her too/.test(n)));
+  assert.ok(!d.notes.some((n) => /not untrusted input/.test(n)));
+});
+
+test('round-2 lows: unreadable rules are unknown, remote "helper" names are unknown, SessionStart in a local file, the winning mode only', () => {
+  const w = world({
+    user: { permissions: { defaultMode: 'auto', allow: ['Bash(curl --cookie=sid=abc'] } },
+    claudeJson: { mcpServers: { memory: { type: 'http', url: 'https://memory.example.com/mcp' }, time: { command: 'uvx', args: ['mcp-server-time'] } } },
+    agents: [
+      { id: 'pkg', kind: 'project', repo: { '.claude/settings.local.json': { hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'x' }] }] } }, '.gitignore': '.claude/settings.local.json\n' } },
+      { id: 'own', kind: 'domain', mode: 'inherit', folder: { permissions: { defaultMode: 'acceptEdits' } } },
+    ],
+  });
+  const a = w.run();
+  const u = row(a, USER_ROW);
+  assert.ok(u.unknown.some((x) => /could not read/.test(x.why)), 'a rule with no closing paren');
+  assert.ok(u.unknown.some((x) => x.text.startsWith('memory MCP server')), 'a remote server is not a local helper');
+  assert.ok(!u.unknown.some((x) => x.text.startsWith('time MCP server')), 'a local one is');
+  assert.ok(row(a, 'pkg').risks.some((r) => r.id === 'session_start' && r.file.endsWith('settings.local.json')));
+  assert.ok(!row(a, 'own').risks.some((r) => r.id === 'auto_mode'), 'its own acceptEdits wins over your auto');
 });

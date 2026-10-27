@@ -971,8 +971,16 @@ takes an allow away the way Claude Code matches it (`cmd:*` takes `cmd` and `cmd
 was redacted is never assumed to match), and `mcp__<server>` or `mcp__<server>__*` denies a server.
 Bypass permissions mode is all three; auto mode (set, or Claude Code's default) is sends and
 untrusted, unless every way to the web is denied. Plugins, yours and the ones a folder's own settings
-turn on, are classified by their names, like servers. A shell command that is not in the table is not
-classified, and one agent asking another through `clawdling send` is not followed: names only.
+turn on, are classified by their names, like servers; a "local helper" name counts only for a server
+that runs here (stdio). A rule that cannot be read once a secret in it is hidden is "unknown: review".
+`npm:*`, `pip:*` and `go:*` are as wide as `npm run:*`; `gh issue view:*` and `gh pr list` read what
+others wrote (untrusted), `gh api:*` reads and sends, and `gh pr:*` or `aws s3:*` (a wildcard after
+one subcommand) is as wide as the command; `find`, `awk`, `sed` and `tar` with a wildcard can run
+other commands (all three). **Text other agents wrote** (the org folder's notes, `clawdling report`,
+Donna's "today so far") is untrusted input on every domain, project and Donna row when at least one
+other agent reads untrusted input itself; the chip names those agents. A shell command that is not in
+the table is not classified, and one agent asking another through `clawdling send` is not followed:
+names only.
 
 **The verdict per agent:** `{id, name, kind, folder, mode, loads[], chips{private[], untrusted[],
 sends[]} (each {text, source}), unknown[], trifecta, risks[] ({id, text, file}), fixes[], sentence,

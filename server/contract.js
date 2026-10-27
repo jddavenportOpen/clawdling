@@ -8,7 +8,7 @@
 // `claude doctor` in a temporary folder (Claude Code's own model-free settings check). Every line
 // reads ok, or a plain sentence with what to do; what cannot be checked offline says so, never ok.
 // `--live` adds one tiny real session (about $0.01 list-price equivalent) in a temporary folder.
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -186,13 +186,28 @@ fs.appendFileSync(new URL('./events.txt', import.meta.url), process.argv[2] + '\
  * written with the expected records and a cost; then `claude purge <folder> --yes` (Claude Code's own
  * command) deletes that folder's transcript and config entry, and the folder is removed.
  */
-export async function liveCheck({ run, nodePath = process.execPath, configDir, platform = process.platform, compat = COMPAT, parse, model = 'haiku', supportsStopFailure = false } = {}) {
+export async function liveCheck({ run, nodePath = process.execPath, configDir, platform = process.platform, compat = COMPAT, parse, model = 'haiku', supportsStopFailure = false, bin = null, env = process.env, interruptible = false } = {}) {
   const out = [];
   const dir = tempDir('clawdling-live-');
   const work = path.join(dir, 'work');
   fs.mkdirSync(work);
   const sid = crypto.randomUUID();
   let started = false;
+  // Ctrl-C while the session runs: the same cleanup as below, then stop (a finally block never runs
+  // on SIGINT). claude purge through the same shim rules, synchronously.
+  const onInterrupt = () => {
+    try {
+      if (started && bin) {
+        const cmd = commandFor(bin, ['purge', work, '--yes'], { env });
+        spawnSync(cmd.file, cmd.args, { cwd: dir, env, timeout: 30000, stdio: 'ignore', windowsHide: true, ...spawnOptions(cmd) });
+      }
+    } catch {
+      // best effort
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+    process.exit(130);
+  };
+  if (interruptible) process.once('SIGINT', onInterrupt);
   try {
     const recorder = path.join(dir, 'record.mjs');
     fs.writeFileSync(recorder, RECORDER);
@@ -258,6 +273,7 @@ export async function liveCheck({ run, nodePath = process.execPath, configDir, p
       else if (left) out.push(line('live_cleanup', 'fail', `\`claude purge\` did not remove the live session; delete ${left} by hand.`));
       else out.push(line('live_cleanup', 'ok', 'the live session is gone (`claude purge` removed its transcript and config entry) and its folder is removed'));
     }
+    if (interruptible) process.removeListener('SIGINT', onInterrupt);
     fs.rmSync(dir, { recursive: true, force: true });
   }
   return out;

@@ -367,7 +367,6 @@
         "rg",
         "egrep",
         "fgrep",
-        "find",
         "fd",
         "strings",
         "xxd",
@@ -376,10 +375,7 @@
         "base64",
         "sqlite3",
         "security",
-        "awk",
-        "sed",
         "jq",
-        "tar",
         "zip",
         "cp",
         "get-content",
@@ -390,6 +386,23 @@
         "private"
       ],
       "why": "reads any file"
+    },
+    {
+      "match": "any",
+      "words": [
+        "find",
+        "awk",
+        "gawk",
+        "sed",
+        "gsed",
+        "tar"
+      ],
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ],
+      "why": "can run other commands (find -exec, awk system(), sed e, tar --to-command)"
     },
     {
       "match": "verbs",
@@ -408,7 +421,17 @@
         "sends",
         "untrusted"
       ],
-      "why": "sends this folder's content out"
+      "why": "sends this folder's content out",
+      "read_verbs": [
+        "pull",
+        "fetch",
+        "clone",
+        "ls-remote",
+        "submodule"
+      ],
+      "read_caps": [
+        "untrusted"
+      ]
     },
     {
       "match": "verbs",
@@ -431,7 +454,12 @@
       "caps": [
         "sends"
       ],
-      "why": "publishes this folder's content"
+      "why": "publishes this folder's content",
+      "bare_caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ]
     },
     {
       "match": "verbs",
@@ -467,7 +495,12 @@
         "untrusted",
         "sends"
       ],
-      "why": "runs package code, which can do anything"
+      "why": "runs package code, which can do anything",
+      "bare_caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ]
     },
     {
       "match": "verbs",
@@ -516,10 +549,30 @@
         "sends"
       ],
       "bare_caps": [
-        "sends",
-        "untrusted"
+        "private",
+        "untrusted",
+        "sends"
       ],
-      "why": "can send data to a service"
+      "why": "can send data to a service",
+      "groups": true,
+      "read_verbs": [
+        "api",
+        "view",
+        "list",
+        "diff",
+        "checkout",
+        "search",
+        "browse",
+        "status",
+        "get",
+        "describe",
+        "ls",
+        "download",
+        "logs"
+      ],
+      "read_caps": [
+        "untrusted"
+      ]
     },
     {
       "match": "bare",
@@ -574,7 +627,7 @@
       "why": "runs any code"
     }
   ],
-  "commands_note": "A Bash or PowerShell allow rule gives the caps of the first entries it matches (all of them, unioned). Words are matched after wrappers (sudo, env, timeout, nohup, nice, time, command) are skipped. match 'any': a wildcard rule for the command. match 'verbs': the rule names one of the verbs (with 'wildcard': true, only a wildcard rule ending right after the verb, like `npm run:*`), or is a bare wildcard for the command (then 'bare_caps'). match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags. Commands not listed here are not classified: names only.",
+  "commands_note": "A Bash or PowerShell allow rule gives the caps of every entry it matches (unioned). Words are matched after wrappers (sudo -u x, env A=b, timeout 30, nice -n 5, xargs...) and leading NAME=value assignments are skipped. match 'any': a wildcard rule for the command. match 'verbs': the rule names one of the verbs (with 'wildcard': true, only a wildcard rule ending right after the verb, like `npm run:*`); a bare wildcard for the command gives 'bare_caps'; 'read_verbs' add 'read_caps'; with 'groups': true a wildcard after one subcommand (`gh pr:*`, `aws s3:*`) counts as bare. match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags. Commands not listed here are not classified: names only.",
   "wrappers": [
     "sudo",
     "env",
@@ -585,6 +638,7 @@
     "command",
     "stdbuf",
     "caffeinate",
-    "doas"
+    "doas",
+    "xargs"
   ]
 }

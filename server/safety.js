@@ -65,11 +65,21 @@ const ALL = ['private', 'untrusted', 'sends'];
 const WRAPPERS = new Set(TABLE.wrappers || []);
 
 /** The words of one command, with wrappers (sudo, env A=b, timeout 30, nice -n 5) skipped. */
+// Wrapper options that take a value (`sudo -u root`, `nice -n 5`, `timeout -s KILL`).
+const WRAPPER_VALUE_FLAGS = new Set(['-u', '-g', '-n', '-s', '-k', '-C', '-h', '-p', '-U', '-D', '-I', '-L', '-P', '-d']);
+
 function unwrap(toks) {
   let i = 0;
+  const assignments = () => {
+    while (i < toks.length - 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i])) i++;
+  };
+  assignments(); // `FOO=1 curl ...`
   while (i < toks.length - 1 && WRAPPERS.has(toks[i].split(/[\\/]/).pop().toLowerCase())) {
     i++;
-    while (i < toks.length - 1 && (/^-/.test(toks[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || /^\d+[smhd]?$/.test(toks[i]))) i++;
+    while (i < toks.length - 1 && (/^-/.test(toks[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || /^\d+[smhd]?$/.test(toks[i]))) {
+      if (WRAPPER_VALUE_FLAGS.has(toks[i]) && i < toks.length - 2) i++;
+      i++;
+    }
   }
   return toks.slice(i);
 }
@@ -84,9 +94,13 @@ export function shellRuleCaps(content) {
   const raw = content.trim();
   const caps = new Set();
   let why = null;
+  let widest = 0;
   const hit = (list, w) => {
     for (const c of list) caps.add(c);
-    if (!why) why = w;
+    if (list.length > widest) {
+      widest = list.length;
+      why = w; // the widest entry explains the rule
+    }
   };
   // `cur*` (no space or colon before the star): every command whose name starts with "cur".
   const partial = /^[^\s:*]+\*$/.test(raw) ? raw.slice(0, -1).split(/[\\/]/).pop().toLowerCase() : null;
@@ -123,10 +137,16 @@ export function shellRuleCaps(content) {
       if (!e.words.includes(first)) continue;
       if (e.match === 'any' && wildcard) hit(e.caps, e.why);
       else if (e.match === 'verbs') {
-        if (e.wildcard) {
+        const reads = e.read_verbs || [];
+        // `gh pr:*`, `aws s3:*`: a wildcard after one subcommand group is as wide as the command.
+        const group = e.groups && wildcard && rest.length === 1 && !e.verbs.includes(rest[0]) && !reads.includes(rest[0]);
+        if (wildcard && (rest.length === 0 || group)) hit(e.bare_caps || e.caps, e.why);
+        else if (e.wildcard) {
           if (wildcard && rest.length === 1 && e.verbs.includes(rest[0])) hit(e.caps, e.why);
-        } else if (wildcard && rest.length === 0) hit(e.bare_caps || e.caps, e.why);
-        else if (rest.some((r) => e.verbs.includes(r))) hit(e.caps, e.why);
+        } else {
+          if (rest.some((r) => e.verbs.includes(r))) hit(e.caps, e.why);
+          if (reads.some((v) => rest.includes(v))) hit(e.read_caps || ['untrusted'], 'reads what others wrote');
+        }
       } else if (e.match === 'bare' && wildcard && (rest.length === 0 || (e.flags || []).includes(rest[0]))) hit(e.caps, e.why);
     }
   }
@@ -207,6 +227,8 @@ function capsFor(view, { tags = {} } = {}) {
   const allRules = (kind) => view.layers.flatMap((l) => (l.facts ? (l.facts[kind] || []).map((r) => ({ rule: r, parsed: parseRule(r), layer: l })) : []));
   const deny = allRules('deny').map((x) => x.parsed).filter(Boolean);
   const allowed = allRules('allow').filter((x) => x.parsed && !deny.some((d) => denies(d, x.parsed)));
+  // A rule Clawdling cannot read once a secret in it is hidden (or cut short) is never assumed harmless.
+  for (const x of allRules('allow')) if (!x.parsed) unknown.push({ text: `\`${x.rule}\` allowed`, source: x.layer.file, why: 'unknown: a rule Clawdling could not read after hiding a secret in it' });
   const toolDenied = (tool) => deny.some((d) => d.tool === tool && (d.content === null || /^\s*:?\*\s*$/.test(d.content)));
 
   for (const { rule, parsed, layer } of allowed) {
@@ -259,7 +281,10 @@ function capsFor(view, { tags = {} } = {}) {
   for (const s of view.mcp) {
     if (mcpDenied(s.name, deny)) continue;
     const tagged = Object.hasOwn(tags, s.name) && Array.isArray(tags[s.name]) ? tags[s.name].filter((c) => CAPS.includes(c)) : null;
-    const k = tagged ? { known: true, caps: new Set(tagged), labels: ['tagged by you'] } : classifyName(s.name, s.command, s.package, s.host);
+    let k = tagged ? { known: true, caps: new Set(tagged), labels: ['tagged by you'] } : classifyName(s.name, s.command, s.package, s.host);
+    // A remote server called "memory" is someone else's computer: a local-helper name counts only for
+    // a server that runs here.
+    if (!tagged && k.known && !k.caps.size && s.type !== 'stdio') k = { known: false, caps: new Set(), labels: [] };
     const what = `${s.name} MCP server${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
     const fix = view.isUserRow
       ? `stop every session using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}, or remove it with \`claude mcp remove ${s.name}\``
@@ -304,7 +329,8 @@ function risksFor(view) {
     if (!f) continue;
     // A user-level switch shows on the user-level row, and on an agent only when it applies to its
     // sessions (the agent uses "Your Claude Code setting"); the agent's own files always show.
-    const show = !(userLevel(l) && view.overridesMode) && !(userLevel(l) && !view.isUserRow && !view.inheritsMode);
+    // ...and only from the layer whose mode wins (a folder's own mode beats yours).
+    const show = !(userLevel(l) && view.overridesMode) && !(userLevel(l) && !view.isUserRow && !view.inheritsMode) && !(userLevel(l) && view.mode && view.mode.source !== l.file && (f.default_mode === 'auto' || f.default_mode === 'bypassPermissions'));
     const note = view.overridesMode ? ` Clawdling starts this agent in "${view.overridesMode}" mode, so it applies when you run claude here yourself.` : '';
     if (show && (f.default_mode === 'bypassPermissions' || f.skip_bypass_prompt)) {
       const what = f.default_mode === 'bypassPermissions' ? 'turns on bypass permissions mode (`defaultMode: bypassPermissions`)' : 'turns off the warning before bypass permissions mode (`skipDangerousModePermissionPrompt`)';
@@ -313,7 +339,7 @@ function risksFor(view) {
     if (show && f.default_mode === 'auto') {
       add('auto_mode', `This settings file turns on auto mode (\`defaultMode: auto\`): commands run when Claude Code's classifier allows them, and prompt injection has beaten it in public tests.${note}`, l.file);
     }
-    if (l.repo && l.kind === 'project') {
+    if (l.repo && (l.kind === 'project' || l.kind === 'local')) {
       const ss = (f.hooks || []).find((h) => h.event === 'SessionStart');
       if (ss) add('session_start', `This repo runs ${ss.count === 1 ? 'a command' : `${ss.count} commands`} whenever a session starts (a SessionStart hook in its own settings), before you type anything. A package or a pull request can plant one: read it before you trust the folder.`, l.file);
     }
@@ -422,7 +448,7 @@ function modeFrom(layers, userFile) {
   for (const kind of ['managed', 'local', 'project', 'user']) {
     for (const l of layers) if (l.kind === kind && l.facts && l.facts.default_mode) return { name: l.facts.default_mode, source: l.file, fix: `remove \`defaultMode\` from ${l.file}, or pick a mode for this agent in Clawdling` };
   }
-  return { name: CLI_DEFAULT_MODE, isDefault: true, source: "Claude Code's default (no settings file picks a mode)", fix: `set \`"defaultMode": "default"\` in ${userFile}, or pick a mode for this agent in Clawdling` };
+  return { name: CLI_DEFAULT_MODE, isDefault: true, source: "Claude Code's default (no settings file picks a mode)", fix: `set \`defaultMode\` in ${userFile} to the mode that asks first ("manual" on recent versions, "default" before), or pick a mode for this agent in Clawdling` };
 }
 
 /**
@@ -466,6 +492,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   };
   rows.push(finish({ id: USER_ROW, name: 'Everything (user level)', kind: 'user', folder: u.config_dir || null }, userView, opts));
 
+  const pending = [];
   for (const a of agents) {
     if (!a || typeof a.id !== 'string') continue;
     const cwd = a.cwd || a.dir;
@@ -544,8 +571,26 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         localNotIgnored: isRepo && d.local_not_ignored ? d.local ? d.local.file : `${d.path}/.claude/settings.local.json` : null,
       };
     }
-    rows.push(finish(base, view, opts));
+    pending.push({ base, view, kind: a.kind });
   }
+  // Text one agent writes reaches the others: the org folder's notes, `clawdling report` (every agent may
+  // run it), Donna's "today so far". It is untrusted input for them when the agent that wrote it reads
+  // untrusted input itself (by name). The CTO's row already says so for its report.
+  const readsUntrusted = new Map();
+  for (const p of pending) {
+    if (p.kind !== 'domain' && p.kind !== 'project') continue;
+    if (capsFor(p.view, opts).chips.untrusted.length) readsUntrusted.set(p.base.id, p.base.name);
+  }
+  for (const p of pending) {
+    if (p.kind !== 'domain' && p.kind !== 'project' && p.kind !== 'chief') continue;
+    const others = [...readsUntrusted].filter(([id]) => id !== p.base.id).map(([, n]) => n);
+    if (!others.length) continue;
+    const who = others.length > 3 ? `${others.slice(0, 3).join(', ')} and ${others.length - 3} more` : others.join(', ');
+    const where = p.kind === 'chief' ? 'her "today so far" context' : 'the org folder\'s notes and `clawdling report`';
+    p.view.own = [...(p.view.own || []), { cap: 'untrusted', text: `text written by agents that read untrusted input (${who}), in ${where}`, source: 'Clawdling (other agents)' }];
+    if (p.kind === 'chief') p.view.notes = p.view.notes.map((n) => (/not untrusted input/.test(n) ? 'Only your own paired Telegram chat and your own iMessage handle reach Donna; what other agents wrote reaches her too, in her "today so far" context.' : n));
+  }
+  for (const p of pending) rows.push(finish(p.base, p.view, opts));
   return { took_ms: Math.round((performance.now() - t0) * 10) / 10, rows };
 }
 

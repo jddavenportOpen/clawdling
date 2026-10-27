@@ -16,7 +16,7 @@ import { Icon } from './icons.js';
 import { COST_NOTE, PRO_NOTE } from './report-card.js';
 
 export const LABEL_TEXT = { at_risk: 'At risk', stalled: 'Stalled', on_track: 'On track', quiet: 'Quiet' };
-const KIND_WORD = { session: 'session', claim: 'claim', check: 'ship check', checkup: 'check-up', cost: 'usage', needs: 'needs you', next: 'NOW.md', model: 'cheaper model' };
+const KIND_WORD = { session: 'session', claim: 'claim', check: 'ship check', checkup: 'check-up', cost: 'usage', needs: 'needs you', next: 'NOW.md', model: 'cheaper model', safety: 'setup safety' };
 const CITE_RE = /\[?\b(R-(?:session|claim|check|checkup|cost|needs|next|model|safety)-[0-9a-f]{8})\b\]?/g;
 const REFRESH_MS = 8000;
 const money = (x) => (Number.isFinite(x) ? `$${x.toFixed(2)}` : 'unknown');
