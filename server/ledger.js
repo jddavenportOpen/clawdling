@@ -172,7 +172,7 @@ export function applyRecord(st, o, { sub = false } = {}) {
       } else if (b.type === 'tool_use' && typeof b.id === 'string') {
         const input = b.input && typeof b.input === 'object' ? b.input : {};
         const name = typeof b.name === 'string' ? b.name.slice(0, 80) : 'tool';
-        const t = { id: b.id.slice(0, 100), seq: st.seq, name, summary: toolSummary(input), commit: name === 'Bash' && typeof input.command === 'string' && /\bgit\b[^;&|\n]*\bcommit\b/.test(input.command), file: EDIT_TOOLS.has(name) && typeof input.file_path === 'string' ? input.file_path : EDIT_TOOLS.has(name) && typeof input.notebook_path === 'string' ? input.notebook_path : null, ts: at, end: null, error: null, turn: st.turn, side };
+        const t = { id: b.id.slice(0, 100), seq: st.seq, name, summary: toolSummary(input), commit: name === 'Bash' && typeof input.command === 'string' && /\bgit\b[^;&|\n]*\bcommit\b/.test(input.command), file: EDIT_TOOLS.has(name) && typeof input.file_path === 'string' ? input.file_path : EDIT_TOOLS.has(name) && typeof input.notebook_path === 'string' ? input.notebook_path : null, ts: at, end: null, error: null, turn: st.turn, side, ...(typeof msg?.id === 'string' ? { msg: msg.id.slice(0, 100) } : {}) };
         // A shell command, for claim receipts: the command line and whether it ran in the background.
         if (SHELL_TOOLS.has(name) && typeof input.command === 'string') {
           t.cmd = input.command.length > CMD_MAX ? input.command.slice(0, CMD_MAX) : input.command;

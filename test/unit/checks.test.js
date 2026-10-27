@@ -63,7 +63,7 @@ test('git filters from the repo config never run while the scratch worktree is m
   const wt = path.join(tmp(), 'wt');
   await checks.git(repo, ['stash', 'create']);
   await checks.addWorktree(repo, wt, 'HEAD');
-  assert.equal(fs.readFileSync(path.join(wt, 'a.txt'), 'utf8'), 'hello\n');
+  assert.equal(fs.readFileSync(path.join(wt, 'a.txt'), 'utf8').replace(/\r\n/g, '\n'), 'hello\n', 'the snapshot (CRLF where Git for Windows checks out CRLF)');
   assert.equal(fs.existsSync(marker), false, 'neither the clean nor the smudge filter ran');
   await checks.removeWorktreeAt(repo, wt);
 });
@@ -178,7 +178,7 @@ test('review 5: a filter switched on only in worktrees (includeIf) never runs; s
   const checks = new Checks({ paths: { rt, env: path.join(rt, '.env') }, org: {} });
   const wt = path.join(tmp(), 'wt');
   await checks.addWorktree(repo, wt, 'HEAD');
-  assert.equal(fs.readFileSync(path.join(wt, 'apps', 'web', 'a.txt'), 'utf8'), 'hello\n');
+  assert.equal(fs.readFileSync(path.join(wt, 'apps', 'web', 'a.txt'), 'utf8').replace(/\r\n/g, '\n'), 'hello\n');
   assert.equal(fs.existsSync(marker), false, 'the worktree-only filter did not run');
   fs.mkdirSync(path.join(repo, 'packages', 'shared'), { recursive: true });
   fs.writeFileSync(path.join(repo, 'packages', 'shared', 'format.js'), 'x');
@@ -225,8 +225,8 @@ test('review 6: a check-up copy keeps no committed link; a ship check whose temp
   const checks = new Checks({ paths: { rt: tmp(), env: path.join(dir, '.env') }, org: { require: () => agent } });
   const wt = path.join(tmp(), 'wt');
   await checks.addWorktree(repo, wt, 'HEAD');
-  if (linked) {
-    assert.equal(fs.lstatSync(path.join(wt, 'env.md')).isSymbolicLink(), true);
+  // (Git for Windows checks links out as plain files unless core.symlinks is on: nothing to remove.)
+  if (linked && fs.lstatSync(path.join(wt, 'env.md')).isSymbolicLink()) {
     assert.equal(await checks.removeLinks(wt), 1);
     assert.equal(fs.existsSync(path.join(wt, 'env.md')), false);
     assert.ok(fs.existsSync(secret), 'the target is untouched');

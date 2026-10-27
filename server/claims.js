@@ -733,11 +733,13 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     let lastEdit = null;
     let edits = 0;
     let editsEnd = -Infinity; // when the last of them finished (edits and subagents can overlap)
+    const editList = [];
     for (const x of before) {
       if (isWorkEdit(x.t, where)) {
         lastEdit = x;
         edits++;
         editsEnd = Math.max(editsEnd, x.t.end ?? x.t.ts);
+        editList.push(x);
       }
     }
     // A command that writes and then runs a check (`... > f && npm test`) is the edit and, just after
@@ -746,7 +748,11 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     const nextEdit = all.find((x) => cmp(x.key, at) > 0 && isWorkEdit(x.t, where));
     const otherEditsEnd = before.filter((x) => x !== lastEdit && isWorkEdit(x.t, where)).reduce((m, x) => Math.max(m, x.t.end ?? x.t.ts), -Infinity);
     const selfChecked = lastEdit && SHELL_TOOLS.has(lastEdit.t.name) && writesFiles(lastEdit.t.cmd).checkAfter && lastEdit.t.ts >= otherEditsEnd;
-    const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && x.t.ts >= editsEnd) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && x.t.res && !x.t.res.denied && !x.t.res.blocked);
+    // A check runs after every edit: it started after the edit finished, or it comes later in the same
+    // assistant message (Claude Code runs an edit and a shell command of one message in order, so
+    // `Edit` + `npm test` sent together test the edited file).
+    const afterEdits = (x) => editList.every((e) => (e.t.end ?? e.t.ts) <= x.t.ts || (x.t.msg && e.t.msg === x.t.msg && e.t.seq < x.t.seq));
+    const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && afterEdits(x)) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && x.t.res && !x.t.res.denied && !x.t.res.blocked);
     // A tool that may change files and that Clawdling cannot read (an MCP server's write or edit
     // tool): it ends what the checks before it say, like an unknown shell command.
     const toolsAfter = before.filter((x) => (!lastEdit || cmp(x.key, lastEdit.key) > 0) && WRITE_TOOL.test(String(x.t.name || '')));

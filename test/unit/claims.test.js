@@ -734,3 +734,19 @@ test('review 13: --version on a script, writing modes of read-only tools, commit
   for (const cmd of ['npm run lint:css', 'npm run build:docs']) assert.equal(canonical(cmd), null, cmd);
   for (const cmd of ['npm run lint', 'npm run build']) assert.ok(canonical(cmd), cmd);
 });
+
+test('an edit and a test sent in one message run in order: the test is after the edit', () => {
+  const t = (s) => new Date(Date.parse('2026-10-26T14:00:00Z') + s * 1000).toISOString();
+  const msg = (at, id, name, input) => ({ type: 'assistant', timestamp: t(at), message: { id: 'same', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'tool_use', id, name, input }], usage: { input_tokens: 1, output_tokens: 1 } } });
+  const res = (at, id, content, isError = false) => ({ type: 'user', timestamp: t(at), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: isError }] } });
+  const recs = [
+    { type: 'user', timestamp: t(0), message: { role: 'user', content: 'x' } },
+    msg(1, 'e9', 'Edit', { file_path: '/repo/a.js', old_string: 'a', new_string: 'b' }),
+    msg(1.02, 'b9', 'Bash', { command: 'npm test' }),
+    res(1.04, 'e9', 'The file was updated.'),
+    res(8, 'b9', 'Exit code 1\n✖ planted: always fails\nℹ fail 1', true),
+    { type: 'assistant', timestamp: t(9), message: { id: 'z9', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'text', text: 'Done.' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  const [c] = claimsOf(recs);
+  assert.equal(labelClaim(c).label, 'contradicted');
+});

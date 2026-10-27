@@ -159,7 +159,7 @@ test('ship check: proposals, approval with the shown commands, a run in a scratc
     return !x.running && x.last ? x : null;
   }, { label: 'ship check done', timeout: 60000 });
   assert.equal(v.last.ok, false);
-  assert.deepEqual(v.last.results.map((r) => [r.name, r.ok]), [['tests', false], ['build', true]]);
+  assert.deepEqual(v.last.results.map((r) => [r.name, r.ok]), [['tests', false], ['build', true]], JSON.stringify(v.last.results.map((r) => ({ name: r.name, exit: r.exit, timed_out: r.timed_out, err1: r.err1, tail: r.tail.slice(-8) }))));
   assert.match(v.last.results[0].err1, /expected 2, got 3/);
   assert.ok(v.last.results[0].tail.length <= 40);
   assert.equal(treeHash(repo), before, 'the live repo is byte-identical');
