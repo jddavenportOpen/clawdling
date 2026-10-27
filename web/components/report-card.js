@@ -230,7 +230,7 @@ function VerifiedBlock({ v, id, name, now, kind }) {
           <button type="button" class="link-btn" onClick=${tab}>Run it again</button>`
         : html`<p class="rc-note">Approved, not run yet. <button type="button" class="link-btn" onClick=${tab}>Run it</button></p>`}` : null}
     <h3 class="rc-sub-h">Check-up</h3>
-    ${up ? html`<p class="rc-checkup" data-testid="rc-checkup">${up.judge_unreliable ? html`<span class="tone-amber-text">Judge unreliable: no score</span>` : up.score === null || up.score === undefined ? html`<span class="tone-amber-text">${up.capped ? 'Stopped at the cost cap' : 'No score'}</span>` : html`<strong>${Math.round(up.score * 100)}%</strong> of the cases passed`}
+    ${up ? html`<p class="rc-checkup" data-testid="rc-checkup">${up.judge_unreliable ? html`<span class="tone-amber-text">Judge unreliable: no score</span>` : up.score === null || up.score === undefined ? html`<span class="tone-amber-text">${up.capped ? 'Stopped at the cost cap' : 'No score'}</span>` : html`<strong>${Math.round(up.score * 100)}%</strong> average case score`}
         <span class="rc-when">${agoText(up.at, now)}</span>${Number.isFinite(up.cost_per_run) ? html` · ${usd(up.cost_per_run)} a run` : null}</p>
       <button type="button" class="link-btn" onClick=${tab}>Open the check-up</button>`
       : html`<p class="rc-note">No check-up yet. <button type="button" class="link-btn" onClick=${tab}>Give ${name} a check-up</button>: five questions drafted from its own instructions, run on your plan with a cost cap.</p>`}

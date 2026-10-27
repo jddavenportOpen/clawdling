@@ -161,7 +161,7 @@ test.describe('agent check-ups', () => {
     await expect(page.getByTestId('case-result').first().locator('.cu-timeline summary')).toContainText('Timeline');
     // The report card's Verified block and the org map show the last check-up.
     await page.locator('[data-tab-btn="overview"]').click();
-    await expect(page.getByTestId('rc-checkup')).toContainText('of the cases passed');
+    await expect(page.getByTestId('rc-checkup')).toContainText('average case score');
   });
 
   test('US-82: Try a cheaper model: each setting scored and priced; "Use this" sets the agent default', async ({ page }) => {
