@@ -17,7 +17,7 @@ import { CTO_ID, CTO_UNGUARDED, ctoPermissions } from './org.js';
 import { runtimeDeny } from './hooks.js';
 import { COST_LABEL } from './report.js';
 import { REVIEW_MAX_BYTES, lintReview } from './review-lint.js';
-import { ReceiptIndex } from './receipts.js';
+import { INVISIBLE_RE, ReceiptIndex } from './receipts.js';
 import { checkThresholds, normalizeThresholds } from './status-rules.js';
 import { isSendCommand, parseSend, plainRead } from './seat-policy.js';
 import { HttpError, badRequest, conflict, notFound, oneLine, readJson, writeJson } from './util.js';
@@ -139,7 +139,7 @@ export function scanTranscript(file) {
  */
 export function plainHeadline(text) {
   return oneLine(String(text || ''), 160)
-    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(INVISIBLE_RE, '')
     .replace(/\b[a-z][a-z0-9+.-]{1,20}:(?:\/\/)?[^\s]*/gi, (m) => (/^(?:https?|ftp|file|mailto|tel|sms|javascript|data|tg|imessage|facetime):/i.test(m) || m.includes('//') ? '[link removed]' : m))
     .replace(/[.\u3002\uff0e\uff61](?=\S)/g, '\u2024')
     // A Telegram @name, a /command (a tap would send it to the bot as you), a #tag; a phone number.
@@ -565,7 +565,7 @@ export class Cto {
     const st = this.state();
     const now = this.now();
     let next = weekSendTime(now, st);
-    if (st.last_run_week === isoWeek(now) || now > next + 6 * 86400000) next = weekSendTime(now + 7 * 86400000, st);
+    if ((st.last_run_week && st.last_run_week >= isoWeek(now)) || now > next + 6 * 86400000) next = weekSendTime(now + 7 * 86400000, st);
     let perms = null;
     if (a) {
       const p = ctoPermissions({ dir: a.dir, home: this.paths.home });
@@ -632,7 +632,7 @@ export class Cto {
       if (typeof b.enabled !== 'boolean') throw badRequest('enabled must be true or false');
       if (b.enabled && !this.org.cto()) throw badRequest('Add a CTO first.');
       // Turned on after this week's run time: the first scheduled run is next week (no surprise run now).
-      if (b.enabled && !st.enabled && this.now() >= weekSendTime(this.now(), st)) st.last_run_week = isoWeek(this.now());
+      if (b.enabled && !st.enabled && this.now() >= weekSendTime(this.now(), st) && !(st.last_run_week && st.last_run_week >= isoWeek(this.now()))) st.last_run_week = isoWeek(this.now());
       st.enabled = b.enabled;
     }
     this.save(st);

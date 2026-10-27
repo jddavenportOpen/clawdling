@@ -390,7 +390,10 @@ export class Evals {
   }
 
   agent(id) {
-    return this.org.require(id);
+    const a = this.org.require(id);
+    // The CTO seat runs only with its own settings and hook (cto.js); a check-up would run it without them.
+    if (a.kind === 'cto') throw badRequest('A check-up is not available for the CTO seat.');
+    return a;
   }
 
   suite(id) {

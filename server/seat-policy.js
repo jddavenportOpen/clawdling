@@ -167,6 +167,8 @@ export function parseSend(cmd, tool = 'Bash') {
     if (v === undefined || !SEND_OPTIONS[flag].test(v)) return notPlain;
   }
   const q = m[4];
+  // Anything a person cannot see (or a control character) is not a message they can approve on sight.
+  if (/[\p{Cc}\p{Cf}\p{Co}\p{Cn}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/u.test(q)) return notPlain;
   // PowerShell has its own quoting (a backslash is not an escape; curly quotes are quotes): only the
   // simplest message counts there.
   if (tool === 'PowerShell' && /[\\"'`$\u2018-\u201f]/.test(q.slice(1, -1))) return notPlain;

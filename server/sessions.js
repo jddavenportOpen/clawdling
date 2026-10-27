@@ -6,6 +6,7 @@
 // hooks (see hooks.js). With tmux, sessions outlive the Clawdling server: on start we reconcile the
 // registry with `tmux ls` and reattach. With pty, they end when it stops and stay resumable.
 import { CROSS_AGENT_RE, isSendCommand, parseSend } from './seat-policy.js';
+import { INVISIBLE_RE } from './receipts.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -360,6 +361,8 @@ export class SessionManager {
   // ---------------------------------------------------------------- views
 
   view(rec) {
+    // The CTO seat with more than one tool call open: no command is shown (which one is on screen?).
+    const pc = rec.kind === 'cto' && (rec.open_tools || []).length > 1 ? null : rec.pending_cmd;
     return {
       sid: rec.sid,
       agent: rec.agent,
@@ -387,12 +390,12 @@ export class SessionManager {
       // Claude asked a question (AskUserQuestion) or wants a plan approved: the chat shows a card.
       asking: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && rec.asking ? rec.asking : null,
       // The CTO seat's message waiting for the owner's yes or no (shown with Claude Code's prompt).
-      pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.command : null,
+      pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && pc ? pc.command : null,
       // ...and whether it is exactly one message the cockpit can show whole (else: read the terminal).
-      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.send !== false && !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command, rec.pending_cmd.tool).plain : null,
-      pending_cmd_id: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.tool_id : null,
+      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && pc ? pc.send !== false && !pc.cut && parseSend(pc.command, pc.tool).plain : null,
+      pending_cmd_id: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && pc ? pc.tool_id : null,
       // Whether it is a message to another agent at all (the seat's other commands are shown too).
-      pending_cmd_send: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.send !== false : null,
+      pending_cmd_send: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && pc ? pc.send !== false : null,
       // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
       background: isLive(rec.status) ? this.runtime.get(rec.sid)?.background ?? null : null,
       resumable: rec.status === 'ended',
@@ -1182,6 +1185,7 @@ export class SessionManager {
     // wrong prompt.
     const toolId = typeof p.tool_use_id === 'string' && p.tool_use_id ? p.tool_use_id.slice(0, 100) : null;
     if (event === 'PreToolUse') {
+      if (toolId && rec.kind === 'cto') rec.open_tools = [...(rec.open_tools || []).filter((x) => x !== toolId), toolId].slice(-20);
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
       // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
       // For the seat, every shell command it is asked about; for others, only a cross-agent message.
@@ -1189,6 +1193,8 @@ export class SessionManager {
       rec.pending_cmd = cmd && toolId && (send || rec.kind === 'cto') ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash', send } : null;
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
+      if (event === 'PostToolUse') rec.open_tools = (rec.open_tools || []).filter((x) => x !== toolId);
+      else rec.open_tools = [];
     }
     const before = rec.transcript_path;
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);
@@ -1381,7 +1387,9 @@ export class SessionManager {
     const rec = this.require(sid);
     if (!isLive(rec.status)) throw conflict('that session has ended; resume it first');
     if (typeof text !== 'string') throw badRequest('text must be a string');
-    const clean = text.replace(/\0/g, '').slice(0, PROMPT_MAX);
+    // Nothing a person cannot see goes into a session, from any sender: control characters (but tab
+    // and line breaks) and invisible Unicode (format, tag, private-use characters...).
+    const clean = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '').replace(INVISIBLE_RE, '').slice(0, PROMPT_MAX);
     if (!rec.hooked) await this.waitFor(() => rec.hooked || rec.waiting_on || !isLive(rec.status), 15000);
     // Never type into a dialog: Enter would answer it (folder trust defaults to "No, exit"; a
     // permission prompt defaults to "Yes"). Those answers belong to the owner, in the terminal.
@@ -1443,7 +1451,7 @@ export class SessionManager {
     // agent, named by its tool call, and only while that very command is the prompt on screen.
     const seatPrompt = rec.kind === 'cto' && rec.waiting_on === 'permission_prompt' && !planCard;
     const pc = rec.pending_cmd;
-    if (seatPrompt && !(pc && cmdToolId && pc.tool_id === cmdToolId && pc.send !== false && !pc.cut && parseSend(pc.command, pc.tool).plain)) {
+    if (seatPrompt && !(pc && cmdToolId && pc.tool_id === cmdToolId && pc.send !== false && !pc.cut && parseSend(pc.command, pc.tool).plain && (rec.open_tools || []).length <= 1)) {
       throw conflict('Answer this CTO prompt in the terminal: the cockpit answers it only for one plain message to an agent, the one it showed you.');
     }
     const rt = this.rt(sid);
@@ -1454,8 +1462,12 @@ export class SessionManager {
     let chosen = null;
     for (let attempt = 0; attempt < 8 && !chosen; attempt++) {
       const screen = await this.backend.screenText(target);
-      // The command on screen must be the one shown (spaces and line wraps aside).
-      if (seatPrompt && !String(screen).replace(/\s+/g, '').includes(pc.command.replace(/\s+/g, '').slice(0, 120))) {
+      // The command must be in the prompt itself (the lines above its question), spaces and wraps aside.
+      const lines = String(screen).split('\n');
+      let q = -1;
+      for (let i = lines.length - 1; i >= 0; i--) if (/Do you want to /.test(lines[i])) { q = i; break; }
+      const prompt = q === -1 ? '' : lines.slice(Math.max(0, q - 30), q).join('');
+      if (seatPrompt && !prompt.replace(/\s+/g, '').includes(pc.command.replace(/\s+/g, '').slice(0, 120))) {
         throw conflict('The prompt on screen is not the message the cockpit showed. Answer it in the terminal.');
       }
       if ((planCard || typed !== null) && !isPlanScreen(screen)) throw conflict('the plan is no longer on screen');
@@ -1531,6 +1543,11 @@ export class SessionManager {
     rec.choices = null;
     rec.asking = null;
     rec.pending_ask = null;
+    // A tool call is answered once: the next prompt must name its own.
+    if (kind === 'permission_prompt' && rec.pending_cmd) {
+      rec.open_tools = (rec.open_tools || []).filter((x) => x !== rec.pending_cmd.tool_id);
+      rec.pending_cmd = null;
+    }
     // A fast answer can be overtaken by the session's own next hook (Stop): it already moved on.
     if (rec.status !== 'needs_you' || rec.waiting_on !== kind) {
       this.scheduleSave();

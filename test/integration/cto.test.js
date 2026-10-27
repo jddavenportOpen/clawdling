@@ -235,6 +235,8 @@ test('the seat starts as a normal Claude Code session with its own settings: no 
   assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 })).status, 403);
   assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' }, asOwner())).status, 204);
   assert.equal((await request(srv, 'DELETE', `/api/sessions/${s.sid}`)).status, 403, 'nor end it');
+  // No check-up for the seat (it would run without its own settings and hook).
+  assert.equal((await request(srv, 'GET', '/api/agents/cto/evals')).status, 400);
   // Other agents' settings keep them out of the seat's folder.
   const shared = readJsonFile(path.join(home, '.clawdling', 'hooks-settings.json'));
   assert.ok(shared.permissions.deny.some((r) => /^Write\(\/\/.+\/cto\/\*\*\)$/.test(r)), JSON.stringify(shared.permissions.deny));

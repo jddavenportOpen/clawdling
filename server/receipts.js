@@ -28,6 +28,10 @@ export function citedIds(text) {
   return [...new Set(String(text || '').match(RECEIPT_RE) || [])];
 }
 
+// Characters a person cannot see but a model reads: format characters (bidi, zero-width, BOM...),
+// Unicode tags, variation selectors, private-use and unassigned code points, line separators.
+export const INVISIBLE_RE = /[\p{Cf}\p{Co}\p{Cn}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/gu;
+
 /**
  * Text written by an agent (a session title, its last line, NOW.md), made safe to hand the CTO: one
  * line, no control characters, capped, and no receipt-shaped "[R-" (a title cannot plant a citation).
@@ -35,7 +39,7 @@ export function citedIds(text) {
 export function agentText(s, max) {
   if (typeof s !== 'string') return null;
   // Control, line-separator, bidi and zero-width characters: they can reorder or hide what is shown.
-  let out = s.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  let out = s.replace(INVISIBLE_RE, '').replace(/[\u0000-\u001f\u007f-\u009f]+/g, ' ').replace(/\s+/g, ' ').trim();
   out = out.replace(/\[(\s*)R-/gi, '($1R-').replace(/\bR-(session|claim|check|checkup|cost|needs|next|model)-([0-9a-f]{8})\b/gi, 'R $1 $2');
   if (out.length > max) out = `${out.slice(0, max - 1)}…`;
   return out || null;

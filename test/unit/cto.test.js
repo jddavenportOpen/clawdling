@@ -284,6 +284,15 @@ test('parseSend: one plain message the cockpit can offer as a one-tap yes, or "a
   assert.equal(parseSend('clawdling send a "say \u201chi\u201d"', 'PowerShell').plain, false, 'curly quotes are quotes to PowerShell');
 });
 
+test('a message with characters a person cannot see is never "plain"; agent text and headlines lose them', () => {
+  const tag = String.fromCodePoint(0xe0049, 0xe0067, 0xe006e); // Unicode tag characters: invisible
+  for (const hidden of [`Thanks, all good.${tag}`, 'Thanks\u202e, all good.', 'Tha\u200bnks', 'Thanks\u0007', 'Thanks\ufe0f', 'Thanks\tok']) {
+    assert.equal(parseSend(`clawdling send a "${hidden}"`).plain, false, JSON.stringify(hidden));
+  }
+  assert.equal(agentText(`Fix it${tag} now\ufe0f`, 80), 'Fix it now');
+  assert.equal(plainHeadline(`All good${tag}.`), 'All good.');
+});
+
 test('the send parsers take linear time on a long run of options (no runaway backtracking)', () => {
   for (const n of [40, 200, 1000]) {
     const opts = Array(n).fill('--a').join(' ');

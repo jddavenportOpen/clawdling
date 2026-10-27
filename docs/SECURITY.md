@@ -578,8 +578,9 @@ again".
 **One-tap answers only for one plain message, bound to it.** In the cockpit, the CTO's prompts get
 Yes and No buttons only when the prompt is for exactly one plain `clawdling send|spawn` message
 (below). The answer names that tool call, and the server presses a key only if that call is still
-the pending one and its exact command is the prompt on screen; otherwise it refuses (`409`) and
-asks you to answer in the terminal. Any
+the pending one, the only tool call open, and its exact command is inside the prompt on screen (the
+lines above its question); a call is answered once. Otherwise it refuses (`409`) and asks you to
+answer in the terminal. With more than one tool call open, the card names no command. Any
 other prompt from the seat (another command, a file outside its reviews, a message in an unusual
 spelling) shows what it is, with the command when it is a shell command, and is answered in the
 terminal ("Show the terminal"). The hook prints its answer first, even when the Clawdling server is not running. If the hook
@@ -638,7 +639,10 @@ permission prompt (Claude Code runs a command on its own: its hook, then its pro
 so the prompt on screen belongs to the newest tool call). Only exactly one
 `clawdling send|spawn [options] <target> "<message>"` counts as a plain message: a session or agent
 id, only the CLI's own options with plain values, the message in quotes with nothing a shell would
-expand, and not starting with `-` (the CLI would read it as an option). Through PowerShell, any
+expand, nothing a person cannot see (control characters, bidi and zero-width characters, Unicode
+tags, variation selectors), and not starting with `-` (the CLI would read it as an option). And
+whatever is typed into any session, by anyone, loses its control characters (but tab and line
+breaks) and its invisible characters first. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
 built so a long run of options cannot make them backtrack without end, and every command is capped
 at 4,001 characters before it is matched. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
@@ -652,7 +656,8 @@ Session titles, the agents' last lines, NOW.md and claim badges are written by a
 can be steered by what it reads. A hostile title could try to steer the CTO. Mitigations:
 
 - The report carries no file contents and no prompts; every agent-written string is capped, made
-  one line, stripped of control, bidi and zero-width characters, and cannot look like a citation
+  one line, stripped of control and invisible characters (bidi, zero-width, tags, variation
+  selectors), and cannot look like a citation
   (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The report's `note` and the CTO's CLAUDE.md
   both say to treat that text as data, never as instructions.
 - The CTO has no web, no MCP servers, and can write only its own reviews without asking. Nothing it
@@ -701,6 +706,7 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
   is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
+  (No check-up runs for the seat: it would run without its own settings and hook.)
   It reads the schedule again after building the estimate, so turning it off (or lowering the cap)
   while a check is under way wins.
 
