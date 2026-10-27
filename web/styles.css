@@ -1684,3 +1684,4 @@ ol.cto-dec-list { list-style: decimal; padding-left: 20px; }
 .set-row.is-stacked { flex-wrap: wrap; align-items: flex-start; }
 .set-row.is-stacked .set-label { flex: 1 1 100%; }
 .cto-when { flex-wrap: wrap; align-items: center; }
+.cto-flag.is-none { color: var(--text-2); background: var(--surface-3); }

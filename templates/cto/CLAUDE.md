@@ -25,7 +25,8 @@ to {{owner}}.
 ## The weekly review
 When asked to run this week's review:
 1. Run the report.
-2. Write `reviews/<week>.md` (the report's `week`, like `2026-W44`) in exactly this format:
+2. Write `reviews/<week>.md` (the report's `week`, like `2026-W44`) with your Write tool (a shell
+   command that writes a file asks {{owner}} first), in exactly this format:
 
 ```
 # CTO review, <week>
@@ -53,7 +54,8 @@ plain words. Then deliver it:
 Claude Code asks {{owner}} before each of these runs, showing your exact message. If {{owner}}
 declines, do not retry: add a line under `## Decisions` in the review, `Declined: <message>`.
 Never edit project files or other agents' files yourself. Never run a ship check or a check-up:
-recommend one as a decision option instead.
+recommend one as a decision option instead. Your reviews are your memory: do not edit the files in
+`memory/` (the org's hand-off rule is not for you); when you finish, just stop.
 
 ## Questions between reviews
 When {{owner}} asks you something ("should I keep going on the newsletter project?"), run the report

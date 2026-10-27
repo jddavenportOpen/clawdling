@@ -16,6 +16,8 @@ import { citedIds } from './receipts.js';
 const LABEL_BY_TEXT = Object.fromEntries(Object.entries(LABEL_TEXT).map(([k, v]) => [v.toLowerCase(), k]));
 const HEADING_RE = /^##\s+(.+?)\s*:\s*(on track|at risk|stalled|quiet)\s*$/i;
 const OVERRIDE_RE = /^\s*(override|overridden|i disagree)\b\s*[:,-]?\s*/i;
+// "No receipts for that": the CTO saying it has nothing to cite, as its rules tell it to.
+const NO_RECEIPTS_RE = /\bno receipts?\b/i;
 export const REVIEW_MAX_BYTES = 256 * 1024;
 
 /** The review's parts: {title, headline, sections: [{name, label, line, bullets}], decisions, other}. */
@@ -91,10 +93,15 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
   const unknown = [];
   let findings = 0;
   let cited = 0;
+  let none = 0;
   const check = (b, where) => {
     findings++;
     const ids = citedIds(b.text);
     if (!ids.length) {
+      if (NO_RECEIPTS_RE.test(b.text)) {
+        none++;
+        return { ...b, ids, state: 'no_receipts' };
+      }
       uncited.push({ line: b.line, text: b.text.slice(0, 300), where });
       return { ...b, ids, state: 'uncited' };
     }
@@ -134,7 +141,7 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
   const mismatched = sections.filter((s) => s.state === 'mismatch' || s.state === 'no_label' || s.state === 'unknown_agent');
   const parts = [];
   if (!findings) parts.push('No findings yet');
-  else if (!uncited.length && !unknown.length) parts.push(`${findings} finding${findings === 1 ? '' : 's'}, all cited`);
+  else if (!uncited.length && !unknown.length) parts.push(`${findings} finding${findings === 1 ? '' : 's'}, all cited${none ? ` (${none} say${none === 1 ? 's' : ''} "no receipts")` : ''}`);
   else {
     if (uncited.length) parts.push(`${uncited.length} uncited`);
     if (unknown.length) parts.push(`${unknown.length} citation${unknown.length === 1 ? '' : 's'} to a receipt that does not exist`);
@@ -147,6 +154,7 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
     headline: r.headline,
     findings,
     cited,
+    no_receipts: none,
     uncited,
     unknown,
     sections,

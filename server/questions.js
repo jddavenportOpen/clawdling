@@ -192,7 +192,9 @@ export async function driveAnswers({ questions, answers, screen, keys, pause = 2
     if (qi < questions.length - 1) await sleep(pause);
   }
   if (questions.length > 1) {
-    // The review: "Ready to submit your answers?" 1. Submit answers / 2. Cancel.
+    // The review: "Ready to submit your answers?" 1. Submit answers / 2. Cancel. Its heading can be
+    // drawn a moment before its options (seen live on 2.1.308): look again until both are there.
+    let missing = null;
     for (let t = 0; t < tries; t++) {
       const text = await screen();
       if (REVIEW_RE.test(text)) {
@@ -201,7 +203,11 @@ export async function driveAnswers({ questions, answers, screen, keys, pause = 2
         const opts = lines.slice(at + 1).map((l) => OPTION_RE.exec(l)).filter(Boolean);
         const submit = opts.findIndex((m) => /^Submit answers\b/i.test(m[3].trim()));
         const sel = opts.findIndex((m) => !!m[1]);
-        if (submit === -1 || sel === -1) throw conflict('the review screen has no "Submit answers"');
+        if (submit === -1 || sel === -1) {
+          missing = 'the review screen has no "Submit answers"';
+          await sleep(pause + t * 50);
+          continue;
+        }
         const moves = submit - sel;
         for (let i = 0; i < Math.abs(moves); i++) await keys(moves > 0 ? KEY.down : KEY.up);
         if (moves) await sleep(pause);
@@ -214,6 +220,6 @@ export async function driveAnswers({ questions, answers, screen, keys, pause = 2
       }
       await sleep(pause + t * 50);
     }
-    throw conflict('the review screen did not appear');
+    throw conflict(missing || 'the review screen did not appear');
   }
 }

@@ -279,6 +279,21 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   await request(srv, 'DELETE', `/api/sessions/${sid}`);
 });
 
+test('a "No" that stops the turn (Claude Code 2.1.308 sends no Stop) makes it the owner\'s turn again, not "Working" forever', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'website', prompt: 'permission? interrupt' })).body;
+  const p = await waitFor(async () => {
+    const v = await status(s.sid);
+    return v.status === 'needs_you' && Array.isArray(v.choices) && v.choices.length ? v : null;
+  }, { label: 'the prompt', timeout: 20000 });
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: p.choices.length })).status, 200);
+  const v = await waitFor(async () => {
+    const x = await status(s.sid);
+    return x.status === 'ready' ? x : null;
+  }, { label: 'ready after the interrupted turn', timeout: 20000 });
+  assert.match(v.last_message, /You said no, so Claude stopped/);
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+});
+
 test('the lint flags uncited bullets, ids that do not exist, and a label the CTO overrode (with its reason)', async () => {
   const week = (await request(srv, 'GET', '/api/cto')).body.week;
   const file = path.join(home, 'cto', 'reviews', `${week}.md`);

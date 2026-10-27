@@ -113,6 +113,10 @@ test('lint: a clean review says "N findings, all cited"; a changed label with no
   assert.equal(bad.sections[0].state, 'mismatch');
   assert.equal(bad.clean, false);
   assert.match(bad.summary, /1 section with a label Clawdling did not compute/);
+  const none = lintReview('## Website: On track\n- Shipped [R-session-aaaaaaaa]\n- Cheaper-model check: no receipts for that.\n', { receipts: RECEIPTS, labels: { website: LABELS.website } });
+  assert.equal(none.clean, true, '"no receipts" is the CTO following its rules, not an uncited claim');
+  assert.equal(none.summary, '2 findings, all cited (1 says "no receipts")');
+  assert.equal(none.sections[0].bullets[1].state, 'no_receipts');
   const unknownAgent = lintReview('## Nobody: Quiet\n- x [R-cost-dddddddd]\n', { receipts: RECEIPTS, labels: {} });
   assert.equal(unknownAgent.sections[0].state, 'unknown_agent');
   assert.equal(lintReview('', {}).summary, 'No findings yet');

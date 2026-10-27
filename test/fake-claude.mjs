@@ -601,6 +601,11 @@ async function interactive() {
       const choice = await asked;
       inSelect = false;
       const answer = ['yes', 'yes, always', 'no'][choice];
+      // "permission? interrupt": like Claude Code 2.1.308, a "No" stops the turn with no Stop hook.
+      if (answer === 'no' && text.includes('interrupt')) {
+        process.stdout.write('  ⎿  Interrupted · What should Claude do instead?\n> ');
+        return;
+      }
       process.stdout.write(`assistant: permission answered (${answer}), done\n> `);
       await runHook('Stop', { stop_hook_active: false, last_assistant_message: `permission answered (${answer}), done` });
       return;

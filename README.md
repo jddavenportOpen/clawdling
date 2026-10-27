@@ -130,7 +130,8 @@ one job.
 session that finished work, a "done" claim and its label, a ship check, a check-up, a week's usage,
 something waiting on you, the agent's own next steps. The CTO must cite one in brackets on every
 line. On the review page each citation is a link: tap it and you are on that session or that tab.
-A line with no citation is marked **uncited**, an id that does not exist says **no such receipt**,
+A line with no citation is marked **uncited** (unless it says "no receipts", which is the CTO
+following its rules), an id that does not exist says **no such receipt**,
 and the top of the page sums it up: "14 findings, all cited", or "2 uncited".
 
 **The labels are not the model's opinion.** On track, At risk, Stalled and Quiet are worked out by

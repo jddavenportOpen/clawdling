@@ -92,6 +92,15 @@ test('driveAnswers: arrows onto the choice, Enter; the review is submitted; a ch
   assert.deepEqual([...ticks].sort(), [0, 2]);
   assert.deepEqual(sent, ['\x1b[B', '\r', '\r', '\x1b[B', '\x1b[B', '\r', '\x1b[B', '\x1b[B', '\r', '\r']);
 
+  // The review's heading drawn before its options (seen live): it looks again, then submits.
+  step = 0;
+  sel = 0;
+  ticks.clear();
+  let partial = 2;
+  const late = () => (step === 2 && partial-- > 0 ? 'Ready to submit your answers?\n' : draw());
+  await driveAnswers({ questions: [Q1, PETS], answers: [{ choices: [1], text: '' }, { choices: [0, 2], text: '' }], screen: async () => late(), keys, pause: 1 });
+  assert.equal(step, 3, 'submitted once the options were drawn');
+
   // The screen is some other prompt: nothing is pressed.
   const pressed = [];
   await assert.rejects(driveAnswers({ questions: [Q1], answers: [{ choices: [0], text: '' }], screen: async () => ' Do you want to proceed?\n ❯ 1. Yes\n   2. No\n', keys: async (b) => pressed.push(b), pause: 1, tries: 2 }), (e) => e.status === 409);

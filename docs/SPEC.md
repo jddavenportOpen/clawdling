@@ -822,6 +822,7 @@ notes"; the Decisions section is not linted.
 |---|---|
 | `cited` | every `R-…` id in it is in the week's receipt index |
 | `uncited` | it cites no id |
+| `no_receipts` | it cites no id and says "no receipts" (the CTO following its rule; not counted as uncited) |
 | `unknown` | it cites an id the index does not have |
 
 | Section state | When |
@@ -832,7 +833,8 @@ notes"; the Decisions section is not linted.
 | `no_label` | the heading has no label |
 | `unknown_agent` | the name matches no agent (by name or id) in the week's labels |
 
-Agents with no section are listed as `missing`. The summary reads "N findings, all cited", or
+Agents with no section are listed as `missing`. The summary reads "N findings, all cited" (plus
+"(1 says "no receipts")" when some do), or
 "2 uncited", "1 citation to a receipt that does not exist", "1 label overridden by the CTO",
 "1 section with a label Clawdling did not compute", joined with " · ". `clean` means at least one
 finding, none uncited or unknown, and no `mismatch`, `no_label` or `unknown_agent` section (an

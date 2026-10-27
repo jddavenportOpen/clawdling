@@ -185,6 +185,7 @@ function Bullet({ b, receipts }) {
   return html`<li class=${`cto-bullet is-${b.state}`} data-state=${b.state} data-testid="cto-bullet">
     <span class="cto-bullet-text"><${Cited} text=${b.text} receipts=${receipts} /></span>
     ${b.state === 'uncited' ? html`<span class="cto-flag" title="No receipt is cited for this line">uncited</span>` : null}
+    ${b.state === 'no_receipts' ? html`<span class="cto-flag is-none" title="The CTO says it has no receipt for this, as its rules ask">no receipts</span>` : null}
   </li>`;
 }
 

@@ -78,6 +78,9 @@ const ANSWERABLE = new Set(['trust', 'imports', 'permission_prompt']);
 const POINTER = '\u276f'; // the "❯" Claude Code puts in front of the selected choice
 const KEY = { up: Buffer.from('\x1b[A'), down: Buffer.from('\x1b[B'), enter: Buffer.from('\r') };
 const DIALOG_ARM_MS = 1500; // Claude Code ignores keys for a moment after a dialog opens
+// Claude Code's screen after a "No" stops the turn (2.1.308): no Stop hook follows it.
+const INTERRUPTED_RE = /Interrupted\s*·\s*What should Claude do instead\?/;
+const INTERRUPT_CHECK_MS = [1500, 4000, 8000, 15000];
 // When to look for a question's choices after its Notification (ms): the list may draw late.
 const CHOICE_RETRY_MS = [300, 1000, 2500, 5000, 9000];
 // How often live sessions are checked for background work (Watching).
@@ -1459,7 +1462,40 @@ export class SessionManager {
     }
     if (!chosen) throw new HttpError(500, 'could not move the selection onto that choice');
     this.events.record({ type: 'answer', sid, agent: rec.agent, question: rec.asking?.kind === 'plan' ? 'plan' : kind, option: n, label: oneLine(chosen, 200) });
-    return this.answered(rec, rt, kind, { option: n, label: chosen });
+    const out = this.answered(rec, rt, kind, { option: n, label: chosen });
+    if (kind === 'permission_prompt' && /^\s*(?:\d+[.)]\s*)?no\b/i.test(chosen)) this.watchInterrupt(rec);
+    return out;
+  }
+
+  /**
+   * After a "No" to a permission prompt, Claude Code (2.1.308) stops the turn and waits ("Interrupted
+   * · What should Claude do instead?") without a Stop hook, so the session would read "Working"
+   * forever. Look at the screen a few times: if it says so, it is the owner's turn again.
+   */
+  watchInterrupt(rec, delays = INTERRUPT_CHECK_MS) {
+    const launch = rec.launch_id;
+    const attempt = (i) => {
+      if (i >= delays.length) return;
+      setTimeout(async () => {
+        if (rec.status !== 'working' || rec.launch_id !== launch) return;
+        try {
+          const text = await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`);
+          if (rec.status === 'working' && rec.launch_id === launch && INTERRUPTED_RE.test(String(text).replace(/\s+/g, ' '))) {
+            rec.status = 'ready';
+            rec.waiting_on = null;
+            rec.notification = null;
+            rec.pending_cmd = null;
+            rec.last_message = 'You said no, so Claude stopped. Tell it what to do instead.';
+            this.onStatusChange(rec);
+            return;
+          }
+        } catch {
+          // the session may be gone
+        }
+        attempt(i + 1);
+      }, delays[i] - (i ? delays[i - 1] : 0)).unref?.();
+    };
+    attempt(0);
   }
 
   /** The bookkeeping after an answer: the prompt is gone and the session moves on. */
