@@ -29,8 +29,14 @@
 - **Everywhere:** a Verified block on the report card, each agent's last check-up on the org map,
   and `clawdling check` / `clawdling checkup` for scripts (exit codes 0, 1, 2).
 
-Reviewed in fourteen rounds by Claude (`xhigh`) and GPT Codex. The claim rules lean to Not verified
-whenever the record cannot tell; known limits are tracked as issues #23 to #28 and #32 to #40.
+Reviewed in fifteen rounds by Claude (`xhigh`) and sixteen by GPT Codex, then by a third-party visual
+review of US-75 to US-83 on a real run. The claim rules lean to Not verified whenever the record
+cannot tell; known limits are tracked as GitHub issues.
+
+Tests: unit + integration on both backends (tmux 628 passed, pty 629 passed, 0 failed), 167 e2e
+(desktop and phone WebKit), CI green on Ubuntu, macOS and Windows (node 20 and 22). Real run with
+Claude Code 2.1.308 on a public repo: Verified, Not verified and Contradicted where they should be,
+a check-up result 3 minutes 21 seconds after Run, and the live repo byte-identical throughout.
 
 ## 1.5.1 (2026-10-26)
 

@@ -751,7 +751,8 @@ export function claimEvidence({ main, subs = [] }, { roots = null } = {}) {
     // A check runs after every edit: it started after the edit finished, or it comes later in the same
     // assistant message (Claude Code runs an edit and a shell command of one message in order, so
     // `Edit` + `npm test` sent together test the edited file).
-    const afterEdits = (x) => editList.every((e) => (e.t.end ?? e.t.ts) <= x.t.ts || (x.t.msg && e.t.msg === x.t.msg && e.t.seq < x.t.seq));
+    // (Not a background edit: it is still running when the next call starts.)
+    const afterEdits = (x) => editList.every((e) => (e.t.end ?? e.t.ts) <= x.t.ts || (!e.t.bg && x.t.msg && e.t.msg === x.t.msg && e.t.seq < x.t.seq));
     const after = before.filter((x) => (!lastEdit || (cmp(x.key, lastEdit.key) > 0 && afterEdits(x)) || (selfChecked && x === lastEdit)) && SHELL_TOOLS.has(x.t.name) && typeof x.t.cmd === 'string' && x.t.end !== null && x.t.res && !x.t.res.denied && !x.t.res.blocked);
     // A tool that may change files and that Clawdling cannot read (an MCP server's write or edit
     // tool): it ends what the checks before it say, like an unknown shell command.

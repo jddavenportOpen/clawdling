@@ -750,3 +750,19 @@ test('an edit and a test sent in one message run in order: the test is after the
   const [c] = claimsOf(recs);
   assert.equal(labelClaim(c).label, 'contradicted');
 });
+
+test('the same-message rule does not trust a background edit', () => {
+  const t = (s2) => new Date(Date.parse('2026-10-26T15:00:00Z') + s2 * 1000).toISOString();
+  const msg = (at, id, name, input) => ({ type: 'assistant', timestamp: t(at), message: { id: 'bgm', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'tool_use', id, name, input }], usage: { input_tokens: 1, output_tokens: 1 } } });
+  const res = (at, id, content) => ({ type: 'user', timestamp: t(at), message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content, is_error: false }] } });
+  const recs = [
+    { type: 'user', timestamp: t(0), message: { role: 'user', content: 'x' } },
+    msg(1, 'g1', 'Bash', { command: 'python3 scripts/regen.py > src/generated.ts', run_in_background: true }),
+    msg(1.01, 'g2', 'Bash', { command: 'npm test' }),
+    res(1.5, 'g1', 'Command running in background with ID: b1'),
+    res(6, 'g2', '# pass 3\n# fail 0'),
+    { type: 'assistant', timestamp: t(7), message: { id: 'z8', model: 'claude-sonnet-5', role: 'assistant', content: [{ type: 'text', text: 'Done, tests pass.' }], usage: { input_tokens: 1, output_tokens: 1 } } },
+  ];
+  const [c] = claimsOf(recs);
+  assert.equal(labelClaim(c).label, 'not_verified');
+});
