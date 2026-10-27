@@ -531,3 +531,48 @@ US-85 to US-90, in the same order (brief US-80 = US-85 ... US-85 = US-90).
 - **US-90 (P1, Dev; 1.7)** **Ask the CTO anything:** "Ask the CTO something…" (or a new session with
   the CTO) is a normal chat ("should I keep going on the newsletter project?"); it answers from the
   same report, citing receipts, and says "no receipts for that" when there are none.
+
+## New in 1.8: safe to hand over
+
+The build brief numbered these US-86 to US-93; 1.7 already uses US-85 to US-90, so here they are
+US-91 to US-98, in the same order (brief US-86 = US-91 ... US-93 = US-98).
+
+- **US-91 (P0, Lou, Rin; 1.8)** The **Setup** card in Settings ("Your Claude Code setup") opens with a
+  **Safety** section listing every agent (Donna, the CTO, domains, projects) and "Everything (user
+  level)", each with three capability chips: private data, untrusted input, sends out. Each chip names
+  what gives it, and where it comes from ("gmail MCP server (mail)", "`WebFetch` allowed",
+  "`Bash(curl:*)` allowed").
+  - Accept: the audit takes under 3 seconds on a 200-agent org, opens no socket and starts no process
+    (not even `gh`); tests stub the network and `child_process` to throw.
+- **US-92 (P0, Lou; 1.8)** An agent with all three shows **Lethal trifecta**, one plain sentence of what
+  could happen, and up to three fixes as text, from the leg that is cheapest to cut ("add
+  "mcp__gmail" to `permissions.deny` in …", "remove `Bash(curl:*)` from `allow` in …").
+  - Accept: the fixes are text; Clawdling changes nothing. "Accept this risk…" with a reason keeps it
+    on this computer and shows the row amber.
+- **US-93 (P0, Rin; 1.8)** Setup risks, each with its file: a SessionStart hook in a repo's own
+  `.claude/settings.json`; bypass permissions mode (or its warning turned off); auto mode; an MCP
+  server in a repo's `.mcp.json`; a repo's `.claude/settings.local.json` that no ignore rule covers;
+  plugins from a marketplace other than Anthropic's official one, by name.
+- **US-94 (P1, Dev; 1.8)** A small shield on every agent on the org map (the owner's node carries the
+  user level), in its side panel and on its report card: green (no trifecta, no setup risk, nothing
+  unknown), amber (a setup risk, an unknown name, or an accepted trifecta), red (the trifecta). The
+  CTO's report JSON carries the same verdict as a receipt (`agents[].safety`, `R-safety-…`).
+- **US-95 (P0, Rin; 1.8)** `clawdling doctor --contract` checks, with no model call: (a) the version is
+  in `server/claude-compat.json`'s range; (b) `claude --help` lists every flag Clawdling passes, and
+  the parser still knows the two it hides; (c) the hook events Clawdling registers are accepted
+  (`claude doctor`'s own settings check of a probe file); (d) the newest transcript parses; (e) the
+  `-p` flags check-ups need. Each line reads ok, or a plain sentence with what to do; what cannot be
+  checked offline says so.
+- **US-96 (P1, Rin; 1.8)** `clawdling doctor --contract --live` also runs one tiny real session
+  (about $0.01, shown first): `claude -p "Reply with OK" --model haiku` in a temporary folder with
+  hooks registered like Clawdling's. SessionStart, UserPromptSubmit and Stop arrived; a transcript
+  with the expected records and a cost-state or usage was written.
+  - Accept: the folder is removed, and `claude purge` removes the session.
+- **US-97 (P0, Sam; 1.8)** A nightly workflow installs the newest Claude Code on ubuntu, macOS and
+  Windows runners and runs `doctor --contract` plus the fixture suites. A new version that passes: a
+  pull request bumping `maxChecked`. A failure: an issue "Claude Code <ver> breaks <check>" with the
+  failing lines. The README badge reads the compat file.
+  - Accept: a planted break opens the issue; a pass opens the bump (both dry-run on 2026-10-27).
+- **US-98 (P1, Lou; 1.8)** When the installed Claude Code is newer than `maxChecked`, the cockpit says,
+  once per version and dismissibly: "Claude Code <ver> is newer than the last version Clawdling
+  checked (<maxChecked>). It will probably work. Run Doctor to check." It never blocks a start.

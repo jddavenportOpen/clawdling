@@ -12,7 +12,9 @@ server can type into those sessions, so the server is built to be reachable only
   to `claude` as `CLAUDE_CONFIG_DIR` for the sessions started with it; you sign in inside Claude
   Code, and Clawdling never sees, reads or stores that login. It never switches accounts on its own.
 - It never edits `~/.claude.json` or your Claude Code settings. Claude Code's own dialogs (folder
-  trust) are shown to you and answered by you.
+  trust) are shown to you and answered by you. (`clawdling doctor --contract --live`, which you run
+  on purpose, ends by asking Claude Code itself, `claude purge <its temporary folder> --yes`, to
+  delete the transcript and folder entry its one test session left; nothing else is touched.)
 - It never builds a shell command or a tmux command from your text. tmux sessions start from a
   generated launcher script in which every value is single-quoted; sessions in the built-in
   terminal (node-pty) are spawned with their argv directly, with no shell on any OS. On Windows the
@@ -769,6 +771,75 @@ thresholds, the Monday line) work only from the computer Clawdling runs on (`403
 address; on a LAN address with `--host` the token alone is not enough). Starting a chat with the CTO
 is open to a paired device like any agent's session, and closed to the CLI (see above).
 
+## Setup safety and the update guard (1.8)
+
+### What the audit reads, and never reads
+
+The setup safety audit (`server/safety.js`, the reads in `discover.scanSafety`) says which agents can
+read private data, read untrusted input and send data out: the **lethal trifecta**, Simon Willison's
+name for the setup in which text an agent reads can trick it into leaking your data
+(<https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/>). It sits next to files that hold
+credentials, so it reads names only:
+
+| Source | What it reads | What it never reads |
+|---|---|---|
+| `settings.json` (yours, managed, each agent folder's, each project repo's `.claude/settings.json` and `settings.local.json`) | `permissions.allow`, `ask`, `deny` rule text, `defaultMode`, `disableBypassPermissionsMode`, `skipDangerousModePermissionPrompt`, whether `autoMode` is set, `additionalDirectories` (only whether one is your home folder or a big folder in it), `enableAllProjectMcpServers`, hook **event names** and counts, `enabledPlugins` names | hook commands, `env`, `apiKeyHelper`, `otelHeadersHelper`, `autoMode` rules, any other value |
+| `~/.claude.json` | `mcpServers` keys, and this folder's own `projects[<folder>].mcpServers` keys; per server the basename of `command`, the first argument that looks like a package (`@scope/name` or `name`, at most 80 characters, not a flag, not a URL, not a token), the `type`, and the **host** of `url` | `env`, `headers`, every other argument, a URL's user, port, path or query, `oauthAccount`, `primaryApiKey`, everything else |
+| a repo's `.mcp.json` | server keys, and the same command, package and host rule | the same |
+| plugins | names, marketplace ids, and a marketplace's source repo (`owner/name`) from `plugins/known_marketplaces.json` | plugin files |
+| `.gitignore`, `.claude/.gitignore`, `.git/info/exclude`, your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) | the ignore rules, to see whether `.claude/settings.local.json` is ignored | nothing else; no `git` process is started |
+| Clawdling's own state | Donna's channel (Telegram or iMessage, paired or not), each agent's permission mode, Donna's and the CTO seat's rules, your choices in `.clawdling/safety.json` | tokens, chat content |
+
+Every rule's text passes `redactSecrets()` **before** it is classified or shown, and then any run of
+20 or more letters and digits that mixes both is replaced too, whatever its format:
+`Bash(curl -H "Authorization: Bearer …")` is shown as `Bash(curl -H "Authorization: Bearer
+[redacted]")`. A package or a host label that looks like a token is dropped. Inside a repo a file is
+read only when its real path is inside the repo (a `.mcp.json` or `.claude/settings.json` linked to
+`~/.netrc` is skipped), like the rest of discovery. The audit opens no socket and starts no process,
+not even `gh`; the cockpit computes it on request and keeps nothing but the owner's two choices below.
+
+Tests plant fake secrets (`sk-ant-…`, GitHub tokens, AWS keys, bearer tokens, a password) in `env`,
+`headers`, URLs, arguments, hook commands, `apiKeyHelper`, plugin names and permission rules, and
+check that none reaches `GET /api/setup/safety`, the CLI text or JSON, the CTO's report, the event log,
+the server's output or `safety.json`; another runs the audit with sockets, DNS, `fetch` and
+`child_process` stubbed to throw (`test/unit/safety.test.js`, `test/integration/safety.test.js`).
+
+### What the verdict means, and does not
+
+Green is "no trifecta found **by name**", never "secure": the audit sees names, not what a server or
+a script really does. A name it does not know is "unknown: review", which is never green (amber at
+least). A custom server called `helper` that sends mail is exactly the case it can miss; that is why
+unknowns are shown, and why you can say what one does. The fixes are text: Clawdling changes no
+settings file, yours or a repo's.
+
+### Your two choices, and who can make them
+
+- **Accept a risk**, with a reason (shown amber, with your reason).
+- **Say what an unknown MCP server or plugin can do** (private data, untrusted input, sends out).
+
+Both are kept in `.clawdling/safety.json` (mode 600), which no agent can read or write (the runtime
+folder's deny rules), and both routes refuse the CLI's token, which every agent and Donna can use: an
+agent cannot accept its own risk. The cockpit (the computer itself, or a paired device) can.
+
+### The update guard
+
+`clawdling doctor --contract` runs only the official `claude`: `--version`, `--help`, `-p --help`,
+one `-p` run that its argument parser stops before anything else happens (no prompt, closed stdin,
+no tools, nothing persisted, and `ANTHROPIC_BASE_URL` set to a closed local port for that one run),
+and `claude doctor` in a temporary folder that holds only a settings file declaring hook events
+(their commands are never run). No model call, no API call by Clawdling, nothing fetched: the compat
+file ships in the repo. `--live` is opt-in, shows its cost first, and runs one `claude -p` on your
+plan in a temporary folder with no tools and no MCP servers; `claude purge` then removes what it
+left in Claude Code's own folders.
+
+The nightly workflow installs the newest Claude Code from npm on GitHub's throwaway runners only. It
+never runs `claude` with a login (there is none in CI) and uses no secret but the job's own
+`GITHUB_TOKEN`. Its permissions are read-only, except the last job, which may push a branch and open
+the bump pull request or the break issue (`contents`, `pull-requests`, `issues`: write). The version
+it reads from npm must look like `x.y.z` before it is used, and it is passed through the environment,
+never pasted into a shell line. The repository lets workflows open pull requests (the setting this
+job needs); pull requests it opens do not start other workflows.
+
 ## Agents
 
 Agent sessions are ordinary interactive Claude Code sessions: Claude Code's permission system
@@ -808,9 +879,10 @@ What it reads:
 - the **names** under `mcpServers` in `~/.claude.json` and any repo's `.mcp.json`, the names and
   descriptions of skills, subagents, commands and plugins, and hook **event names**
 
-What it never reads or keeps: an MCP server's `env`, `headers`, `args`, `command` or `url`
-values; hook command text; `primaryApiKey`, `oauthAccount` or any other credential; a GitHub
-token. A planted secret in any of those does not appear in `GET /api/discover`, `GET /api/setup`,
+What it never reads or keeps: an MCP server's `env` or `headers`, any argument but the first
+package-like one, or any part of a `url` but its host (the setup safety audit, 1.8, reads the
+command's basename, that package and that host; see below); hook command text; `primaryApiKey`,
+`oauthAccount` or any other credential; a GitHub token. A planted secret in any of those does not appear in `GET /api/discover`, `GET /api/setup`,
 or anything written into an agent (tests: `test/unit/discover.test.js`,
 `test/integration/import.test.js`).
 
@@ -846,7 +918,8 @@ hook spool, launcher scripts (include first prompts), generated context files, `
 and since 1.5 `ledger/` (session summaries), `digest.json`, `otel.json` and `traces/`, and since 1.6
 `checks/` (approval fingerprints, ship-check results, the scratch worktrees in use) and `evals/`
 (case approvals, the scratch copies in use), and since 1.7 `cto.json` (the CTO's schedule),
-`cto/receipts/` (the weekly receipt index) and `cto-launch-settings.json` (see above). An agent's
+`cto/receipts/` (the weekly receipt index) and `cto-launch-settings.json` (see above), and since 1.8
+`safety.json` (the risks you accepted, with your reasons, and what you said an unknown server does). An agent's
 `checks.yaml` and `evals/` (cases and results) live in its own folder; the CTO's reviews live in
 `<org>/cto/reviews/`.
 Transcripts are Claude Code's own (`~/.claude/projects/`); Clawdling reads them for the chat view,

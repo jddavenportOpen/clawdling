@@ -913,3 +913,126 @@ in Clawdling.`, from this week's or last week's review only (an older one is not
 domain name, turned into a one-dot leader so no chat app makes it tappable; bidi and zero-width
 characters, `<` and `>` dropped) and the count of questions still waiting. No other review text is sent. Same sender and rules as the
 Monday report.
+
+## 1.8 addendum: safe to hand over
+
+Two checks an owner needs before trusting agents with real work. The **setup safety audit** says, per
+agent and for the user-level setup every agent inherits, whether its sessions load all three legs of
+the lethal trifecta ([Simon Willison](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/)):
+something that reads private data, something that reads untrusted input, and a way to send data out.
+The **update guard** checks the installed Claude Code against the surfaces Clawdling relies on, on the
+owner's computer and nightly in CI. Security: SECURITY.md, "Setup safety and the update guard".
+Stories: US-91 to US-98.
+
+### The audit (`server/safety.js`, `server/capabilities.json`, `discover.scanSafety`)
+
+A pure function, `auditSafety({scan, agents, org, accepted, tags})`, over a names-only scan. It reads
+no file, opens no socket and starts no process; `scanSafety` (in discover.js, under its rules) does
+the reading, and also starts no process (the `.gitignore` check reads the ignore files itself).
+
+**What each agent's sessions load** (Claude Code reads `.claude/settings.json` from the session's
+folder only, not from the folders above it; checked with `claude doctor` on 2.1.308):
+- a domain or project agent: managed settings, the user's `settings.json`, the session folder's
+  `.claude/settings.json` and `.claude/settings.local.json` (the repo's, for a repo-rooted project
+  agent), MCP servers from `~/.claude.json` (`mcpServers`, and this folder's own entry) and the
+  folder's `.mcp.json`, and the user's enabled plugins. Its permission mode is Clawdling's
+  (`--permission-mode`), unless it uses "Your Claude Code setting"; then the settings' `defaultMode`
+  (managed, local, project, user, in that order).
+- Donna: managed settings and her folder's (`--setting-sources project,local`), no MCP server at all
+  (`--strict-mcp-config`), `dontAsk` with her allow-list, and her channel: Telegram (sends: replies)
+  and iMessage (private: it reads Messages; sends: replies). Her inbound is the paired owner only, so
+  it is not untrusted input, and the row says so.
+- the CTO: managed settings and its folder's (`--setting-sources project`), no MCP server, its rules
+  (1.7). Private: the org report; untrusted: the agent-written text in it; nothing sends.
+- "Everything (user level)": what a plain `claude` loads anywhere on this computer.
+Sessions started on an extra Claude account (1.0.1) load that account's own settings, which
+Clawdling never reads; the user-level row says so when there is one.
+
+**Classification, by name** (`server/capabilities.json`). An MCP server's key, the basename of its
+command, its first package-like argument and its URL's host are split into words and matched
+against word lists: mail, chat, issues and code hosts are all three; calendar, files and docs, CRM,
+databases and payments are private (payments also send); browsers and fetchers are untrusted and
+send; search is untrusted; a short list of local helpers is known and harmless. A name that matches
+nothing is **unknown: review**, never safe. Permission rules: `WebFetch` (untrusted and sends: a URL
+is a channel), `WebSearch` (untrusted), `Read(//…)` and `Read(~/…)` outside the agent's folder
+(private), and shell rules that can send: unrestricted Bash (`Bash`, `Bash(*)`, `Bash(:*)`), a
+wildcard for a network tool (`curl`, `wget`, `nc`, `ssh`, `scp`, `rsync`…), `git push`, a publish
+or deploy verb, and an interpreter with a wildcard (`python3:*`, `node -e *`). `Bash(git status:*)`,
+`Bash(npm test)` and a fixed `curl https://host/health` do not send. A deny rule in any layer that
+covers an allow takes it away (Claude Code's own rule), and `mcp__<server>` denies a server. Bypass
+permissions mode and auto mode, when the sessions really run in them, are sends (and untrusted,
+unless WebFetch is denied). Plugins are classified by their names, like servers.
+
+**The verdict per agent:** `{id, name, kind, folder, mode, loads[], chips{private[], untrusted[],
+sends[]} (each {text, source}), unknown[], trifecta, risks[] ({id, text, file}), fixes[], sentence,
+accepted, notes[], verdict, summary}`. `verdict` is red (trifecta, not accepted), amber (a setup
+risk, an unknown name, or an accepted trifecta) or green ("no trifecta found by name", never
+"secure"). `fixes` (at most three, text only) come from the leg with the fewest items: a deny rule
+in the agent's own folder for something it inherits, removing a rule from the file that adds it, or
+`claude mcp remove` on the user-level row.
+
+**Setup risks (`risks[].id`):** `session_start` (a repo's own `.claude/settings.json` has a
+SessionStart hook), `bypass` (`defaultMode: bypassPermissions` or
+`skipDangerousModePermissionPrompt`), `auto_mode` (`defaultMode: auto`), `repo_mcp` (a server in a
+repo's `.mcp.json`), `local_not_ignored` (a repo's `.claude/settings.local.json` that no ignore rule
+covers: the repo's `.gitignore`, `.claude/.gitignore`, `.git/info/exclude`, the global excludes
+file), `marketplace` (a plugin from a marketplace other than Anthropic's official ones, or one
+using the official name with a source outside `anthropics/`, listed once on the user-level row).
+A user-level mode switch shows on an agent only when it applies to that agent's sessions.
+
+**The owner's choices** (`.clawdling/safety.json`, mode 600): `accepted{agentId: {reason, at}}` (a
+reason of at least three characters, redacted and kept to one line; a red row becomes amber) and
+`tags{name: caps[]}` (what an unknown MCP server or plugin can do). Written only through the cockpit:
+`POST /api/setup/safety/accept {agent, reason|null}` and `POST /api/setup/safety/tag {server,
+caps|null}` refuse the CLI token (every agent and Donna can run the CLI).
+
+**Where it shows:** `GET /api/setup/safety` (`{took_ms, rows, privacy}`, the user level first); the
+Safety section on Settings' setup card (`#/settings/safety`); a shield on every org-map node (the
+owner node carries the user level) and in its side panel; a line on each report card;
+`clawdling discover --setup --safety [--json]` (offline: it reads the org folder and never asks the
+cockpit or `gh`); and in the CTO's schema 2 report, `agents[].safety` = `{receipt (R-safety-…),
+link, verdict, trifecta, accepted, risks[], unknown}` (an additive field; the schema stays 2).
+
+### The update guard (`server/contract.js`, `server/claude-compat.json`)
+
+`claude-compat.json`: `min` (2.1.139, the oldest version Windows hooks support), `maxChecked`, the
+`flags` Clawdling passes (each must appear in `claude --help`), the `hiddenFlags` it passes that
+`--help` does not list (`--append-system-prompt-file`, `--max-turns`), the `printFlags` check-ups need,
+the `hookEvents` it registers, and a short history. Per-feature version gates (StopFailure, 2.1.229)
+stay where they are.
+
+`clawdling doctor --contract [--json]` makes no model call:
+- (a) `claude --version` against `min`..`maxChecked` (newer is a note, not a failure);
+- (b) the flags in `claude --help`, and the hidden ones through one `claude -p` run whose argument
+  parser stops at a made-up flag after them (`error: unknown option` names the first unknown one; the
+  run also has no prompt, closed stdin, no tools, nothing persisted and an unreachable API address);
+- (c) the hook events, through `claude doctor` in a temporary folder whose `.claude/settings.json`
+  declares every event plus a made-up one: doctor reports `Unknown hook event "X" was ignored`, so
+  the made-up one proves the check ran, and none of Clawdling's may appear. A version whose doctor
+  reports nothing is "not checkable offline", never ok;
+- (d) the newest Clawdling session's transcript, with the report card's parser (1.5);
+- (e) the `-p` flags check-ups use.
+
+`--live` (asks first, or `--yes`) adds one real session, `claude -p "Reply with OK" --model haiku`,
+in a temporary folder, with hooks registered the way Clawdling registers them (a recorder script in
+place of Clawdling's): SessionStart, UserPromptSubmit and Stop must arrive, and the transcript must
+have user and assistant records and a cost-state or usage. Then `claude purge <folder> --yes`
+(Claude Code's own command) deletes that folder's transcript and config entry, and the folder goes.
+
+**The health check** (`GET /api/health`) adds `claude_compat: {max_checked, newer}`; the cockpit shows
+"Claude Code <ver> is newer than the last version Clawdling checked (<maxChecked>). It will probably
+work. Run Doctor to check." once per version, dismissible, never blocking a start.
+
+**Nightly** (`.github/workflows/claude-nightly.yml`, daily 09:00 UTC and on demand): the newest
+`@anthropic-ai/claude-code` from npm, installed on a throwaway runner (never on a user's computer),
+on ubuntu, macOS and Windows: `doctor --contract --json` plus the contract fixture suites
+(`test/unit/claude-contract.test.js`, `test/unit/contract.test.js`). The report job, the only one with
+a write token (`contents`, `pull-requests`, `issues`; no other secret), opens a pull request that bumps
+`maxChecked` (at most one open at a time) or an issue titled "Claude Code <ver> breaks <check>" (a
+comment when it is already open). Branches named `guard-dryrun/pass` and `guard-dryrun/break` (a
+planted flag) run it as a dry run against that branch.
+
+### Contract fixtures, 1.8
+
+`test/fixtures/claude-cli/`: `claude --help` and the argument-parser probe from 2.1.283, 2.1.304 and
+2.1.308, and a scrubbed `claude doctor` report of the probe file (2.1.308).

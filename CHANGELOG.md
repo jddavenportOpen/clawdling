@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.8.0 (TBD)
+
+**Clawdling 1.8: safe to hand over. Before you hand your agents the keys, Clawdling checks your Claude
+Code setup for the lethal trifecta, offline, by name only.**
+
+- **Setup safety.** Settings' "Your Claude Code setup" opens with a Safety section: every agent
+  (Donna, the CTO, domains, projects) and "Everything (user level)", each with three chips, private
+  data, untrusted input and sends out, that name what gives each one and the file it comes from. An
+  agent with all three shows **Lethal trifecta** (Simon Willison's term), one sentence of what could
+  happen, and up to three fixes as text from the leg that is cheapest to cut. Clawdling changes
+  nothing. Accept a risk with a reason (kept on your computer, shown amber), or say what an unknown
+  MCP server or plugin does.
+- **Exactly what each agent loads.** Your settings, managed settings, the session folder's own
+  `.claude/settings.json` and `settings.local.json` (Claude Code reads no other folder's), your MCP
+  servers and the repo's `.mcp.json`, your plugins, and the permission mode Clawdling starts it in:
+  your own auto mode does not reach an agent that asks first, and the audit knows. Donna loads none
+  of your setup, and only your paired chat reaches her: her row says so.
+- **Setup risks, each with its file:** a SessionStart hook in a repo's own settings (the npm-worm
+  vector), bypass permissions or auto mode, an MCP server a repo defines, a `settings.local.json` no
+  `.gitignore` covers, a plugin from a marketplace other than Anthropic's official one.
+- **Names only, and nothing else.** Rule text redacted before it is classified or shown, MCP server
+  keys with their command basename, first package and URL host, plugin names; never an `env` value,
+  a header, a hook command, an API key helper or a URL past its host. No socket, no process (not even
+  `gh`), a few milliseconds; 200 agents well under 3 seconds. Unknown names are "unknown: review",
+  never green; green means "no trifecta found by name", never "secure".
+- **Shields.** Green, amber or red on every org-map node (the owner's carries the user level), in its
+  side panel and on each report card. The CTO's schema 2 report gains `agents[].safety` with an
+  `R-safety-…` receipt (an additive field).
+- **`clawdling discover --setup --safety [--json]`**: the same audit in a terminal, offline.
+- **The update guard: `clawdling doctor --contract`.** Checks the installed Claude Code against
+  `server/claude-compat.json` with no model call: the version range, every flag Clawdling passes
+  (including the two `--help` hides, through the argument parser), the hook events it registers
+  (`claude doctor`'s own settings check of a probe file, which a made-up event proves ran), the
+  newest transcript, and the `-p` flags check-ups use. `--live` runs one haiku session (about $0.01,
+  shown first) with Clawdling-style hooks, checks the events, the transcript and its cost, then
+  `claude purge` deletes it.
+- **Nightly against every Claude Code release.** A scheduled workflow installs the newest Claude Code
+  on Linux, macOS and Windows runners and runs the contract: a pass opens a pull request that bumps
+  `maxChecked`, a break opens "Claude Code <ver> breaks <check>". Dry-run on 2026-10-27: 2.1.312
+  passed on all three; a planted break opened its issue. The README badge reads the compat file.
+- **"Newer than the last version checked."** When your Claude Code is newer than `maxChecked`, the
+  cockpit says so once per version, dismissibly, and never blocks a start.
+
 ## 1.7.0 (TBD)
 
 **Clawdling 1.7: your CTO. Every Monday it reads your projects' receipts and asks you three questions.**

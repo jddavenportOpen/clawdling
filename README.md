@@ -1,6 +1,7 @@
 # Clawdling
 
 [![ci](https://github.com/jddavenportOpen/clawdling/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/jddavenportOpen/clawdling/actions/workflows/ci.yml)
+[![Checked with Claude Code](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fraw.githubusercontent.com%2FjddavenportOpen%2Fclawdling%2Fmain%2Fserver%2Fclaude-compat.json&query=%24.maxChecked&label=checked%20with%20Claude%20Code&prefix=2.1.139%20to%20)](server/claude-compat.json)
 
 **Turn Claude Code into an org of agents.** On macOS, Linux and Windows.
 
@@ -148,6 +149,52 @@ It never runs a ship check or a check-up itself (it suggests one as a decision).
 message to another agent without your yes. It never runs on its own unless you turned on the weekly
 review, and it cannot change its own instructions or settings. How the seat is locked down:
 [SECURITY.md](docs/SECURITY.md#the-cto-seat-17).
+
+## Safe to hand over
+
+> Before you hand your agents the keys: Clawdling checks your Claude Code setup for the lethal
+> trifecta, offline, by name only.
+
+An agent that can read your **private data**, read **untrusted input** (a web page, an email, an
+issue) and **send data out** can be tricked by the second into leaking the first through the third.
+Simon Willison calls it [the lethal trifecta](https://simonwillison.net/2025/Jun/16/the-lethal-trifecta/).
+Settings, "Your Claude Code setup", now opens with **Safety**: every agent, and everything at the
+user level, with three chips that name what gives each one ("gmail MCP server", "`WebFetch`
+allowed", "`Bash(curl:*)` allowed") and which file it comes from.
+
+![Setup safety: each agent's private data, untrusted input and sends-out chips, the trifecta sentence and the cheapest fixes](docs/img/safety.png)
+
+- **Red: the lethal trifecta.** One sentence of what could happen, and up to three fixes as text,
+  from whichever leg is cheapest to cut: "add "mcp__gmail" to `permissions.deny` in
+  ~/clawdling/domains/work/.claude/settings.json". Clawdling changes nothing; you copy the change.
+  Or accept the risk with a reason, kept on your computer: the row turns amber.
+- **Amber: a setup risk**, with its file: a repo whose own settings run a command at SessionStart
+  (how an npm worm planted hooks in hundreds of packages), bypass permissions or auto mode, an MCP
+  server a repo defines in `.mcp.json`, a `.claude/settings.local.json` no `.gitignore` covers, a
+  plugin from a marketplace other than Anthropic's. Or a name it does not know: "unknown: review",
+  never green. Tell it what that server does, once.
+- **Green: no trifecta found by name.** Not "secure": it reads names, not what code does.
+- **A shield on every agent** on the org map and on its report card, and the same verdict in the
+  CTO's weekly report.
+- **Per agent, exactly what loads.** Clawdling starts each agent in its own permission mode, so your
+  own auto mode does not reach it, and the audit knows. Donna loads none of your setup, and only
+  your own paired chat reaches her, so her inbox is not untrusted input; her row says so.
+
+It reads names only: rule text (anything secret-looking replaced by `[redacted]`), MCP server names
+and their command, package and host, plugin names. Never an `env` value, a header, a hook command or
+a URL past its host. It runs in a few milliseconds, opens no socket and starts no process. From a
+terminal: `clawdling discover --setup --safety`. Exactly what it reads:
+[SECURITY.md](docs/SECURITY.md#setup-safety-and-the-update-guard-18).
+
+**Checked with every Claude Code release.** Claude Code ships about a release a day. Clawdling relies
+on a few of its surfaces (the flags it passes, the hook events, the transcript records, the `-p`
+flags check-ups use), and checks them:
+- `clawdling doctor --contract`: on your computer, with no model call, in about a second. Each line
+  is ok or a plain sentence with what to do. `--live` adds one tiny real session (about $0.01 on your
+  plan, shown first), then has Claude Code delete it.
+- Every night in CI, against the newest Claude Code on Linux, macOS and Windows: a pass bumps the
+  badge above; a break opens an issue the same morning. When yours is newer than the last version
+  checked, the cockpit says so once.
 
 ## What you need
 
