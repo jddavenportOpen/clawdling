@@ -1470,6 +1470,331 @@ export function scanSetup({ configDir, claudeJsonPath, repos = [], agents, homed
   };
 }
 
+// ------------------------------------------------------------------------------ safety scan (1.8)
+//
+// What the setup safety audit (safety.js) needs, read under the same rules as the setup scan:
+// realpath containment, names only, redactSecrets() first. From a settings file: the permission
+// rules (allow, ask, deny), the default mode, the auto and bypass switches, hook EVENT names and
+// counts. From an MCP server entry: its key, the basename of its command, its first package-like
+// argument and the host of its URL. Never a hook command, an `env` or `headers` value, a URL's
+// path or query, `apiKeyHelper`, or any other argument. It reads files only: no process, no socket.
+
+const RULE_MAX = 300; // permission rules read per list
+const RULE_CHARS = 2048; // a longer rule is cut before it is redacted
+const MODE_NAMES = new Set(['default', 'manual', 'acceptEdits', 'plan', 'bypassPermissions', 'auto', 'dontAsk']);
+const PKG_RE = /^[@a-z0-9][\w./-]{0,80}$/;
+const HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}\.){0,8}[a-z0-9-]{1,63}$/;
+// Arguments that take a value that is not a package (`-e NAME=value`, `-v a:b`, `-H "x: y"`).
+const VALUE_FLAGS = new Set(['-e', '--env', '--env-file', '-v', '--volume', '-H', '--header', '--name', '-w', '--workdir', '--network', '--mount', '--cwd', '--prefix', '--directory', '--config']);
+const RUNNER_WORDS = new Set(['run', 'exec', 'x', 'dlx', 'tool', '--']);
+
+/** A run of 20+ letters and digits, both present: a token, whatever its format. */
+const LONG_TOKEN_RE = /[A-Za-z0-9+/=_-]{20,}/g;
+function scrubTokens(s) {
+  return s.replace(LONG_TOKEN_RE, (m) => (/\d/.test(m) && /[A-Za-z]/.test(m) && !/^[a-z]+(?:-[a-z]+)*$/.test(m) ? REDACTED : m));
+}
+
+/**
+ * A permission rule as the audit may show it: cut, redacted, long tokens out, one line. A rule like
+ * `Bash(curl -H "Authorization: Bearer abc")` comes back as `Bash(curl -H "Authorization: Bearer
+ * [redacted]")`. The audit classifies this text, never the raw rule.
+ */
+export function ruleText(rule) {
+  if (typeof rule !== 'string' || !rule) return null;
+  return cleanText(scrubTokens(redactSecrets(rule.slice(0, RULE_CHARS))), 200);
+}
+
+/** Is a word (a package, a host label) a pasted token rather than a name? */
+function tokenish(s) {
+  return redactSecrets(s) !== s || scrubTokens(s) !== s;
+}
+
+/** The package-like name of an MCP stdio server: `@scope/name` or `name`, version dropped; else null. */
+function packageArg(args) {
+  if (!Array.isArray(args)) return null;
+  for (let i = 0; i < args.length && i < 40; i++) {
+    const a = args[i];
+    if (typeof a !== 'string') return null;
+    if (a.startsWith('-')) {
+      if (VALUE_FLAGS.has(a)) i++;
+      continue;
+    }
+    if (RUNNER_WORDS.has(a)) continue;
+    const at = a.lastIndexOf('@');
+    const bare = at > 0 ? a.slice(0, at) : a;
+    if (!PKG_RE.test(bare) || bare.includes('://') || bare.includes('..') || tokenish(bare)) return null;
+    return bare;
+  }
+  return null;
+}
+
+/** The basename of an MCP server's command (`npx`, `uvx`, `gmail-mcp`), or null. */
+function commandBase(cmd) {
+  if (typeof cmd !== 'string' || !cmd || cmd.length > 1024) return null;
+  const base = cmd.trim().split(/[\\/]/).pop().replace(/\.(?:exe|cmd|bat|js|mjs|py)$/i, '');
+  return PKG_RE.test(base.toLowerCase()) && !tokenish(base) ? base.toLowerCase() : null;
+}
+
+/** The host of an MCP server's URL (no scheme, user, port, path or query), or null. */
+function urlHost(u) {
+  if (typeof u !== 'string' || !u || u.length > 4096) return null;
+  let host;
+  try {
+    host = new URL(u).hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+  if (!HOST_RE.test(host) || host.split('.').some((l) => tokenish(l))) return null;
+  return host;
+}
+
+/** `[{name, type, command, package, host}]` from an `mcpServers` object: names only. */
+export function mcpFacts(servers) {
+  if (!isObj(servers)) return [];
+  const out = [];
+  for (const [key, v] of Object.entries(servers).slice(0, LIST_MAX)) {
+    const name = cleanName(key);
+    if (!name || FORBIDDEN_KEYS.has(key)) continue;
+    const s = isObj(v) ? v : {};
+    const type = typeof s.type === 'string' && /^(stdio|http|sse|ws|sdk)$/.test(s.type) ? s.type : typeof s.url === 'string' ? 'http' : 'stdio';
+    out.push({
+      name,
+      type,
+      command: commandBase(s.command),
+      package: packageArg(s.args),
+      host: urlHost(s.url),
+    });
+  }
+  return out;
+}
+
+const ruleList = (v) => (Array.isArray(v) ? v.slice(0, RULE_MAX).map(ruleText).filter(Boolean) : []);
+
+/**
+ * One settings file's facts for the audit, or null when it is not there (or not JSON, or outside
+ * its scope). `file` is shown as given (tildified by the caller).
+ */
+export function settingsFacts(file, scope = LENIENT, { home } = {}) {
+  return withJson(
+    file,
+    (s) => {
+      if (!isObj(s)) return null;
+      const p = isObj(s.permissions) ? s.permissions : {};
+      const hooks = [];
+      if (isObj(s.hooks)) {
+        for (const [event, groups] of Object.entries(s.hooks)) {
+          if (!EVENT_RE.test(event) || !Array.isArray(groups)) continue;
+          hooks.push({ event, count: groups.reduce((n, g) => n + (isObj(g) && Array.isArray(g.hooks) ? g.hooks.length : 1), 0) });
+        }
+      }
+      // Extra folders: only whether one is the home folder itself or a big folder in it.
+      const homeDirs = [];
+      if (Array.isArray(p.additionalDirectories) && home) {
+        for (const d of p.additionalDirectories.slice(0, 50)) {
+          if (typeof d !== 'string' || !d) continue;
+          const abs = path.resolve(d.replace(/^~(?=$|[\\/])/, home));
+          if (homeLevel(abs, home)) homeDirs.push(cleanName(tildify(abs, home)));
+        }
+      }
+      const mode = typeof p.defaultMode === 'string' ? (MODE_NAMES.has(p.defaultMode) ? p.defaultMode : 'other') : null;
+      return {
+        allow: ruleList(p.allow),
+        ask: ruleList(p.ask),
+        deny: ruleList(p.deny),
+        default_mode: mode,
+        auto_mode_rules: isObj(s.autoMode),
+        skip_bypass_prompt: s.skipDangerousModePermissionPrompt === true,
+        bypass_disabled: p.disableBypassPermissionsMode === 'disable',
+        home_dirs: homeDirs.filter(Boolean),
+        hooks,
+        all_project_mcp: s.enableAllProjectMcpServers === true,
+        plugins: isObj(s.enabledPlugins) ? Object.entries(s.enabledPlugins).slice(0, LIST_MAX).map(([k, v]) => [cleanName(k), v === true]).filter(([k]) => k) : [],
+      };
+    },
+    scope
+  );
+}
+
+/** The home folder itself, or one of the big folders in it (Documents, Desktop, Downloads, Library). */
+function homeLevel(p, home) {
+  const h = path.resolve(home);
+  if (samePathKey(p) === samePathKey(h)) return true;
+  if (!isInside(p, h)) return samePathKey(p) === samePathKey(path.parse(p).root);
+  const rel = path.relative(h, p).split(path.sep);
+  return rel.length === 1 && ['documents', 'desktop', 'downloads', 'library', 'pictures', 'icloud drive (archive)'].includes(rel[0].toLowerCase());
+}
+
+/** Where Claude Code reads managed (policy) settings on this OS. */
+export function managedSettingsPaths(platform = process.platform) {
+  if (platform === 'darwin') return ['/Library/Application Support/ClaudeCode/managed-settings.json'];
+  if (platform === 'win32') return ['C:\\Program Files\\ClaudeCode\\managed-settings.json', 'C:\\ProgramData\\ClaudeCode\\managed-settings.json'];
+  return ['/etc/claude-code/managed-settings.json'];
+}
+
+// ---- .gitignore, read as files (the audit starts no process, so no `git check-ignore`)
+
+/** A gitignore pattern as a RegExp over a path relative to the ignore file's folder, or null. */
+function ignoreRe(pattern) {
+  let p = pattern.replace(/\s+$/, '');
+  if (!p || p.startsWith('#')) return null;
+  let neg = false;
+  if (p.startsWith('!')) {
+    neg = true;
+    p = p.slice(1);
+  }
+  if (p.startsWith('\\')) p = p.slice(1);
+  const dirOnly = p.endsWith('/');
+  if (dirOnly) p = p.slice(0, -1);
+  const anchored = p.includes('/');
+  if (p.startsWith('/')) p = p.slice(1);
+  let re = '';
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i];
+    if (c === '*') {
+      if (p[i + 1] === '*') {
+        const slash = p[i + 2] === '/';
+        re += slash ? '(?:.*/)?' : '.*';
+        i += slash ? 2 : 1;
+      } else re += '[^/]*';
+    } else if (c === '?') re += '[^/]';
+    else if (c === '[') {
+      const end = p.indexOf(']', i + 1);
+      if (end === -1) re += '\\[';
+      else {
+        re += `[${p.slice(i + 1, end).replace(/^!/, '^').replace(/\\/g, '\\\\')}]`;
+        i = end;
+      }
+    } else re += c.replace(/[.+^${}()|\\]/g, '\\$&');
+  }
+  // A pattern matches the path itself or any folder above it (`.claude/` ignores what is inside).
+  const body = `${anchored ? '^' : '(?:^|/)'}${re}`;
+  try {
+    return { neg, dirOnly, re: new RegExp(`${body}${dirOnly ? '/' : '(?:$|/)'}`) };
+  } catch {
+    return null;
+  }
+}
+
+function ignoreLines(file, scope) {
+  const r = readIn(file, scope, 256 * 1024);
+  return r ? r.text.split(/\r?\n/).slice(0, 5000) : [];
+}
+
+/** The global excludes file: core.excludesFile in ~/.gitconfig, else $XDG_CONFIG_HOME/git/ignore. */
+function globalExcludes(home, env) {
+  const cfg = readIn(path.join(home, '.gitconfig'), LENIENT, 256 * 1024);
+  if (cfg) {
+    const m = /^\s*excludesfile\s*=\s*(.+?)\s*$/im.exec(cfg.text);
+    if (m) {
+      const v = m[1].replace(/^"(.*)"$/, '$1');
+      return path.resolve(v.replace(/^~(?=$|[\\/])/, home));
+    }
+  }
+  const xdg = envGet(env, 'XDG_CONFIG_HOME');
+  return path.join(xdg || path.join(home, '.config'), 'git', 'ignore');
+}
+
+/**
+ * Is `rel` (a path inside `repo`, with forward slashes) ignored by the repo's .gitignore, its
+ * .claude/.gitignore, .git/info/exclude or the user's global excludes? true / false; the last
+ * matching rule wins, like git. Nested .gitignore files elsewhere are not read.
+ */
+export function gitIgnored(repo, rel, { home = os.homedir(), env = process.env } = {}) {
+  const box = scopeOf(repo, true);
+  const sources = [
+    [globalExcludes(home, env), '', LENIENT],
+    [path.join(repo, '.git', 'info', 'exclude'), '', box],
+    [path.join(repo, '.gitignore'), '', box],
+    [path.join(repo, '.claude', '.gitignore'), '.claude/', box],
+  ];
+  let ignored = false;
+  for (const [file, prefix, scope] of sources) {
+    for (const line of ignoreLines(file, scope)) {
+      const r = ignoreRe(line);
+      if (!r) continue;
+      const sub = prefix ? (rel.startsWith(prefix) ? rel.slice(prefix.length) : null) : rel;
+      if (sub === null) continue;
+      if (r.re.test(sub) || (r.dirOnly && r.re.test(`${sub}/`))) ignored = !r.neg;
+    }
+  }
+  return ignored;
+}
+
+/**
+ * Everything the safety audit reads, for the user level and for each folder an agent's sessions run
+ * in (`dirs`: [{dir, repo: true|false}]). The result holds names, rule text and flags only:
+ *   user: {settings, managed[], mcp[], plugins[], marketplaces[]}
+ *   dirs: {<dir>: {settings, local, mcp_json[], mcp_local[], local_not_ignored, in_repo}}
+ */
+export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.homedir(), env = process.env, managed, platform = process.platform } = {}) {
+  const home = path.resolve(homedir);
+  const cfg = path.resolve(configDir || configDirFor(env, home));
+  const user = scopeOf(cfg, false);
+  const show = (p) => tildify(p, home);
+  const fileFacts = (f, scope) => {
+    const x = settingsFacts(f, scope, { home });
+    return x ? { file: show(f), ...x } : null;
+  };
+  const list = [];
+  const seen = new Set();
+  for (const d of Array.isArray(dirs) ? dirs : []) {
+    const dir = typeof d === 'string' ? d : d?.dir;
+    if (typeof dir !== 'string' || !isAbsoluteAny(dir) || seen.has(samePathKey(path.resolve(dir)))) continue;
+    seen.add(samePathKey(path.resolve(dir)));
+    list.push(path.resolve(dir));
+  }
+  // ~/.claude.json: per server only what mcpFacts keeps; per folder only its own mcpServers.
+  const cj = withJson(claudeJsonPath || claudeJsonPathFor(env, home), (j) => {
+    const want = new Map();
+    for (const p of list) for (const v of [p, real(p)]) if (v) want.set(claudeJsonProjectKey(v), p);
+    const byDir = new Map();
+    if (j && isObj(j.projects)) {
+      for (const [k, v] of Object.entries(j.projects)) {
+        const dir = want.get(claudeJsonProjectKey(k));
+        if (dir && isObj(v)) byDir.set(dir, mcpFacts(v.mcpServers));
+      }
+    }
+    return { user: mcpFacts(j?.mcpServers), byDir };
+  });
+  const marketplaces = withJson(path.join(cfg, 'plugins', 'known_marketplaces.json'), (j) =>
+    isObj(j)
+      ? Object.entries(j).slice(0, LIST_MAX).map(([k, v]) => {
+          const repo = isObj(v) && isObj(v.source) && typeof v.source.repo === 'string' && NWO_RE.test(v.source.repo) ? v.source.repo : null;
+          return { name: cleanName(k), repo };
+        }).filter((m) => m.name)
+      : []
+  );
+  const settings = fileFacts(path.join(cfg, 'settings.json'), user);
+  const out = {
+    user: {
+      config_dir: show(cfg),
+      settings,
+      managed: (managed || managedSettingsPaths(platform)).map((f) => fileFacts(f, LENIENT)).filter(Boolean),
+      mcp: cj.user,
+      plugins: listPlugins(cfg, settings ? settings.plugins : []),
+      marketplaces,
+    },
+    dirs: {},
+  };
+  for (const dir of list) {
+    const box = scopeOf(dir, true);
+    const dot = path.join(dir, '.claude');
+    const localFile = path.join(dot, 'settings.local.json');
+    const local = fileFacts(localFile, box);
+    const inRepo = !!gitDirOf(dir);
+    out.dirs[dir] = {
+      path: show(dir),
+      in_repo: inRepo,
+      settings: fileFacts(path.join(dot, 'settings.json'), box),
+      local,
+      mcp_json: withJson(path.join(dir, '.mcp.json'), (j) => mcpFacts(j?.mcpServers), box),
+      mcp_local: cj.byDir.get(dir) || [],
+      local_not_ignored: !!locate(localFile, box) && inRepo && !gitIgnored(dir, '.claude/settings.local.json', { home, env }),
+    };
+  }
+  return out;
+}
+
 /**
  * A Claude Code subagent definition looked up BY NAME among `<configDir>/agents/*.md` (scope
  * user) or `<repo>/.claude/agents/*.md` (scope repo), matching its frontmatter `name` (a file

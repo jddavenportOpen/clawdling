@@ -1,0 +1,456 @@
+{
+  "schema": 1,
+  "note": "The setup safety audit's classification table (SPEC-1.8 3.1). A name is matched by its words: an MCP server's key, the basename of its command and its package. A name that matches nothing here is 'unknown: review', never safe. private = reads private data; untrusted = reads content someone else wrote; sends = can send data out.",
+  "official_marketplaces": [
+    "claude-plugins-official",
+    "anthropic-agent-skills"
+  ],
+  "official_owners": [
+    "anthropics"
+  ],
+  "servers": [
+    {
+      "id": "mail",
+      "label": "mail",
+      "words": [
+        "gmail",
+        "mail",
+        "email",
+        "outlook",
+        "imap",
+        "smtp",
+        "fastmail",
+        "protonmail",
+        "proton",
+        "jmap",
+        "mailgun",
+        "sendgrid",
+        "resend",
+        "postmark",
+        "inbox",
+        "google-workspace",
+        "gsuite"
+      ],
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
+      "id": "chat",
+      "label": "chat",
+      "words": [
+        "slack",
+        "discord",
+        "telegram",
+        "whatsapp",
+        "teams",
+        "imessage",
+        "messages",
+        "signal",
+        "matrix",
+        "mattermost",
+        "zulip",
+        "chat",
+        "sms",
+        "twilio"
+      ],
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
+      "id": "calendar",
+      "label": "calendar",
+      "words": [
+        "calendar",
+        "gcal",
+        "cal",
+        "calendly"
+      ],
+      "caps": [
+        "private"
+      ]
+    },
+    {
+      "id": "drive",
+      "label": "files and docs",
+      "words": [
+        "drive",
+        "gdrive",
+        "dropbox",
+        "onedrive",
+        "box",
+        "docs",
+        "gdocs",
+        "sheets",
+        "notion",
+        "obsidian",
+        "notes",
+        "evernote",
+        "confluence",
+        "sharepoint",
+        "airtable",
+        "coda"
+      ],
+      "caps": [
+        "private"
+      ]
+    },
+    {
+      "id": "crm",
+      "label": "CRM",
+      "words": [
+        "crm",
+        "salesforce",
+        "hubspot",
+        "pipedrive",
+        "attio",
+        "zoho",
+        "close"
+      ],
+      "caps": [
+        "private"
+      ]
+    },
+    {
+      "id": "database",
+      "label": "database",
+      "words": [
+        "postgres",
+        "postgresql",
+        "pg",
+        "mysql",
+        "sqlite",
+        "supabase",
+        "mongodb",
+        "mongo",
+        "redis",
+        "bigquery",
+        "snowflake",
+        "neon",
+        "planetscale",
+        "dynamodb",
+        "firestore",
+        "firebase",
+        "clickhouse",
+        "duckdb",
+        "database",
+        "db",
+        "sql",
+        "prisma"
+      ],
+      "caps": [
+        "private"
+      ]
+    },
+    {
+      "id": "filesystem",
+      "label": "files outside the folder",
+      "words": [
+        "filesystem",
+        "fs",
+        "files",
+        "desktop-commander"
+      ],
+      "caps": [
+        "private"
+      ]
+    },
+    {
+      "id": "code-host",
+      "label": "issues and code",
+      "words": [
+        "github",
+        "gitlab",
+        "bitbucket",
+        "linear",
+        "jira",
+        "asana",
+        "trello",
+        "clickup",
+        "monday",
+        "zendesk",
+        "intercom",
+        "freshdesk",
+        "helpscout",
+        "sentry",
+        "atlassian",
+        "shortcut"
+      ],
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
+      "id": "social",
+      "label": "social",
+      "words": [
+        "twitter",
+        "linkedin",
+        "reddit",
+        "bluesky",
+        "bsky",
+        "mastodon",
+        "instagram",
+        "facebook",
+        "threads",
+        "youtube",
+        "tiktok"
+      ],
+      "caps": [
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
+      "id": "browser",
+      "label": "browser",
+      "words": [
+        "playwright",
+        "puppeteer",
+        "browser",
+        "browser-use",
+        "browserbase",
+        "chrome",
+        "chrome-devtools",
+        "chromium",
+        "stagehand",
+        "selenium",
+        "steel",
+        "hyperbrowser",
+        "computer-use"
+      ],
+      "caps": [
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
+      "id": "fetch",
+      "label": "web fetch",
+      "words": [
+        "fetch",
+        "web-fetch",
+        "webfetch",
+        "firecrawl",
+        "scrape",
+        "scraper",
+        "crawl",
+        "crawler",
+        "http",
+        "curl",
+        "apify",
+        "jina"
+      ],
+      "caps": [
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
+      "id": "search",
+      "label": "web search",
+      "words": [
+        "search",
+        "tavily",
+        "exa",
+        "brave-search",
+        "brave",
+        "perplexity",
+        "serper",
+        "serpapi",
+        "kagi",
+        "duckduckgo",
+        "google-search",
+        "websearch",
+        "context7"
+      ],
+      "caps": [
+        "untrusted"
+      ]
+    },
+    {
+      "id": "payments",
+      "label": "payments",
+      "words": [
+        "stripe",
+        "paypal",
+        "square",
+        "plaid",
+        "shopify"
+      ],
+      "caps": [
+        "private",
+        "sends"
+      ]
+    },
+    {
+      "id": "harmless",
+      "label": "local helper",
+      "words": [
+        "sequential-thinking",
+        "sequentialthinking",
+        "time",
+        "everything",
+        "memory",
+        "ide",
+        "think"
+      ],
+      "caps": []
+    }
+  ],
+  "commands": [
+    {
+      "match": "any",
+      "words": [
+        "curl",
+        "wget",
+        "http",
+        "https",
+        "httpie",
+        "xh",
+        "nc",
+        "ncat",
+        "netcat",
+        "socat",
+        "telnet",
+        "ftp",
+        "sftp",
+        "scp",
+        "ssh",
+        "rsync",
+        "mail",
+        "mailx",
+        "sendmail",
+        "mutt",
+        "osascript"
+      ],
+      "why": "can send data out"
+    },
+    {
+      "match": "verbs",
+      "words": [
+        "git"
+      ],
+      "verbs": [
+        "push",
+        "send-email",
+        "request-pull"
+      ],
+      "why": "sends this folder's content out"
+    },
+    {
+      "match": "verbs",
+      "words": [
+        "npm",
+        "yarn",
+        "pnpm",
+        "bun",
+        "cargo",
+        "twine",
+        "gem",
+        "poetry",
+        "uv"
+      ],
+      "verbs": [
+        "publish",
+        "upload",
+        "push"
+      ],
+      "why": "publishes this folder's content"
+    },
+    {
+      "match": "verbs",
+      "words": [
+        "gh",
+        "glab",
+        "aws",
+        "gcloud",
+        "gsutil",
+        "az",
+        "vercel",
+        "netlify",
+        "fly",
+        "flyctl",
+        "heroku",
+        "wrangler",
+        "firebase",
+        "supabase",
+        "s3cmd",
+        "rclone",
+        "doctl"
+      ],
+      "verbs": [
+        "api",
+        "create",
+        "comment",
+        "edit",
+        "post",
+        "upload",
+        "send",
+        "push",
+        "deploy",
+        "publish",
+        "put",
+        "cp",
+        "sync",
+        "copy",
+        "release",
+        "gist",
+        "invoke",
+        "run",
+        "exec",
+        "ssh"
+      ],
+      "why": "can send data to a service"
+    },
+    {
+      "match": "bare",
+      "words": [
+        "python",
+        "python3",
+        "node",
+        "deno",
+        "bun",
+        "ruby",
+        "perl",
+        "php",
+        "bash",
+        "sh",
+        "zsh",
+        "fish",
+        "pwsh",
+        "powershell",
+        "npx",
+        "uvx",
+        "bunx",
+        "eval",
+        "xargs",
+        "env",
+        "docker",
+        "make",
+        "sudo",
+        "exec",
+        "source"
+      ],
+      "flags": [
+        "-c",
+        "-e",
+        "--eval",
+        "-p",
+        "--print",
+        "run",
+        "-x",
+        "x"
+      ],
+      "why": "runs any code, which can send data out"
+    }
+  ],
+  "commands_note": "A Bash or PowerShell allow rule gives 'sends' when it lets the agent run one of these. match 'any': a wildcard rule for the command (any arguments can carry data). match 'verbs': the rule names one of the verbs, or is a bare wildcard for the command. match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags."
+}

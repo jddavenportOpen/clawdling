@@ -73,6 +73,7 @@ import {
 } from './paths.js';
 import { commandFor, envGet, portablePath, spawnOptions } from './platform.js';
 import { discover, findSubagent, scanSetup } from './discover.js';
+import { PRIVACY as SAFETY_PRIVACY, SafetyChoices, runSafetyAudit } from './safety-run.js';
 import { importGroup, importProject, promoteSubagent } from './importer.js';
 import { SessionManager } from './sessions.js';
 import { claudeConfigDir, findTranscript } from './transcripts.js';
@@ -685,6 +686,14 @@ export async function startServer(opts = {}) {
       const stats = sessions.agentStats();
       const agents = org.agents().map((a) => ({ ...a, live: stats[a.id]?.live || 0, needs_you: stats[a.id]?.needs_you || 0, last_activity_at: stats[a.id]?.last_activity_at || null }));
       return { org: o, agents, channels: channelsStatus(), org_trusted: sessions.orgTrusted };
+    }
+
+    const safetyChoices = new SafetyChoices(path.join(paths.rt, 'safety.json'));
+    /** The setup safety audit (1.8), the GET /api/setup/safety body. */
+    function safetyAudit() {
+      const o = org.read();
+      const body = runSafetyAudit({ agents: org.agents(), home, userHome, configDir, env: cEnv, channels: { telegram: telegram.status(o), imessage: imessage.status(o) }, choices: safetyChoices });
+      return { ...body, privacy: SAFETY_PRIVACY };
     }
 
     function publishOrg(reason, id) {
@@ -1327,6 +1336,24 @@ export async function startServer(opts = {}) {
       // Bring in your projects (SPEC-1.2): candidates, the Claude Code setup, imports, standing agents.
       ['GET', /^\/api\/discover$/, async (req, m, res, url) => [200, await discovery({ github: url.searchParams.get('github') !== '0', refresh: url.searchParams.get('refresh') === '1' })]],
       ['GET', /^\/api\/setup$/, () => [200, scanSetup({ configDir, agents: org.agents(), homedir: userHome, env: cEnv })]],
+      // The setup safety audit (1.8): names only, read from files; no process, no socket, no change.
+      ['GET', /^\/api\/setup\/safety$/, () => [200, safetyAudit()]],
+      // The owner's own choices, kept in .clawdling (no agent can read or write it): from the cockpit
+      // only, never through the CLI, which every agent and Donna can run.
+      ['POST', /^\/api\/setup\/safety\/accept$/, async (req) => {
+        if (rawToken(req)) throw new HttpError(403, 'Only you can accept a risk, from the cockpit: agents and Donna cannot.');
+        const b = await jsonBody(req);
+        safetyChoices.accept(b.agent, b.reason === undefined ? null : b.reason);
+        events.record({ type: 'safety', action: b.reason ? 'accepted' : 'unaccepted', id: b.agent });
+        return [200, safetyAudit()];
+      }],
+      ['POST', /^\/api\/setup\/safety\/tag$/, async (req) => {
+        if (rawToken(req)) throw new HttpError(403, 'Only you can tag an MCP server, from the cockpit: agents and Donna cannot.');
+        const b = await jsonBody(req);
+        safetyChoices.tag(b.server, b.caps === undefined ? null : b.caps);
+        events.record({ type: 'safety', action: 'tagged', server: b.server });
+        return [200, safetyAudit()];
+      }],
       ['POST', /^\/api\/import$/, async (req) => {
         const b = await jsonBody(req);
         const r = await serially(() => (b.group ? importGroup(org, { ...b.group, items: b.items }, { env: cEnv }) : importProject(org, b, { env: cEnv, cloneRoot: cloneRoot() })));

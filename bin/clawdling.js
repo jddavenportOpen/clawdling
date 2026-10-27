@@ -43,6 +43,7 @@ Usage:
   clawdling new domain "<Name>" --mission "..."
   clawdling new project "<Name>" --goal "..." [--repo PATH] [--domain ID]
   clawdling discover [--all] [--setup] [--no-github] [--json]
+  clawdling discover --setup --safety [--json]   the setup safety audit: the lethal trifecta per agent (offline, names only)
                                             find your projects (Claude Code history, git repos in
                                             ~/code and similar folders, GitHub through your own gh)
   clawdling import <name|path|owner/repo>... [--recent] [--domain D] [--clone] [--group "Name"] [--yes]
@@ -89,7 +90,7 @@ picks one (tmux or pty).
 
 // ------------------------------------------------------------------------------------- args
 
-const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-enter', 'print', 'dry-run', 'disable', 'pair', 'help', 'version', 'setup', 'no-github', 'recent', 'clone', 'yes']);
+const BOOLEAN_FLAGS = new Set(['defaults', 'force', 'open', 'all', 'json', 'no-enter', 'print', 'dry-run', 'disable', 'pair', 'help', 'version', 'setup', 'no-github', 'recent', 'clone', 'yes', 'safety', 'contract', 'live']);
 const REMOTE_HELP = `usage:
   clawdling remote list [--json]
   clawdling remote check [--json]
@@ -406,6 +407,7 @@ function githubLine(gh) {
 
 async function cmdDiscover(args) {
   const ctx = context(args.flags);
+  if (args.flags.safety) return cmdSafety(ctx, args.flags);
   const body = await discoverHere(ctx, args.flags);
   if (args.flags.setup) {
     const { scanSetup } = await import('../server/discover.js');
@@ -440,6 +442,48 @@ async function cmdDiscover(args) {
   if (body.setup) printSetup(body.setup);
   const fresh = list.filter((c) => c.recent && !c.agent);
   if (fresh.length) console.log(`\nNext: ${cliCmd(ctx.home, `import ${fresh.slice(0, 3).map((c) => (/\s/.test(c.name) ? JSON.stringify(oneLine(c.name, 60)) : oneLine(c.name, 60))).join(' ')}${fresh.length > 3 ? ' ...' : ''}`)} (or --recent), or "Bring in your projects" in the cockpit.`);
+}
+
+// The setup safety audit (1.8): offline, from files only. It never asks gh or the cockpit.
+async function cmdSafety(ctx, flags) {
+  if (!flags.setup) throw new CliError('the safety audit is part of the setup scan: `discover --setup --safety`');
+  const { runSafetyAudit, offlineChannels, SafetyChoices, PRIVACY } = await import('../server/safety-run.js');
+  let agents = [];
+  let o = null;
+  try {
+    if (fs.existsSync(ctx.paths.orgJson)) {
+      const store = new OrgStore(ctx.paths);
+      agents = store.agents();
+      o = store.read();
+    }
+  } catch {
+    // an unreadable org: the user level only
+  }
+  const audit = runSafetyAudit({ agents, home: ctx.home, userHome: os.homedir(), env: childEnv(), channels: offlineChannels(o), choices: new SafetyChoices(path.join(ctx.paths.rt, 'safety.json')) });
+  if (flags.json) return console.log(JSON.stringify({ ...audit, privacy: PRIVACY }, null, 2));
+  printSafety(audit);
+  console.log(`\n${PRIVACY}`);
+  return undefined;
+}
+
+const SHIELD = { red: 'RED  ', amber: 'AMBER', green: 'GREEN' };
+const CHIP = { private: 'private data', untrusted: 'untrusted input', sends: 'sends out' };
+
+export function printSafety(audit) {
+  console.log(`Setup safety: the lethal trifecta per agent (checked in ${audit.took_ms} ms, by name only)`);
+  for (const r of audit.rows) {
+    console.log(`\n${SHIELD[r.verdict]}  ${r.name}: ${r.summary}${r.mode ? ` (${r.mode})` : ''}`);
+    for (const c of ['private', 'untrusted', 'sends']) {
+      const xs = r.chips[c];
+      console.log(`  ${pad(CHIP[c], 16)}${xs.length ? xs.map((x) => x.text.replace(/`/g, '')).join('; ') : 'none found'}`);
+    }
+    for (const u of r.unknown) console.log(`  unknown         ${u.text}: ${u.why}`);
+    if (r.sentence) console.log(`  What could happen: ${r.sentence}`);
+    for (const f of r.fixes) console.log(`  Fix: ${f.replace(/`/g, '')}`);
+    if (r.accepted) console.log(`  Accepted by you: ${r.accepted.reason}`);
+    for (const k of r.risks) console.log(`  Risk: ${k.text.replace(/`/g, '')} (${k.file})`);
+    for (const n of r.notes) console.log(`  Note: ${n.replace(/`/g, '')}`);
+  }
 }
 
 function printSetup(st) {
