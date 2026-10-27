@@ -159,7 +159,7 @@ export async function contractChecks({ run, transcript = null, compat = COMPAT, 
   const probeDir = tempDir('clawdling-contract-');
   try {
     const hidden = compat.hiddenFlags.flatMap(([f, val]) => [f, val]);
-    const p = await run(['-p', '--tools', '', '--no-session-persistence', ...hidden, SENTINEL_FLAG], { cwd: probeDir, env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' } });
+    const p = await run(['-p', '--tools', '', '--no-session-persistence', '--strict-mcp-config', ...hidden, SENTINEL_FLAG], { cwd: probeDir, env: { ANTHROPIC_BASE_URL: 'http://127.0.0.1:9' } });
     out.push(hiddenFlagsCheck(`${p.stderr}\n${p.stdout}`, compat));
     fs.mkdirSync(path.join(probeDir, '.claude'));
     fs.writeFileSync(path.join(probeDir, '.claude', 'settings.json'), JSON.stringify(probeSettings(compat), null, 2));

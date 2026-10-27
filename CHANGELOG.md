@@ -18,6 +18,9 @@ Code setup for the lethal trifecta, offline, by name only.**
   your own auto mode does not reach an agent that asks first, and the audit knows. Donna's text
   turns load none of your setup and only your paired chat reaches them; the sessions you open with
   her in the cockpit load it like any agent's. Her row covers both, and says so.
+- **Tools that skills grant themselves.** A skill's or command's `allowed-tools` and a subagent's
+  `permissionMode` count like allow rules and modes, from their frontmatter only; a repo's own
+  skill, command or subagent that grants tools is a setup risk.
 - **Setup risks, each with its file:** a SessionStart hook in a repo's own settings (the npm-worm
   vector), bypass permissions or auto mode, an MCP server a repo defines, a `settings.local.json` no
   `.gitignore` covers, a plugin from a marketplace other than Anthropic's official one.

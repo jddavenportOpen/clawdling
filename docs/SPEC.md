@@ -930,6 +930,15 @@ A pure function, `auditSafety({scan, agents, org, accepted, tags})`, over a name
 no file, opens no socket and starts no process; `scanSafety` (in discover.js, under its rules) does
 the reading, and also starts no process (the `.gitignore` check reads the ignore files itself).
 
+**Tools granted by skills, commands and subagents.** A skill's or command's `allowed-tools` lets Claude
+use those tools without asking during the turn it runs, and a subagent's `permissionMode` applies
+when the session asks first. The audit reads both from the frontmatter (never the body) of yours
+(`~/.claude/skills|commands|agents`), the session folder's `.claude/` and the org folder's subagents:
+each `allowed-tools` rule is classified like an allow rule, sourced to its file; a subagent's `auto`
+or `bypassPermissions` adds that mode's chips on an agent that asks first; and a repo's own skill,
+command or subagent that grants tools or sets a mode is a setup risk (`repo_grants`). Not read:
+folders above the session folder, and skills a plugin brings.
+
 **What each agent's sessions load** (Claude Code reads `.claude/settings.json` from the session's
 folder only, not from the folders above it; checked with `claude doctor` on 2.1.308):
 - a domain or project agent: managed settings, the user's `settings.json`, the session folder's
@@ -993,7 +1002,8 @@ risk, an unknown name, or an accepted trifecta) or green ("no trifecta found by 
 in the agent's own folder for something it inherits, removing a rule from the file that adds it, or
 `claude mcp remove` on the user-level row.
 
-**Setup risks (`risks[].id`):** `session_start` (a repo's own `.claude/settings.json` has a
+**Setup risks (`risks[].id`):** `repo_grants` (a repo's own skill, command or subagent grants tools or
+sets a permission mode), `session_start` (a repo's own `.claude/settings.json` has a
 SessionStart hook), `bypass` (`defaultMode: bypassPermissions` or
 `skipDangerousModePermissionPrompt`), `auto_mode` (`defaultMode: auto`), `repo_mcp` (a server in a
 repo's `.mcp.json`), `local_not_ignored` (a repo's `.claude/settings.local.json` that no ignore rule

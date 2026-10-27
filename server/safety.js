@@ -255,8 +255,10 @@ function capsFor(view, { tags = {} } = {}) {
     const where = layer.file;
     // A rule from your own (or managed) settings reaches every agent: on an agent, the narrower fix
     // is a deny rule in its own folder, which wins over an allow from any layer.
-    const shared = (layer.kind === 'user' || layer.kind === 'managed') && !view.isUserRow;
-    const removeFix = shared ? `stop this agent using \`${rule}\`: add it to \`permissions.deny\` in ${view.denyFile}` : `remove \`${rule}\` from \`allow\` in ${where}`;
+    const shared = (layer.kind === 'user' || layer.kind === 'managed' || (layer.kind === 'grant' && layer.shared)) && !view.isUserRow;
+    const removeFix = shared ? `stop this agent using \`${rule}\`: add it to \`permissions.deny\` in ${view.denyFile}`
+      : layer.kind === 'grant' ? `remove \`${rule}\` from \`allowed-tools\` in ${layer.path}`
+      : `remove \`${rule}\` from \`allow\` in ${where}`;
     if (parsed.tool === 'WebFetch') {
       add('untrusted', `\`${rule}\` allowed`, where, `turn off WebFetch for this agent: add "WebFetch" to \`permissions.deny\` in ${view.denyFile}`);
       add('sends', `\`${rule}\` allowed (a URL is a channel)`, where, `turn off WebFetch for this agent: add "WebFetch" to \`permissions.deny\` in ${view.denyFile}`);
@@ -288,6 +290,17 @@ function capsFor(view, { tags = {} } = {}) {
     const what = mode.isDefault ? "Auto mode, Claude Code's default" : 'Auto mode';
     add('sends', `${what} (commands run when its classifier allows them)`, mode.source, mode.fix);
     if (!webClosed) add('untrusted', `${what} (the web can be read without asking)`, mode.source, mode.fix);
+  }
+
+  // A subagent's own permissionMode applies when the session asks first (default, manual, dontAsk).
+  if (mode && ['default', 'manual', 'dontAsk'].includes(mode.name)) {
+    for (const g of view.subagentModes || []) {
+      const fix = `remove \`permissionMode\` from ${g.file}`;
+      const what = `the ${g.name} subagent runs in ${g.mode === 'auto' ? 'auto mode' : 'bypass permissions mode'} (\`permissionMode\`)`;
+      add('sends', what, g.file, fix);
+      if (!webClosed) add('untrusted', what, g.file, fix);
+      if (g.mode === 'bypassPermissions') add('private', what, g.file, fix);
+    }
   }
 
   // Every agent but the CTO also gets the org folder (--add-dir): you, and every agent's notes.
@@ -370,6 +383,10 @@ function risksFor(view) {
   for (const p of view.folderPlugins || []) {
     if (p.official) continue;
     add('marketplace', `This folder's settings turn on the ${p.name} plugin, from ${p.marketplace ? `the "${p.marketplace}" marketplace` : 'a marketplace Clawdling could not name'}, not Anthropic's official one.`, p.source);
+  }
+  for (const g of view.repoGrants || []) {
+    if (g.allowed.length) add('repo_grants', `This repo's ${g.kind} "${g.name}" lets Claude use ${g.allowed.slice(0, 3).map((r) => `\`${r}\``).join(', ')}${g.allowed.length > 3 ? ` and ${g.allowed.length - 3} more` : ''} without asking (\`allowed-tools\`), even before you trust the folder: read it.`, g.file);
+    if (g.mode) add('repo_grants', `This repo's subagent "${g.name}" sets its own permission mode (\`permissionMode: ${g.mode}\`).`, g.file);
   }
   for (const s of view.mcp) {
     if (s.scope === 'project') add('repo_mcp', `This repo defines the ${s.name} MCP server in .mcp.json: code the repo controls, which runs once you approve it.`, s.source);
@@ -460,6 +477,12 @@ function finish(base, view, opts) {
 
 const posix = (p) => (p ? String(p).replace(/\\/g, '/').replace(/^([A-Za-z]):/, (m, d) => `/${d.toLowerCase()}`).replace(/\/+$/, '') : null);
 
+/** Skills, commands and subagents with `allowed-tools`, as allow layers (`shared`: not the agent's own). */
+function grantLayers(grants, shared) {
+  return grants.filter((g) => g.allowed && g.allowed.length).map((g) => ({ kind: 'grant', shared, path: g.file, file: `${g.file} (${g.kind} "${g.name}", allowed-tools)`, facts: { allow: g.allowed } }));
+}
+const subagentModes = (grants) => grants.filter((g) => g.kind === 'subagent' && (g.mode === 'auto' || g.mode === 'bypassPermissions'));
+
 // What Claude Code runs in when nothing picks a mode: auto mode on current versions (permissions.js).
 export const CLI_DEFAULT_MODE = 'auto';
 
@@ -507,8 +530,9 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   const rows = [];
 
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
+  const userGrants = u.grants || [];
   const userView = {
-    layers: userLayers, mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -561,6 +585,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         overridesMode = PERMISSION_LABEL[setting];
       }
       const homeAddDirs = (a.addDirs || []).filter((x) => x && home && posix(x) === homePosix).map(() => '~');
+      const orgFolder = !!org.home && (a.addDirs || []).some((x) => posix(x) === orgPosix);
       // Plugins this folder's own settings turn on (a repo can enable one for its sessions).
       const folderPlugins = folderLayers.flatMap((l) => (l.facts.plugins || []).map(([key, on]) => {
         const at = key.lastIndexOf('@');
@@ -571,8 +596,11 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         return { name, marketplace: mk, enabled: on, official: named && ownerOk, source: `${l.file} (plugins)` };
       })).filter((x) => !plugins.some((p) => p.name === x.name && p.marketplace === x.marketplace && p.enabled));
       view = {
-        layers, mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
-        orgFolder: !!org.home && (a.addDirs || []).some((x) => posix(x) === orgPosix),
+        layers: [...layers, ...grantLayers(userGrants, true), ...grantLayers(orgFolder ? scan.org_grants || [] : [], true), ...grantLayers(d.grants || [], false)],
+        subagentModes: subagentModes([...userGrants, ...(orgFolder ? scan.org_grants || [] : []), ...(d.grants || [])]),
+        repoGrants: isRepo && d.in_repo ? d.grants || [] : [],
+        mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
+        orgFolder,
         notes: ['It also loads everything at the user level (the first row).'],
         localNotIgnored: isRepo && d.local_not_ignored ? d.local ? d.local.file : `${d.path}/.claude/settings.local.json` : null,
       };
@@ -602,7 +630,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // untrusted input itself (by name). The CTO's row already says so for its report.
   const readsUntrusted = new Map();
   for (const p of pending) {
-    if (p.kind !== 'domain' && p.kind !== 'project') continue;
+    if (p.kind !== 'domain' && p.kind !== 'project' && p.kind !== 'chief') continue;
     if (capsFor(p.view, opts).chips.untrusted.length) readsUntrusted.set(p.base.id, p.base.name);
   }
   for (const p of pending) {

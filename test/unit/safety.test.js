@@ -175,7 +175,7 @@ test('the union of user, agent folder and repo: a project agent is red, a domain
   assert.ok(site.fixes.every((f) => typeof f === 'string'), 'fixes are text');
   const health = row(a, 'health');
   assert.deepEqual(texts(health, 'private'), ["the org folder: your me.md and every agent's notes (`--add-dir`, Clawdling)"], 'a deny rule in its folder takes gmail away; the org folder stays');
-  assert.deepEqual(texts(health, 'untrusted'), ['text written by agents that read untrusted input (site), in the org folder\'s notes and `clawdling report`'], 'its own WebFetch is denied; the site agent\'s words still reach it');
+  assert.deepEqual(texts(health, 'untrusted'), ['text written by agents that read untrusted input (Donna, site), in the org folder\'s notes and `clawdling report`'], 'its own WebFetch is denied; the site agent\'s words still reach it');
   assert.equal(health.trifecta, false);
   assert.equal(health.verdict, 'green');
   assert.equal(health.summary, 'No trifecta found by name');
@@ -648,4 +648,42 @@ test('round 3: an unknown defaultMode is "unknown: review"; an official marketpl
   const m = world({ user: { enabledPlugins: { 'x@claude-plugins-official': true } } });
   write(path.join(m.cfg, 'plugins', 'known_marketplaces.json'), { 'claude-plugins-official': { source: { source: 'url', url: 'https://evil.example/m.json' } } });
   assert.ok(row(m.run(), USER_ROW).risks.some((r) => r.id === 'marketplace' && /whose source is not Anthropic's/.test(r.text)));
+});
+
+// ------------------------------------------------------------------------------ review round 4
+
+test('skills, commands and subagents that grant tools: allowed-tools are allow rules, a subagent mode applies, a repo grant is a risk', () => {
+  const skill = (rules) => `---\nname: triage\ndescription: Triage issues\nallowed-tools: ${rules}\n---\nRead the issue. sk-ant-api03-BODYbodyBODYbodyBODY\n`;
+  const w = world({
+    agents: [{
+      id: 'site', kind: 'project', repo: {
+        '.claude/skills/triage/SKILL.md': skill('Bash(gh issue view *) Bash(gh issue comment *), Read'),
+        '.claude/agents/helper.md': '---\nname: helper\ndescription: use proactively\npermissionMode: auto\n---\nbody\n',
+        '.claude/commands/ship.md': '---\nallowed-tools:\n  - Bash(git push:*)\n---\nship it\n',
+      },
+    }],
+  });
+  const r = row(w.run(), 'site');
+  assert.ok(texts(r, 'untrusted').some((t) => t.startsWith('`Bash(gh issue view *)`')));
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('`Bash(gh issue comment *)`')));
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('`Bash(git push:*)`')), 'a YAML list');
+  assert.ok(texts(r, 'sends').some((t) => /the helper subagent runs in auto mode/.test(t)));
+  assert.equal(r.trifecta, true);
+  assert.ok(r.chips.sends.find((x) => x.text.startsWith('`Bash(gh issue comment *)`')).source.includes('skill "triage", allowed-tools'));
+  assert.ok(r.fixes.some((f) => /from `allowed-tools` in /.test(f) || /permissionMode/.test(f)));
+  const ids = r.risks.filter((x) => x.id === 'repo_grants');
+  assert.equal(ids.length, 3, 'the skill, the command and the subagent');
+  assert.ok(!JSON.stringify(r).includes('BODYbody'), 'never the body');
+  // The user's own skills reach every agent and the user row.
+  const u = world({ agents: [{ id: 'a', kind: 'domain' }] });
+  write(path.join(u.cfg, 'skills', 'web', 'SKILL.md'), skill('WebFetch'));
+  const a = u.run();
+  assert.ok(texts(row(a, USER_ROW), 'untrusted').some((t) => t.startsWith('`WebFetch`')));
+  assert.ok(texts(row(a, 'a'), 'untrusted').some((t) => t.startsWith('`WebFetch`')));
+});
+
+test('redaction keeps a wildcard after a credential flag', () => {
+  assert.equal(ruleText('Bash(curl -u *)'), 'Bash(curl -u *)');
+  assert.equal(ruleText('Bash(curl -u admin:*)'), 'Bash(curl -u [redacted]:*)');
+  assert.ok(shellRuleCapsOf('curl -u [redacted]:*'));
 });

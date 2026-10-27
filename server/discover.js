@@ -1505,7 +1505,11 @@ function scrubTokens(s) {
 // length; `-p` only when it is not a number (`ssh -p 22` keeps its port).
 const CRED_FLAG_RE = /(^|[\s(])(-u|--user|--password|--passwd|--pass|--token|--api-key|--apikey|--secret|--auth|-p)(\s+|=)(["']?)([^\s"')]+)\4/g;
 function redactFlagValues(s) {
-  return s.replace(CRED_FLAG_RE, (m, pre, flag, sep, q, val) => (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || /^\$/.test(val) ? m : `${pre}${flag}${sep}${q}${REDACTED}${q}`));
+  return s.replace(CRED_FLAG_RE, (m, pre, flag, sep, q, val) => {
+    if (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || /^\$/.test(val) || /^:?\*$/.test(val)) return m; // a wildcard stays a wildcard
+    const tail = /:\*$/.test(val) ? ':*' : ''; // `-u admin:*` keeps the rule's own `:*`
+    return `${pre}${flag}${sep}${q}${REDACTED}${tail}${q}`;
+  });
 }
 
 export function ruleText(rule) {
@@ -1793,13 +1797,97 @@ export function gitIgnored(repo, rel, { home = os.homedir(), env = process.env }
   return ignored;
 }
 
+// ---- skills, commands and subagents that grant tools (frontmatter only, never the body)
+
+/** The raw frontmatter lines of a file's head, or []. */
+function frontmatterLines(text) {
+  const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/);
+  if (lines[0] === undefined || lines[0].trim() !== '---') return [];
+  const end = lines.findIndex((l, i) => i > 0 && /^(?:---|\.\.\.)\s*$/.test(l));
+  return end === -1 ? [] : lines.slice(1, end);
+}
+
+/** Split `Bash(gh issue view *) Read, WebFetch` into rules, keeping what is inside parentheses whole. */
+function splitRules(v) {
+  const out = [];
+  let cur = '';
+  let depth = 0;
+  for (const ch of String(v)) {
+    if (ch === '(') depth++;
+    if (ch === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && (ch === ',' || /\s/.test(ch))) {
+      if (cur.trim()) out.push(cur.trim());
+      cur = '';
+    } else cur += ch;
+  }
+  if (cur.trim()) out.push(cur.trim());
+  return out.map((r) => r.replace(/^["']|["']$/g, '')).filter(Boolean);
+}
+
+/** A frontmatter key as a list: an inline value (`a, b` or `[a, b]`) or `- item` lines below it. */
+function frontmatterList(fm, key) {
+  const i = fm.findIndex((l) => new RegExp(`^${key}\\s*:`).test(l));
+  if (i === -1) return [];
+  const inline = fm[i].replace(new RegExp(`^${key}\\s*:`), '').trim().replace(/^\[|\]$/g, '');
+  const items = inline ? splitRules(inline) : [];
+  for (let j = i + 1; j < fm.length && /^\s+-\s*/.test(fm[j]); j++) items.push(...splitRules(fm[j].replace(/^\s+-\s*/, '')));
+  return items.slice(0, RULE_MAX);
+}
+
+/**
+ * Skills (`skills/<x>/SKILL.md`), commands (`commands/**\/*.md`, depth 3) and subagents (`agents/*.md`)
+ * under a `.claude`-style folder that grant tools: `[{kind, name, file, allowed[], mode}]`, only those
+ * with `allowed-tools` or a subagent `permissionMode`. Each rule passes ruleText(); nothing else of the
+ * file is kept.
+ */
+function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home = os.homedir()) {
+  const out = [];
+  const take = (kind, file, fallbackName) => {
+    const r = readIn(file, scope);
+    if (!r) return;
+    const fm = frontmatterLines(r.text);
+    if (!fm.length) return;
+    const allowed = frontmatterList(fm, 'allowed-tools').map(ruleText).filter(Boolean);
+    const m = kind === 'subagent' ? /^permissionMode\s*:\s*["']?([A-Za-z]+)/m.exec(fm.join('\n')) : null;
+    const mode = m ? (MODE_NAMES.has(m[1]) ? m[1] : 'other') : null;
+    if (!allowed.length && !mode) return;
+    const nm = /^name\s*:\s*["']?([^"'\n]+)/m.exec(fm.join('\n'));
+    const name = cleanName(nm ? nm[1].trim() : fallbackName);
+    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: tildify(file, home), allowed, mode });
+  };
+  if (kinds.includes('skills')) {
+    const sd = path.join(dir, 'skills');
+    if (dirIn(sd, scope)) for (const e of listEntries(sd, LIST_MAX).entries) if (!e.name.startsWith('.') && direntIsDir(sd, e)) take('skill', path.join(sd, e.name, 'SKILL.md'), e.name);
+  }
+  if (kinds.includes('agents')) for (const f of mdFiles(path.join(dir, 'agents'), scope)) take('subagent', path.join(dir, 'agents', f), f.replace(/\.md$/i, ''));
+  if (kinds.includes('commands')) {
+    let budget = WALK_MAX;
+    const seen = new Set();
+    const walk = (d, depth) => {
+      const rd = dirIn(d, scope);
+      if (!rd || budget <= 0 || seen.has(samePathKey(rd))) return;
+      seen.add(samePathKey(rd));
+      const { entries } = listEntries(rd, Math.min(LIST_MAX, budget));
+      budget -= entries.length;
+      for (const e of entries) {
+        if (e.name.startsWith('.')) continue;
+        if (direntIsDir(rd, e)) {
+          if (depth < 3) walk(path.join(rd, e.name), depth + 1);
+        } else if (/\.md$/i.test(e.name)) take('command', path.join(rd, e.name), e.name.replace(/\.md$/i, ''));
+      }
+    };
+    walk(path.join(dir, 'commands'), 0);
+  }
+  return out.slice(0, LIST_MAX);
+}
+
 /**
  * Everything the safety audit reads, for the user level and for each folder an agent's sessions run
  * in (`dirs`: [{dir, repo: true|false}]). The result holds names, rule text and flags only:
  *   user: {settings, managed[], mcp[], plugins[], marketplaces[]}
  *   dirs: {<dir>: {settings, local, mcp_json[], mcp_local[], local_not_ignored, in_repo}}
  */
-export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.homedir(), env = process.env, managed = [] } = {}) {
+export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.homedir(), env = process.env, managed = [], orgHome = null } = {}) {
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
   const user = scopeOf(cfg, false);
@@ -1846,7 +1934,10 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.
       mcp: cj.user,
       plugins: listPlugins(cfg, settings ? settings.plugins : []),
       marketplaces,
+      grants: toolGrants(cfg, user, ['skills', 'commands', 'agents'], home),
     },
+    // Subagents in the org folder, which every agent but the CTO gets with --add-dir.
+    org_grants: orgHome ? toolGrants(path.join(path.resolve(orgHome), '.claude'), scopeOf(orgHome, true), ['agents'], home) : [],
     dirs: {},
   };
   for (const dir of list) {
@@ -1862,6 +1953,7 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.
       local,
       mcp_json: withJson(path.join(dir, '.mcp.json'), (j) => mcpFacts(j?.mcpServers), box),
       mcp_local: cj.byDir.get(dir) || [],
+      grants: toolGrants(dot, box, ['skills', 'commands', 'agents'], home),
       local_not_ignored: !!locate(localFile, box) && inRepo && !gitIgnored(dir, '.claude/settings.local.json', { home, env }),
     };
   }

@@ -450,7 +450,7 @@ async function cmdSafety(ctx, flags) {
   if (!flags.setup) throw new CliError('the safety audit is part of the setup scan: `discover --setup --safety`');
   // It lists permission rules from your settings and every repo's: yours to read, not an agent's
   // (every agent may run `clawdling discover` without asking).
-  if (process.env.CLAWDLING_SID || process.env.CLAWDLING_DONNA === '1') {
+  if (process.env.CLAWDLING_SID !== undefined || process.env.CLAWDLING_DONNA !== undefined) {
     throw new CliError('the setup safety audit is yours: open Settings in the cockpit, or run `clawdling discover --setup --safety` in your own terminal');
   }
   const { runSafetyAudit, offlineChannels, SafetyChoices, PRIVACY } = await import('../server/safety-run.js');

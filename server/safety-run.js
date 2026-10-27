@@ -82,7 +82,7 @@ function placeOf(a, home) {
  */
 export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJsonPath, env = process.env, channels = {}, choices = null, managed, accounts = 0, platform = process.platform } = {}) {
   const placed = agents.filter((a) => a && typeof a.id === 'string').map((a) => placeOf(a, home));
-  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), homedir: userHome, env, managed: managed || managedSettingsPaths(platform, env) });
+  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), homedir: userHome, env, managed: managed || managedSettingsPaths(platform, env), orgHome: home });
   const cto = placed.find((a) => a.kind === 'cto' || a.id === CTO_ID);
   let ctoRules = null;
   if (cto) {
