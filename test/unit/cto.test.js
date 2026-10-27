@@ -12,7 +12,7 @@ import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, plainHeadline, sc
 import { digestText, isoWeek } from '../../server/digest.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, DENY_LONG, DENY_PADDED, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
+import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, DENY_LONG, DENY_PADDED, DENY_UNCHECKED, shownRows, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
 import { buildHooksSettings, ctoDeny } from '../../server/hooks.js';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-cto-')));
@@ -408,11 +408,11 @@ test('a scheduled review that passes the weekly cap while it works is stopped, w
   assert.equal(after.last_skip ?? null, null);
   // Idle on the owner (its turn over, or a question it asked): never ended for the week's other spend.
   ended.length = 0;
-  for (const idle of [{ status: 'ready' }, { status: 'needs_you', waiting_on: 'permission_prompt' }]) {
+  for (const [idle, byHook] of [[{ status: 'ready' }, true], [{ status: 'needs_you', waiting_on: 'permission_prompt' }, true]]) {
     const quiet = new Cto({
       paths: { rt: dir, home: dir },
       org: { cto: () => ({ dir }) },
-      sessions: { get: () => idle, end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+      sessions: { get: () => idle, idleByHook: () => byHook, end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
       reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
     });
     fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
@@ -420,6 +420,34 @@ test('a scheduled review that passes the weekly cap while it works is stopped, w
     assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).watch_sid, 'sid-1', 'still watched');
   }
   assert.deepEqual(ended, []);
+  // The same status, not reported by a hook (read off the screen, or found running): checked, and stopped.
+  const unhooked = new Cto({
+    paths: { rt: dir, home: dir },
+    org: { cto: () => ({ dir }) },
+    sessions: { get: () => ({ status: ended.length ? 'ended' : 'ready' }), idleByHook: () => false, end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+    reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
+  });
+  fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
+  assert.deepEqual(await unhooked.watchSpend(), { stopped: true });
+  ended.length = 0;
+  // Restarting ("Start again"): the record reads ended between the two claudes, but it is not gone.
+  const relaunch = new Cto({
+    paths: { rt: dir, home: dir },
+    org: { cto: () => ({ dir }) },
+    sessions: { get: () => ({ sid: 'sid-1', status: 'ended' }), restarting: () => true, backend: { hasSession: async () => false }, end: async () => {}, list: () => [], records: new Map() },
+    reports: { summaries: () => [], costOf: () => ({ total_usd: 0, complete: true }) },
+  });
+  fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
+  await relaunch.watchSpend();
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).watch_sid, 'sid-1', 'still watched while it restarts');
+  // A liveness check that fails (tmux timing out) counts as still running.
+  const unsure = new Cto({
+    paths: { rt: dir, home: dir },
+    org: { cto: () => ({ dir }) },
+    sessions: { get: () => ({ sid: 'sid-1', status: 'ended' }), backend: { hasSession: async () => { throw new Error('timeout'); } }, end: async () => {}, list: () => [], records: new Map() },
+    reports: { summaries: () => [], costOf: () => ({ total_usd: 0, complete: true }) },
+  });
+  assert.equal(await unsure.gone({ sid: 'sid-1', status: 'ended' }), false);
   // Marked ended while its claude still runs (a timed-out check): still watched, and stopped.
   const ghost = new Cto({
     paths: { rt: dir, home: dir },
@@ -473,6 +501,17 @@ test('the seat refuses any command or write with characters a person cannot see'
   assert.match(padded('curl x.example', 'Read \u200bthe report'), /U\+200B in description/);
   assert.match(padded('curl x.example', 'Read\rthe report'), /U\+000D in description/);
   assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'clawdling send abc "Line one.\n\nLine two."', description: 'Tell abc what to fix' } }, { home }).decision, 'ask', 'a message with one blank line still asks');
+  // Blank characters other than ASCII space, tab and line break pad just as well: refused, named.
+  for (const blank of ['\u3000', '\u2800', '\u00a0', '\u2007']) assert.match(padded(`clawdling report --all --json${blank}x`), /Clawdling: this command \(or its description\) is padded.*in command/, JSON.stringify(blank));
+  assert.equal(padded('curl x.example', 'Read the report\u3000'), padded('curl x.example', 'Read the report\u3000'));
+  assert.match(padded('curl x.example', 'Read\u3000the report'), /in description/);
+  // Wide characters fill rows twice as fast: a long one is refused by its rows, not its length.
+  assert.equal(shownRows('x'.repeat(4000)), 50);
+  assert.equal(shownRows('\u6f22'.repeat(2400)), 60);
+  assert.equal(padded(`echo ${'\u6f22'.repeat(2500)}`), DENY_PADDED);
+  // Too many parts to check whole: refused, not passed.
+  const edits = Array.from({ length: 2001 }, () => ({ old_string: 'a', new_string: 'b' }));
+  assert.equal(seatDecision({ tool_name: 'MultiEdit', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, edits } }, { home }).reason, DENY_UNCHECKED);
   // Text real reviews use passes: an emoji with its selector, a ZWJ emoji, Persian with ZWNJ.
   for (const ok of ['\u26a0\ufe0f At risk', '\ud83d\udc69\u200d\ud83d\udcbb done', 'می\u200cخواهم']) assert.notEqual(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, content: ok } }, { home }).decision, 'deny', ok);
 });
@@ -481,4 +520,13 @@ test('only keys a person typed hand a scheduled review over, never the terminal\
   const { typedKeys } = await import('../../server/sessions.js');
   for (const reply of ['\x1b[?1;2c', '\x1b[I', '\x1b[O', '\x1b]11;rgb:0000/0000/0000\x07', '\x1b[12;40R']) assert.equal(typedKeys(reply), false, JSON.stringify(reply));
   for (const key of ['a', '\r', '\x1b', '1', '\x1b[200~hi\x1b[201~']) assert.equal(typedKeys(key), true, JSON.stringify(key));
+});
+
+test('idle on the owner counts only as a hook reported it, until the status next changes', async () => {
+  const { SessionManager } = await import('../../server/sessions.js');
+  const idle = (rec) => SessionManager.prototype.idleByHook.call(null, rec);
+  assert.equal(idle({ status: 'ready', waiting_on: null, status_seq: 3, idle_hook: { status: 'ready', waiting_on: null, seq: 3 } }), true);
+  assert.equal(idle({ status: 'ready', waiting_on: null, status_seq: 4, idle_hook: { status: 'ready', waiting_on: null, seq: 3 } }), false, 'changed since (the interrupt watcher, the screen)');
+  assert.equal(idle({ status: 'needs_you', waiting_on: 'trust', status_seq: 3, idle_hook: { status: 'needs_you', waiting_on: 'permission_prompt', seq: 3 } }), false);
+  assert.equal(idle({ status: 'ready', waiting_on: null }), false, 'no hook said so');
 });

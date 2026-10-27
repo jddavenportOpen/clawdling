@@ -660,9 +660,10 @@ It refuses a carriage return the same way (a terminal draws what follows it over
 in a shell call or a path always, in written text unless it is part of a CRLF line break. It checks
 every string the call carries, the command's description included. And it refuses any shell
 command longer than 4,000 characters (the most the cockpit shows), or padded so that part of it
-could sit out of view (a run of blank lines, more than 80 spaces in a row, more than 40 lines), and
-any description longer than one line of 200 characters: what you approve is always the whole
-command, and the cockpit's command box scrolls on its own. Through PowerShell, any
+could sit out of view (a run of blank lines, more than 80 spaces in a row, more than 40 lines or 60
+rows of an 80-column terminal, any blank character other than the ASCII space, tab and line break),
+any description longer than one line of 200 characters, and any call with too many parts to check
+whole: what you approve is always the whole command, and the cockpit's command box scrolls on its own. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
 built so a long run of options cannot make them backtrack without end, and every command is capped
 at 4,001 characters before it is matched. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
@@ -733,10 +734,12 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   on the CTO page and in Settings. A status is not a hand-over (Clawdling itself marks a slow start
   "needs you"); once you send it a message, answer it, type in its terminal, resume, restart or change
   it, it is yours: a review you start or take over yourself is yours to stop. ("Start again" on a
-  stuck scheduled review runs the same review, so it stays watched.) While it sits idle on you (its
-  turn over, or a question it asked), it spends nothing and is not ended, so your own chats with the
-  CTO passing the cap cannot close it and lose its decisions. A stop is reported only once the
-  session's claude is gone; if ending it fails, it stays watched and is tried again a minute later.
+  stuck scheduled review runs the same review, so it stays watched, through the restart too.) While
+  it sits idle on you as Claude Code's own hooks reported it (its turn over, or a question it asked),
+  it spends nothing and is not ended, so your own chats with the CTO passing the cap cannot close it
+  and lose its decisions; a state read off the screen or guessed does not count. A stop is reported
+  only once the session's claude is gone (a liveness check that fails counts as still running); if
+  ending it fails, it stays watched and is tried again a minute later.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
   (No check-up runs for the seat: it would run without its own settings and hook.)
   It reads the schedule again after building the estimate, so turning it off (or lowering the cap)

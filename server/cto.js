@@ -716,8 +716,9 @@ export class Cto {
   /** Whether a session is ended and its claude is no longer running. */
   async gone(rec) {
     if (!rec) return true;
-    if (rec.status !== 'ended') return false;
-    return !(await Promise.resolve(this.sessions.backend?.hasSession?.(rec.tmux_name)).catch(() => false));
+    if (rec.status !== 'ended' || this.sessions.restarting?.(rec.sid)) return false;
+    // A check that fails (tmux timing out under load) counts as still running.
+    return !(await Promise.resolve(this.sessions.backend?.hasSession?.(rec.tmux_name, { strict: true })).catch(() => true));
   }
 
   /** The owner acted in the scheduled review (sent, answered, typed, resumed): from now on it is theirs. */
@@ -749,10 +750,10 @@ export class Cto {
       }
       return { stopped: false };
     }
-    // Idle on the owner (its turn ended, or a question a hook reported): it spends nothing, so the
-    // owner's own CTO chats passing the cap must not end it (its decisions would vanish). A slow
-    // start Clawdling itself marked "needs you" may be running, so it is checked.
-    if (rec.status === 'ready' || (rec.status === 'needs_you' && rec.waiting_on && rec.waiting_on !== 'startup')) return { stopped: false };
+    // Idle on the owner, as a hook reported it (its turn ended, or a question): it spends nothing, so
+    // the owner's own CTO chats passing the cap must not end it (its decisions would vanish). A status
+    // read off the screen or guessed (a slow start marked "needs you") may hide a running turn: checked.
+    if (this.sessions.idleByHook?.(rec)) return { stopped: false };
     const spent = this.weekSpend();
     // Spend that cannot be counted (a model missing from the price table, unreadable usage) stops it
     // too: unpriced usage adds $0 and would never pass the cap. A fresh session gets two minutes.

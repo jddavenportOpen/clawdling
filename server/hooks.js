@@ -143,7 +143,7 @@ export function buildHooksSettings({ nodePath, hookScript, platform = process.pl
 
 export const STATUSES = ['starting', 'working', 'ready', 'needs_you', 'ended'];
 // needs_you states that only happen before Claude Code has started (dialogs on screen, no hook yet).
-const STARTUP_WAITS = new Set(['trust', 'imports', 'login', 'startup']);
+export const STARTUP_WAITS = new Set(['trust', 'imports', 'login', 'startup']);
 const LIVE = new Set(['starting', 'working', 'ready', 'needs_you']);
 export const isLive = (status) => LIVE.has(status);
 

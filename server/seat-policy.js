@@ -31,6 +31,7 @@ export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it as
 export const DENY_HIDDEN = 'Clawdling: this has characters a person cannot see, so the CTO seat may not run or write it.';
 export const DENY_LONG = 'Clawdling: this command is longer than the cockpit shows (4,000 characters), so the CTO seat may not run it. Its commands are short: the report, the session list, one message.';
 export const DENY_PADDED = 'Clawdling: this command (or its description) is padded with blank lines, long runs of spaces or many lines, which can push part of it out of view, so the CTO seat may not run it. Write one plain command, with a one-line description.';
+export const DENY_UNCHECKED = 'Clawdling: this call has too many parts for the seat to check, so the CTO seat may not make it. Split it into smaller ones.';
 export const DENY_TOOL = 'Clawdling: the CTO seat uses only its report, its reviews and its questions to you (no subagents, schedules, web or messages outside clawdling send).';
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
@@ -103,10 +104,30 @@ function reviewFile(home, file, cwd, now) {
 /** Every string in a tool's input, with its key path (`edits[0].new_string`), at most 8 deep and 200 wide. */
 function strings(value, key = '', out = [], depth = 0) {
   if (typeof value === 'string') out.push([key || 'input', value]);
-  else if (value && typeof value === 'object' && depth < 8) {
-    for (const [k, v] of Object.entries(value).slice(0, 200)) strings(v, Array.isArray(value) ? `${key}[${k}]` : key ? `${key}.${k}` : k, out, depth + 1);
+  else if (value && typeof value === 'object') {
+    const entries = Object.entries(value);
+    // Too deep or too wide to check whole: not checked is not passed (the caller refuses it).
+    if (depth >= 8 || entries.length > 2000) out.truncated = true;
+    else for (const [k, v] of entries) strings(v, Array.isArray(value) ? `${key}[${k}]` : key ? `${key}.${k}` : k, out, depth + 1);
   }
   return out;
+}
+
+// Characters that draw as blank space but are not the ASCII space, tab or line break: a command
+// padded with them can push its middle out of view (no seat command or description needs one).
+const BLANK_RE = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\u2800\u3164\uffa0]/u;
+// Wide (two-column) characters, roughly East Asian Wide and Fullwidth plus emoji.
+const WIDE_RE = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
+
+/** Rows a command takes in an 80-column terminal, wide characters counting two columns. */
+export function shownRows(text, cols = 80) {
+  let rows = 0;
+  for (const line of String(text).split('\n')) {
+    let w = 0;
+    for (const ch of line) w += WIDE_RE.test(ch) ? 2 : 1;
+    rows += Math.max(1, Math.ceil(w / cols));
+  }
+  return rows;
 }
 
 /**
@@ -121,7 +142,9 @@ export function seatDecision(payload, { home, now = Date.now() }) {
   // refused, whatever it is (the owner could not read what they would be approving), naming it.
   if (SHELL_TOOLS.has(p.tool_name) || FILE_TOOLS.has(p.tool_name)) {
     // Every string the call carries (its command, description, text, paths), however nested.
-    for (const [k, v] of strings(input)) {
+    const all = strings(input);
+    if (all.truncated) return { decision: 'deny', reason: DENY_UNCHECKED };
+    for (const [k, v] of all) {
       const h = hiddenAt(v);
       if (h) return { decision: 'deny', reason: `${DENY_HIDDEN} (${h.code} in ${k}, at character ${h.index + 1})` };
       // A carriage return sends a terminal's cursor back to the line's start, so what follows is drawn
@@ -129,6 +152,8 @@ export function seatDecision(payload, { home, now = Date.now() }) {
       const strict = SHELL_TOOLS.has(p.tool_name) || /_path$/.test(k);
       const cr = strict ? v.indexOf('\r') : v.search(/\r(?!\n)/);
       if (cr >= 0) return { decision: 'deny', reason: `${DENY_HIDDEN} (U+000D in ${k}, at character ${cr + 1})` };
+      const blank = SHELL_TOOLS.has(p.tool_name) ? v.search(BLANK_RE) : -1;
+      if (blank >= 0) return { decision: 'deny', reason: `${DENY_PADDED} (U+${v.codePointAt(blank).toString(16).toUpperCase().padStart(4, '0')} in ${k}, at character ${blank + 1})` };
     }
   }
   if (SHELL_TOOLS.has(p.tool_name)) {
@@ -137,7 +162,7 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     if (cmd.length > 4000) return { decision: 'deny', reason: DENY_LONG };
     // Padding that pushes part of a command (or a description that pushes the command) out of view:
     // a blank-line run, a long run of spaces, many lines; a description of more than one short line.
-    if (/\n[ \t]*\n[ \t]*\n|[ \t]{81}/.test(cmd) || cmd.split('\n').length > 40) return { decision: 'deny', reason: DENY_PADDED };
+    if (/\n[ \t]*\n[ \t]*\n|[ \t]{81}/.test(cmd) || cmd.split('\n').length > 40 || shownRows(cmd) > 60) return { decision: 'deny', reason: DENY_PADDED };
     const desc = typeof input.description === 'string' ? input.description : '';
     if (desc.length > 200 || /[\n\t]/.test(desc)) return { decision: 'deny', reason: DENY_PADDED };
     if (CROSS_AGENT_RE.test(cmd)) return { decision: 'ask', reason: ASK_SEND };

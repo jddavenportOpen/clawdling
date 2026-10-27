@@ -10,7 +10,7 @@ import { cleanInput } from './receipts.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ACCEPTED_EVENTS, LOGIN_NOTICE, applyHookEvent, isLive } from './hooks.js';
+import { ACCEPTED_EVENTS, LOGIN_NOTICE, STARTUP_WAITS, applyHookEvent, isLive } from './hooks.js';
 import { which } from './paths.js';
 import { cliPermissionMode } from './permissions.js';
 import { prependPath } from './platform.js';
@@ -222,6 +222,7 @@ export function reconcileRecords(records, live, now = nowIso()) {
       if (rec.status === 'ended') {
         rec.status = 'ready';
         rec.ended_at = null;
+        rec.idle_hook = null; // found running again: no hook said it is idle
       }
       attach.push(rec);
     } else if (rec.status !== 'ended') {
@@ -916,6 +917,7 @@ export class SessionManager {
     rec.ended_at = null;
     rec.notification = null;
     rec.waiting_on = null;
+    rec.idle_hook = null;
     rec.signed_in = false;
     rec.hooked = false;
     rec.launched_at = nowIso();
@@ -1104,6 +1106,7 @@ export class SessionManager {
   markEnded(rec, { notice } = {}) {
     const rt = this.rt(rec.sid);
     if (rec.status !== 'ended') rec.status = 'ended';
+    rec.idle_hook = null;
     if (!rec.ended_at) rec.ended_at = nowIso();
     const first = rt.endedGen !== rt.gen;
     rt.endedGen = rt.gen;
@@ -1145,6 +1148,7 @@ export class SessionManager {
   }
 
   onStatusChange(rec) {
+    rec.status_seq = (rec.status_seq || 0) + 1; // any change, hook or not, outdates rec.idle_hook
     const rt = this.runtime.get(rec.sid);
     if (rec.status === 'ended') {
       this.markEnded(rec, { notice: rec.notification });
@@ -1226,12 +1230,22 @@ export class SessionManager {
     if (event === 'Stop' || event === 'UserPromptSubmit') setTimeout(() => this.refreshBackground(rec), 300).unref?.();
     if (titleChanged) this.events.record({ type: 'rename', sid, title: rec.title, auto: true });
     if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd') this.onTurnEnd?.(rec); // the CTO's record (cto.js)
+    // Idle on the owner, as a hook (not the screen, a timer or a guess) reported it: the turn ended
+    // (Stop), or Claude Code asked (a permission, a question, an error). Valid until any status change.
+    const idle = (event === 'Stop' && rec.status === 'ready') || (event !== 'SessionStart' && rec.status === 'needs_you' && !!rec.waiting_on && !STARTUP_WAITS.has(rec.waiting_on));
+    rec.idle_hook = idle ? { status: rec.status, waiting_on: rec.waiting_on, seq: (rec.status_seq || 0) + (statusChanged ? 1 : 0) } : null;
     if (statusChanged) this.onStatusChange(rec);
     else {
       this.scheduleSave();
       this.publish(rec);
     }
     return this.view(rec);
+  }
+
+  /** Whether the session sits idle on the owner in a state a hook reported (see rec.idle_hook). */
+  idleByHook(rec) {
+    const h = rec?.idle_hook;
+    return !!h && h.seq === (rec.status_seq || 0) && h.status === rec.status && h.waiting_on === rec.waiting_on;
   }
 
   /**
@@ -1275,7 +1289,7 @@ export class SessionManager {
     if (rec.status === 'ended' && !(await this.backend.hasSession(rec.tmux_name))) return this.view(rec);
     await this.backend.killSession(rec.tmux_name);
     // A kill that did not take (tmux timing out under load) is not an end: the session is still running.
-    if (await this.backend.hasSession(rec.tmux_name)) throw new Error('The session is still running: ending it did not work. Try again.');
+    if (await this.backend.hasSession(rec.tmux_name, { strict: true })) throw new Error('The session is still running: ending it did not work. Try again.');
     this.markEnded(rec, { notice: null });
     return this.view(rec);
   }
@@ -1368,15 +1382,27 @@ export class SessionManager {
     const fresh = !rec.hooked && !this.runtime.get(sid)?.resumed;
     const prompt = fresh ? this.runtime.get(sid)?.firstPrompt || '' : '';
     const reason = rec.waiting_on || 'login';
-    await this.stopForRelaunch(rec);
-    this.events.record({ type: 'restart', sid, agent: rec.agent, reason });
-    if (!fresh) return this.resume(sid, { cols, rows });
-    this.resolveTarget(rec.agent); // the agent must still exist
-    rec.pending_prompt = !!prompt;
-    rec.prompted = !!prompt; // nothing ran: a later Resume must not --resume a conversation that does not exist
-    await this.launch(rec, { prompt, resume: false, cols, rows });
-    this.publish(rec);
-    return this.view(rec);
+    // Between the old claude's end and the new one's start the record reads "ended": not gone (cto.js).
+    const rt = this.rt(sid);
+    rt.restarting = true;
+    try {
+      await this.stopForRelaunch(rec);
+      this.events.record({ type: 'restart', sid, agent: rec.agent, reason });
+      if (!fresh) return await this.resume(sid, { cols, rows });
+      this.resolveTarget(rec.agent); // the agent must still exist
+      rec.pending_prompt = !!prompt;
+      rec.prompted = !!prompt; // nothing ran: a later Resume must not --resume a conversation that does not exist
+      await this.launch(rec, { prompt, resume: false, cols, rows });
+      this.publish(rec);
+      return this.view(rec);
+    } finally {
+      rt.restarting = false;
+    }
+  }
+
+  /** Whether "Start again" is relaunching this session right now. */
+  restarting(sid) {
+    return !!this.runtime.get(sid)?.restarting;
   }
 
   /**
@@ -1540,6 +1566,7 @@ export class SessionManager {
             rec.waiting_on = null;
             rec.notification = null;
             rec.pending_cmd = null;
+            rec.idle_hook = null; // read off the screen, not a hook
             rec.last_message = 'You said no, so Claude stopped. Tell it what to do instead.';
             this.onStatusChange(rec);
             this.onTurnEnd?.(rec);

@@ -199,11 +199,13 @@ export class Tmux {
     }
   }
 
-  async hasSession(name) {
+  /** With `strict`, only tmux's own "no such session" (or no server) is false: a timeout throws. */
+  async hasSession(name, { strict = false } = {}) {
     try {
       await this.exec(['has-session', '-t', `=${name}`]);
       return true;
-    } catch {
+    } catch (err) {
+      if (strict && !/can't find session|no server running|error connecting|no such file/i.test(String(err.stderr || ''))) throw err;
       return false;
     }
   }
