@@ -635,6 +635,8 @@ export class Reports {
    * the week's index, so the review page can resolve a citation later in the week.
    */
   async allReport({ window = '7d', thresholds = null, index = true } = {}) {
+    // Its labels compare this week with the one before, and feed the week's label history: 7 days only.
+    if (window !== '7d') throw badRequest('report --all covers the last 7 days: leave out --window, or use --window 7d');
     const t = normalizeThresholds(thresholds);
     const now = this.now();
     const week = isoWeek(now);

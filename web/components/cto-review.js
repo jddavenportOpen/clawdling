@@ -43,12 +43,12 @@ export function Cited({ text, receipts }) {
   return out;
 }
 
-/** The message part of a CTO send or spawn command (the quoted text after the session or agent). */
+/** The message part of a CTO send or spawn command (the quoted text after the session or agent,
+ * past any --options); the whole command when it is not one plain message. */
 export function messageOf(command) {
-  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\s+(?:"[^"]*"|'[^']*'|\S+)\s+([\s\S]*)$/.exec(String(command || ''));
-  if (!m) return String(command || '');
-  const t = m[1].trim();
-  return /^(["']).*\1$/s.test(t) ? t.slice(1, -1) : t;
+  const s = String(command || '');
+  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\s+(?:--[a-z-]+(?:[ =][^\s"']+)?\s+)*[^\s"'-][^\s"']*\s+("(?:[^"\\]|\\.)*"|'[^']*')\s*$/.exec(s);
+  return m && !/[\r\n]/.test(s) ? m[1].slice(1, -1).replace(/\\(.)/g, '$1') : s;
 }
 
 export function CtoPage({ id }) {
@@ -93,7 +93,7 @@ export function CtoPage({ id }) {
     ${v.reviews.length ? html`<div class="cto-weeks" role="tablist" aria-label="Reviews by week">
       ${v.reviews.map((r) => html`<button role="tab" aria-selected=${r.week === shown ? 'true' : 'false'} class=${`tab-btn ${r.week === shown ? 'is-on' : ''}`} onClick=${() => setWeek(r.week)} data-week=${r.week}>${r.week}</button>`)}
     </div>
-    <${ReviewView} key=${`${shown}-${tick}`} week=${shown} now=${now} />`
+    <${ReviewView} key=${shown} week=${shown} tick=${tick} now=${now} />`
       : html`<div class="notice" data-testid="cto-empty"><p>No reviews yet. Run the first one: it takes a few minutes, and the CTO asks before it messages any agent.</p></div>`}
     ${dialog === 'run' ? html`<${RunDialog} onClose=${() => setDialog(null)} onGo=${async () => {
       setDialog(null);
@@ -135,16 +135,17 @@ function RunDialog({ onClose, onGo }) {
   </${Modal}>`;
 }
 
-function ReviewView({ week, now }) {
+function ReviewView({ week, tick, now }) {
   const [r, setR] = useState(null);
   const [err, setErr] = useState('');
   const [raw, setRaw] = useState(false);
+  // A refresh keeps what is on screen until the new copy arrives (no flash, no lost scroll).
   useEffect(() => {
     let live = true;
     if (!week) return undefined;
-    api.ctoReviewFor(week).then((x) => { if (live) setR(x); }).catch((e) => { if (live) setErr(e.message); });
+    api.ctoReviewFor(week).then((x) => { if (live) { setR(x); setErr(''); } }).catch((e) => { if (live && !r) setErr(e.message); });
     return () => { live = false; };
-  }, [week]);
+  }, [week, tick]);
   if (err) return html`<p class="form-error" role="alert">Could not load the review for ${week}: ${err}</p>`;
   if (!r) return html`<div class="panel-skel tall" aria-label="Loading"></div>`;
   const l = r.lint;
@@ -225,7 +226,7 @@ function Deliveries({ list }) {
       const [tone, text] = DELIVERY[d.state] || DELIVERY.pending;
       return html`<li key=${d.id || i} class=${`cto-del tone-${tone}`} data-state=${d.state}>
         <p class="cto-del-top"><span class=${`pill pill-${tone === 'ok' ? 'ok' : tone === 'wait' ? 'wait' : 'bad'}`}><span class="pill-dot"></span>${text(d)}</span>
-          <span class="rc-label">${d.verb === 'spawn' ? `New session of ${d.to || 'an agent'}` : `To session ${d.to || '?'}`}</span>
+          <span class="rc-label">${!d.to ? 'Recipient unclear: the full command is below' : d.verb === 'spawn' ? `New session of ${d.to}` : `To session ${d.to}`}</span>
           ${d.state === 'asking' ? html`<button class="btn btn-quiet btn-sm" onClick=${() => focusSession(d.sid)}>Answer it</button>` : null}</p>
         <blockquote class="cto-del-msg">${messageOf(d.command)}</blockquote>
       </li>`;

@@ -19,6 +19,7 @@ import { COST_LABEL } from './report.js';
 import { REVIEW_MAX_BYTES, lintReview } from './review-lint.js';
 import { ReceiptIndex } from './receipts.js';
 import { checkThresholds, normalizeThresholds } from './status-rules.js';
+import { CROSS_AGENT_RE, parseSend } from './seat-policy.js';
 import { HttpError, badRequest, conflict, notFound, oneLine, readJson, writeJson } from './util.js';
 
 export const CHECK_MS = 10 * 60000;
@@ -26,7 +27,6 @@ export const REVIEW_PROMPT = "Run this week's review.";
 const WEEK_RE = /^\d{4}-W\d{2}$/;
 const DEFAULT_CAP = 2;
 const TRANSCRIPT_MAX = 32 * 1024 * 1024;
-const SEND_RE = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\b/;
 const BUSY = new Set(['starting', 'working', 'needs_you']);
 
 /**
@@ -48,6 +48,8 @@ export function ctoLaunchSettings({ nodePath, hookScript, stopFailure, home, dir
   }
   const { allow, ask, deny } = ctoPermissions({ dir, home, platform });
   s.permissions = { allow, ask, deny };
+  // No settings layer may switch the seat's hooks off (its own check lives in them).
+  s.disableAllHooks = false;
   return s;
 }
 
@@ -91,8 +93,8 @@ export function scanTranscript(file) {
     for (const c of content) {
       if (o.type === 'assistant' && c.type === 'tool_use' && typeof c.id === 'string') {
         const cmd = typeof c.input?.command === 'string' ? c.input.command : null;
-        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && SEND_RE.test(cmd)) {
-          if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: SEND_RE.exec(cmd)[1], command: cmd.slice(0, 4000), state: 'pending', note: null });
+        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && CROSS_AGENT_RE.test(cmd)) {
+          if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: parseSend(cmd).verb, command: cmd.slice(0, 4000), state: 'pending', note: null });
         } else if (c.name === 'AskUserQuestion' && Array.isArray(c.input?.questions)) {
           if (!asks.has(c.id)) asks.set(c.id, { id: c.id, at: o.timestamp || null, questions: c.input.questions.slice(0, 4).map((q) => ({ question: oneLine(String(q?.question || ''), 300), options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map((x) => oneLine(String(x?.label || ''), 120)) })), answers: null, state: 'waiting' });
         }
@@ -100,7 +102,9 @@ export function scanTranscript(file) {
         const result = typeof c.content === 'string' ? c.content : Array.isArray(c.content) ? c.content.map((x) => (typeof x?.text === 'string' ? x.text : '')).join('\n') : '';
         const s = sends.get(c.tool_use_id);
         if (s) {
-          const declined = /doesn't want to proceed|was rejected|permission to use \w+ (?:with command .* )?has been denied|user (?:denied|declined)/i.test(result);
+          // Claude Code's own rejection texts, at the start of an error result (a sent message whose
+          // output mentions "rejected" is still sent).
+          const declined = !!c.is_error && /^\s*(?:Error:\s*)?(?:The user doesn't want to proceed with this tool use|Permission to use \w+ (?:with command [\s\S]*? )?has been denied|User rejected tool use)/.test(result);
           s.state = declined ? 'declined' : c.is_error ? 'failed' : 'sent';
           s.note = oneLine(result, 200);
         }
@@ -121,10 +125,23 @@ export function scanTranscript(file) {
   return out;
 }
 
-/** Who a delivery went to: the agent id of a spawn, the session of a send (first word after the verb). */
+/**
+ * The CTO's headline made safe for a chat app: one line, 160 characters, no link a phone would make
+ * tappable (any "scheme:" token becomes "[link removed]"; a dot inside a word, as in a domain name,
+ * becomes a one-dot leader so it reads the same but is not a link), no invisible characters.
+ */
+export function plainHeadline(text) {
+  return oneLine(String(text || ''), 160)
+    .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
+    .replace(/\b[a-z][a-z0-9+.-]{1,20}:(?:\/\/)?[^\s]*/gi, (m) => (/^(?:https?|ftp|file|mailto|tel|sms|javascript|data|tg|imessage|facetime):/i.test(m) || m.includes('//') ? '[link removed]' : m))
+    .replace(/(\w)\.(?=[A-Za-z])/g, '$1\u2024')
+    .replace(/[<>]/g, '')
+    .trim();
+}
+
+/** Who a delivery went to: the agent id of a spawn, the session of a send; null when unclear. */
 export function deliveryTarget(command) {
-  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+(?:"([^"]+)"|'([^']+)'|(\S+))/.exec(String(command || ''));
-  return m ? m[2] || m[3] || m[4] : null;
+  return parseSend(command).target;
 }
 
 export class Cto {
@@ -175,6 +192,8 @@ export class Cto {
   /** The seat's launch settings file, written fresh before every start (sessions.seatLaunch). */
   launchSettings(rec, target, { nodePath, hookScript, stopFailure }) {
     if (!ctoPermissions({ dir: target.dir, home: this.paths.home }).fileRules || !runtimeDeny(this.paths.home).length) throw new HttpError(409, CTO_UNGUARDED);
+    // The folder's own settings file, this version's, at every start (an edited copy is kept as .old).
+    this.org.refreshCtoSettings();
     const file = path.join(this.paths.rt, 'cto-launch-settings.json');
     writeJson(file, ctoLaunchSettings({ nodePath, hookScript, stopFailure, home: this.paths.home, dir: target.dir }), 0o600);
     return { settingsPath: file };
@@ -259,6 +278,14 @@ export class Cto {
     if (!WEEK_RE.test(String(week))) throw badRequest('week looks like 2026-W44');
     const dir = this.reviewsDir();
     const file = path.join(dir, `${week}.md`);
+    // reviews/ itself must be a real folder in the seat's folder, and the file a plain file read
+    // without following a link (O_NOFOLLOW where the OS has it), checked again once open.
+    try {
+      if (fs.lstatSync(dir).isSymbolicLink() || fs.realpathSync(dir) !== path.join(fs.realpathSync(this.require().dir), 'reviews')) throw new Error('moved');
+    } catch (err) {
+      if (err.code === 'ENOENT') throw notFound(`No review for ${week} yet.`);
+      throw new HttpError(422, 'The reviews folder is not a plain folder in the CTO folder.');
+    }
     let st;
     try {
       st = fs.lstatSync(file);
@@ -267,22 +294,45 @@ export class Cto {
     }
     if (!st.isFile()) throw new HttpError(422, 'The review is not a plain file.');
     if (st.size > REVIEW_MAX_BYTES) throw new HttpError(413, 'The review is larger than 256 KB.');
-    if (fs.realpathSync(path.dirname(file)) !== fs.realpathSync(dir)) throw new HttpError(422, 'The review is not in the reviews folder.');
-    return { text: fs.readFileSync(file, 'utf8'), mtimeMs: st.mtimeMs };
+    let fd;
+    try {
+      fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+      const fst = fs.fstatSync(fd);
+      if (!fst.isFile() || fst.size > REVIEW_MAX_BYTES) throw new HttpError(422, 'The review is not a plain file.');
+      const buf = Buffer.alloc(fst.size);
+      fs.readSync(fd, buf, 0, fst.size, 0);
+      return { text: buf.toString('utf8'), mtimeMs: fst.mtimeMs };
+    } catch (err) {
+      if (err instanceof HttpError) throw err;
+      throw new HttpError(422, 'The review is not a plain file.');
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
   }
 
   /** The CTO's sessions, newest first. */
   ctoSessions() {
-    return this.sessions.list().filter((s) => s.agent === CTO_ID).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
+    // Every record the registry keeps (30 days), not only the cockpit's 14-day list.
+    const recs = this.sessions.records ? [...this.sessions.records.values()] : [];
+    return recs.filter((r) => r.agent === CTO_ID).map((r) => this.sessions.view(r)).sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
   }
 
-  /** Decisions and deliveries from the seat's sessions active in that ISO week. */
+  /**
+   * Decisions and deliveries for one ISO week, from the seat's own transcripts: a review session's
+   * items go to the week in its title ("CTO review, 2026-W44"), any other session's to the week each
+   * item happened. Final states are also kept in .clawdling/cto/activity/<week>.json, so the record
+   * outlives the sessions and their transcripts.
+   */
   activity(week) {
     const decisions = [];
     const deliveries = [];
+    const weekOf = (iso) => {
+      const t = Date.parse(iso || '');
+      return Number.isFinite(t) ? isoWeek(t) : null;
+    };
     for (const s of this.ctoSessions()) {
-      const when = s.last_activity_at || s.created_at;
-      if (!when || isoWeek(Date.parse(when)) !== week) continue;
+      const titled = /^CTO review, (\d{4}-W\d{2})$/.exec(s.title || '')?.[1] || null;
+      if (titled && titled !== week) continue;
       const rec = this.sessions.get(s.sid);
       if (!rec) continue;
       let file = null;
@@ -292,19 +342,42 @@ export class Cto {
         file = null;
       }
       const scan = file ? scanTranscript(file) : { deliveries: [], decisions: [] };
-      for (const d of scan.decisions) decisions.push({ ...d, sid: s.sid });
-      for (const d of scan.deliveries) deliveries.push({ ...d, sid: s.sid, to: deliveryTarget(d.command) });
+      const mine = (it) => (titled ? true : weekOf(it.at) === week);
+      for (const d of scan.decisions) if (mine(d)) decisions.push({ ...d, sid: s.sid });
+      for (const d of scan.deliveries) if (mine(d)) deliveries.push({ ...d, sid: s.sid, to: deliveryTarget(d.command) });
+      const nowWeek = isoWeek(this.now()) === week;
       // A question on screen now that the transcript does not have yet (Claude Code writes it once answered).
       const ask = s.status === 'needs_you' && s.asking && s.asking.kind === 'question' && s.asking.card ? s.asking : null;
-      if (ask && !scan.decisions.some((d) => d.id === ask.tool_id)) {
+      if (ask && (titled || nowWeek) && !scan.decisions.some((d) => d.id === ask.tool_id)) {
         decisions.push({ id: ask.tool_id, sid: s.sid, at: s.last_activity_at, state: 'waiting', answers: null, questions: (ask.card.questions || []).map((q) => ({ question: oneLine(String(q.question || ''), 300), options: (q.options || []).map((o) => oneLine(String(o.label || ''), 120)) })) });
       }
       // A message waiting for the owner's yes or no right now.
-      if (s.pending_cmd && !deliveries.some((d) => d.command === s.pending_cmd && d.state === 'pending')) deliveries.push({ id: null, sid: s.sid, at: s.last_activity_at, verb: SEND_RE.exec(s.pending_cmd)?.[1] || 'send', command: s.pending_cmd, to: deliveryTarget(s.pending_cmd), state: 'asking', note: null });
+      if (s.pending_cmd && (titled || nowWeek) && !deliveries.some((d) => d.command === s.pending_cmd && d.state === 'pending')) deliveries.push({ id: null, sid: s.sid, at: s.last_activity_at, verb: parseSend(s.pending_cmd).verb, command: s.pending_cmd, to: deliveryTarget(s.pending_cmd), state: 'asking', note: null });
     }
-    decisions.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
-    deliveries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
-    return { decisions, deliveries };
+    // Keep the final states; merge what was kept before (sessions end, transcripts go).
+    const file = path.join(this.paths.rt, 'cto', 'activity', `${week}.json`);
+    const kept = readJson(file, null) || {};
+    const FINAL = new Set(['answered', 'declined', 'sent', 'failed']);
+    const merge = (now, old) => {
+      const byId = new Map();
+      for (const x of Array.isArray(old) ? old : []) if (x && x.id) byId.set(x.id, x);
+      for (const x of now) if (x.id) byId.set(x.id, x);
+      return [...byId.values(), ...now.filter((x) => !x.id)];
+    };
+    const allDecisions = merge(decisions, kept.decisions);
+    const allDeliveries = merge(deliveries, kept.deliveries);
+    const keep = { decisions: allDecisions.filter((x) => x.id && FINAL.has(x.state)).slice(-50), deliveries: allDeliveries.filter((x) => x.id && FINAL.has(x.state)).slice(-50) };
+    if (keep.decisions.length + keep.deliveries.length > (kept.decisions?.length || 0) + (kept.deliveries?.length || 0) || JSON.stringify(keep) !== JSON.stringify({ decisions: kept.decisions || [], deliveries: kept.deliveries || [] })) {
+      try {
+        fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+        writeJson(file, keep, 0o600);
+      } catch (err) {
+        this.logger?.warn?.(`cto: could not keep the week's activity: ${err.message}`);
+      }
+    }
+    allDecisions.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    allDeliveries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
+    return { decisions: allDecisions, deliveries: allDeliveries };
   }
 
   /** One review for its page: the text, the lint, receipt links, computed labels, decisions, deliveries. */
@@ -352,7 +425,7 @@ export class Cto {
     // Only this week's review or last week's, and it says which (the report may go out first).
     const now = this.now();
     if (!l || (l.week !== isoWeek(now) && l.week !== isoWeek(now - 7 * 86400000))) return null;
-    let h = l.headline ? oneLine(l.headline, 160).replace(/\b(?:https?|ftp|file):\/\/\S+/gi, '[link removed]').replace(/\bwww\.\S+/gi, '[link removed]').replace(/[<>]/g, '') : '';
+    let h = l.headline ? plainHeadline(l.headline) : '';
     h = h.trim();
     const n = l.decisions_waiting;
     const tail = n ? `${n} decision${n === 1 ? '' : 's'} waiting in Clawdling.` : '';
@@ -401,7 +474,7 @@ export class Cto {
       const c = this.reports.costOf(this.reports.summaries({ agent: CTO_ID }), isoWeekRange(this.now()));
       return { usd: c.total_usd, complete: c.complete };
     } catch {
-      return { usd: 0, complete: false };
+      return { usd: 0, complete: false, error: true };
     }
   }
 
@@ -508,6 +581,12 @@ export class Cto {
       // Counted before starting, like the Monday report: a failure never turns into a retry storm.
       st.last_run_week = week;
       st.last_run_at = new Date(now).toISOString();
+      if (spent.error) {
+        st.last_skip = { week, at: st.last_run_at, why: "This week's CTO review was skipped: Clawdling could not count what the CTO has used this week, so it could not check the weekly cap." };
+        this.save(st);
+        this.events?.record?.({ type: 'cto', action: 'skipped', week });
+        return { ran: false, why: 'spend unknown', notice: st.last_skip.why };
+      }
       if (spent.usd + est.high_usd > st.weekly_cap_usd) {
         st.last_skip = { week, at: st.last_run_at, why: `This week's CTO review was skipped: it could cost up to $${est.high_usd.toFixed(2)}, and the CTO has used $${spent.usd.toFixed(2)} of its $${st.weekly_cap_usd.toFixed(2)} weekly cap.` };
         this.save(st);

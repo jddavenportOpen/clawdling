@@ -696,8 +696,9 @@ unknown key, is refused with a message naming it (`checkThresholds`).
 
 ### The report for the whole org: schema 2 (`server/report.js`)
 
-`clawdling report --all [--window today|7d|30d] [--json]` and `GET /api/report/all?window=7d` run
-`Reports.allReport`. It is the CTO's only input: no file contents, no prompts. Donna and the CTO
+`clawdling report --all [--window 7d] [--json]` and `GET /api/report/all?window=7d` run
+`Reports.allReport`. It covers the last 7 days only (another window is a `400`): its labels compare
+this week with the one before and feed the week's label history. It is the CTO's only input: no file contents, no prompts. Donna and the CTO
 itself are not in it. Without `--json` the CLI prints one row per agent: name, label and each
 reason with its receipt id. `--all` with an agent name is an error.
 
@@ -770,14 +771,16 @@ change time, else the oldest one after it).
   the readable copy; at every server start it is rewritten from this version's template when it
   differs, and an edited copy is kept beside it as `settings.json.old`.
 - **Its launch.** Every start writes `.clawdling/cto-launch-settings.json` (mode 600): Clawdling's
-  hooks, with PreToolUse and PostToolUse registered for every tool, and the seat's permissions
-  (`ctoLaunchSettings`). The session gets `--settings` with that file, `--setting-sources
-  project,local`, `--strict-mcp-config`, the ask-first permission mode whatever `agent.json` says,
-  no `--add-dir`, and the org context file like any agent. Without that file it refuses to start.
-  Its PreToolUse hook runs with an extra argument, `cto`, and answers "ask" (Claude Code's hook
-  JSON) for any shell command but one plain `clawdling report ...` or `clawdling ls ...`, for any
-  `send` or `spawn` in any spelling, and for any write outside `reviews/` (`server/seat-policy.js`),
-  so saved allow rules cannot widen what it runs without a prompt.
+  hooks, with PreToolUse and PostToolUse registered for every tool, `disableAllHooks: false`, and
+  the seat's permissions (`ctoLaunchSettings`); the folder's settings file is rewritten from the
+  template too. The session gets `--settings` with that file, `--setting-sources project`,
+  `--strict-mcp-config`, the ask-first permission mode whatever `agent.json` says, no `--add-dir`,
+  and the org context file like any agent. Without that file it refuses to start. Its PreToolUse
+  hook runs with an extra argument, `cto`, and answers "allow" for one plain `clawdling report` /
+  `clawdling ls` with only the listed options, and "ask" for any other shell command, any `send` or
+  `spawn` in any spelling, any write but `reviews/<YYYY-Www>.md`, and any call it cannot read
+  (`server/seat-policy.js`; exact grammar in SECURITY.md). While one of its tool calls is in flight,
+  typing into its session is refused (`409`).
 - **Where it cannot be protected.** In an org whose path has characters Claude Code's rules cannot
   express, `POST /api/cto` answers 400 and a start answers 409: no seat without its file rules.
 - **CLAUDE.md rules** (editable in the Context tab; the CTO cannot change it): your only source is
@@ -896,8 +899,10 @@ that fails is recorded the same way.
 ### The Monday report line (`server/digest.js`)
 
 Its own opt-in (`headline_in_digest`, off by default; Settings shows the exact line first). When on,
-the Monday report adds one line before its total: `CTO: <headline>. N decisions waiting in
-Clawdling.`, from the newest review: its `Headline:` (one line, 160 characters, every `http://`,
-`https://`, `ftp://`, `file://` and `www.` link replaced by `[link removed]`, `<` and `>` dropped)
-and the count of questions still waiting. No other review text is sent. Same sender and rules as the
+the Monday report adds one line before its total: `CTO, week <N>: <headline>. 3 decisions waiting
+in Clawdling.`, from this week's or last week's review only (an older one is not news): its
+`Headline:` made plain by `plainHeadline` (one line, 160 characters; any `scheme:` link such as
+`https:`, `mailto:` or `tel:` replaced by `[link removed]`; a dot between a word and letters, as in a
+domain name, turned into a one-dot leader so no chat app makes it tappable; bidi and zero-width
+characters, `<` and `>` dropped) and the count of questions still waiting. No other review text is sent. Same sender and rules as the
 Monday report.

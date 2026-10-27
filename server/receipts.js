@@ -34,7 +34,8 @@ export function citedIds(text) {
  */
 export function agentText(s, max) {
   if (typeof s !== 'string') return null;
-  let out = s.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // Control, line-separator, bidi and zero-width characters: they can reorder or hide what is shown.
+  let out = s.replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
   out = out.replace(/\[(\s*)R-/gi, '($1R-').replace(/\bR-(session|claim|check|checkup|cost|needs|next|model)-([0-9a-f]{8})\b/gi, 'R $1 $2');
   if (out.length > max) out = `${out.slice(0, max - 1)}…`;
   return out || null;

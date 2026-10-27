@@ -158,7 +158,7 @@ test.describe('the CTO seat (real server)', () => {
     await expect(ctoCard.getByTestId('cto-schedule-switch')).not.toBeChecked();
     await expect(ctoCard).toContainText(/about \$\d+\.\d\d to \$\d+\.\d\d each time \(list-price equivalent, not a bill\)/);
     await expect(ctoCard.getByTestId('cto-digest-switch')).not.toBeChecked();
-    await expect(ctoCard.getByTestId('cto-digest-preview')).toHaveText(/^CTO: .+/);
+    await expect(ctoCard.getByTestId('cto-digest-preview')).toHaveText(/^CTO, week \d+: .+/);
     await ctoCard.scrollIntoViewIfNeeded();
     await shot(ctoCard, '05-settings-cto-card');
   });
@@ -341,7 +341,7 @@ test.describe('the CTO seat (mock)', () => {
     await expect(card.getByTestId('cto-cap')).toHaveValue('2');
     await expect(card.getByTestId('cto-digest-switch')).not.toBeChecked();
     await expect(card).toContainText('Turned on, the Monday report would add exactly this line now:');
-    await expect(card.getByTestId('cto-digest-preview')).toHaveText('CTO: One project is at risk and one has stalled; the rest are on track or quiet. 1 decision waiting in Clawdling.');
+    await expect(card.getByTestId('cto-digest-preview')).toHaveText(/^CTO, week \d+: One project is at risk and one has stalled; the rest are on track or quiet\. 1 decision waiting in Clawdling\.$/);
 
     await card.locator('label.switch').filter({ has: page.getByTestId('cto-schedule-switch') }).click();
     await expect(sw).toBeChecked();

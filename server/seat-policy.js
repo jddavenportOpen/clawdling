@@ -1,49 +1,89 @@
 // The CTO seat's own permission check (1.7), run by its PreToolUse hook (bin/clawdling-hook.js
 // with the extra argument "cto"), before Claude Code's permission rules.
 //
-// Claude Code merges allow rules from every settings layer, and "Yes, and don't ask again" saves a
-// new one. A PreToolUse hook that answers "ask" makes Claude Code ask anyway. So whatever rules the
-// seat's folder gathers, it runs exactly two things without a prompt: `clawdling report ...` and
-// `clawdling ls ...` as plain commands, and file writes inside its reviews/ folder. Every other
-// shell command, and every write anywhere else, shows Claude Code's own prompt; a message to
-// another agent (send or spawn, in any spelling) is named as one.
+// Claude Code merges allow rules from several settings layers, and "Yes, and don't ask again" saves
+// a new one. A PreToolUse hook that answers "ask" makes Claude Code ask anyway; "allow" lets a call
+// through. So the seat runs exactly this without a prompt: `clawdling report` and `clawdling ls`
+// with only the options listed below (never --home or --port, which would point the CLI at another
+// server), and writes to reviews/<ISO-week>.md. Every other shell command, and every other write,
+// shows Claude Code's own prompt; a message to another agent (send or spawn, in any spelling) is
+// named as one. Anything the hook cannot read is asked about too.
 import path from 'node:path';
 
-// One plain command: no pipes, lists, redirection, substitution or quotes-within-quotes tricks.
-const PLAIN_ALLOWED = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:report|ls)(?:\s+[A-Za-z0-9_=.:,\/-]+)*\s*$/;
-// Any way of running clawdling's send or spawn: the shim, the .cmd/.ps1 shims, the script by path.
-const CROSS_AGENT = /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i;
+// Any way of running clawdling's send or spawn: the shim, the .cmd/.ps1 shims, the script by path,
+// inside another command. Shared by the cockpit's display and the review page's list.
+export const CROSS_AGENT_RE = /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+const WINDOW = new Set(['today', '7d', '30d']);
+const AGENT_ID = /^[a-z0-9][a-z0-9-]{0,39}$/;
+const WEEK_FILE = /^\d{4}-W\d{2}\.md$/;
 
 export const ASK_SEND = 'Clawdling: the CTO wants to message another agent. Read the exact message, then say yes or no.';
 export const ASK_OTHER = 'Clawdling: the CTO seat runs only the report and the session list without asking.';
-export const ASK_WRITE = 'Clawdling: the CTO seat writes only in its reviews folder without asking.';
+export const ASK_WRITE = 'Clawdling: the CTO seat writes only its weekly review file without asking.';
+export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it asks.';
+const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
-/** True when `file` (absolute, or relative to `cwd`) is inside `dir`. */
-function inside(dir, file, cwd) {
-  if (typeof file !== 'string' || !file || typeof dir !== 'string' || !dir) return false;
-  const abs = path.resolve(typeof cwd === 'string' && cwd ? cwd : dir, file);
-  const rel = path.relative(path.resolve(dir), abs);
-  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+/**
+ * True for one plain `clawdling report ...` / `clawdling ls ...` with only these options:
+ *   report [--all] [--json] [--window today|7d|30d | --window=...] [<agent id>]
+ *   ls [--all] [--json]
+ */
+export function plainRead(cmd) {
+  if (typeof cmd !== 'string' || cmd.length > 200 || !/^[A-Za-z0-9 ._=-]+$/.test(cmd.trim())) return false;
+  const t = cmd.trim().split(/ +/);
+  if (!/^clawdling(?:\.cmd|\.ps1)?$/.test(t[0])) return false;
+  const verb = t[1];
+  const rest = t.slice(2);
+  const seen = new Set();
+  const once = (k) => {
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  };
+  if (verb === 'ls') return rest.every((a) => (a === '--all' || a === '--json') && once(a));
+  if (verb !== 'report') return false;
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i];
+    if (a === '--all' || a === '--json') {
+      if (!once(a)) return false;
+    } else if (a === '--window') {
+      if (!once(a) || !WINDOW.has(rest[++i])) return false;
+    } else if (a.startsWith('--window=')) {
+      if (!once('--window') || !WINDOW.has(a.slice(9))) return false;
+    } else if (AGENT_ID.test(a)) {
+      if (!once('agent')) return false;
+    } else return false;
+  }
+  return true;
+}
+
+/** True when `file` (absolute, or relative to `cwd`) is <home>/cto/reviews/<YYYY-Www>.md exactly. */
+function reviewFile(home, file, cwd) {
+  if (typeof file !== 'string' || !file || !home) return false;
+  const dir = path.resolve(home, 'cto', 'reviews');
+  const abs = path.resolve(typeof cwd === 'string' && cwd ? cwd : path.join(home, 'cto'), file);
+  return path.dirname(abs) === dir && WEEK_FILE.test(path.basename(abs));
 }
 
 /**
  * What the seat's hook answers for one tool call: null (let Claude Code's rules decide) or
- * {decision: 'ask', reason}. `home` is the org folder (the seat lives in <home>/cto).
+ * {decision: 'ask' | 'allow', reason}. `home` is the org folder (the seat lives in <home>/cto).
  */
 export function seatDecision(payload, { home }) {
   const p = payload && typeof payload === 'object' ? payload : {};
+  if (typeof p.tool_name !== 'string' || !p.tool_name) return { decision: 'ask', reason: ASK_UNREADABLE };
   const input = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
   if (SHELL_TOOLS.has(p.tool_name)) {
     const cmd = typeof input.command === 'string' ? input.command : '';
-    if (CROSS_AGENT.test(cmd)) return { decision: 'ask', reason: ASK_SEND };
-    if (PLAIN_ALLOWED.test(cmd) && !/\r|\n/.test(cmd)) return null;
+    if (CROSS_AGENT_RE.test(cmd)) return { decision: 'ask', reason: ASK_SEND };
+    if (plainRead(cmd)) return { decision: 'allow', reason: ALLOW_READ };
     return { decision: 'ask', reason: ASK_OTHER };
   }
   if (FILE_TOOLS.has(p.tool_name)) {
     const file = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : '';
-    if (home && inside(path.join(home, 'cto', 'reviews'), file, p.cwd)) return null;
+    if (p.tool_name !== 'NotebookEdit' && reviewFile(home, file, p.cwd)) return null;
     return { decision: 'ask', reason: ASK_WRITE };
   }
   return null;
@@ -53,4 +93,17 @@ export function seatDecision(payload, { home }) {
 export function decisionOutput(d) {
   if (!d) return '';
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason } });
+}
+
+/**
+ * A cross-agent command as the cockpit shows it: {plain, verb, target, message}. `plain` only for
+ * exactly one `clawdling send|spawn <target> "<message>"` (one line, one quoted message, nothing
+ * else), the only form the cockpit offers as one tap; anything else says "read it in the terminal".
+ */
+export function parseSend(cmd) {
+  const s = String(cmd || '');
+  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][^\s"']+)?\s+)*)([^\s"'-][^\s"']*)\s+("(?:[^"\\$`]|\\.)*"|'[^']*')\s*$/.exec(s);
+  if (m && !/[\r\n]/.test(s)) return { plain: true, verb: m[1], target: m[3], message: m[4].slice(1, -1).replace(/\\(.)/g, '$1') };
+  const loose = /\b(send|spawn)\b/i.exec(s);
+  return { plain: false, verb: loose ? loose[1].toLowerCase() : 'send', target: null, message: s };
 }

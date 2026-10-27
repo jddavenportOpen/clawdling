@@ -324,6 +324,7 @@ function QuestionBanner({ s, mobile, accent }) {
     <${StatusGlyph} status="needs_you" label=${false} />
     <span class="dialog-text" data-testid="pane-question-text">${s.pending_cmd ? 'Send this message to another agent?' : s.notification || 'Claude Code is asking for your permission.'}</span>
     ${s.pending_cmd ? html`<code class="dialog-cmd" data-testid="pane-pending-cmd">${s.pending_cmd}</code>` : null}
+    ${s.pending_cmd && s.pending_cmd_plain === false ? html`<span class="dialog-cmd-warn" data-testid="pane-pending-warn">This is more than one plain message, or too long to show whole. Read it in the terminal before you answer.</span>` : null}
     <span class="dialog-actions">
       ${shown.map((c, i) => html`<button key=${c.option} class=${`btn ${i === 0 && accent ? 'btn-primary' : 'btn-quiet'} btn-sm dialog-choice`} title=${choiceLabel(c)}
         onClick=${() => answer(c.option)} disabled=${!!busy} data-option=${c.option} data-testid="question-choice">

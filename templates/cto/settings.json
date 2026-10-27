@@ -2,13 +2,13 @@
   "$schema": "https://json.schemastore.org/claude-code-settings.json",
   "permissions": {
     "allow": [
-      "Bash(clawdling report)",
-      "Bash(clawdling report *)",
+      "Bash(clawdling report --all --json --window 7d)",
+      "Bash(clawdling report --all --json)",
+      "Bash(clawdling ls --json)",
       "Bash(clawdling ls)",
-      "Bash(clawdling ls *)",
       "Read({{cto}}/**)",
-      "Write({{cto}}/reviews/**)",
-      "Edit({{cto}}/reviews/**)"
+      "Write({{cto}}/reviews/*.md)",
+      "Edit({{cto}}/reviews/*.md)"
     ],
     "ask": [
       "Bash(clawdling send *)",

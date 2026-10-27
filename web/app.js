@@ -3,7 +3,7 @@ import { render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { html } from './lib/html.js';
 import { setState, getState, useStore } from './lib/store.js';
-import { initialState, parseRoute, togglePalette, toggleRail, focusPaneIndex, closeOverlay, goHome, focusSession, navigate } from './lib/actions.js';
+import { initialState, parseRoute, togglePalette, toggleRail, focusPaneIndex, closeOverlay, goHome, focusSession, navigate, toast } from './lib/actions.js';
 import { boot } from './lib/live.js';
 import { initTheme } from './lib/theme.js';
 import { shortcutOf, eventInTerminal, isTypingTarget } from './lib/keys.js';
@@ -83,7 +83,13 @@ function App() {
     };
     if (tryOpen()) return undefined;
     const t = setInterval(() => { if (tryOpen()) clearInterval(t); }, 300);
-    const stop = setTimeout(() => clearInterval(t), 10000);
+    const stop = setTimeout(() => {
+      clearInterval(t);
+      if (!getState().sessions[sid]) {
+        toast('That session is no longer in the list (it ended over two weeks ago). Its receipt is still in the review.', { ms: 5200 });
+        navigate('#/');
+      }
+    }, 10000);
     return () => { clearInterval(t); clearTimeout(stop); };
   }, [route.sid, auth]);
 

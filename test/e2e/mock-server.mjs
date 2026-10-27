@@ -557,7 +557,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const r = a ? c.review : null;
     const waiting = r ? r.decisions.filter((d) => d.state === 'waiting').reduce((n, d) => n + d.questions.length, 0) : 0;
     const headline = r ? lintReview(r.text).headline : null;
-    const preview = r && (headline || waiting) ? `CTO: ${headline ? `${headline}${/[.!?]$/.test(headline) ? '' : '.'} ` : ''}${waiting ? `${waiting} decision${waiting === 1 ? '' : 's'} waiting in Clawdling.` : ''}`.trim() : null;
+    const preview = r && (headline || waiting) ? `CTO, week ${Number(r.week.slice(6))}: ${headline ? `${headline}${/[.!?]$/.test(headline) ? '' : '.'} ` : ''}${waiting ? `${waiting} decision${waiting === 1 ? '' : 's'} waiting in Clawdling.` : ''}`.trim() : null;
     let next = null;
     if (c.enabled) {
       const d = new Date();

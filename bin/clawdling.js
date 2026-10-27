@@ -49,7 +49,7 @@ Usage:
                                             make a project agent per project (prints the plan
                                             until you add --yes; never writes into your repos)
   clawdling ls [--all] [--json]             list sessions
-  clawdling report [agent|--all] [--window today|7d|30d] [--json]
+  clawdling report [agent] [--window today|7d|30d] [--json] | report --all [--json]
                                             the report card: what got done, what needs you, what it
                                             used (a list-price equivalent, not a bill), what is next
   clawdling check <agent> [--json]          run the project's approved ship check (set up in the

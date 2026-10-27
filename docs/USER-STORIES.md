@@ -520,7 +520,7 @@ US-85 to US-90, in the same order (brief US-80 = US-85 ... US-85 = US-90).
 - **US-89 (P1, Maya; 1.7)** **Optional schedule:** Settings gives "Run the CTO review every Monday at
   08:00" (day, hour and a weekly cap, $2.00 by default), off by default, with the estimated cost of
   one review shown before it is turned on. A separate switch, also off by default, adds the CTO's
-  line to the Monday report (1.5): "CTO: <headline>. 3 decisions waiting in Clawdling.", previewed
+  line to the Monday report (1.5): "CTO, week 44: <headline>. 3 decisions waiting in Clawdling." (this week's or last week's review only, links removed), previewed
   exactly, with links removed from the headline.
   - Accept: no scheduled run happens without the opt-in; at most one run per ISO week, counted
     before it starts; turned on after this week's time, the first run is next week; a run whose

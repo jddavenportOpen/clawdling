@@ -127,6 +127,8 @@ test('report --all (schema 2): computed labels with reasons and receipts for eve
   }
   assert.ok(by.shop.claims.some((c) => c.label === 'contradicted' && c.open), 'the open contradicted claim');
   assert.ok(by.website.claims.some((c) => c.label === 'verified'));
+  // 7 days only: its labels feed the week's label history.
+  assert.equal((await request(srv, 'GET', '/api/report/all?window=today')).status, 400);
   // Stable ids: the same receipts in a second report.
   const again = (await request(srv, 'GET', '/api/report/all?window=7d')).body;
   assert.deepEqual(again.agents.map((a) => a.status.reasons.map((x) => x.receipt)), rep.agents.map((a) => a.status.reasons.map((x) => x.receipt)));
@@ -184,9 +186,9 @@ test('Add a CTO: one click makes the seat beside Donna, with its folder, CLAUDE.
   assert.ok(fs.statSync(path.join(dir, 'reviews')).isDirectory());
   assert.ok(!fs.existsSync(path.join(dir, '.claude', 'skills')), 'no skills: it does not create agents');
   const st = readJsonFile(path.join(dir, '.claude', 'settings.json'));
-  assert.ok(st.permissions.allow.includes('Bash(clawdling report *)'));
+  assert.ok(st.permissions.allow.includes('Bash(clawdling report --all --json --window 7d)'));
   assert.ok(st.permissions.allow.includes('Bash(clawdling ls)'));
-  assert.ok(st.permissions.allow.some((x) => /^Write\(\/\/.+\/cto\/reviews\/\*\*\)$/.test(x)), JSON.stringify(st.permissions.allow));
+  assert.ok(st.permissions.allow.some((x) => /^Write\(\/\/.+\/cto\/reviews\/\*\.md\)$/.test(x)), JSON.stringify(st.permissions.allow));
   assert.ok(!st.permissions.allow.some((x) => /send|spawn|new|end|import/.test(x)), 'no cross-agent or org-changing command is allowed');
   assert.deepEqual(st.permissions.ask.filter((x) => x.startsWith('Bash(')), ['Bash(clawdling send *)', 'Bash(clawdling spawn *)']);
   for (const d of ['WebFetch', 'WebSearch']) assert.ok(st.permissions.deny.includes(d));
@@ -211,15 +213,24 @@ test('the seat starts as a normal Claude Code session with its own settings: no 
   const argv = launch.argv;
   const at = (flag) => argv[argv.indexOf(flag) + 1];
   assert.equal(at('--permission-mode'), 'manual');
-  assert.equal(at('--setting-sources'), 'project,local');
+  assert.equal(at('--setting-sources'), 'project', 'not even the seat folder\'s settings.local.json');
   assert.ok(argv.includes('--strict-mcp-config'));
   assert.ok(!argv.includes('--add-dir'), 'the org folder is not added');
   const settings = readJsonFile(at('--settings'));
+  assert.equal(settings.disableAllHooks, false);
   assert.ok(at('--settings').startsWith(path.join(home, '.clawdling')), 'in Clawdling\'s own folder, out of the agents\' reach');
   assert.ok(settings.permissions.ask.includes('Bash(clawdling send *)'));
   assert.ok(!settings.permissions.allow.includes('Bash(clawdling send *)'));
   assert.ok(settings.hooks.PreToolUse.every((g) => g.matcher === undefined), 'every tool call is reported');
   assert.equal(launch.cwd, fs.realpathSync(path.join(home, 'cto')));
+  // A tool call in flight (its prompt may be drawn before its Notification): typing is refused.
+  const hook = (event, payload) => request(srv, 'POST', '/api/hooks', { event, sid: s.sid, payload, ts: new Date().toISOString() });
+  assert.equal((await hook('PreToolUse', { tool_name: 'Bash', tool_use_id: 'toolu_t1', tool_input: { command: 'clawdling spawn web "x"' } })).status, 204);
+  const typed = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'yes' });
+  assert.equal(typed.status, 409);
+  assert.match(typed.body.error, /the CTO is in the middle of a step/);
+  assert.equal((await hook('PostToolUse', { tool_name: 'Bash', tool_use_id: 'toolu_t1' })).status, 204);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' })).status, 204);
   await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
 });
 
@@ -247,6 +258,10 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   assert.equal(rev.decisions[0].state, 'waiting');
   // Every citation resolves to a link.
   for (const s of rev.lint.sections) for (const b of s.bullets) for (const id of b.ids) assert.match(rev.receipts[id].link, /^#\//);
+  // While its question is open, nothing can be typed into it (Enter would answer a prompt).
+  const typed = await request(srv, 'POST', `/api/sessions/${sid}/send`, { text: 'hello' });
+  assert.equal(typed.status, 409, typed.text);
+  assert.match(typed.body.error, /the CTO is in the middle of a step|waiting for your answer/);
   // Answer: ask both agents.
   const ans = await request(srv, 'POST', `/api/sessions/${sid}/answer`, { tool_id: asking.asking.tool_id, answers: [{ choices: [0] }, { choices: [0] }] });
   assert.equal(ans.status, 200, ans.text);
@@ -273,6 +288,8 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   assert.deepEqual(rev.deliveries.map((d) => [d.verb, d.state]), [['spawn', 'declined'], ['send', 'sent']]);
   assert.equal(rev.decisions[0].state, 'answered');
   assert.match(rev.text, /^Declined: Your CTO review flagged this/m, 'the declined message is noted in the review');
+  const kept = readJsonFile(path.join(home, '.clawdling', 'cto', 'activity', `${week}.json`));
+  assert.deepEqual(kept.deliveries.map((d) => d.state), ['declined', 'sent'], 'the record outlives the sessions');
   const view = (await request(srv, 'GET', '/api/cto')).body;
   assert.equal(view.reviews[0].week, week);
   seen[sid] = true;

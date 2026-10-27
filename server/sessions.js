@@ -5,6 +5,7 @@
 // WebSocket viewers; input from viewers goes back to the session. Status comes from Claude Code
 // hooks (see hooks.js). With tmux, sessions outlive the Clawdling server: on start we reconcile the
 // registry with `tmux ls` and reattach. With pty, they end when it stops and stay resumable.
+import { CROSS_AGENT_RE, parseSend } from './seat-policy.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -151,9 +152,6 @@ export function dialogFromScreen(screen) {
  * one bare word gets a trailing space so it can never be dispatched as a claude subcommand
  * (`claude -- update` would otherwise run `claude update`).
  */
-// A cross-agent message from the CTO seat: `clawdling send <sid> "..."` or `clawdling spawn <agent> "..."`.
-export const SEND_CMD_RE = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\b/;
-
 export function safePositional(prompt) {
   return /\s/.test(prompt) ? prompt : `${prompt} `;
 }
@@ -388,6 +386,8 @@ export class SessionManager {
       asking: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && rec.asking ? rec.asking : null,
       // The CTO seat's message waiting for the owner's yes or no (shown with Claude Code's prompt).
       pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.command : null,
+      // ...and whether it is exactly one message the cockpit can show whole (else: read the terminal).
+      pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command).plain : null,
       // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
       background: isLive(rec.status) ? this.runtime.get(rec.sid)?.background ?? null : null,
       resumable: rec.status === 'ended',
@@ -841,7 +841,8 @@ export class SessionManager {
       model: rec.model,
       effort: rec.effort,
       permissionMode: cliPermissionMode(seat ? 'ask' : rec.permission_mode, this.modeChoices),
-      extraArgs: seat ? ['--setting-sources', 'project,local', '--strict-mcp-config'] : [],
+      // Not even the seat folder's settings.local.json loads: a saved "don't ask again" is ignored.
+      extraArgs: seat ? ['--setting-sources', 'project', '--strict-mcp-config'] : [],
       // The seat reads the report, not other agents' folders: the org is not added to it.
       addDirs: seat ? [] : this.addDirsFor(target, rec.cwd),
       appendSystemPromptFile: ctxFile,
@@ -1175,9 +1176,12 @@ export class SessionManager {
     const toolId = typeof p.tool_use_id === 'string' && p.tool_use_id ? p.tool_use_id.slice(0, 100) : null;
     if (event === 'PreToolUse') {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
-      rec.pending_cmd = cmd && SEND_CMD_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000) } : null;
+      // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
+      rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000 } : null;
+      if (rec.kind === 'cto') rec.seat_tool = toolId || 'unknown';
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
+      if (event !== 'PostToolUse' || !rec.seat_tool || rec.seat_tool === toolId) rec.seat_tool = null;
     }
     const before = rec.transcript_path;
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);
@@ -1378,6 +1382,9 @@ export class SessionManager {
       throw conflict(`the session is waiting for your answer in the terminal (${rec.notification || rec.waiting_on}); answer it in the cockpit first`);
     }
     if (!isLive(rec.status)) throw conflict('that session has ended');
+    // The CTO seat: while one of its tool calls is in flight, a prompt for it may be on screen before
+    // its Notification arrives, and typed text (or Enter) would answer it. Its yes is the owner's.
+    if (rec.kind === 'cto' && rec.seat_tool) throw conflict('the CTO is in the middle of a step (it may be asking your permission): wait for it, or answer in the cockpit');
     const target = rec.pane_id || `=${rec.tmux_name}:`;
     if (clean) await this.backend.paste(target, clean);
     if (enter !== false) {
@@ -1462,8 +1469,9 @@ export class SessionManager {
     }
     if (!chosen) throw new HttpError(500, 'could not move the selection onto that choice');
     this.events.record({ type: 'answer', sid, agent: rec.agent, question: rec.asking?.kind === 'plan' ? 'plan' : kind, option: n, label: oneLine(chosen, 200) });
+    const wasPlan = planCard || rec.asking?.kind === 'plan';
     const out = this.answered(rec, rt, kind, { option: n, label: chosen });
-    if (kind === 'permission_prompt' && /^\s*(?:\d+[.)]\s*)?no\b/i.test(chosen)) this.watchInterrupt(rec);
+    if (kind === 'permission_prompt' && !wasPlan && /^\s*(?:\d+[.)]\s*)?no\b/i.test(chosen)) this.watchInterrupt(rec);
     return out;
   }
 
@@ -1480,11 +1488,14 @@ export class SessionManager {
         if (rec.status !== 'working' || rec.launch_id !== launch) return;
         try {
           const text = await this.backend.screenText(rec.pane_id || `=${rec.tmux_name}:`);
-          if (rec.status === 'working' && rec.launch_id === launch && INTERRUPTED_RE.test(String(text).replace(/\s+/g, ' '))) {
+          // Only the bottom of the screen: an older "Interrupted" further up is history.
+          const tail = String(text).split('\n').filter((l) => l.trim()).slice(-8).join(' ').replace(/\s+/g, ' ');
+          if (rec.status === 'working' && rec.launch_id === launch && INTERRUPTED_RE.test(tail)) {
             rec.status = 'ready';
             rec.waiting_on = null;
             rec.notification = null;
             rec.pending_cmd = null;
+            rec.seat_tool = null;
             rec.last_message = 'You said no, so Claude stopped. Tell it what to do instead.';
             this.onStatusChange(rec);
             return;

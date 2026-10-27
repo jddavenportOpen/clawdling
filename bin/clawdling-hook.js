@@ -109,7 +109,9 @@ async function main() {
     slim.tool_name = clip(payload.tool_name, 100);
     slim.tool_use_id = clip(payload.tool_use_id, 100);
     const cmd = payload.tool_input && typeof payload.tool_input.command === 'string' ? payload.tool_input.command : '';
-    if (event === 'PreToolUse' && (payload.tool_name === 'Bash' || payload.tool_name === 'PowerShell') && /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\b/.test(cmd)) slim.tool_input = { command: clip(cmd, 4000) };
+    // The same test as server/seat-policy.js CROSS_AGENT_RE (any spelling); 4,001 characters at most,
+    // so the server can tell the owner when it was cut.
+    if (event === 'PreToolUse' && (payload.tool_name === 'Bash' || payload.tool_name === 'PowerShell') && /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i.test(cmd)) slim.tool_input = { command: clip(cmd, 4001) };
   }
   const record = { event, sid, payload: slim, ts: new Date().toISOString(), ...(process.env.CLAWDLING_LAUNCH ? { launch: process.env.CLAWDLING_LAUNCH } : {}) };
   let token = '';

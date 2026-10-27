@@ -524,7 +524,7 @@ in `/home/lou/org` (paths are absolute-path rules, `//` plus the path):
 
 | List | Rules |
 |---|---|
-| **allow** | `Bash(clawdling report)`, `Bash(clawdling report *)`, `Bash(clawdling ls)`, `Bash(clawdling ls *)`, `Read(//home/lou/org/cto/**)`, `Write(//home/lou/org/cto/reviews/**)`, `Edit(//home/lou/org/cto/reviews/**)` |
+| **allow** | `Bash(clawdling report --all --json --window 7d)`, `Bash(clawdling report --all --json)`, `Bash(clawdling ls --json)`, `Bash(clawdling ls)` (exact commands, no wildcard), `Read(//home/lou/org/cto/**)`, `Write(//home/lou/org/cto/reviews/*.md)`, `Edit(//home/lou/org/cto/reviews/*.md)` |
 | **ask** | `Bash(clawdling send *)`, `Bash(clawdling spawn *)` |
 | **deny** | `WebFetch`, `WebSearch`, `Write(//home/lou/org/cto/CLAUDE.md)`, `Edit(//home/lou/org/cto/CLAUDE.md)`, `Write(//home/lou/org/cto/.claude/**)`, `Edit(//home/lou/org/cto/.claude/**)`, `Read(//home/lou/org/.clawdling/**)`, `Edit(//home/lou/org/.clawdling/**)` |
 
@@ -534,48 +534,59 @@ On Windows each `Bash(...)` rule in allow and ask also comes as the same `PowerS
 `( ) '` or accents), Clawdling neither adds nor starts a CTO there: it fails closed, like the
 needs-you ping, rather than run the seat without its file rules.
 
-Everything else asks: any other command, any write outside `reviews/`, any read outside its folder
-(the org folder is not added to it). The seat's own allow-list is narrower than every other
-agent's: `clawdling new`, `end`, `doctor`, `discover`, `send`, `spawn` and the remote commands are
-not on it.
+No command rule has a wildcard: options such as `--home` (read another folder's server address and
+token) or `--port` (send the owner token to another local port) can never ride along on an allowed
+command. The seat's allow-list is narrower than every other agent's: `clawdling new`, `end`,
+`doctor`, `discover`, `send`, `spawn` and the remote commands are not on it.
 
 **Why ask rules, not just "not allowed".** In Claude Code an ask rule beats an allow rule from any
 settings layer. A command merely missing from the seat's allow-list could still run without a
-prompt if an allow rule in another settings layer matched it: your own user settings, a settings
-file like the org's `.claude/settings.json` (which pre-approves `clawdling send` and `spawn` for
-every other agent), or a "Yes, and don't ask again" that Claude Code saved in the seat's
-`settings.local.json`. With `clawdling send *` and `clawdling spawn *` as ask rules, every
-cross-agent message shows Claude Code's own prompt with the exact command, every time. The rules
-match those words at the start of a command, so a second check covers every other spelling.
+prompt if an allow rule in another layer matched it (a file like the org's `.claude/settings.json`,
+which pre-approves `clawdling send` and `spawn` for every other agent). With `clawdling send *` and
+`clawdling spawn *` as ask rules, a cross-agent message shows Claude Code's own prompt with the
+exact command. The rules match those words at the start of a command, so a second check covers
+every other spelling.
 
 **The seat's own check (its PreToolUse hook).** The seat's PreToolUse hook runs with an extra
 argument, `cto`, and answers before Claude Code's permission rules (`server/seat-policy.js`). A hook
-that answers "ask" makes Claude Code ask, whatever allow rules exist, including one saved by "Yes,
-and don't ask again". It answers "ask" for:
+answer of "ask" makes Claude Code ask whatever allow rules exist; "allow" lets the call through. It
+answers:
 
-- any Bash or PowerShell command that is not one plain `clawdling report ...` or `clawdling ls ...`
-  (no pipes, lists, redirection, substitution or line breaks);
-- any command that runs clawdling's `send` or `spawn` in any spelling (the shim, `clawdling.cmd`,
-  `clawdling.ps1`, the script by path, inside `sh -c`), with the reason "the CTO wants to message
-  another agent";
-- any Write, Edit, MultiEdit or NotebookEdit outside `<org>/cto/reviews/`.
+- **allow** for one plain `clawdling report` or `clawdling ls` with only these options:
+  `report [--all] [--json] [--window today|7d|30d] [<agent id>]`, `ls [--all] [--json]` (no other
+  option, no pipes, lists, redirection, substitution, quotes or line breaks);
+- **ask** for any command that runs clawdling's `send` or `spawn` in any spelling (the shim,
+  `clawdling.cmd`, `clawdling.ps1`, the script by path, inside `sh -c` or after `&&`), with the
+  reason "the CTO wants to message another agent";
+- **ask** for every other Bash or PowerShell command;
+- **ask** for any Write, Edit, MultiEdit or NotebookEdit other than `<org>/cto/reviews/<YYYY-Www>.md`
+  itself (no other name, no subfolder);
+- **ask** for a tool call it cannot read (no tool name, unreadable input), even with no session.
 
 So the seat runs exactly two things without a prompt, the report and the session list, and writes
-only its reviews; every other command or write shows Claude Code's own prompt, every time. The hook
-prints its answer even when the Clawdling server is not running. If the hook cannot run at all, the
-ask rules above and the ask-first mode still apply.
+only its weekly review file; everything else shows Claude Code's own prompt, every time. On a
+cross-agent prompt Claude Code then offers only Yes and No (seen on 2.1.308), never "don't ask
+again". The hook prints its answer first, even when the Clawdling server is not running. If the hook
+cannot run at all, the exact allow rules, the ask rules and the ask-first mode still apply.
+
+**Nothing can be typed into it mid-step.** While one of the seat's tool calls is in flight (from
+its PreToolUse to its PostToolUse or the end of the turn), the server refuses to type into its
+session (`409`), whoever asks: another agent's `clawdling send`, Donna, or the API. A permission
+prompt can be on screen a moment before Clawdling hears about it, and a typed Enter would answer it.
 
 ### How it starts
 
 - **Its own settings file, out of agents' reach.** Every start writes
-  `.clawdling/cto-launch-settings.json` (mode 600) and passes it as `--settings`: Clawdling's hooks
-  and the lists above. `.clawdling/` is denied to agents' file tools, so the seat cannot edit what it
-  starts with. The folder's `.claude/settings.json` holds the same lists for you to read; at every
-  server start it is rewritten from this version's template if it differs (an edited copy is kept
-  as `settings.json.old`), and the seat is denied writing anywhere in its `.claude/`.
-- **`--setting-sources project,local`**: your user-level Claude Code settings do not load into the
-  seat (their allow rules, hooks, environment, default model). Managed (policy) settings still
-  apply, as Claude Code always applies them.
+  `.clawdling/cto-launch-settings.json` (mode 600) and passes it as `--settings`: Clawdling's hooks,
+  `disableAllHooks: false` (no other layer can switch its hooks off), and the lists above.
+  `.clawdling/` is denied to agents' file tools, so the seat cannot edit what it starts with. The
+  folder's `.claude/settings.json` holds the same lists for you to read; at every server start and
+  every seat start it is rewritten from this version's template if it differs (an edited copy is
+  kept as `settings.json.old`), and the seat is denied writing anywhere in its `.claude/`.
+- **`--setting-sources project`**: neither your user-level Claude Code settings nor the seat
+  folder's `settings.local.json` load into it (their allow rules, hooks, environment, default model;
+  a saved "don't ask again" has no effect). Managed (policy) settings still apply, as Claude Code
+  always applies them.
 - **`--strict-mcp-config`** with no MCP config: no MCP server starts in it.
 - **Always ask first.** The seat starts in Claude Code's ask-before-editing mode
   (`--permission-mode manual`, or `default`), whatever its `agent.json` says, at every start and
@@ -589,13 +600,15 @@ ask rules above and the ask-first mode still apply.
 The seat's hooks report every tool call (PreToolUse and PostToolUse with no matcher) so the cockpit
 can show a pending cross-agent message beside Claude Code's prompt. The hook script
 (`bin/clawdling-hook.js`) forwards only the tool's name and its call id (100 characters each), and
-the command (4,000 characters at most) only for a PreToolUse of Bash or PowerShell whose command
-starts with `clawdling send` or `clawdling spawn`. No other command, file path or tool input leaves
-the hook. The server keeps that command until any other tool call, the matching PostToolUse, the end
-of the turn or a new prompt, and shows it only while the session waits on a permission prompt
-(Claude Code runs a command on its own: its hook, then its prompt, then the call, so the prompt on
-screen belongs to the newest tool call). Apart from the seat's "ask" (above), the hooks decide
-nothing: the prompt, and the answer to it, are Claude Code's own.
+the command (4,001 characters at most) only for a PreToolUse of Bash or PowerShell that runs
+clawdling's `send` or `spawn` (the same test as the seat's check). No other command, file path or
+tool input leaves the hook. The server keeps that command until any other tool call, the matching
+PostToolUse, the end of the turn or a new prompt, and shows it only while the session waits on a
+permission prompt (Claude Code runs a command on its own: its hook, then its prompt, then the call,
+so the prompt on screen belongs to the newest tool call). When the command is more than one plain
+`clawdling send|spawn <target> "<message>"`, or was cut at 4,000 characters, the cockpit says so
+and asks you to read it in the terminal before you answer. Apart from the seat's own check (above),
+the hooks decide nothing: the prompt, and the answer to it, are Claude Code's own.
 
 ### Prompt injection through the report
 
@@ -603,8 +616,8 @@ Session titles, the agents' last lines, NOW.md and claim badges are written by a
 can be steered by what it reads. A hostile title could try to steer the CTO. Mitigations:
 
 - The report carries no file contents and no prompts; every agent-written string is capped, made
-  one line, stripped of control characters, and cannot look like a citation (`[R-` and receipt-shaped
-  ids are broken up), so it cannot plant a fake receipt. The report's `note` and the CTO's CLAUDE.md
+  one line, stripped of control, bidi and zero-width characters, and cannot look like a citation
+  (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The report's `note` and the CTO's CLAUDE.md
   both say to treat that text as data, never as instructions.
 - The CTO has no web, no MCP servers, and can write only its own reviews without asking.
 - A message to another agent always shows Claude Code's prompt with the exact text; the receiving
@@ -619,8 +632,11 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
 
 Whether a message was sent, declined, failed or is waiting, and what you answered on a decision
 card, are read from the seat's own Claude Code transcripts (`scanTranscript`), not from what the
-model wrote. The CTO also notes a declined message in the review (`Declined: ...`), but the page
-does not depend on it.
+model wrote: "declined" only for Claude Code's own rejection text at the start of an error result,
+and a message in any spelling counts. Final states are also kept per week in
+`.clawdling/cto/activity/<week>.json`, so the record outlives the sessions and their transcripts.
+The CTO also notes a declined message in the review (`Declined: ...`) when it can (a "No" in
+Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
 
 ### The schedule
 
@@ -630,14 +646,17 @@ does not depend on it.
   this week's time, the first run is next week.
 - **A weekly cap** (default $2.00, list-price equivalent): before a run, the CTO's spend this ISO
   week from its receipts plus the high end of the estimate must fit under it, or the week is skipped
-  once, with a notice on the CTO page and in Settings.
+  once, with a notice on the CTO page and in Settings. If the spend cannot be counted, the week is
+  skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
 
 ### The Monday report line
 
 Off by default and separate from the Monday report's own switch; Settings shows the exact line
-first. When on, the Monday report adds one line: the newest review's headline (one line, 160
-characters, links replaced by `[link removed]`, `<` and `>` dropped) and how many decisions wait.
+first. When on, the Monday report adds one line, `CTO, week <N>: <headline>. N decisions waiting in
+Clawdling.`, from this week's or last week's review only: one line, 160 characters, any `scheme:`
+link replaced by `[link removed]`, a dot inside a domain-like word turned into a one-dot leader so
+no chat app makes it tappable, invisible characters and `<` `>` dropped.
 Nothing else from a review leaves the computer, and it goes through the Monday report's sender and
 rules.
 

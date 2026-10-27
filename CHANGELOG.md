@@ -45,10 +45,11 @@
   CTO's line in the Monday report, its own switch, previewed exactly, with links removed from the
   headline.
 - **How the seat is locked down.** It starts with its own `--settings` file written into
-  `.clawdling/` (out of agents' reach), `--setting-sources project,local` (your user-level settings
-  do not load), `--strict-mcp-config` (no MCP servers), always the ask-first mode, and without the
-  org folder added. It may run `clawdling report` and `clawdling ls` and write its own `reviews/`
-  without asking; the web, its own CLAUDE.md and its settings are denied; everything else asks.
+  `.clawdling/` (out of agents' reach), `--setting-sources project` (neither your user-level
+  settings nor a saved "don't ask again" load), `--strict-mcp-config` (no MCP servers), always the
+  ask-first mode, and without the org folder added. Its own hook check lets it run only plain
+  `clawdling report` and `clawdling ls` (exact options, never `--home` or `--port`) and write only
+  `reviews/<week>.md` without asking; nothing can be typed into it while a step is in flight; the web, its own CLAUDE.md and its settings are denied; everything else asks.
   Its hooks report every tool call, and the hook script forwards only the tool's name and id, plus
   the command of a `clawdling send|spawn`. Adding the seat, starting a review and every CTO setting
   work only on the computer itself; a paired phone can read reviews and answer the CTO's prompts.
