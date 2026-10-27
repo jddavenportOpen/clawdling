@@ -6,7 +6,7 @@
 // hooks (see hooks.js). With tmux, sessions outlive the Clawdling server: on start we reconcile the
 // registry with `tmux ls` and reattach. With pty, they end when it stops and stay resumable.
 import { CROSS_AGENT_RE, isSendCommand, parseSend } from './seat-policy.js';
-import { INVISIBLE_RE } from './receipts.js';
+import { cleanInput } from './receipts.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -757,7 +757,8 @@ export class SessionManager {
     if (typeof agent !== 'string' || !agent) throw badRequest('agent is required');
     const target = this.resolveTarget(agent);
     if (prompt !== undefined && prompt !== null && typeof prompt !== 'string') throw badRequest('prompt must be a string');
-    const text = typeof prompt === 'string' ? prompt.replace(/\0/g, '').slice(0, PROMPT_MAX).trim() : '';
+    // A first message is typed into a session too (receipts.js cleanInput, the same as send).
+    const text = typeof prompt === 'string' ? cleanInput(prompt).slice(0, PROMPT_MAX).trim() : '';
     if (model !== undefined && model !== null && model !== '' && !isValidModel(model)) throw badRequest('invalid model');
     if (effort !== undefined && effort !== null && effort !== '' && !isValidEffort(effort)) throw badRequest('effort must be low, medium, high, xhigh or max');
     const accountId = account && account !== 'default' ? account : null;
@@ -1387,9 +1388,8 @@ export class SessionManager {
     const rec = this.require(sid);
     if (!isLive(rec.status)) throw conflict('that session has ended; resume it first');
     if (typeof text !== 'string') throw badRequest('text must be a string');
-    // Nothing a person cannot see goes into a session, from any sender: control characters (but tab
-    // and line breaks) and invisible Unicode (format, tag, private-use characters...).
-    const clean = text.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g, '').replace(INVISIBLE_RE, '').slice(0, PROMPT_MAX);
+    // Nothing that can hide or reorder words goes into a session, from any sender (receipts.js).
+    const clean = cleanInput(text).slice(0, PROMPT_MAX);
     if (!rec.hooked) await this.waitFor(() => rec.hooked || rec.waiting_on || !isLive(rec.status), 15000);
     // Never type into a dialog: Enter would answer it (folder trust defaults to "No, exit"; a
     // permission prompt defaults to "Yes"). Those answers belong to the owner, in the terminal.
@@ -1467,6 +1467,10 @@ export class SessionManager {
       let q = -1;
       for (let i = lines.length - 1; i >= 0; i--) if (/Do you want to /.test(lines[i])) { q = i; break; }
       const prompt = q === -1 ? '' : lines.slice(Math.max(0, q - 30), q).join('');
+      // ...and nothing changed while we looked (the same call pending, the only one open).
+      if (seatPrompt && (rec.pending_cmd !== pc || rec.waiting_on !== 'permission_prompt' || (rec.open_tools || []).length > 1)) {
+        throw conflict('The CTO moved on while you answered. Look at the prompt again.');
+      }
       if (seatPrompt && !prompt.replace(/\s+/g, '').includes(pc.command.replace(/\s+/g, '').slice(0, 120))) {
         throw conflict('The prompt on screen is not the message the cockpit showed. Answer it in the terminal.');
       }
@@ -1674,6 +1678,11 @@ export class SessionManager {
     if (!rec || !rt?.control || rt.control.closed || !data) return;
     rt.control.sendBytes(Buffer.from(data.slice(0, 65536), 'utf8'));
     if (rec.status === 'needs_you' && (rec.waiting_on === 'permission_prompt' || rec.waiting_on === 'elicitation_dialog') && /\r|^[1-9]$|^\x1b$/.test(data)) {
+      // An answer typed in the terminal answers the prompt on screen: its call is no longer pending.
+      if (rec.waiting_on === 'permission_prompt' && rec.pending_cmd) {
+        rec.open_tools = (rec.open_tools || []).filter((x) => x !== rec.pending_cmd.tool_id);
+        rec.pending_cmd = null;
+      }
       // Esc, the digit of a choice that says No (the choices read off the screen), or an Enter (the
       // arrows may have moved onto No). A Yes never reads as a No: the watcher acts only on Claude
       // Code's own "⎿ Interrupted" line, which appears only after a No.

@@ -249,16 +249,28 @@ test('the seat policy: exact read-only report and ls are allowed, the weekly fil
     assert.deepEqual(sh(other), { decision: 'ask', reason: ASK_OTHER }, other);
   }
   const NOW = new Date(2026, 9, 28, 12).getTime(); // Wednesday of 2026-W44
-  const w = (file_path, tool = 'Write') => seatDecision({ tool_name: tool, tool_input: { file_path }, cwd: `${home}/cto` }, { home, now: NOW });
+  // A real org folder: the review file's check looks at the file itself (no links).
+  const real = tmp();
+  fs.mkdirSync(path.join(real, 'cto', 'reviews'), { recursive: true });
+  const w = (file_path, tool = 'Write') => seatDecision({ tool_name: tool, tool_input: { file_path: file_path.replace(home, real) }, cwd: `${real}/cto` }, { home: real, now: NOW });
   assert.equal(w(`${home}/cto/reviews/2026-W44.md`), null);
   assert.equal(w('reviews/2026-W44.md', 'Edit'), null, 'relative to the seat folder');
   assert.equal(w('reviews/2026-W43.md'), null, 'last week too');
   for (const far of ['reviews/9999-W99.md', 'reviews/2026-W45.md', 'reviews/2025-W44.md']) assert.equal(w(far).decision, 'ask', far);
+  fs.writeFileSync(path.join(real, 'cto', 'reviews', '2026-W44.md'), '# review\n');
+  assert.equal(w('reviews/2026-W44.md'), null, 'an existing plain review');
+  if (process.platform !== 'win32') {
+    fs.writeFileSync(path.join(real, 'other.md'), 'not a review');
+    fs.symlinkSync(path.join(real, 'other.md'), path.join(real, 'cto', 'reviews', '2026-W43.md'));
+    assert.equal(w('reviews/2026-W43.md').decision, 'ask', 'a link: the write would land elsewhere');
+    fs.rmSync(path.join(real, 'cto', 'reviews', '2026-W43.md'));
+    fs.linkSync(path.join(real, 'other.md'), path.join(real, 'cto', 'reviews', '2026-W43.md'));
+    assert.equal(w('reviews/2026-W43.md').decision, 'ask', 'a hard link too');
+  }
   for (const bad of [`${home}/cto/CLAUDE.md`, `${home}/cto/.claude/settings.json`, `${home}/cto/reviews/../CLAUDE.md`, `${home}/cto/reviews/notes.md`, `${home}/cto/reviews/sub/2026-W44.md`, `${home}/cto/reviews/.clawdling/server.json`, `${home}/projects/web/memory/NOW.md`, `${home}/cto/reviews`, '/etc/passwd']) assert.deepEqual(w(bad), { decision: 'ask', reason: ASK_WRITE }, bad);
   assert.deepEqual(seatDecision({ tool_name: 'NotebookEdit', tool_input: { notebook_path: `${home}/cto/reviews/2026-W44.md` } }, { home }), { decision: 'ask', reason: ASK_WRITE });
   assert.equal(seatDecision({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } }, { home }), null, 'reads stay with Claude Code\'s rules');
-  for (const t of ['Agent', 'Task', 'Workflow', 'Monitor', 'WebFetch', 'WebSearch']) assert.equal(seatDecision({ tool_name: t, tool_input: {} }, { home }).decision, 'deny', t);
-  assert.equal(seatDecision({ tool_name: 'SomeNewTool', tool_input: {} }, { home }).decision, 'ask', 'a tool it does not know is asked about');
+  for (const t of ['Agent', 'Task', 'Workflow', 'Monitor', 'WebFetch', 'WebSearch', 'SendMessage', 'ListAgents', 'RemoteTrigger', 'CronCreate', 'ScheduleWakeup', 'SomeNewTool']) assert.equal(seatDecision({ tool_name: t, tool_input: {} }, { home }).decision, 'deny', t);
   assert.equal(sh('clawdling report --all --json').decision, 'allow');
   assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'clawdling report --all --json', run_in_background: true } }, { home }).decision, 'ask', 'not in the background');
   assert.equal(seatDecision({ tool_name: 'AskUserQuestion', tool_input: {} }, { home }), null);
@@ -282,6 +294,9 @@ test('parseSend: one plain message the cockpit can offer as a one-tap yes, or "a
   // The CLI reads an argument starting with "-" as an option, quoted or not.
   for (const opt of ['clawdling send a "--home=/tmp/x"', "clawdling send a '-p 1'", 'clawdling spawn web " --port 9"']) assert.equal(parseSend(opt).plain, false, opt);
   assert.equal(parseSend('clawdling send a "say \u201chi\u201d"', 'PowerShell').plain, false, 'curly quotes are quotes to PowerShell');
+  assert.equal(parseSend('clawdling.cmd send a "Use %PATH:~3,1%"').plain, false, 'cmd.exe expands %VAR%');
+  assert.equal(parseSend('clawdling send a "100% done!"').plain, true, 'bash does not');
+  assert.equal(parseSend('clawdling send a "x"\u2028').plain, false, 'nothing glued on after the quote');
 });
 
 test('a message with characters a person cannot see is never "plain"; agent text and headlines lose them', () => {

@@ -217,6 +217,15 @@ export class Cto {
     } catch {
       // no .claude yet: refreshCtoSettings writes it
     }
+    // reviews/ holds plain files with one name each: no link through which a review write lands elsewhere.
+    try {
+      for (const n of fs.readdirSync(path.join(target.dir, 'reviews'))) {
+        const st = fs.lstatSync(path.join(target.dir, 'reviews', n));
+        if (!st.isFile() || st.nlink !== 1) odd.push(`reviews/${n}`);
+      }
+    } catch {
+      // no reviews yet
+    }
     if (odd.length) throw new HttpError(409, `The CTO will not start: its folder has ${odd.map((x) => `"${x}"`).join(', ')}, which Clawdling did not put there. Remove ${odd.length === 1 ? 'it' : 'them'}, then start it again.`);
     // The folder's own settings file, this version's, at every start (an edited copy is kept as .old).
     this.org.refreshCtoSettings();
@@ -238,7 +247,7 @@ export class Cto {
     try {
       // Weekly reviews only: a short chat between reviews says nothing about what a review costs.
       const reviewSids = new Set(this.ctoSessions().filter((x) => x.review_week).map((x) => x.sid));
-      for (const s of this.reports.summaries({ agent: CTO_ID })) if (reviewSids.has(s.sid) && s.turns > 0 && s.cost && s.cost.usd > 0) past.push(s.cost.usd);
+      for (const s of this.reports.summaries({ agent: CTO_ID })) if (reviewSids.has(s.sid) && s.turns > 0 && s.cost && s.cost.usd > 0 && s.cost.complete !== false) past.push(s.cost.usd);
     } catch {
       // no receipts
     }
@@ -259,7 +268,8 @@ export class Cto {
     } catch {
       // keep the default
     }
-    const model = (a && a.model) || 'sonnet';
+    // No model set: the account's own default, which may be the top tier; price it as the top tier.
+    const model = (a && a.model) || 'opus';
     const alias = { opus: 'claude-opus-5-5', sonnet: 'claude-sonnet-5-5', haiku: 'claude-haiku-4-5' };
     const p = priceFor(alias[model] || model) || priceFor('claude-sonnet-5-5');
     const base = 25000; // Claude Code's own system prompt and tools, roughly

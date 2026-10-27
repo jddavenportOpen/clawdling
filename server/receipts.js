@@ -30,7 +30,16 @@ export function citedIds(text) {
 
 // Characters a person cannot see but a model reads: format characters (bidi, zero-width, BOM...),
 // Unicode tags, variation selectors, private-use and unassigned code points, line separators.
-export const INVISIBLE_RE = /[\p{Cf}\p{Co}\p{Cn}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/gu;
+export const INVISIBLE_RE = /[\p{Cf}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/gu;
+
+// What is removed from text typed into any session, by anyone: control characters (but tab and line
+// breaks), and the invisible characters that can hide or reorder words (format characters, Unicode
+// tags, private-use and unassigned code points). Joiners (ZWJ, ZWNJ) and variation selectors stay:
+// emoji sequences and Persian or Indic spelling need them, and they carry no words.
+const INPUT_STRIP_RE = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f\u2028\u2029\u{E0000}-\u{E007F}\p{Co}\p{Cn}]|(?![\u200c\u200d])\p{Cf}/gu;
+export function cleanInput(text) {
+  return String(text ?? '').replace(INPUT_STRIP_RE, '');
+}
 
 /**
  * Text written by an agent (a session title, its last line, NOW.md), made safe to hand the CTO: one

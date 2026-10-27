@@ -7,7 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
-import { api, isMock, login, mock, mockRequests, openPanes, pane, reset, sessionBySid, sessions, spawn, tag } from './helpers.js';
+import { BASE, TOKEN, api, isMock, login, mock, mockRequests, openPanes, pane, reset, sessionBySid, sessions, spawn, tag } from './helpers.js';
 
 const SHOTS = process.env.CLAWDLING_E2E_SHOTS || '';
 async function shot(target, name) {
@@ -43,6 +43,14 @@ async function expectBesideDonna(page) {
 
 test.describe('the CTO seat (real server)', () => {
   test.skip(() => isMock(), 'the fake claude writes the review and asks its questions');
+  // End the CTO's sessions afterwards, as the owner (the CLI's token may not): later specs count
+  // what needs you, and a finished review waits as "your turn".
+  test.afterAll(async () => {
+    if (isMock()) return;
+    const owner = { cookie: `cl_token=${TOKEN()}`, 'content-type': 'application/json' };
+    const list = await (await fetch(new URL('/api/sessions', BASE()), { headers: owner })).json();
+    for (const s of list.filter((x) => x.agent === 'cto' && x.status !== 'ended')) await fetch(new URL(`/api/sessions/${s.sid}`, BASE()), { method: 'DELETE', headers: owner });
+  });
 
   test('Add a CTO, edit its CLAUDE.md, run the review, decide, decline the message, read the cited review', async ({ page }) => {
     test.setTimeout(180_000);

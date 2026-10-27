@@ -8,6 +8,7 @@
 // server), and writes to reviews/<ISO-week>.md. Every other shell command, and every other write,
 // shows Claude Code's own prompt; a message to another agent (send or spawn, in any spelling) is
 // named as one. Anything the hook cannot read is asked about too.
+import fs from 'node:fs';
 import path from 'node:path';
 
 // Any way of running clawdling's send or spawn: the shim, the .cmd/.ps1 shims, the script by path,
@@ -16,18 +17,17 @@ export const CROSS_AGENT_RE = /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 // What the seat may use with Claude Code's own rules deciding (reads, its question cards, its list).
+// Every other tool is denied: subagents and workflows (they run beside its own thread), watchers,
+// the web, messages to other sessions (SendMessage), schedules and remote triggers (they would spend
+// the plan on their own), and any tool a later Claude Code adds. Deny by default.
 const PLAIN_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'AskUserQuestion', 'TodoWrite', 'ExitPlanMode']);
-// No subagents, workflows or watchers: they run beside the seat's own thread, so a prompt on screen
-// might not belong to the newest tool call, and their calls land in other transcripts.
-const DENIED_TOOLS = new Set(['Agent', 'Task', 'Workflow', 'Monitor', 'WebFetch', 'WebSearch']);
 const WEEK_FILE = /^\d{4}-W\d{2}\.md$/;
 
 export const ASK_SEND = 'Clawdling: the CTO wants to message another agent. Read the exact message, then say yes or no.';
 export const ASK_OTHER = 'Clawdling: the CTO seat runs only the report and the session list without asking.';
 export const ASK_WRITE = 'Clawdling: the CTO seat writes only its weekly review file without asking.';
 export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it asks.';
-export const ASK_UNKNOWN = 'Clawdling: the CTO seat asks before using a tool it does not know.';
-export const DENY_TOOL = 'Clawdling: the CTO seat does not start subagents, workflows or watchers, and has no web.';
+export const DENY_TOOL = 'Clawdling: the CTO seat uses only its report, its reviews and its questions to you (no subagents, schedules, web or messages outside clawdling send).';
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
 /**
@@ -84,7 +84,16 @@ function reviewFile(home, file, cwd, now) {
   const name = path.basename(abs);
   if (path.dirname(abs) !== dir || !WEEK_FILE.test(name)) return false;
   const week = name.slice(0, -3);
-  return week === isoWeekOf(now) || week === isoWeekOf(now - 7 * 86400000);
+  if (week !== isoWeekOf(now) && week !== isoWeekOf(now - 7 * 86400000)) return false;
+  // The file itself: missing (a new review) or one plain file with one name, never a link (soft or
+  // hard) through which a write would land in another agent's file.
+  try {
+    if (fs.realpathSync(dir) !== path.join(fs.realpathSync(path.resolve(home)), 'cto', 'reviews')) return false;
+    const st = fs.lstatSync(abs);
+    return st.isFile() && st.nlink === 1;
+  } catch (err) {
+    return err && err.code === 'ENOENT' && fs.existsSync(dir);
+  }
 }
 
 /**
@@ -95,7 +104,6 @@ export function seatDecision(payload, { home, now = Date.now() }) {
   const p = payload && typeof payload === 'object' ? payload : {};
   if (typeof p.tool_name !== 'string' || !p.tool_name) return { decision: 'ask', reason: ASK_UNREADABLE };
   const input = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
-  if (DENIED_TOOLS.has(p.tool_name)) return { decision: 'deny', reason: DENY_TOOL };
   if (SHELL_TOOLS.has(p.tool_name)) {
     const cmd = typeof input.command === 'string' ? input.command : '';
     if (CROSS_AGENT_RE.test(cmd.slice(0, 4001))) return { decision: 'ask', reason: ASK_SEND };
@@ -109,7 +117,7 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     return { decision: 'ask', reason: ASK_WRITE };
   }
   if (PLAIN_TOOLS.has(p.tool_name)) return null;
-  return { decision: 'ask', reason: ASK_UNKNOWN };
+  return { decision: 'deny', reason: DENY_TOOL };
 }
 
 /** The hook's stdout for a decision (Claude Code's PreToolUse JSON), or '' for none. */
@@ -155,7 +163,7 @@ export function parseSend(cmd, tool = 'Bash') {
   const notPlain = { plain: false, verb: loose ? loose[1].toLowerCase() : 'send', target: null, message: s };
   if (/[\r\n]/.test(s) || s.length > 4000) return notPlain;
   // Option values may not start with "-" (one way to split the options, so no runaway backtracking).
-  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][A-Za-z0-9._:\[\]][A-Za-z0-9._:\[\]-]*)?\s+)*)([A-Za-z0-9][A-Za-z0-9-]{0,63})\s+("(?:[^"\\$`]|\\["\\])*"|'[^']*')\s*$/.exec(s);
+  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][A-Za-z0-9._:\[\]][A-Za-z0-9._:\[\]-]*)?\s+)*)([A-Za-z0-9][A-Za-z0-9-]{0,63})\s+("(?:[^"\\$`]|\\["\\])*"|'[^']*')[ \t]*$/.exec(s);
   if (!m) return notPlain;
   // Every option must be the CLI's own, with a value of its shape.
   const opts = m[2].trim() ? m[2].trim().split(/\s+/) : [];
@@ -168,7 +176,9 @@ export function parseSend(cmd, tool = 'Bash') {
   }
   const q = m[4];
   // Anything a person cannot see (or a control character) is not a message they can approve on sight.
-  if (/[\p{Cc}\p{Cf}\p{Co}\p{Cn}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/u.test(q)) return notPlain;
+  if (/[\p{Cc}\p{Cf}\p{Co}\p{Cn}\p{Default_Ignorable_Code_Point}\u{E0000}-\u{E007F}\uFE00-\uFE0F\u{E0100}-\u{E01EF}\u2028\u2029]/u.test(q)) return notPlain;
+  // cmd.exe (the .cmd shim) and PowerShell expand %VAR%, ^ and ! in their own ways.
+  if ((tool === 'PowerShell' || /^\s*clawdling\.(?:cmd|ps1)\b/.test(s)) && /[%^!]/.test(q)) return notPlain;
   // PowerShell has its own quoting (a backslash is not an escape; curly quotes are quotes): only the
   // simplest message counts there.
   if (tool === 'PowerShell' && /[\\"'`$\u2018-\u201f]/.test(q.slice(1, -1))) return notPlain;
