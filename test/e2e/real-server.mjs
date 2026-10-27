@@ -40,7 +40,12 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
     CLAUDE_CONFIG_DIR: path.join(home, 'claude-config'),
     CLAWDLING_MANAGED_SETTINGS: '',
   });
-  execFileSync(process.execPath, [cli, 'init', '--defaults'], { env, stdio: 'ignore', timeout: 30000 });
+  // CLAWDLING_E2E_OWNER=<name>: the same default org under a placeholder owner name instead of this
+  // computer's user name (for screenshots that may be shown to someone else).
+  const owner = process.env.CLAWDLING_E2E_OWNER;
+  const answers = path.join(home, 'answers.json');
+  if (owner) fs.writeFileSync(answers, JSON.stringify({ owner, domains: ['Work', 'Health', 'Money', 'Home'], donna: { channel: 'none' } }));
+  execFileSync(process.execPath, [cli, 'init', ...(owner ? ['--answers', answers] : ['--defaults'])], { env, stdio: 'ignore', timeout: 30000 });
 
   const proc = spawn(process.execPath, [cli, 'start', '--port', '0'], { env, stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = '';

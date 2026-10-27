@@ -22,7 +22,9 @@ import { IMPORTS_NOTICE, LOGIN_NOTICE, SIGNED_IN_NOTICE, trustNotice } from '../
 import { COST_LABEL, nextOf, windowRange } from '../../server/report.js';
 import { verifyLayer } from './mock-verify.mjs';
 import { localDay } from '../../server/ledger.js';
-import { digestText } from '../../server/digest.js';
+import { digestText, isoWeek } from '../../server/digest.js';
+import { lintReview } from '../../server/review-lint.js';
+import { DEFAULT_THRESHOLDS } from '../../server/status-rules.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -149,7 +151,7 @@ function sess(agentsById, agent, title, status, opts = {}) {
   return {
     sid, agent, agent_name: a ? a.name : agent, kind: a ? a.kind : 'domain', title: title || null, status,
     model: opts.model || (a && a.model) || null,
-    cwd: a ? (a.repo || `${HOME}/${a.kind === 'chief' ? a.id : a.kind === 'project' ? `projects/${a.id}` : `domains/${a.id}`}`) : HOME,
+    cwd: a ? (a.repo || `${HOME}/${a.kind === 'chief' || a.kind === 'cto' ? a.id : a.kind === 'project' ? `projects/${a.id}` : `domains/${a.id}`}`) : HOME,
     tmux_name: `cl-${agent}-${sid.slice(0, 6)}`,
     created_at: iso((opts.age ?? last) + 20 * MIN),
     last_activity_at: iso(ended ? (opts.ended ?? last) : last),
@@ -266,7 +268,75 @@ const FIXTURES = {
   fresh() {
     return { agents: baseAgents(), sessions: [], trustSim: true };
   },
+  // 1.7, the CTO seat: the default org plus a CTO beside Donna and this week's review, with one
+  // of every marker (a clean cited bullet, an uncited one, a citation to an id that does not
+  // exist, a label the CTO overrode with its reason, an agent with no section, an answered and a
+  // waiting decision, a sent and a declined message). The waiting decision is on a live session.
+  cto() {
+    const fx = FIXTURES.default();
+    fx.agents.splice(1, 0, ctoAgent('Ada', { age: 7 * DAY }));
+    const by = Object.fromEntries(fx.agents.map((a) => [a.id, a]));
+    const week = isoWeek(Date.now());
+    const site = fx.sessions.find((s) => s.agent === 'site');
+    const done = sess(by, 'cto', `CTO review, ${week}`, 'ended', { ended: 2 * HOUR });
+    const asking = sess(by, 'cto', `CTO review, ${week}`, 'needs_you', { last: 3 * MIN, notification: 'Claude needs your permission', waiting_on: 'permission_prompt' });
+    const flagged = 'Your CTO review flagged this: a "done" claim was contradicted. Please look at it and say what you will do.';
+    const stalled = 'Your CTO review flagged this: nothing finished in 9 days. Please look at it and say what you will do.';
+    const text = [
+      `# CTO review, ${week}`,
+      'Headline: One project is at risk and one has stalled; the rest are on track or quiet.',
+      '## Launch the website: At risk',
+      '- A "done" claim was contradicted: the signup test fails [R-claim-1a2b3c4d]',
+      '- Nobody has looked at the failing test since Tuesday.',
+      '## Spring half marathon: On track',
+      '- Override: the plan was rewritten on paper this week, outside Clawdling [R-next-5e6f7a8b]',
+      '- The training plan was last touched 9 days ago [R-next-5e6f7a8b]',
+      '## Health: On track',
+      '- Usage this week: $0.31 at list price [R-cost-9c0d1e2f]',
+      '- A long run was logged on Sunday [R-session-00000000]',
+      '## Work: Quiet',
+      '- No sessions this week [R-cost-3a4b5c6d]',
+      '## Money: Quiet',
+      '- No sessions this week [R-cost-7e8f9a0b]',
+      '## Decisions',
+      '1. Launch the website: what should happen next?',
+      '2. Spring half marathon: what should happen next?',
+      `Declined: ${stalled}`,
+      '',
+    ].join('\n');
+    const q = (name) => ({ question: `${name}: what should happen next?`, options: [`Ask ${name} to look at it`, `Leave ${name} for now`] });
+    const cto = {
+      review: {
+        week, text, updated_at: iso(2 * HOUR),
+        receipts: {
+          'R-claim-1a2b3c4d': { kind: 'claim', agent: 'site', link: `#/s/${site.sid}`, label: 'Contradicted: npm test failed after "Done."' },
+          'R-next-5e6f7a8b': { kind: 'next', agent: 'marathon', link: '#/agent/marathon', label: 'NOW.md, 9 days old' },
+          'R-cost-9c0d1e2f': { kind: 'cost', agent: 'health', link: '#/agent/health', label: 'about $0.31 this week' },
+          'R-cost-3a4b5c6d': { kind: 'cost', agent: 'work', link: '#/agent/work', label: 'no usage this week' },
+          'R-cost-7e8f9a0b': { kind: 'cost', agent: 'money', link: '#/agent/money', label: 'no usage this week' },
+        },
+        labels: {
+          site: { label: 'at_risk', name: 'Launch the website' }, marathon: { label: 'stalled', name: 'Spring half marathon' },
+          health: { label: 'on_track', name: 'Health' }, work: { label: 'quiet', name: 'Work' }, money: { label: 'quiet', name: 'Money' }, home: { label: 'quiet', name: 'Home' },
+        },
+        decisions: [
+          { id: 'toolu_mockcto1', sid: done.sid, at: iso(150 * MIN), state: 'answered', questions: [q('Launch the website')], answers: { 'Launch the website: what should happen next?': 'Ask Launch the website to look at it' } },
+          { id: 'toolu_mockcto2', sid: asking.sid, at: iso(3 * MIN), state: 'waiting', questions: [q('Spring half marathon')], answers: null },
+        ],
+        deliveries: [
+          { id: 'toolu_mockcto3', sid: done.sid, at: iso(140 * MIN), verb: 'send', to: site.sid.slice(0, 8), command: `clawdling send ${site.sid.slice(0, 8)} "${flagged}"`, state: 'sent', note: null },
+          { id: 'toolu_mockcto4', sid: done.sid, at: iso(130 * MIN), verb: 'spawn', to: 'marathon', command: `clawdling spawn marathon "${stalled}"`, state: 'declined', note: null },
+        ],
+      },
+    };
+    return { agents: fx.agents, sessions: [...fx.sessions, done, asking], cto };
+  },
 };
+
+/** The CTO seat's agent, shaped like core's org.createCto(). */
+function ctoAgent(owner, extra = {}) {
+  return mkAgent('cto', 'cto', 'CTO', `${owner}'s CTO: reads every project's receipts each week and asks ${owner} the decisions that matter`, { icon: 'compass', color: '#3E63DD', ...extra });
+}
 
 /** Report-card data for a mock session, kept off its JSON (non-enumerable). */
 function rep(s, data) {
@@ -446,6 +516,8 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.remote = { enabled: false, hosts: [], devices: [], pairing: null };
     st.donnaSession = name === 'empty' ? null : '7f3c2a9e-1b4d-4c8e-9a51-0d6e2f8b3c17';
     st.channels = { telegram: { configured: false, enabled: false, paired: false, chat_id_masked: null }, imessage: { supported: true, enabled: false, handle: null } };
+    // 1.7, the CTO seat: off by default, like core's cto.json; the "cto" fixture adds a review.
+    st.cto = { review: null, enabled: false, day: 1, hour: 8, weekly_cap_usd: 2, last_skip: null, thresholds: { ...DEFAULT_THRESHOLDS }, headline_in_digest: false, ...(fx.cto || {}) };
     for (const s of fx.sessions) ensureTerm(s);
     v16.reset();
     publishOrg('reset', null);
@@ -473,6 +545,89 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
   };
   const claudeMd = (a) => a._claude || defaultClaudeMd(a, st.org.owner);
   const nowMd = (a) => (a._now != null ? a._now : defaultNow(a));
+
+  // ---- 1.7 the CTO seat: GET/POST /api/cto, the estimate, "Run this week's review", the
+  // review page (linted by core's own lintReview), and the schedule settings.
+  const CTO_ESTIMATE = { low_usd: 0.18, high_usd: 0.54, based_on: "the size of the CTO's prompt (about 31k tokens: the report, its CLAUDE.md and Claude Code's own context) at sonnet list prices", label: COST_LABEL };
+  const ctoSessions = () => [...st.sessions.values()].filter((s) => s.agent === 'cto').sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const ctoRunning = () => ctoSessions().find((s) => s.status !== 'ended' && /^CTO review, /.test(s.title || ''));
+  function ctoView() {
+    const a = agentById('cto');
+    const c = st.cto;
+    const r = a ? c.review : null;
+    const waiting = r ? r.decisions.filter((d) => d.state === 'waiting').reduce((n, d) => n + d.questions.length, 0) : 0;
+    const headline = r ? lintReview(r.text).headline : null;
+    const preview = r && (headline || waiting) ? `CTO: ${headline ? `${headline}${/[.!?]$/.test(headline) ? '' : '.'} ` : ''}${waiting ? `${waiting} decision${waiting === 1 ? '' : 's'} waiting in Clawdling.` : ''}`.trim() : null;
+    let next = null;
+    if (c.enabled) {
+      const d = new Date();
+      d.setHours(c.hour, 0, 0, 0);
+      d.setDate(d.getDate() + ((c.day - d.getDay() + 7) % 7 || 7));
+      next = d.toISOString();
+    }
+    return {
+      exists: !!a,
+      agent: a ? { id: a.id, name: a.name, dir: `${HOME}/cto`, model: a.model } : null,
+      week: isoWeek(Date.now()),
+      reviews: r ? [{ week: r.week, bytes: Buffer.byteLength(r.text), updated_at: r.updated_at }] : [],
+      latest: r ? { week: r.week, headline, decisions_waiting: waiting } : null,
+      running: a ? ctoRunning()?.sid || null : null,
+      permissions: a ? { allow: ['Bash(clawdling report *)', 'Bash(clawdling ls)', `Write(/${HOME}/cto/reviews/**)`], ask: ['Bash(clawdling send *)', 'Bash(clawdling spawn *)'], deny: ['WebFetch', 'WebSearch'], file_rules: [] } : null,
+      schedule: { enabled: c.enabled, day: c.day, hour: c.hour, weekly_cap_usd: c.weekly_cap_usd, last_run_week: null, last_run_at: null, last_skip: c.last_skip, next_at: next, spent_this_week: { usd: 0.42, complete: true } },
+      thresholds: c.thresholds,
+      headline_in_digest: c.headline_in_digest,
+      headline_preview: a ? preview : null,
+      label: COST_LABEL,
+    };
+  }
+  function ctoRoute(res, p, m, body) {
+    if (!p.startsWith('/api/cto')) return false;
+    const a = agentById('cto');
+    if (p === '/api/cto' && m === 'GET') { send(res, 200, ctoView()); return true; }
+    if (p === '/api/cto' && m === 'POST') {
+      if (a) { send(res, 409, { error: 'This org already has a CTO.' }); return true; }
+      const cto = ctoAgent(st.org.owner, { age: 0 });
+      cto._nowAge = 0;
+      st.agents.splice(st.agents.findIndex((x) => x.kind === 'chief') + 1, 0, cto);
+      publishOrg('agent_created', 'cto');
+      send(res, 201, publicAgent(cto));
+      return true;
+    }
+    if (!a) { send(res, 404, { error: 'This org has no CTO yet. Add one from the org map.' }); return true; }
+    if (p === '/api/cto/estimate' && m === 'GET') { send(res, 200, CTO_ESTIMATE); return true; }
+    if (p === '/api/cto/review' && m === 'POST') {
+      const live = ctoRunning();
+      if (live) { send(res, 409, { error: 'A review is already running. Open it to answer its questions.', sid: live.sid }); return true; }
+      const week = isoWeek(Date.now());
+      send(res, 201, createSession({ agent: 'cto', prompt: `Run this week's review. The week is ${week}.`, title: `CTO review, ${week}` }));
+      return true;
+    }
+    const mm = p.match(/^\/api\/cto\/reviews\/(\d{4}-W\d{2})$/);
+    if (mm && m === 'GET') {
+      const r = st.cto.review;
+      if (!r || r.week !== mm[1]) { send(res, 404, { error: `No review for ${mm[1]} yet.` }); return true; }
+      const lint = lintReview(r.text, { receipts: r.receipts, labels: r.labels });
+      const cited = new Set([...lint.sections.flatMap((x) => x.bullets), ...lint.other].flatMap((b) => b.ids));
+      send(res, 200, { week: r.week, updated_at: r.updated_at, text: r.text, lint, labels: r.labels,
+        receipts: Object.fromEntries([...cited].filter((id) => r.receipts[id]).map((id) => [id, r.receipts[id]])), decisions: r.decisions, deliveries: r.deliveries });
+      return true;
+    }
+    if (p === '/api/cto/settings' && m === 'POST') {
+      const c = st.cto;
+      if (body.weekly_cap_usd !== undefined && !(Number.isFinite(body.weekly_cap_usd) && body.weekly_cap_usd > 0 && body.weekly_cap_usd <= 100)) { send(res, 400, { error: 'weekly_cap_usd must be more than 0 and at most 100' }); return true; }
+      if (body.day !== undefined && !(Number.isInteger(body.day) && body.day >= 0 && body.day <= 6)) { send(res, 400, { error: 'day must be 0 to 6' }); return true; }
+      if (body.hour !== undefined && !(Number.isInteger(body.hour) && body.hour >= 0 && body.hour <= 23)) { send(res, 400, { error: 'hour must be 0 to 23' }); return true; }
+      for (const [k, v] of Object.entries(body.thresholds || {})) {
+        if (!(k in DEFAULT_THRESHOLDS) || !(Number.isFinite(v) && v > 0)) { send(res, 400, { error: `thresholds.${k} is out of range` }); return true; }
+      }
+      for (const k of ['enabled', 'headline_in_digest']) if (typeof body[k] === 'boolean') c[k] = body[k];
+      for (const k of ['day', 'hour', 'weekly_cap_usd']) if (body[k] !== undefined) c[k] = body[k];
+      if (body.thresholds) c.thresholds = { ...c.thresholds, ...body.thresholds };
+      send(res, 200, ctoView());
+      return true;
+    }
+    return false;
+  }
 
   const orgView = () => ({ org: st.org, agents: st.agents.map(agentWithStats), channels: channelStatus(), org_trusted: st.orgTrusted });
   const publishOrg = (reason, id) => broadcast('org', { reason, id, ...orgView() });
@@ -517,7 +672,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function setStatus(s, status, extra = {}) {
     Object.assign(s, extra, { status });
-    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; }
+    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; s.pending_cmd = null; }
     if (status === 'ended') { s.ended_at = new Date().toISOString(); }
     else s.ended_at = null;
     s.last_activity_at = new Date().toISOString();
@@ -1055,6 +1210,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     if (m !== 'GET') st.requests.push({ method: m, path: p, body, at: Date.now() });
 
     if (v16.route(res, p, m, body || {}, url)) return;
+    if (ctoRoute(res, p, m, body || {})) return;
     if (p === '/api/me' && m === 'GET') { send(res, 200, { ok: true, owner: st.org.owner, org: st.org.name, version: '1.0.0-mock' }); return; }
     if (st.fail[p]) { send(res, st.fail[p].status || 500, { error: st.fail[p].error || 'internal error' }); return; }
     if (p === '/api/org' && m === 'GET') { send(res, 200, orgView()); return; }
@@ -1475,6 +1631,15 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       let n = 0;
       for (const term of st.terms.values()) for (const ws of term.viewers) { ws.terminate(); n += 1; }
       send(res, 200, { dropped: n });
+      return;
+    }
+    // 1.7: the CTO waits on Claude Code's permission prompt for `clawdling send|spawn ...` ({sid, command}).
+    if (p === '/__mock/cto-prompt' && req.method === 'POST') {
+      const body = await readBody(req);
+      const s1 = st.sessions.get(body.sid);
+      if (!s1) { send(res, 404, { error: 'no such session' }); return; }
+      setStatus(s1, 'needs_you', { waiting_on: 'permission_prompt', notification: 'Claude needs your permission to use Bash', choices: permissionChoices('clawdling send'), pending_cmd: body.command });
+      send(res, 204);
       return;
     }
     if (p === '/__mock/dialog' && req.method === 'POST') {
