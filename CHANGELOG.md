@@ -33,10 +33,33 @@ Reviewed in fifteen rounds by Claude (`xhigh`) and sixteen by GPT Codex, then by
 review of US-75 to US-83 on a real run. The claim rules lean to Not verified whenever the record
 cannot tell; known limits are tracked as GitHub issues.
 
-Tests: unit + integration on both backends (tmux 628 passed, pty 629 passed, 0 failed), 167 e2e
+Tests: unit + integration on both backends (tmux 636 passed, pty 637 passed, 0 failed), 187 e2e
 (desktop and phone WebKit), CI green on Ubuntu, macOS and Windows (node 20 and 22). Real run with
 Claude Code 2.1.308 on a public repo: Verified, Not verified and Contradicted where they should be,
 a check-up result 3 minutes 21 seconds after Run, and the live repo byte-identical throughout.
+## 1.5.2 (2026-10-26)
+
+**Two fixes for what a viewer sees first: the org map and the report card.**
+
+- **The org map no longer draws a lone project over "You"** (issue #29). With exactly one project,
+  the map's layout never gave it an angle, so the project, its name and its usage line ("$0.16 ·
+  just now", or "nothing done in 7 days" on a new org) were drawn at the centre, over your own
+  disc. It now sits on the outer ring like any other project. New e2e checks, at 1440 and 390 wide
+  in dark and light, on a new org and a busy one: nothing on the map overlaps your disc.
+- **The report card leads with the outcome, and a tool error along the way is no longer a warning**
+  (issue #31). A session that searched for a file that wasn't there, read one that didn't exist
+  yet, then passed its tests showed amber "2 steps hit an error along the way", and the closing
+  line was cut before "go test ./... passed". Now:
+  - a check result in the agent's closing message (the last sentence that says tests, a build or
+    a lint passed or failed; not a plan, an instruction or a check it did not run) is the row's
+    first line, in the agent's own words and whole up to 300 characters; the rest of the closing
+    line follows it, without repeating it;
+  - the count of tool calls that came back with an error (a search that matched nothing, a
+    permission you declined) reads "2 hiccups along the way", in the same quiet grey as the file
+    count. A failed check still says so in the outcome line, and the Timeline lists each error.
+
+  Sessions already counted before 1.5.2 keep their saved closing line; the outcome line shows for
+  sessions that end from now on.
 
 ## 1.5.1 (2026-10-26)
 

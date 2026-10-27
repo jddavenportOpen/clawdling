@@ -70,6 +70,7 @@ test('Done, Needs you, Cost and the Timeline after one working session; receipts
   const d = r.done[0];
   assert.equal(d.sid, s.sid);
   assert.equal(d.line, 'I added a README section. The test command failed, so the tests need a look.');
+  assert.equal(d.outcome, 'The test command failed, so the tests need a look.', 'the check result the closing message reports');
   assert.equal(d.files_changed, 1);
   assert.equal(d.tool_errors, 1);
   assert.equal(d.live, true);

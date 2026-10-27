@@ -13,9 +13,8 @@ staff you can text, an agent for each area of your life and work, and an agent f
 project. Then it gives you a cockpit where you see the whole thing and open any agent in one
 click, as a real Claude Code session that already knows its job, its history and its tools.
 
-No session caps and no per-agent fees. Every agent is the official `claude` CLI running on the
-Claude plan you already pay for. Clawdling adds no limits of its own: your Claude plan's usage
-limits, and your machine, are the limit.
+No per-agent fees. Every agent is the official `claude` CLI running on the Claude plan you
+already pay for, so your plan's usage limits apply as usual. Clawdling adds no limits of its own.
 
 <!-- Hero: docs/img/demo.gif (keep this path; swap the file for a newer demo GIF any time). -->
 ![Clawdling: the org map and the cockpit, with live sessions and what needs you](docs/img/demo.gif)
@@ -29,8 +28,9 @@ on your own machine.** Open any agent and its Overview answers four questions, f
 ![An agent's report card: Done, Needs you, Cost and Next](docs/img/report-card.png)
 
 - **Done.** Each session that did some work, with the agent's own closing words, how many files
-  it changed and the commits it made in the project's repo. No AI summary on top: just what the
-  agent said and what git recorded.
+  it changed and the commits it made in the project's repo. A check result it reports ("All 24
+  tests pass.") comes first. No AI summary on top: just what the agent said and what git
+  recorded.
 - **Needs you.** Every question, permission, failed turn and finished turn waiting on your reply,
   the same ones the rail counts. One tap opens that session.
 - **Cost.** Usage as a list-price equivalent, by day, by model, and the top sessions. It is not

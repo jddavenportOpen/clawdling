@@ -92,6 +92,36 @@ export function lastLine(text, max = 160) {
   return `${head.slice(0, sp > max * 0.5 ? sp : max - 1)}…`;
 }
 
+// A sentence that says how a check went: it names a check, then a result ("go test ./... passed",
+// "All 12 tests pass", "The build failed"). Plans, instructions, conditions, checks that were not
+// run and work on a check ("I fixed the failing tests") are not results.
+const CHECK_WORD = /\b(tests?|test suite|specs?|checks?|builds?|lint|linter|linting|typecheck|type-check|type check|tsc|ci|pytest|vitest|jest|go test|cargo test|npm test)\b/i;
+const RESULT_WORD = /\b(pass|passes|passed|passing|green|fail|fails|failed|failing|failures?|succeeded|succeeds|ok|clean|broke|broken)\b/i;
+const NOT_A_RESULT = /\b(should|will|would|could|can|may|might|need to|needs to|if|unless|let me|to (?:check|verify|confirm|make sure|see)|(?:didn't|did not|haven't|have not|couldn't|could not|unable to|not) run|without running)\b|^(run|try|please|next|then|fix|add|make|update|ensure|write|create|implement|remove|change)\b/i;
+
+function reportsResult(s) {
+  const c = CHECK_WORD.exec(s);
+  return !!c && !s.endsWith('?') && RESULT_WORD.test(s.slice(c.index + c[0].length)) && !NOT_A_RESULT.test(s);
+}
+
+/**
+ * The outcome in the agent's own last words: the last sentence that reports a check's result,
+ * whole (cut at a word past `max` characters), or null when the message reports none.
+ */
+export function outcomeLine(text, max = 300) {
+  const t = oneLine(String(text || '').replace(/[`*_#>]+/g, ''), 4000).trim();
+  if (!t) return null;
+  const sentences = [];
+  let start = 0;
+  for (const m of t.matchAll(/[\p{L}\p{N})"'\]][.!?](?=\s)/gu)) {
+    sentences.push(t.slice(start, m.index + 2).trim());
+    start = m.index + 2;
+  }
+  if (start < t.length) sentences.push(t.slice(start).trim());
+  const hit = sentences.filter(reportsResult).pop();
+  return hit ? lastLine(hit, max) : null;
+}
+
 function newState(file, ino) {
   return {
     file, ino, offset: 0, rest: Buffer.alloc(0), seq: 0,
@@ -454,6 +484,7 @@ export function summarize({ main, subs }, { prices = PRICES, claimRoots = null }
     commit_times,
     last_line: main.lastText ? lastLine(main.lastText.text) : null,
     claims: claimEvidence({ main, subs }, { roots: claimRoots }),
+    outcome: main.lastText ? outcomeLine(main.lastText.text) : null,
     last_line_at: main.lastText ? new Date(main.lastText.ts ?? main.lastTs ?? Date.now()).toISOString() : null,
     started_at: main.firstTs !== null ? new Date(main.firstTs).toISOString() : null,
     last_at: main.lastTs !== null ? new Date(main.lastTs).toISOString() : null,

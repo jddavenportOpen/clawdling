@@ -179,11 +179,11 @@ export function sourceKey(file) {
 }
 const sameKey = (a, b) => !!a && !!b && ['size', 'mtime_ms', 'subs', 'subs_size', 'subs_mtime'].every((k) => a[k] === b[k]);
 
-const PART_FIELDS = ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents', 'cost', 'days', 'unknown_days', 'commit_times', 'last_line', 'last_line_at', 'started_at', 'last_at', 'format', 'claims'];
+const PART_FIELDS = ['turns', 'tools', 'tool_errors', 'files_changed', 'subagents', 'cost', 'days', 'unknown_days', 'commit_times', 'last_line', 'outcome', 'last_line_at', 'started_at', 'last_at', 'format', 'claims'];
 
 /** The per-file fields a receipt keeps (no prompt text: the last line is the agent's own words). */
 function partOf(s) {
-  if (!s) return { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null, format: { ok: false, issues: ['unreadable'] }, claims: [] };
+  if (!s) return { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, cost: { usd: null, source: 'none', complete: false, unknown_models: [], models: {} }, days: {}, unknown_days: {}, commit_times: [], last_line: null, outcome: null, last_line_at: null, started_at: null, last_at: null, format: { ok: false, issues: ['unreadable'] }, claims: [] };
   return Object.fromEntries(PART_FIELDS.map((k) => [k, s[k] ?? null]));
 }
 
@@ -194,7 +194,7 @@ function legacyPart(r) {
 
 /** A session's figures from its parts. */
 export function mergeParts(parts) {
-  const out = { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, days: {}, unknown_days: {}, commit_times: [], last_line: null, last_line_at: null, started_at: null, last_at: null, claims: [] };
+  const out = { turns: 0, tools: 0, tool_errors: 0, files_changed: 0, subagents: 0, days: {}, unknown_days: {}, commit_times: [], last_line: null, outcome: null, last_line_at: null, started_at: null, last_at: null, claims: [] };
   const cost = { usd: 0, source: null, complete: true, unknown_models: new Set(), models: {} };
   let priced = 0;
   const issues = new Set();
@@ -216,6 +216,7 @@ export function mergeParts(parts) {
     out.claims.push(...(Array.isArray(p.claims) ? p.claims : []));
     if (p.last_line && (!out.last_line_at || String(p.last_line_at || '') >= out.last_line_at)) {
       out.last_line = p.last_line;
+      out.outcome = p.outcome || null; // the result a closing message reports goes with that message
       out.last_line_at = p.last_line_at || out.last_line_at;
     }
     if (p.started_at && (!out.started_at || p.started_at < out.started_at)) out.started_at = p.started_at;
@@ -498,6 +499,7 @@ export class Reports {
         sid: s.sid,
         title: s.title || null,
         line: s.last_line || null,
+        outcome: s.outcome || null,
         files_changed: s.files_changed ?? 0,
         tool_errors: s.tool_errors ?? 0,
         turns: s.turns ?? 0,

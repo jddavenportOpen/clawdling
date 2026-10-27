@@ -1374,6 +1374,7 @@ h3.chat-h { font-size: 16.5px; }
 .rc-when.is-live { color: var(--working-text); }
 .rc-line { color: var(--text-2); font-size: 13px; line-height: 1.45; overflow-wrap: anywhere; }
 .rc-line.is-empty { color: var(--text-3); }
+.rc-outcome { color: var(--text); font-size: 13px; font-weight: 500; line-height: 1.45; overflow-wrap: anywhere; }
 .rc-facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--text-3); }
 .rc-gone { padding: 0 6px; border: 1px dashed var(--line-3); border-radius: 999px; color: var(--text-2); }
 .rc-commits { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; color: var(--text-2); }
@@ -1411,7 +1412,7 @@ h3.chat-h { font-size: 16.5px; }
   .rc-block { padding: 14px; }
   .report-bar .seg { width: 100%; }
   .report-bar .seg-btn { flex: 1; justify-content: center; }
-  .rc-line, .rc-empty, .rc-rows li { font-size: 14px; }
+  .rc-line, .rc-outcome, .rc-empty, .rc-rows li { font-size: 14px; }
 }
 
 /* ---------- session Timeline (pane tab, 1.5) ---------- */

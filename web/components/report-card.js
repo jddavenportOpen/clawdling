@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { useStore } from '../lib/store.js';
 import { api } from '../lib/api.js';
 import { focusSession, navigate } from '../lib/actions.js';
-import { needsYou, isBlocked, sessionName } from '../lib/model.js';
+import { needsYou, isBlocked, sessionName, restLine } from '../lib/model.js';
 import { parseMarkdown } from '../lib/markdown.js';
 import { relTime, longTime, plural, prefersReducedMotion } from '../lib/util.js';
 import { load, save } from '../lib/prefs.js';
@@ -155,11 +155,12 @@ function DoneBlock({ r, win, name, now, agentsById }) {
           <span class=${`rc-when ${d.live ? 'is-live' : ''}`} title=${longTime(d.when)}>${d.live ? 'Still running' : `Ended ${agoText(d.when, now)}`}</span>
           <span class="rc-open" aria-hidden="true"><${Icon} name="chevron-right" size=${12} /></span>
         </span>
-        ${d.line ? html`<span class="rc-line">${d.line}</span>` : html`<span class="rc-line is-empty">It finished without a closing message.</span>`}
+        ${d.outcome ? html`<span class="rc-outcome" data-testid="rc-outcome">${d.outcome}</span>` : null}
+        ${restLine(d.line, d.outcome) ? html`<span class="rc-line">${restLine(d.line, d.outcome)}</span>` : d.outcome ? null : html`<span class="rc-line is-empty">It finished without a closing message.</span>`}
         <span class="rc-facts">
           <span>${plural(d.files_changed, 'file')} changed</span>
           ${d.commits && (d.commits.length || !d.live) ? html`<span>${plural(d.commits.length, 'commit')}</span>` : null}
-          ${d.tool_errors ? html`<span class="tone-amber-text">${plural(d.tool_errors, 'step')} hit an error along the way</span>` : null}
+          ${d.tool_errors ? html`<span data-testid="rc-hiccups" title=${`${plural(d.tool_errors, 'tool call')} came back with an error, like a search that matched nothing or a permission you declined. The Timeline shows each one.`}>${plural(d.tool_errors, 'hiccup')} along the way</span>` : null}
           ${d.claim ? html`<${ClaimPill} claim=${d.claim} />` : null}
           ${d.transcript === 'gone' ? html`<span class="rc-gone" title="Claude Code deleted this session's transcript (its retention cleanup). Clawdling kept its summary.">Transcript gone, kept summary only</span>` : null}
         </span>
