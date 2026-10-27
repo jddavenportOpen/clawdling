@@ -191,3 +191,13 @@ const LIVE_LABEL = {
   auto: 'auto mode', dontAsk: "doesn't ask", bypassPermissions: 'skips permission checks',
 };
 export const liveModeLabel = (mode) => (mode ? LIVE_LABEL[mode] || mode : null);
+
+/**
+ * A done row's closing line without the outcome the row already shows first (the outcome is one
+ * sentence of the same closing message), or null when nothing else is left.
+ */
+export function restLine(line, outcome) {
+  if (!line) return null;
+  const rest = outcome && line.includes(outcome) ? line.replace(outcome, ' ').replace(/\s{2,}/g, ' ').trim() : line;
+  return /[\p{L}\p{N}]/u.test(rest) ? rest : null;
+}

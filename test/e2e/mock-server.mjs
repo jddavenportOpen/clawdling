@@ -251,7 +251,7 @@ const FIXTURES = {
     const hero = fx.sessions.find((s) => s.agent === 'site');
     rep(hero, { line: 'The hero now stacks on phones under 400 px wide; checking Safari next.', files: 3, cost: [1.84], models: { 'claude-opus-5-5': 0.8, 'claude-sonnet-5': 0.2 } });
     const extra = [
-      rep(sess(by, 'site', 'Add the signup form', 'ended', { ended: 3 * HOUR, model: 'opus' }), { line: 'The signup form works: it saves to the waitlist and sends the welcome email. All 24 tests pass.', files: 6, commits: [['Add the signup form with email checks', 3.4 * HOUR], ['Send the welcome email from the waitlist', 3.1 * HOUR]], cost: [0.62, 2.18], models: { 'claude-opus-5-5': 0.85, 'claude-sonnet-5': 0.15 } }),
+      rep(sess(by, 'site', 'Add the signup form', 'ended', { ended: 3 * HOUR, model: 'opus' }), { line: 'The signup form works: it saves to the waitlist and sends the welcome email. All 24 tests pass.', outcome: 'All 24 tests pass.', errors: 2, files: 6, commits: [['Add the signup form with email checks', 3.4 * HOUR], ['Send the welcome email from the waitlist', 3.1 * HOUR]], cost: [0.62, 2.18], models: { 'claude-opus-5-5': 0.85, 'claude-sonnet-5': 0.15 } }),
       rep(sess(by, 'site', 'Speed up the home page', 'ended', { ended: 26 * HOUR }), { line: 'The home page now loads in 1.1 s instead of 3.4 s: images are resized and load as you scroll.', files: 9, errors: 1, commits: [['Resize and lazy-load the hero images', 27 * HOUR]], cost: [0, 0.94, 0, 2.47], models: { 'claude-opus-5-5': 0.7, 'claude-sonnet-5': 0.3 }, tl: 2000 }),
       rep(sess(by, 'site', 'Write the launch checklist', 'ended', { ended: 4 * DAY }), { line: 'The launch checklist is in docs/launch.md: 14 items, 9 done.', files: 1, commits: [['Add the launch checklist', 4 * DAY + HOUR]], cost: [0, 0, 0, 0, 0.96, 0, 1.21], models: { 'claude-sonnet-5': 1 }, gone: true }),
       rep(sess(by, 'health', 'Plan the taper week', 'ended', { ended: 2 * DAY }), { line: 'Taper week planned: three short runs and one rest day.', files: 1, cost: [0, 0, 0.31], models: { 'claude-sonnet-5': 1 } }),
@@ -741,7 +741,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     const w = windowRange(win, now);
     const mine = [...st.sessions.values()].filter((s) => s.agent === a.id && s._rep);
     const done = mine.filter((s) => Date.parse(whenOf(s)) >= w.start).sort((x, y) => whenOf(y).localeCompare(whenOf(x))).map((s) => ({
-      sid: s.sid, title: s.title, line: s._rep.line, files_changed: s._rep.files || 0, tool_errors: s._rep.errors || 0, turns: 3, when: whenOf(s),
+      sid: s.sid, title: s.title, line: s._rep.line, outcome: s._rep.outcome || null, files_changed: s._rep.files || 0, tool_errors: s._rep.errors || 0, turns: 3, when: whenOf(s),
       live: s.status !== 'ended', status: s.status, transcript: s._rep.gone ? 'gone' : 'ok',
       commits: a.repo ? (s._rep.commits || []).map(([subject, ago], i) => ({ hash: `${s.sid.slice(0, 6)}${i}a1b2c`, subject, at: iso(ago) })) : null,
     }));
@@ -1071,6 +1071,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       if (agentById(id)) { send(res, 409, { error: `an agent called "${id}" already exists` }); return; }
       const a = mkAgent(id, kind, name, String(body.mission || '').trim(), { age: 0, repo: body.repo || null, domain: body.domain || null, model: body.model || null, icon: kind === 'project' ? 'folder' : null, color: null });
       a._log = [`${new Date().toISOString().slice(0, 10)} Created ${name}.`];
+      a._nowAge = 0; // like core: its NOW.md is written when it is created
       st.agents.push(a);
       publishOrg('agent_created', id);
       send(res, 201, publicAgent(a));

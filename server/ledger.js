@@ -87,6 +87,30 @@ export function lastLine(text, max = 160) {
   return `${head.slice(0, sp > max * 0.5 ? sp : max - 1)}…`;
 }
 
+// A sentence that says how a check went: it names a check and a result ("go test ./... passed",
+// "All 12 tests pass", "The build failed"). Plans, instructions and conditions are not results.
+const CHECK_WORD = /\b(tests?|test suite|specs?|checks?|builds?|lint|linter|linting|typecheck|type-check|type check|tsc|ci|pytest|vitest|jest|go test|cargo test|npm test)\b/i;
+const RESULT_WORD = /\b(pass|passes|passed|passing|green|fail|fails|failed|failing|failures?|succeeded|succeeds|ok|clean|broke|broken)\b/i;
+const NOT_A_RESULT = /\b(should|will|would|could|can|may|might|need to|needs to|if|unless|let me|to (?:check|verify|confirm|make sure|see))\b|^(run|try|please|next|then)\b/i;
+
+/**
+ * The outcome in the agent's own last words: the last sentence that reports a check's result,
+ * whole (up to `max` characters), or null when the message reports none.
+ */
+export function outcomeLine(text, max = 300) {
+  const t = oneLine(String(text || '').replace(/[`*_#>]+/g, ''), 4000).trim();
+  if (!t) return null;
+  const sentences = [];
+  let start = 0;
+  for (const m of t.matchAll(/[\p{L}\p{N})"'\]][.!?](?=\s)/gu)) {
+    sentences.push(t.slice(start, m.index + 2).trim());
+    start = m.index + 2;
+  }
+  if (start < t.length) sentences.push(t.slice(start).trim());
+  const hit = sentences.filter((s) => !s.endsWith('?') && CHECK_WORD.test(s) && RESULT_WORD.test(s) && !NOT_A_RESULT.test(s)).pop();
+  return hit ? cut(hit, max) : null;
+}
+
 function newState(file, ino) {
   return {
     file, ino, offset: 0, rest: Buffer.alloc(0), seq: 0,
@@ -427,6 +451,7 @@ export function summarize({ main, subs }, { prices = PRICES } = {}) {
     unknown_days,
     commit_times,
     last_line: main.lastText ? lastLine(main.lastText.text) : null,
+    outcome: main.lastText ? outcomeLine(main.lastText.text) : null,
     last_line_at: main.lastText ? new Date(main.lastText.ts ?? main.lastTs ?? Date.now()).toISOString() : null,
     started_at: main.firstTs !== null ? new Date(main.firstTs).toISOString() : null,
     last_at: main.lastTs !== null ? new Date(main.lastTs).toISOString() : null,
