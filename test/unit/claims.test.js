@@ -254,7 +254,9 @@ test('labels: a ship check after the last edit counts, and can turn Not verified
   const v = labelClaim(c, { shipRuns: [run(after, true)] });
   assert.equal(v.label, 'verified');
   assert.equal(v.check.ship, true);
-  assert.equal(labelClaim(c, { shipRuns: [run(after, false)] }).label, 'contradicted');
+  const f = labelClaim(c, { shipRuns: [run(after, false)] });
+  assert.equal(f.label, 'not_verified', 'a failed ship check keeps it Not verified: the copy is not the agent\'s environment');
+  assert.equal(f.unclear, true);
 });
 
 test('labels: the approved checks.yaml commands count as checks for that project', () => {
@@ -445,7 +447,7 @@ test('review 5: a shell edit that fails is still a change; the latest check of e
   const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
   const at = new Date(Date.parse(c.at) + 60000).toISOString();
   const run = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL a', tail: ['FAIL src/a.test.js'] }, { name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: true }] };
-  assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'contradicted', 'a failed ship check never reads Verified');
+  assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'not_verified', 'a failed ship check never reads Verified');
 });
 
 test('review 5: set -e does not stop at a check inside an && list; set -euo pipefail sets pipefail; a cut command is no check', () => {
@@ -476,9 +478,9 @@ test('review 6: a failure stands unless the same check passed after it; ship ste
   const [c] = claimsOf([prompt('x'), edit(), say('Done.')]);
   const at = new Date(Date.parse(c.at) + 60000).toISOString();
   const run = { at, results: [{ name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: false, err1: 'error', tail: ['\u2716 2 problems (2 errors, 0 warnings)'] }, { name: 'typecheck', cmd: 'npm run typecheck', kind: 'lint', ok: true }] };
-  assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'contradicted');
+  assert.equal(labelClaim(c, { shipRuns: [run] }).label, 'not_verified', 'one step\'s pass never cancels another\'s failure');
   const run2 = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, err1: 'FAIL', tail: ['FAIL src/a.test.js'] }, { name: 'e2e', cmd: 'npm run e2e', kind: 'test', ok: true }] };
-  assert.equal(labelClaim({ ...c, kind: 'tests', needs: ['test'] }, { shipRuns: [run2] }).label, 'contradicted');
+  assert.equal(labelClaim({ ...c, kind: 'tests', needs: ['test'] }, { shipRuns: [run2] }).label, 'not_verified');
 });
 
 test('review 6: set -e does not make a check behind && count; selection by position, attached flags; skip flags on every path', () => {
@@ -518,7 +520,7 @@ test('a failure of part of a suite is settled only by a passing ship check; a pa
   const [a] = claimsOf([prompt('x'), edit(), bash('npx jest src/cart.test.js', 'Exit code 1\nFAIL src/cart.test.js', true), bash('npx jest', 'Tests: 12 passed, 12 total'), say('Done. All tests pass.')]);
   assert.equal(labelClaim(a).label, 'not_verified', 'what the whole run covered cannot be told from the record');
   const at = new Date(Date.parse(a.at) + 60000).toISOString();
-  assert.equal(labelClaim(a, { shipRuns: [{ at, results: [{ name: 'tests', cmd: 'npx jest', kind: 'test', ok: true }] }] }).label, 'verified', 'a passing ship check settles it');
+  assert.equal(labelClaim(a, { shipRuns: [{ at, results: [{ name: 'tests', cmd: 'npx jest', kind: 'test', ok: true }] }] }).label, 'not_verified', 'a ship check pass never overrides the session\'s own failure');
   const [b] = claimsOf([prompt('x'), edit(), bash('npx jest', 'Exit code 1\nFAIL src/cart.test.js\nTests: 1 failed, 11 passed', true), bash('npx jest src/cart.test.js', 'Tests: 3 passed, 3 total'), say('Done. All tests pass.')]);
   assert.equal(labelClaim(b).label, 'contradicted', 'a part passing never covers the whole suite failing');
 });
@@ -550,9 +552,15 @@ test('review 8: a canonical run\'s exit code decides; a ship run settles only th
   const [b] = claimsOf([prompt('x'), edit(), bash('npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done.')]);
   const at = new Date(Date.parse(b.at) + 60000).toISOString();
   const lintOnly = { at, results: [{ name: 'lint', cmd: 'npm run lint', kind: 'lint', ok: true }, { name: 'build', cmd: 'npm run build', kind: 'build', ok: true }] };
-  assert.equal(labelClaim(b, { shipRuns: [lintOnly] }).label, 'contradicted', 'a lint-and-build run does not settle a failed test');
+  assert.equal(labelClaim(b, { shipRuns: [lintOnly] }).label, 'contradicted', 'a lint-and-build run does not touch a failed test');
   const withTests = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: true }] };
-  assert.equal(labelClaim(b, { shipRuns: [withTests] }).label, 'verified');
+  assert.equal(labelClaim(b, { shipRuns: [withTests] }).label, 'not_verified', 'the session failed, the ship check passed: they disagree');
+  const failedShip = { at, results: [{ name: 'tests', cmd: 'npm test', kind: 'test', ok: false, tail: ['FAIL a'] }] };
+  const later = new Date(Date.parse(at) + 60000).toISOString();
+  const [s] = claimsOf([prompt('x'), edit(), say('Done.')]);
+  const sAt = new Date(Date.parse(s.at) + 60000).toISOString();
+  assert.equal(labelClaim(s, { shipRuns: [{ ...failedShip, at: sAt }, { ...withTests, at: new Date(Date.parse(sAt) + 60000).toISOString() }] }).label, 'verified', 'a later ship pass settles an earlier ship failure');
+  assert.ok(later);
   for (const cmd of ['npx tsc -v', 'npx eslint -v', 'npx jest -v', 'npm test -v', 'make test -q', 'make test -i', 'go test', 'go test .']) assert.equal(canonical(cmd), null, cmd);
   for (const cmd of ['pytest -v', 'go test -v ./...', 'cargo test --workspace']) assert.ok(canonical(cmd), cmd);
   assert.notEqual(canonical('cd packages/api && npm test').id, canonical('cd ../web && npm test').id);
@@ -709,4 +717,20 @@ test('review 12: background scripts, find -exec, fixing checks and MCP edits end
   const approved = [{ name: 'tests', run: 'pytest -q' }];
   const [p] = claimsOf([prompt('x'), edit(), bash('pytest', 'Exit code 1\n1 failed', true), bash('pytest -q', '5 passed'), say('Done.')]);
   assert.equal(labelClaim(p, { approved }).label, 'verified', 'the approved command\'s own harmless flags are not its identity');
+});
+
+test('review 13: --version on a script, writing modes of read-only tools, commits with hooks, -- in ids, sub-scripts', () => {
+  for (const cmd of ['./scripts/bump.sh --version 1.4.0', 'node scripts/codegen.js -h localhost:4000', 'sort -o a.txt a.txt', 'uniq in.txt out.txt', 'xxd -r in.hex out.bin', "awk '{ print > \"out.txt\" }' in.txt", 'gawk -i inplace "{print}" a.txt', 'find . -fls out.txt']) {
+    const [c] = claimsOf([prompt('x'), edit(), bash('npm test'), bash(cmd, ''), say('Done.')]);
+    assert.equal(labelClaim(c).label, 'not_verified', cmd);
+  }
+  const [k] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('git commit -m "fix"', ''), say('Done.')]);
+  assert.equal(labelClaim(k).label, 'verified', 'no hooks: a commit changes no files');
+  assert.equal(labelClaim(k, { commitHooks: true }).label, 'not_verified', 'with hooks (husky, lint-staged), a commit may fix files');
+  const [k2] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('git commit --no-verify -m "fix"', ''), say('Done.')]);
+  assert.equal(labelClaim(k2, { commitHooks: true }).label, 'verified');
+  const approved = [{ name: 'tests', run: 'npm test -- --ci' }];
+  assert.equal(canonical('npm test -- --ci', { approved }).id, canonical('npm test').id);
+  for (const cmd of ['npm run lint:css', 'npm run build:docs']) assert.equal(canonical(cmd), null, cmd);
+  for (const cmd of ['npm run lint', 'npm run build']) assert.ok(canonical(cmd), cmd);
 });

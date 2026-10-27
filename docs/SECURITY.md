@@ -435,6 +435,12 @@ To limit the damage a hostile script could do:
   are kept, for 90 days, in `.clawdling/checks/<agent>/`. Scratch worktrees in use are
   listed in `.clawdling/checks/active.json`, and Clawdling removes any a crash left behind when it
   starts.
+- **One way.** A ship check's pass can verify a claim the session left unchecked; its failure only
+  keeps claims Not verified. The copy has no `.env` and a scrubbed environment, so a failure there
+  may be the copy's, not the work's: it never marks a claim Contradicted or sends the agent after it.
+- **The shell itself.** On Windows the steps run through PowerShell by its full path
+  (`%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`), so a `powershell.exe`
+  committed to the repo is never run instead.
 - **Never automatic.** A ship check runs only when you press Run (or run `clawdling check`); it never
   runs on its own when a session ends.
 

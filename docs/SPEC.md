@@ -500,45 +500,45 @@ check-ups (on demand, on the plan, capped) and Try a cheaper model. Security: SE
   the stack's detected test/build/lint commands, or the generic list (`npm test`, `pnpm test`,
   `yarn test`, `pytest`, `go test`, `cargo test`, `make test`, `make check`, `npm run build`,
   `tsc`, `ruff`, `eslint`, and their usual wrappers: `npx`, `uv run`, `python -m`, `cd x &&`).
-  Only a **canonical run** can verify or contradict (added in review, after seven rounds of edge
-  cases on arbitrary shell lines): one command, after optional `cd x &&`, `export` or `VAR=value`
-  steps (only variables known not to change what runs: `CI`, `NO_COLOR`, `NODE_ENV`...) and a
-  trailing `2>&1`; it is
-  an approved or detected command, or a standard runner (`npm test`, `pytest`, `go test ./...`,
-  `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with only harmless extra flags (long
-  flags such as `--ci`, `--verbose`, `--noEmit`; short ones only where they mean verbose or quiet
-  for that runner: `pytest -q`, `go test -v`). It passes on exit 0 with no failure marks; it fails
-  only on a visible non-zero exit together with output showing checks that ran and failed (a
-  runner's failure lines and counts, or compile errors). A missing script, a runner that never
-  started, no tests found or a cut-off run is only a possible failure: Not verified, never
-  Contradicted. A ship-check run whose failed steps show no such output (no packages in the copy,
-  a timeout) could not check anything: it is shown so and is not evidence. Its identity is its command in one spelling (`npm t` is `npm test`),
-  where it ran (`cd packages/api &&`) and its scope flags (`--workspace`, `-p api`). Formatter runs
-  (`npm run format`, `make fmt`, `dart format .`) are changes, not checks, and so are bulk shell
-  edits (`xargs sed -i`, `find -exec`/`-delete`, inline interpreter code that writes, fixers behind
-  `uv run`/`python -m`, `--fix` passed to a script, writes run in the background). A test sub-script
-  (`npm run test:unit`, `npm run e2e`, `make test-unit`) is a named part of the suite: a selection.
-  After a check, any command not known to leave files alone (a script, a code generator, `go mod
-  tidy`; known-safe: read-only tools, `git add/commit/push`, recognized checks without a fixing flag)
-  ends what the checks before it say: a pass no longer counts, a failure is only possible. A runner
-  that never started (exit 126/127, "command not found", "No module named") or found no tests is no
-  check; a pass of the same runner under another spelling (`python3 -m pytest` after `pytest`) makes
-  an earlier failure only possible. A completion claim is **no_changes** only when no edit and no
-  such unknown command ran. Any other recognized
-  check that shows a failure (a non-zero exit, an error, or failure marks: piped, chained, `|| true`,
-  a file or name argument, a selection or skip flag, exit 0 with failure marks, a timeout) keeps the
-  claim at **not_verified**: the record cannot tell whose failure it is or what the run covered. A
-  failure stands unless something after it settles it: a canonical pass of the same check, or a
-  passing ship-check run with a step of each kind the failure could be. Each ship-check run after the
-  claim (before the session's next change, within 24 hours) is one check that passed only when
-  every step passed. **contradicted** when a canonical failure (or a failed ship-check run)
-  stands; **not_verified** when any other failure stands, or there is no check (the default);
-  **verified** when nothing stands and a canonical pass or a passing ship-check run exists; a
-  `tests` claim needs one of each kind it names; a completion claim with no edit is
-  **no_changes**. A command cut at 1,000 characters is no check and counts as a change; with more
-  than 200 shell commands after the last edit, the session alone cannot verify. Ship-check runs
-  that left anything out (new files git does not track, submodules, filtered files) are not
-  evidence.
+  Only a **canonical run** from the session can verify or contradict (added in review, after
+  thirteen rounds of edge cases on arbitrary shell lines): one command, after optional `cd x &&`,
+  `export` or `VAR=value` steps (only variables known not to change what runs: `CI`, `NO_COLOR`,
+  `NODE_ENV`...) and a trailing `2>&1`; an approved or detected command, or a standard runner (`npm
+  test`, `pytest`, `go test ./...`, `cargo test`, `eslint .`, `tsc --noEmit`, `ruff check .`), with
+  only harmless extra flags (long flags such as `--ci`, `--verbose`, `--noEmit`; short ones only
+  where they mean verbose or quiet for that runner: `pytest -q`, `go test -v`). It passes on exit 0
+  with no failure marks; it fails only on a visible non-zero exit together with output showing
+  checks that ran and failed (a runner's failure lines and counts, or compile errors). Its identity
+  is its command in one spelling (`npm t` is `npm test`), where it ran (`cd packages/api &&`) and its
+  scope flags (`--workspace`, `-p api`). A sub-script (`npm run test:unit`, `npm run lint:css`,
+  `make test-unit`) is a named part of the check: a selection.
+  Any other recognized check that shows a failure (piped, chained, `|| true`, a file or name
+  argument, a selection or skip flag, exit 0 with failure marks, a timeout, a missing script, a
+  runner that never started, no tests found) is a **possible failure**: it keeps the claim at
+  **not_verified** (the record cannot tell whose failure it is or what the run covered), never
+  Contradicted. Formatter runs and bulk shell edits (`npm run format`, `make fmt`, `xargs sed -i`,
+  `find -exec`/`-delete`, inline interpreter code that writes, fixers behind `uv run`/`python -m`,
+  `--fix` passed to a script, writes run in the background) are changes. After a check, any command
+  not known to leave files alone (a script, a code generator, `go mod tidy`, an MCP tool that
+  writes, `git commit` in a repo with commit hooks; known-safe: read-only tools, `git add/commit/push`
+  without hooks, recognized checks without a fixing flag) ends what the checks before it say: a pass
+  no longer counts, a failure is only possible. A pass of the same runner under another spelling
+  (`python3 -m pytest` after `pytest`) makes an earlier failure only possible.
+  **Ship-check runs speak one way** (the scratch copy is not the agent's environment: no `.env`, no
+  secrets, packages only if a setup step installs them): each run after the claim (before the
+  session's next change, within 24 hours) is one check that passed only when every step passed. A
+  pass can verify a claim the session left unchecked; a failure is a possible failure (never
+  Contradicted, never discarded); a pass never overrides the session's own failure (a later pass of
+  every kind settles only an earlier ship-check failure, and a session failure with a ship pass after
+  it becomes only possible). Runs that left anything out (new files git does not track, submodules,
+  filtered files) or were cut short are not evidence.
+  A failure stands unless a canonical session pass of the same check settles it. **contradicted**
+  when a canonical session failure stands; **not_verified** when any other failure stands, or there
+  is no check (the default); **verified** when nothing stands and a canonical pass or a passing
+  ship-check run exists; a `tests` claim needs one of each kind it names; a completion claim is
+  **no_changes** only when no edit and no unknown command ran. A command cut at 1,000 characters is
+  no check and counts as a change; with more than 200 shell commands after the last edit, the
+  session alone cannot verify.
 - `GET /api/sessions/:sid/claims` → `{claims[{at, kind, needs, phrase, label, check{cmd, at, ok,
   first_error_line, ship?}, badge, fix?}]}`; `fix` (the last claim, when contradicted) is the one
   message "Ask the agent to fix it" sends: ``Your last check failed: `<command>` → `<first error

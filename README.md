@@ -79,7 +79,9 @@ instant. To get more receipts:
 - **A ship check per project.** Pick, once, the commands that prove the project works (tests,
   build, lint); Clawdling shows each one exactly, with what it does, and runs only what you ticked.
   Press Run (or `clawdling check <agent>`) and they run in a scratch copy of the repo, never in the
-  live one. A pass after the agent's last change turns "Not verified" into "Verified".
+  live one. A pass after the agent's last change turns "Not verified" into "Verified"; a failure
+  keeps a claim Not verified (the copy has no `.env` or secrets, so it never marks a claim
+  Contradicted on its own).
 - **Agent check-ups.** Five questions drafted from the agent's own CLAUDE.md and NOW.md: does it
   know its job, its next step, what is not its job, its house rules, its last handoff? You read and
   edit them first; each run uses the agent's real folder and memory (in a scratch copy) on your

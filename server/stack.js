@@ -552,3 +552,25 @@ function clean(s) {
     .replace(/\s+/g, ' ')
     .trim();
 }
+
+/**
+ * Does `git commit` in this repo run hooks that may change files (husky, lint-staged, pre-commit,
+ * lefthook, a pre-commit script)? Read from the repo's files; nothing is run.
+ */
+export function commitHooks(repo) {
+  const has = (f) => {
+    try {
+      fs.statSync(path.join(repo, f));
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  if (['.husky', '.pre-commit-config.yaml', 'lefthook.yml', 'lefthook.yaml', '.lefthook.yml', '.git/hooks/pre-commit', '.simple-git-hooks.json', '.lintstagedrc', '.lintstagedrc.json'].some(has)) return true;
+  try {
+    const pkg = JSON.parse(fs.readFileSync(path.join(repo, 'package.json'), 'utf8'));
+    return !!(pkg && (pkg['lint-staged'] || pkg['simple-git-hooks'] || pkg.husky || (pkg.devDependencies && (pkg.devDependencies.husky || pkg.devDependencies['lint-staged']))));
+  } catch {
+    return false;
+  }
+}

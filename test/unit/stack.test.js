@@ -301,3 +301,16 @@ test('other test scripts (test:smoke, e2e:ci) are named too, but not watch modes
     rmrf(dir);
   }
 });
+
+test('commitHooks: husky, lint-staged and pre-commit are seen from the repo\'s files', async () => {
+  const { commitHooks } = await import('../../server/stack.js');
+  const os = await import('node:os');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'clawdling-hooks-'));
+  assert.equal(commitHooks(d), false);
+  fs.writeFileSync(path.join(d, 'package.json'), JSON.stringify({ devDependencies: { husky: '9' } }));
+  assert.equal(commitHooks(d), true);
+  fs.rmSync(path.join(d, 'package.json'));
+  fs.writeFileSync(path.join(d, '.pre-commit-config.yaml'), 'repos: []\n');
+  assert.equal(commitHooks(d), true);
+  fs.rmSync(d, { recursive: true, force: true });
+});

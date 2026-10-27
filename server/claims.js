@@ -503,7 +503,7 @@ function programWrites(w0, raw = '', depth = 0) {
   }
   // find deletes, or runs a program on each file it finds.
   if (h === 'find') {
-    if (w.includes('-delete')) return true;
+    if (w.includes('-delete') || w.some((x) => /^-f(print|print0|ls|printf)$/.test(x))) return true;
     const e = w.findIndex((x) => /^-(exec|execdir|ok|okdir)$/.test(x));
     if (e !== -1) {
       const end = w.findIndex((x, j) => j > e && (x === ';' || x === '\\;' || x === '+'));
@@ -512,6 +512,9 @@ function programWrites(w0, raw = '', depth = 0) {
     return false;
   }
   if (WRITE_PROGRAMS.has(h)) return true;
+  // Read-only tools with a writing mode.
+  if ((h === 'sort' && w.some((x) => x === '-o' || x.startsWith('--output'))) || (h === 'uniq' && w.slice(1).filter((x) => !x.startsWith('-')).length >= 2) || (h === 'xxd' && w.includes('-r') && w.slice(1).filter((x) => !x.startsWith('-')).length >= 2) || (h === 'tree' && w.includes('-o'))) return true;
+  if ((h === 'awk' || h === 'gawk') && (w.some((x, j) => x === '-i' && w[j + 1] === 'inplace') || /system\s*\(|print[^|]*>/.test(raw))) return true;
   // Any tool asked to fix or write (`cargo clippy --fix`, `rubocop -A`, `golangci-lint run --fix`).
   if (w.some((x) => /^--(fix|write|apply|autocorrect|autocorrect-all|fix-only|unsafe-fixes)$/.test(x)) || (h === 'rubocop' && w.some((x) => x === '-a' || x === '-A'))) return true;
   // PowerShell's writing cmdlets and their aliases (any case), and .NET file writes.
@@ -810,7 +813,7 @@ function outcome(c, masked, chained = false, preceded = false, cut = false, late
  * [{at, results: [{name, cmd, kind, ok, tail}]}]; one that ran after the last change counts as a check
  * too. Returns {label, check: {cmd, at, ok, first_error_line, ship?}|null, needs}.
  */
-export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = {}) {
+export function labelClaim(c, { approved = [], detected = [], shipRuns = [], commitHooks = false } = {}) {
   if (!c || typeof c !== 'object') return { label: 'not_verified', check: null };
   if (c.kind === 'completion' && !(c.edits > 0)) return c.maybe_changes > 0 ? { label: 'not_verified', check: null } : { label: 'no_changes', check: null };
   const since = c.last_edit_at ? Date.parse(c.last_edit_at) : -Infinity;
@@ -826,7 +829,7 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
   // Any command after a check that is not known to leave files alone (a script, a codegen, `cargo
   // clippy --fix`) may have changed the work: checks before it no longer speak for the claim.
   let fence = c.tool_fence_at ? Date.parse(c.tool_fence_at) || -Infinity : -Infinity;
-  for (const x of Array.isArray(c.cmds) ? c.cmds : []) if (!x.cut && !knownSafe(x.cmd, { approved, detected })) fence = Math.max(fence, Date.parse(x.at) || 0);
+  for (const x of Array.isArray(c.cmds) ? c.cmds : []) if (!x.cut && !knownSafe(x.cmd, { approved, detected, commitHooks })) fence = Math.max(fence, Date.parse(x.at) || 0);
   const checks = [];
   if (c.cmds_dropped) checks.push({ kinds: ['check'], id: null, canonical: false, ok: false, at: c.last_edit_at || c.at, cmd: '(older commands)', first_error_line: null });
   for (const x of Array.isArray(c.cmds) ? c.cmds : []) {
@@ -863,38 +866,40 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [] } = 
       checks.push({ kinds: lineKinds(x.cmd, { approved, detected }), id: null, canonical: false, ok: false, cmd: x.cmd, at: x.at, first_error_line: first });
     }
   }
-  // Each ship-check run after the claim is one check: it passed only when every step passed. A
-  // passing run (the whole approved list, on a snapshot of the work) settles everything before it.
+  // Each ship-check run after the claim is one check: it passed only when every step passed. The
+  // scratch copy is not the agent's environment (no packages unless a setup step installed them, no
+  // .env, no secrets), so a ship check speaks one way only: a pass can verify a claim the session
+  // left unchecked; a failure keeps it Not verified (never Contradicted, never discarded), and a pass
+  // never overrides the session's own failures (tests skipped for a missing variable pass too).
   for (const r of Array.isArray(shipRuns) ? shipRuns : []) {
     const t = Date.parse(r.at || r.started_at || '');
     if (!Number.isFinite(t) || !(t > shipFrom) || !(t < shipTo)) continue;
     const steps = (Array.isArray(r.results) ? r.results : []).filter((x) => !x.setup);
     if (!steps.length) continue;
-    // A failed step counts only when its output shows checks that ran and failed: a step that could
-    // not start in the copy (no node_modules, no venv) or timed out says nothing about the work.
     const failed = steps.filter((x) => x.ok !== true);
-    const evidenced = failed.filter((x) => !x.timed_out && checkFailed((Array.isArray(x.tail) ? x.tail : []).join('\n')));
-    if (failed.length && !evidenced.length) continue;
-    const bad = evidenced[0];
-    checks.push({ ship: true, kinds: steps.map((x) => x.kind || 'check'), failedKinds: evidenced.map((x) => x.kind || 'check'), canonical: true, ok: !bad, cmd: bad ? bad.cmd : steps[steps.length - 1].cmd, at: new Date(t).toISOString(), first_error_line: bad ? bad.err1 || null : null });
+    const bad = failed[0];
+    checks.push({ ship: true, kinds: steps.map((x) => x.kind || 'check'), failedKinds: failed.map((x) => x.kind || 'check'), canonical: false, ok: !bad, cmd: bad ? bad.cmd : steps[steps.length - 1].cmd, at: new Date(t).toISOString(), first_error_line: bad ? bad.err1 || null : null });
   }
   checks.sort((a, b) => Date.parse(a.at) - Date.parse(b.at));
   const needs = c.kind === 'tests' && Array.isArray(c.needs) && c.needs.length ? c.needs : null;
   // A canonical check counts for the claim's kinds; a failure whose owner cannot be told counts
   // against every claim.
   // (A failure of a general check, `make ci`, counts against a tests claim: it may be a test.)
-  const counts = (x) => !needs || !x.canonical || (x.ship ? (x.ok ? x.kinds : x.failedKinds).some((k) => needs.includes(k) || (!x.ok && k === 'check' && needs.includes('test'))) : needs.includes(x.kind) || (!x.ok && x.kind === 'check' && needs.includes('test')));
-  // A failure stands unless something after it settles it: a canonical pass of the same check (the
-  // same command and scope, whatever harmless flags), or a passing ship-check run with a step of
-  // every kind the failure could be (a failure of unknown kind needs a run with a test step). A lint
-  // pass never settles a failed typecheck; a pass of part of a suite never settles anything.
-  const shipCovers = (p, f) => (f.ship ? f.failedKinds : f.kinds || [f.kind]).every((k) => (k === 'check' ? p.kinds.includes('test') : p.kinds.includes(k)));
-  const settles = (p, f) => p.ok && ((p.ship && shipCovers(p, f)) || (p.canonical && !p.ship && f.canonical && !f.ship && p.id !== null && p.id === f.id));
+  const counts = (x) => !needs || (x.ship ? (x.ok ? x.kinds : x.failedKinds).some((k) => needs.includes(k) || (!x.ok && k === 'check' && needs.includes('test'))) : !x.canonical || needs.includes(x.kind) || (!x.ok && x.kind === 'check' && needs.includes('test')));
+  // A failure stands unless something after it settles it: a canonical session pass of the same
+  // check (the same command and scope, whatever harmless flags) settles a canonical session failure;
+  // a passing ship-check run with a step of every kind settles only an earlier ship-check failure.
+  // A lint pass never settles a failed typecheck; a pass of part of a suite never settles anything.
+  const shipCovers = (p, f) => f.failedKinds.every((k) => (k === 'check' ? p.kinds.includes('test') : p.kinds.includes(k)));
+  const settles = (p, f) => p.ok && ((p.ship && f.ship && shipCovers(p, f)) || (p.canonical && !p.ship && f.canonical && !f.ship && p.id !== null && p.id === f.id));
   for (let i = 0; i < checks.length; i++) {
     const f = checks[i];
     if (!f.ok && f.canonical && !f.ship && checks.some((p, j) => j > i && p.ok && p.canonical && !p.ship && p.rid && p.rid === f.rid && p.id !== f.id)) f.canonical = false;
   }
   const standing = checks.filter((f, i) => !f.ok && counts(f) && !checks.some((p, j) => j > i && settles(p, f)));
+  // The session's own failure, with a ship-check pass after it: the two disagree (an environment
+  // difference, a flaky test). Not verified, never Contradicted, never Verified.
+  for (const f of standing) if (f.canonical && !f.ship && checks.some((p) => p.ship && p.ok && Date.parse(p.at) >= Date.parse(f.at) && (p.kinds.includes(f.kind) || (f.kind === 'check' && p.kinds.includes('test'))))) f.canonical = false;
   const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: x.first_error_line || null, ...(x.ship ? { ship: true } : {}) } : null);
   const canonFail = standing.filter((x) => x.canonical).pop();
   if (canonFail) return { label: 'contradicted', check: strip(canonFail) };
@@ -967,7 +972,7 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   // means the failure may have been the spelling's (a missing venv), not the code's.
   const scope = (extra) => extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x));
   const rkey = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, (unwrap(words(String(what))) || []).join(' '), ...scope(extra)].filter(Boolean).join(' ');
-  const bare = (what) => normId(what).split(' ').filter((x) => !HARMLESS.test(x) && !Object.values(SHORT_HARMLESS).some((l) => l.includes(x))).join(' ');
+  const bare = (what) => normId(what).split(' ').filter((x) => x !== '--' && !HARMLESS.test(x) && !Object.values(SHORT_HARMLESS).some((l) => l.includes(x))).join(' ');
   const ident = (what, extra) => [dirs.length ? `in ${dirs.join('/')}` : null, bare(what), ...extra.filter((x, j) => SCOPE_FLAG.test(x) || ((extra[j - 1] === '-p' || extra[j - 1] === '--package') && !x.startsWith('-'))).map((x) => (x === '--all' ? '--workspace' : x))].filter(Boolean).join(' ');
   // Only variables known not to change what runs (`CI=1`, `NO_COLOR=1`); any other (`PYTEST_ADDOPTS`,
   // `GOFLAGS`, `TEST=...` for rake, `TESTS=...` for make) may select tests: not the whole run.
@@ -996,8 +1001,9 @@ export function canonical(cmd, { approved = [], detected = [] } = {}) {
   if (kind === 'test' && ['make', 'gmake', 'just', 'task', 'mage'].includes(a[0]) && !['test', 'tests', 'check'].includes(a[1])) return null;
   // node: every flag can select (`node --test-name-pattern=cart --test`).
   if (a[0] === 'node' && a.slice(1).some((x) => x !== '--test' && !HARMLESS.test(x))) return null;
-  // A test sub-script (`npm run test:unit`, `npm run e2e`) is a named part of the suite: a selection.
-  if (kind === 'test' && subScript(a)) return null;
+  // A sub-script (`npm run test:unit`, `npm run lint:css`, `npm run build:docs`) is a named part of
+  // the check: a selection (unless approved or detected, above).
+  if (subScript(a) && !/^(lint|build|typecheck|type-check|types|check|tsc)$/.test(a[1] === 'run' || a[1] === 'run-script' ? a[2] : a[1])) return null;
   // go test/vet/build: only ./... is the whole module (`go test` alone tests one package).
   if (a[0] === 'go' && !extra.includes('./...')) return null;
   if (!harmlessFor(a[0])(extra)) return null;
@@ -1046,7 +1052,7 @@ const GIT_SAFE = new Set(['status', 'log', 'diff', 'show', 'branch', 'rev-parse'
  * Is this shell line known to leave files alone? Read-only programs, git's look/record commands,
  * recognized checks run without a fixing flag. Anything else may have changed the work.
  */
-export function knownSafe(cmd, { approved = [], detected = [] } = {}) {
+export function knownSafe(cmd, { approved = [], detected = [], commitHooks = false } = {}) {
   if (writesFiles(cmd).writes) return false;
   for (const sg of segments(String(cmd))) {
     const w = words(sg.raw);
@@ -1054,6 +1060,9 @@ export function knownSafe(cmd, { approved = [], detected = [] } = {}) {
     const u = unwrap(w);
     if (!u) continue; // command -v: only looks a program up
     const h = u[0].replace(/^.*[\\/]/, '');
+    // (git commit runs the repo's pre-commit hooks, which may fix files: safe only without hooks, or
+    // with --no-verify.)
+    if (h === 'git' && u[1] === 'commit' && commitHooks && !u.includes('--no-verify') && !u.includes('-n')) return false;
     if (h === 'git' && GIT_SAFE.has(u[1]) && !(u[1] === 'config' && u.length > 3) && !(u[1] === 'branch' && u.some((x) => /^-[dDmM]$/.test(x)))) continue;
     // Tools that only report (or act elsewhere, never on the files here).
     if (h === 'gh' && !/^(checkout|clone|download|install|extension)$/.test(u[2] || '') && u[1] !== 'repo' ? true : h === 'gh' && u[1] === 'repo' && /^(view|list)$/.test(u[2] || '')) continue;
@@ -1064,7 +1073,8 @@ export function knownSafe(cmd, { approved = [], detected = [] } = {}) {
     if (h === 'curl' && !u.some((x) => /^(-o|-O|--output|--remote-name|-D|--dump-header)$/.test(x) || /^-[a-zA-Z]*[oO]/.test(x))) continue;
     if (h === 'find' && !u.some((x) => /^-(delete|exec|execdir|ok|okdir|fprint)/.test(x))) continue;
     if (SAFE_PROGRAMS.has(h) && h !== 'find') continue;
-    if (runsNothing(w)) continue;
+    // `--version` or `-h` alone: only looks (on an arbitrary script, `--version 1.4.0` may write).
+    if (runsNothing(w) && (w.length === 2 || checkOf(sg.raw, { approved, detected }))) continue;
     // A check is safe only when nothing says it fixes: its name (`lint:fix`, `make lint-fix`), its
     // flags (`ktlint -F`, `swiftlint autocorrect`), or its detected script (`"lint": "eslint . --fix"`).
     const fixes = u.some((x) => /(^|[:_-])(fix|autofix|format|fmt|write|autocorrect)([:_-]|$)/i.test(x) || x === '-F' || /^--auto-?correct/.test(x)) || detected.some((d) => d && d.kind === 'format' && sg.raw.trim().startsWith(String(d.cmd || '\0')));

@@ -81,7 +81,7 @@ import { Reports } from './report.js';
 import { Checks } from './checks.js';
 import { Evals, parseCells } from './evals/runner.js';
 import { fixMessage } from './claims.js';
-import { detectStack } from './stack.js';
+import { commitHooks, detectStack } from './stack.js';
 import { Digest } from './digest.js';
 import { KINDS as OTLP_KINDS, INGEST_MAX_BYTES, OtelState, RateLimit, SECRET_HEADER, TraceStore, enrich, envBlock, normalize, preflight, sessionHeaders } from './otel.js';
 import { Accounts } from './accounts.js';
@@ -450,16 +450,18 @@ export async function startServer(opts = {}) {
       const a = org.agent(agentId);
       if (!a) return {};
       let detected = [];
+      let hooks = false;
       if (a.repo) {
         const hit = stackCache.get(a.repo);
-        if (hit && Date.now() - hit.at < 60000) detected = hit.commands;
+        if (hit && Date.now() - hit.at < 60000) ({ commands: detected, hooks } = hit);
         else {
           try {
             detected = detectStack(a.repo).commands;
           } catch {
             detected = [];
           }
-          stackCache.set(a.repo, { at: Date.now(), commands: detected });
+          hooks = commitHooks(a.repo);
+          stackCache.set(a.repo, { at: Date.now(), commands: detected, hooks });
         }
       }
       let approved = [];
@@ -471,7 +473,7 @@ export async function startServer(opts = {}) {
       } catch {
         // no ship check
       }
-      return { approved, detected, shipRuns };
+      return { approved, detected, shipRuns, commitHooks: hooks };
     };
     reports.verifyInfo = (agentId) => {
       const a = org.agent(agentId);

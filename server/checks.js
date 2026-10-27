@@ -18,7 +18,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { checkFailed, firstErrorLine, wordsKind, words } from './claims.js';
+import { firstErrorLine, wordsKind, words } from './claims.js';
 import { killTree } from './channels/donna.js';
 import { readEnvFile } from './envfile.js';
 import { childEnv } from './paths.js';
@@ -592,7 +592,8 @@ export class Checks {
 
   /** The command line for the platform shell. */
   shell(cmd) {
-    if (this.platform === 'win32') return { file: 'powershell.exe', args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd] };
+    // By full path: a bare name would let a powershell.exe committed to the repo run instead.
+    if (this.platform === 'win32') return { file: path.join(this.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'), args: ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', cmd] };
     return { file: '/bin/sh', args: ['-c', cmd] };
   }
 
@@ -750,7 +751,7 @@ export class Checks {
       results,
       // Every failed step failed without showing checks that ran (no node_modules in the copy, a
       // runner not found, a timeout): this run could not check anything.
-      could_not_run: results.some((r) => !r.setup && !r.ok) && results.filter((r) => !r.setup && !r.ok).every((r) => r.timed_out || !checkFailed(r.tail.join('\n'))),
+      could_not_run: results.some((r) => !r.setup && !r.ok) && results.filter((r) => !r.setup && !r.ok).every((r) => r.timed_out || r.exit === 126 || r.exit === 127 || /command not found|: not found|is not recognized as an internal or external command|Missing script|ENOENT|No such file or directory/i.test(r.tail.join('\n'))),
       untracked: leftOut.untracked,
       submodules: leftOut.submodules,
       filtered: leftOut.filtered,
