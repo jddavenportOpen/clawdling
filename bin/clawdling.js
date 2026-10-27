@@ -49,7 +49,7 @@ Usage:
                                             make a project agent per project (prints the plan
                                             until you add --yes; never writes into your repos)
   clawdling ls [--all] [--json]             list sessions
-  clawdling report [agent] [--window today|7d|30d] [--json]
+  clawdling report [agent|--all] [--window today|7d|30d] [--json]
                                             the report card: what got done, what needs you, what it
                                             used (a list-price equivalent, not a bill), what is next
   clawdling check <agent> [--json]          run the project's approved ship check (set up in the
@@ -613,6 +613,21 @@ async function cmdReport(args) {
   const win = args.flags.window || '7d';
   const id = args._[1];
   const q = `?window=${encodeURIComponent(win)}`;
+  // The whole org for the CTO seat (1.7): computed status, reasons and receipt ids, schema 2.
+  if (args.flags.all) {
+    if (id) throw new CliError('--all reports on every agent: leave out the agent name');
+    const r = await api(ctx, 'GET', `/api/report/all${q}`);
+    if (args.flags.json) return console.log(JSON.stringify(r, null, 2));
+    console.log(`Every agent, ${WINDOW_LABEL[win] || win} (week ${r.week}). Labels are computed by Clawdling from receipts.\n`);
+    console.log(`${pad('AGENT', 18)}${pad('STATUS', 10)}WHY`);
+    for (const a of r.agents) {
+      const why = (a.status.reasons || []).map((x) => `${x.text} [${x.receipt}]`);
+      console.log(`${pad(a.name, 18)}${pad(a.status.text, 10)}${why[0] || ''}`);
+      for (const w of why.slice(1)) console.log(`${pad('', 28)}${w}`);
+    }
+    if (!r.agents.length) console.log('No domain or project agents yet.');
+    return undefined;
+  }
   if (!id) {
     const o = await api(ctx, 'GET', `/api/org/report${q}`);
     if (args.flags.json) return console.log(JSON.stringify(o, null, 2));

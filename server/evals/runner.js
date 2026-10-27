@@ -480,6 +480,28 @@ export class Evals {
     }
   }
 
+  /** The run before the newest (the CTO's "score dropped" rule compares the two), or null. */
+  previous(id) {
+    try {
+      const r = this.history(id, 2)[1];
+      if (!r) return null;
+      const cur = Array.isArray(r.cells) ? r.cells.find((c) => c.current) || r.cells[0] : null;
+      return { at: r.started_at, score: r.score, judge_unreliable: !!r.judge_unreliable, cases: cur ? cur.cases.length : 0, passes: cur ? cur.passes : 0 };
+    } catch {
+      return null;
+    }
+  }
+
+  /** The newest "Try a cheaper model" run (more than one cell) and its recommendation, or null. */
+  cheaper(id) {
+    try {
+      const r = this.history(id, 10).find((h) => Array.isArray(h.cells) && h.cells.length > 1);
+      return r ? { at: r.started_at, recommendation: r.recommendation || null } : null;
+    } catch {
+      return null;
+    }
+  }
+
   // ---------------------------------------------------------------------------------- the estimate
 
   /** Recent cost per turn from the agent's own receipts (median of the last 20 turns), and its model. */

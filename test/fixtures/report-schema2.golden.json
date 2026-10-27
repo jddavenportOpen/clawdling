@@ -1,0 +1,384 @@
+{
+  "$": [
+    "object"
+  ],
+  "$.agents": [
+    "array"
+  ],
+  "$.agents[]": [
+    "object"
+  ],
+  "$.agents[].cheaperModel": [
+    "object"
+  ],
+  "$.agents[].cheaperModel.last": [
+    "null",
+    "object"
+  ],
+  "$.agents[].cheaperModel.last.at": [
+    "string"
+  ],
+  "$.agents[].cheaperModel.last.link": [
+    "string"
+  ],
+  "$.agents[].cheaperModel.last.receipt": [
+    "string"
+  ],
+  "$.agents[].cheaperModel.last.recommendation": [
+    "null",
+    "object"
+  ],
+  "$.agents[].cheaperModel.last.recommendation.current": [
+    "boolean"
+  ],
+  "$.agents[].cheaperModel.last.recommendation.label": [
+    "null",
+    "string"
+  ],
+  "$.agents[].cheaperModel.last.recommendation.saves_pct": [
+    "null",
+    "number"
+  ],
+  "$.agents[].checks": [
+    "object"
+  ],
+  "$.agents[].checks.configured": [
+    "boolean"
+  ],
+  "$.agents[].checks.last": [
+    "null",
+    "object"
+  ],
+  "$.agents[].checks.last.at": [
+    "string"
+  ],
+  "$.agents[].checks.last.failed": [
+    "array"
+  ],
+  "$.agents[].checks.last.failed[]": [
+    "string"
+  ],
+  "$.agents[].checks.last.link": [
+    "string"
+  ],
+  "$.agents[].checks.last.ok": [
+    "boolean"
+  ],
+  "$.agents[].checks.last.receipt": [
+    "string"
+  ],
+  "$.agents[].checkup": [
+    "object"
+  ],
+  "$.agents[].checkup.last": [
+    "null",
+    "object"
+  ],
+  "$.agents[].checkup.last.at": [
+    "string"
+  ],
+  "$.agents[].checkup.last.cases": [
+    "null",
+    "number"
+  ],
+  "$.agents[].checkup.last.judge_unreliable": [
+    "boolean"
+  ],
+  "$.agents[].checkup.last.link": [
+    "string"
+  ],
+  "$.agents[].checkup.last.passes": [
+    "null",
+    "number"
+  ],
+  "$.agents[].checkup.last.receipt": [
+    "string"
+  ],
+  "$.agents[].checkup.last.score": [
+    "null",
+    "number"
+  ],
+  "$.agents[].checkup.previous": [
+    "null",
+    "object"
+  ],
+  "$.agents[].checkup.previous.at": [
+    "string"
+  ],
+  "$.agents[].checkup.previous.cases": [
+    "null",
+    "number"
+  ],
+  "$.agents[].checkup.previous.judge_unreliable": [
+    "boolean"
+  ],
+  "$.agents[].checkup.previous.link": [
+    "string"
+  ],
+  "$.agents[].checkup.previous.passes": [
+    "null",
+    "number"
+  ],
+  "$.agents[].checkup.previous.receipt": [
+    "string"
+  ],
+  "$.agents[].checkup.previous.score": [
+    "null",
+    "number"
+  ],
+  "$.agents[].claims": [
+    "array"
+  ],
+  "$.agents[].claims[]": [
+    "object"
+  ],
+  "$.agents[].claims[].at": [
+    "null",
+    "string"
+  ],
+  "$.agents[].claims[].badge": [
+    "null",
+    "string"
+  ],
+  "$.agents[].claims[].label": [
+    "string"
+  ],
+  "$.agents[].claims[].link": [
+    "string"
+  ],
+  "$.agents[].claims[].open": [
+    "boolean"
+  ],
+  "$.agents[].claims[].receipt": [
+    "string"
+  ],
+  "$.agents[].claims[].sid": [
+    "string"
+  ],
+  "$.agents[].claims[].title": [
+    "null",
+    "string"
+  ],
+  "$.agents[].cost": [
+    "object"
+  ],
+  "$.agents[].cost.by_model": [
+    "array"
+  ],
+  "$.agents[].cost.by_model[]": [
+    "object"
+  ],
+  "$.agents[].cost.by_model[].model": [
+    "string"
+  ],
+  "$.agents[].cost.by_model[].usd": [
+    "number"
+  ],
+  "$.agents[].cost.complete": [
+    "boolean"
+  ],
+  "$.agents[].cost.done_prev_week": [
+    "number"
+  ],
+  "$.agents[].cost.done_week": [
+    "number"
+  ],
+  "$.agents[].cost.link": [
+    "string"
+  ],
+  "$.agents[].cost.prev_week_usd": [
+    "number"
+  ],
+  "$.agents[].cost.receipt": [
+    "string"
+  ],
+  "$.agents[].cost.week_usd": [
+    "number"
+  ],
+  "$.agents[].done": [
+    "array"
+  ],
+  "$.agents[].done[]": [
+    "object"
+  ],
+  "$.agents[].done[].claim": [
+    "null",
+    "string"
+  ],
+  "$.agents[].done[].commits": [
+    "null",
+    "number"
+  ],
+  "$.agents[].done[].files_changed": [
+    "number"
+  ],
+  "$.agents[].done[].line": [
+    "null",
+    "string"
+  ],
+  "$.agents[].done[].link": [
+    "string"
+  ],
+  "$.agents[].done[].live": [
+    "boolean"
+  ],
+  "$.agents[].done[].receipt": [
+    "string"
+  ],
+  "$.agents[].done[].sid": [
+    "string"
+  ],
+  "$.agents[].done[].title": [
+    "null",
+    "string"
+  ],
+  "$.agents[].done[].when": [
+    "null",
+    "string"
+  ],
+  "$.agents[].id": [
+    "string"
+  ],
+  "$.agents[].kind": [
+    "string"
+  ],
+  "$.agents[].name": [
+    "string"
+  ],
+  "$.agents[].needs": [
+    "array"
+  ],
+  "$.agents[].needs[]": [
+    "object"
+  ],
+  "$.agents[].needs[].kind": [
+    "string"
+  ],
+  "$.agents[].needs[].link": [
+    "string"
+  ],
+  "$.agents[].needs[].receipt": [
+    "string"
+  ],
+  "$.agents[].needs[].sid": [
+    "string"
+  ],
+  "$.agents[].needs[].since": [
+    "null",
+    "string"
+  ],
+  "$.agents[].needs[].title": [
+    "null",
+    "string"
+  ],
+  "$.agents[].next": [
+    "object"
+  ],
+  "$.agents[].next.empty": [
+    "boolean"
+  ],
+  "$.agents[].next.link": [
+    "string"
+  ],
+  "$.agents[].next.receipt": [
+    "string"
+  ],
+  "$.agents[].next.stale": [
+    "boolean"
+  ],
+  "$.agents[].next.text": [
+    "null",
+    "string"
+  ],
+  "$.agents[].next.updated_at": [
+    "null",
+    "string"
+  ],
+  "$.agents[].sessions_ever": [
+    "number"
+  ],
+  "$.agents[].sessions_in_window": [
+    "number"
+  ],
+  "$.agents[].status": [
+    "object"
+  ],
+  "$.agents[].status.label": [
+    "string"
+  ],
+  "$.agents[].status.reasons": [
+    "array"
+  ],
+  "$.agents[].status.reasons[]": [
+    "object"
+  ],
+  "$.agents[].status.reasons[].code": [
+    "string"
+  ],
+  "$.agents[].status.reasons[].receipt": [
+    "string"
+  ],
+  "$.agents[].status.reasons[].text": [
+    "string"
+  ],
+  "$.agents[].status.text": [
+    "string"
+  ],
+  "$.generated_at": [
+    "string"
+  ],
+  "$.labels": [
+    "object"
+  ],
+  "$.labels.at_risk": [
+    "string"
+  ],
+  "$.labels.on_track": [
+    "string"
+  ],
+  "$.labels.quiet": [
+    "string"
+  ],
+  "$.labels.stalled": [
+    "string"
+  ],
+  "$.note": [
+    "string"
+  ],
+  "$.schema": [
+    "number"
+  ],
+  "$.thresholds": [
+    "object"
+  ],
+  "$.thresholds.checkup_drop": [
+    "number"
+  ],
+  "$.thresholds.cost_min_usd": [
+    "number"
+  ],
+  "$.thresholds.cost_rise_pct": [
+    "number"
+  ],
+  "$.thresholds.needs_hours": [
+    "number"
+  ],
+  "$.thresholds.stalled_days": [
+    "number"
+  ],
+  "$.week": [
+    "string"
+  ],
+  "$.window": [
+    "object"
+  ],
+  "$.window.from": [
+    "string"
+  ],
+  "$.window.key": [
+    "string"
+  ],
+  "$.window.to": [
+    "string"
+  ]
+}
