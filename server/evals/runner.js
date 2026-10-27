@@ -14,7 +14,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { looksLikeCredential, realPathInside } from '../checks.js';
+import { looksLikeCredential, realPathInside, repoKey } from '../checks.js';
 import { killTree } from '../channels/donna.js';
 import { readEnvFile } from '../envfile.js';
 import { absPathRule } from '../hooks.js';
@@ -395,7 +395,10 @@ export class Evals {
 
   suite(id) {
     const agent = this.agent(id);
-    return loadSuite(agent.dir, this.approvals.read(id));
+    // A project agent's cases are approved for its repo (by real path): an agent that edits its own
+    // agent.json to point at another repo runs nothing until the owner approves again.
+    const scope = agent.kind === 'project' && agent.repo ? `repo:${repoKey(agent.repo)}` : '';
+    return loadSuite(agent.dir, this.approvals.read(id), { scope });
   }
 
   // --------------------------------------------------------------------------------- the views

@@ -462,7 +462,9 @@ To limit the damage a hostile script could do:
   unapproved; nothing runs until you have read them.
 - **The cases you approved, as written.** Like `checks.yaml`, each case's files are fingerprinted
   in `.clawdling/evals/<agent>/approved.json` when you approve or save them in the cockpit; a case
-  changed on disk (by the agent, say) does not run until you approve it again.
+  changed on disk (by the agent, say) does not run until you approve it again. A project agent's
+  cases are approved for its repo, by real path: an agent that points its `agent.json` at another
+  repo runs nothing until you approve again.
 - **The sandbox.** Each run copies the agent folder into a scratch folder under the temp folder,
   without `evals/` (so the agent cannot read its own test), `.env` files, links,
   `node_modules` and `.git` (a project agent also gets a detached worktree of its repo at HEAD).

@@ -229,15 +229,17 @@ export function parseSettings(text) {
 }
 
 /** The fingerprint of a case: every file the run and graders read. */
-function caseHash(files) {
-  return sha(JSON.stringify(Object.keys(files).sort().map((k) => [k, files[k]])));
+function caseHash(files, scope = '') {
+  // `scope`: what else the approval covers (a project agent's repo, by real path): pointing the
+  // agent at another repo needs the cases approved again.
+  return sha(JSON.stringify([...Object.keys(files).sort().map((k) => [k, files[k]]), ...(scope ? [['@scope', scope]] : [])]));
 }
 
 /**
  * The suite in an agent folder: cases (parsed, or with the error that stops each one), settings,
  * and per case whether it is still what the owner approved.
  */
-export function loadSuite(agentDir, approvals = {}) {
+export function loadSuite(agentDir, approvals = {}, { scope = '' } = {}) {
   const dir = evalsDir(agentDir);
   const out = { dir, exists: false, cases: [], settings: { ...SUITE_DEFAULTS }, settings_error: null, settings_text: null };
   let names = [];
@@ -277,7 +279,7 @@ export function loadSuite(agentDir, approvals = {}) {
     }
     const ref = readSmall(path.join(cdir, 'reference.md'));
     if (ref !== null) files['reference.md'] = ref;
-    const c = { id, files, hash: caseHash(files), error: null, prompt: null, fm: null, graders: [], reference: ref === null ? null : ref.trim() };
+    const c = { id, files, hash: caseHash(files, scope), error: null, prompt: null, fm: null, graders: [], reference: ref === null ? null : ref.trim() };
     try {
       if (promptText === null) throw badRequest(`${id}: prompt.md is missing`);
       const p = parsePrompt(promptText, { caseId: id });

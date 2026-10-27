@@ -549,3 +549,20 @@ test('review 5: a check-up whose copy cannot be made ends with an error and no s
   assert.equal(result.score, null);
   assert.equal(votes, 0);
 });
+
+test('a project agent\'s cases are approved for its repo: pointing agent.json at another repo needs approval again', () => {
+  const dir = tmp();
+  const repoA = tmp();
+  const repoB = tmp();
+  const agent = { id: 'web', name: 'Web', kind: 'project', dir, repo: repoA };
+  const ev = new Evals({ paths: { rt: path.join(dir, '.rt'), home: dir, meMd: path.join(dir, 'me.md') }, org: { require: () => agent }, reports: { summaries: () => [] }, sessions: {} });
+  writeCase(dir, 'a', { prompt: promptFile({ name: 'a' }, 'Q?'), graders: { c: graderFile({ type: 'llm' }, 'x') } });
+  const c = ev.suite('web').cases[0];
+  ev.approvals.set('web', { a: c.hash });
+  assert.equal(ev.suite('web').cases[0].approved, true);
+  agent.repo = repoB; // the agent edits its own agent.json
+  assert.equal(ev.suite('web').cases[0].approved, false);
+  assert.throws(() => ev.start('web'), /approve/i);
+  agent.repo = repoA;
+  assert.equal(ev.suite('web').cases[0].approved, true);
+});
