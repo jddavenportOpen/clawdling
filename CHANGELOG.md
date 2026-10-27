@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.5.2 (2026-10-26)
+
+**Two fixes for what a viewer sees first: the org map and the report card.**
+
+- **The org map no longer draws a lone project over "You"** (issue #29). With exactly one project,
+  the map's layout never gave it an angle, so the project, its name and its usage line ("$0.16 ·
+  just now", or "nothing done in 7 days" on a new org) were drawn at the centre, over your own
+  disc. It now sits on the outer ring like any other project. New e2e checks, at 1440 and 390 wide
+  in dark and light, on a new org and a busy one: nothing on the map overlaps your disc.
+- **The report card leads with the outcome, and a recovered error is no longer a warning**
+  (issue #31). A session that searched for a file that wasn't there, read one that didn't exist
+  yet, then passed its tests showed amber "2 steps hit an error along the way", and the closing
+  line was cut before "go test ./... passed". Now:
+  - a check result in the agent's closing message (the last sentence that says tests, a build or
+    a lint passed or failed) is the row's first line, whole and in the agent's own words;
+  - the count of tool calls that came back with an error reads "2 hiccups along the way", in the
+    same quiet grey as the file count (the Timeline still lists each one, in red).
+
+  Sessions already counted before 1.5.2 keep their saved closing line; the outcome line shows for
+  sessions that end from now on.
+
 ## 1.5.1 (2026-10-26)
 
 **Two fixes found while filming the 1.5 demo with Claude Code 2.1.308.**

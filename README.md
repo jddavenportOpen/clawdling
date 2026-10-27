@@ -28,8 +28,9 @@ on your own machine.** Open any agent and its Overview answers four questions, f
 ![An agent's report card: Done, Needs you, Cost and Next](docs/img/report-card.png)
 
 - **Done.** Each session that did some work, with the agent's own closing words, how many files
-  it changed and the commits it made in the project's repo. No AI summary on top: just what the
-  agent said and what git recorded.
+  it changed and the commits it made in the project's repo. A check result it reports ("All 24
+  tests pass.") comes first, whole. No AI summary on top: just what the agent said and what git
+  recorded.
 - **Needs you.** Every question, permission, failed turn and finished turn waiting on your reply,
   the same ones the rail counts. One tap opens that session.
 - **Cost.** Usage as a list-price equivalent, by day, by model, and the top sessions. It is not
