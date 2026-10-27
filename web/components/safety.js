@@ -61,7 +61,7 @@ export function Shield({ verdict, size = 14, title }) {
   const t = title || `Setup safety: ${SHIELD_WORD[verdict]}`;
   return html`<svg class=${`shield shield-${verdict}`} width=${size} height=${size} viewBox="0 0 16 16" role="img" aria-label=${t} data-shield=${verdict}>
     <title>${t}</title>
-    <path d="M8 1.2 2.5 3.3v4.1c0 3.4 2.3 6.1 5.5 7.4 3.2-1.3 5.5-4 5.5-7.4V3.3z" />
+    <path class="shield-body" d="M8 1.2 2.5 3.3v4.1c0 3.4 2.3 6.1 5.5 7.4 3.2-1.3 5.5-4 5.5-7.4V3.3z" />
     ${verdict === 'green' ? html`<path class="shield-mark" d="m5.4 8 1.8 1.8 3.4-3.6" />`
       : verdict === 'red' ? html`<path class="shield-mark" d="M8 4.8v3.8M8 10.8v.3" />`
       : html`<path class="shield-mark" d="M5.6 8h4.8" />`}
@@ -150,8 +150,9 @@ function TagForm({ name }) {
   </span>`;
 }
 
+// The name an unknown item can be tagged under: an MCP server's key or a plugin's name.
 const mcpName = (text) => {
-  const m = /^(.+?) MCP server/.exec(String(text || ''));
+  const m = /^(.+?) (?:MCP server|plugin)(?: \(|$)/.exec(String(text || ''));
   return m ? m[1] : null;
 };
 
@@ -188,7 +189,11 @@ export function SafetySection() {
   const agentsById = useStore((s) => s.agentsById);
   const [openIds, setOpen] = useState(null);
   const rows = (data && Array.isArray(data.rows)) ? data.rows : [];
-  // Red rows start open; the rest start folded.
+  // Red rows start open, the rest folded; after that a row stays as it is (accepting a risk turns it
+  // amber, and it must not fold under the owner's hand).
+  useEffect(() => {
+    if (openIds === null && rows.length) setOpen(rows.filter((x) => x.verdict === 'red').map((x) => x.id));
+  }, [rows.length, openIds]);
   const isOpen = (r) => (openIds ? openIds.includes(r.id) : r.verdict === 'red');
   const toggle = (r) => {
     const cur = openIds || rows.filter((x) => x.verdict === 'red').map((x) => x.id);
@@ -197,7 +202,7 @@ export function SafetySection() {
   const n = { red: rows.filter((r) => r.verdict === 'red').length, amber: rows.filter((r) => r.verdict === 'amber').length };
   return html`<section class="safety-sec" id="safety" aria-labelledby="safety-h" data-testid="safety-section">
     <h3 class="card-h" id="safety-h">Safety <span class="card-h-sub">the lethal trifecta, per agent</span> <button class="link-btn" onClick=${reload}>Check again</button></h3>
-    <p class="set-note safety-lead">An agent that can read your <strong>private data</strong>, read <strong>untrusted input</strong> and <strong>send data out</strong> can be tricked by the second into leaking the first through the third.
+    <p class="set-note safety-lead">An agent that can read your <strong>private data</strong>, read <strong>untrusted input</strong> and <strong>send data out</strong> can be tricked by the second into leaking the first through the third.${' '}
       <a href=${LINK} target="_blank" rel="noopener noreferrer">Simon Willison's “lethal trifecta”</a>. Checked by name, on this computer${data && Number.isFinite(data.took_ms) ? ` in ${data.took_ms < 1 ? 'under 1' : Math.round(data.took_ms)} ms` : ''}.</p>
     ${err === 'unsupported' ? html`<p class="panel-quiet">This Clawdling server can't check setup safety yet. Update it, then reload this page.</p>`
       : err && !data ? html`<p class="form-error" role="alert">Couldn't check: ${err}</p>`

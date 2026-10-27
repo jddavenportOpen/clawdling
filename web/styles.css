@@ -1691,13 +1691,13 @@ ol.cto-dec-list { list-style: decimal; padding-left: 20px; }
 
 /* ── 1.8: Setup safety (the lethal trifecta), shields ─────────────────── */
 .shield { flex: none; vertical-align: -2px; }
-.shield path:first-child { stroke-width: 1.3; stroke-linejoin: round; }
+.shield .shield-body { stroke-width: 1.3; stroke-linejoin: round; }
 .shield .shield-mark { fill: none; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.shield-green path:first-child { fill: color-mix(in srgb, var(--ready) 22%, transparent); stroke: var(--ready-text); }
+.shield-green .shield-body { fill: color-mix(in srgb, var(--ready) 22%, transparent); stroke: var(--ready-text); }
 .shield-green .shield-mark { stroke: var(--ready-text); }
-.shield-amber path:first-child { fill: color-mix(in srgb, var(--needs) 24%, transparent); stroke: var(--needs-text); }
+.shield-amber .shield-body { fill: color-mix(in srgb, var(--needs) 24%, transparent); stroke: var(--needs-text); }
 .shield-amber .shield-mark { stroke: var(--needs-text); }
-.shield-red path:first-child { fill: var(--danger); stroke: var(--danger); }
+.shield-red .shield-body { fill: var(--danger); stroke: var(--danger); }
 .shield-red .shield-mark { stroke: var(--danger-ink); }
 .map-shield path { stroke-width: 1.2; stroke-linejoin: round; }
 .map-shield.shield-green path { fill: color-mix(in srgb, var(--ready) 35%, var(--bg-stage)); stroke: var(--ready-text); }
@@ -1744,6 +1744,7 @@ ol.cto-dec-list { list-style: decimal; padding-left: 20px; }
 .safety-notes li { font-size: 12.5px; color: var(--text-2); }
 .safety-accept { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .safety-accept input { flex: 1 1 220px; min-width: 0; }
+.safety-row-body > .btn { align-self: flex-start; }
 .safety-accepted { margin: 0; font-size: 12.5px; color: var(--needs-text); }
 .safety-tag { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; margin-top: 4px; font-size: 12px; }
 .safety-tag-opt { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; }

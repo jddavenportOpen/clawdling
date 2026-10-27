@@ -1369,7 +1369,7 @@ export async function startServer(opts = {}) {
         return [200, safetyAudit()];
       }],
       ['POST', /^\/api\/setup\/safety\/tag$/, async (req) => {
-        if (rawToken(req)) throw new HttpError(403, 'Only you can tag an MCP server, from the cockpit: agents and Donna cannot.');
+        if (rawToken(req)) throw new HttpError(403, 'Only you can tag an MCP server or plugin, from the cockpit: agents and Donna cannot.');
         const b = await jsonBody(req);
         safetyChoices.tag(b.server, b.caps === undefined ? null : b.caps);
         events.record({ type: 'safety', action: 'tagged', server: b.server });

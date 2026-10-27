@@ -200,9 +200,11 @@ function capsFor(view, { tags = {} } = {}) {
     const tagged = Array.isArray(tags[s.name]) ? tags[s.name].filter((c) => CAPS.includes(c)) : null;
     const k = tagged ? { known: true, caps: new Set(tagged), labels: ['tagged by you'] } : classifyName(s.name, s.command, s.package, s.host);
     const what = `${s.name} MCP server${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
-    const fix = s.scope === 'user'
-      ? `stop this agent loading the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}`
-      : `remove the ${s.name} server from ${s.source}`;
+    const fix = view.isUserRow
+      ? `stop every session using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}, or remove it with \`claude mcp remove ${s.name}\``
+      : s.scope === 'user'
+        ? `stop this agent using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}`
+        : `remove the ${s.name} server from ${s.source}`;
     if (!k.known) {
       unknown.push({ text: what, source: s.source, why: 'unknown: review what it can do' });
       continue;
@@ -213,7 +215,8 @@ function capsFor(view, { tags = {} } = {}) {
   // Plugins (user level): by name, the same table. A plugin can bring its own MCP servers and hooks.
   for (const p of view.plugins) {
     if (!p.enabled) continue;
-    const k = classifyName(p.name);
+    const ptag = Array.isArray(tags[p.name]) ? tags[p.name].filter((c) => CAPS.includes(c)) : null;
+    const k = ptag ? { known: true, caps: new Set(ptag), labels: ['tagged by you'] } : classifyName(p.name);
     const what = `${p.name} plugin${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
     const src = view.pluginSource;
     if (!k.known) {
@@ -271,9 +274,12 @@ function risksFor(view) {
 }
 
 /** One plain sentence: what could happen, naming one item from each leg. */
-function trifectaSentence(chips) {
+function trifectaSentence(chips, who = 'this agent') {
   // "`Bash(curl:*)` allowed (can send data out)" -> "Bash(curl:*)"; "gmail MCP server (mail)" -> "gmail MCP server".
-  const root = (x) => x.text.replace(/\s+\([^()]*\)$/, '').replace(/`/g, '').replace(/ allowed$/, '');
+  const root = (x) => {
+    const r = x.text.replace(/\s+\([^()]*\)$/, '').replace(/`/g, '').replace(/ allowed$/, '');
+    return / (MCP server|plugin)$/.test(r) ? `the ${r}` : r;
+  };
   const used = new Set();
   const pick = (c) => {
     const x = chips[c].find((y) => !used.has(root(y))) || chips[c][0];
@@ -283,7 +289,7 @@ function trifectaSentence(chips) {
   const u = pick('untrusted');
   const p = pick('private');
   const out = pick('sends');
-  return `Text this agent reads through ${u} could tell it to take your data from ${p} and send it out with ${out}.`;
+  return `Text ${who} reads through ${u} could tell it to take your data from ${p} and send it out with ${out}.`;
 }
 
 /** Up to three fixes, from the leg that is cheapest to remove (the fewest items). */
@@ -330,7 +336,7 @@ function finish(base, view, opts) {
     notes: view.notes || [],
     accepted: trifecta ? accepted : null,
   };
-  row.sentence = trifecta ? trifectaSentence(chips) : null;
+  row.sentence = trifecta ? trifectaSentence(chips, view.isUserRow ? 'a session' : 'this agent') : null;
   row.fixes = trifecta ? fixesFor(chips) : [];
   row.verdict = verdictOf(row);
   row.summary = row.verdict === 'amber' && row.trifecta ? 'Lethal trifecta (accepted)' : row.verdict === 'amber' ? (row.risks.length ? `${row.risks.length} setup risk${row.risks.length === 1 ? '' : 's'}` : `${row.unknown.length} unknown to review`) : SUMMARY[row.verdict];

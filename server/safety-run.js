@@ -47,9 +47,9 @@ export class SafetyChoices {
     return v;
   }
 
-  /** Tag what an MCP server can do (a subset of private, untrusted, sends), or clear it with null. */
+  /** Tag what an MCP server (or a plugin) can do (a subset of private, untrusted, sends), or clear it with null. */
   tag(server, caps) {
-    if (typeof server !== 'string' || !SERVER_RE.test(server)) throw badRequest('invalid MCP server name');
+    if (typeof server !== 'string' || !SERVER_RE.test(server)) throw badRequest('invalid MCP server or plugin name');
     const v = this.read();
     if (caps === null) delete v.tags[server];
     else {

@@ -25,6 +25,7 @@ import { localDay } from '../../server/ledger.js';
 import { digestText, isoWeek } from '../../server/digest.js';
 import { lintReview } from '../../server/review-lint.js';
 import { DEFAULT_THRESHOLDS } from '../../server/status-rules.js';
+import { auditSafety } from '../../server/safety.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '../..');
@@ -77,6 +78,7 @@ const baseHealth = () => ({
   backend: { kind: 'tmux', socket: 'clawdling', persistent: true, reason: 'tmux 3.6a is installed', label: 'tmux (sessions keep running when Clawdling stops)' },
   tmux: { ok: true, version: '3.6a' }, claude: { ok: true, version: '2.1.0 (mock)' }, home: HOME,
   cli: 'node ~/clawdling-app/bin/clawdling.js', platform: 'darwin',
+  claude_compat: { max_checked: '2.1.308', newer: false },
 });
 
 const iso = (msAgo) => new Date(Date.now() - msAgo).toISOString();
@@ -394,6 +396,45 @@ const SETUP_REPOS = {
     commands: [{ name: 'seed', description: 'Fill the local database with test orders' }], hooks: [], mcp: [{ name: 'db', scope: 'project' }, { name: 'stripe', scope: 'project' }] },
 };
 
+// What the setup safety audit (1.8) reads, names only, in the shape discover.scanSafety returns. The
+// cockpit's Safety section, shields and report-card line are computed from it by the real
+// server/safety.js. The user level loads GitHub and Linear (each one reads private repos and
+// untrusted issues, and can write): the domains deny both in their own folders, as the fix says.
+const SAFETY_DENY = { file: '', allow: [], ask: [], deny: ['mcp__github', 'mcp__linear'], default_mode: null, auto_mode_rules: false, skip_bypass_prompt: false, bypass_disabled: false, home_dirs: [], hooks: [], all_project_mcp: false, plugins: [] };
+const safetyFacts = (file, extra = {}) => ({ ...SAFETY_DENY, deny: [], file, ...extra });
+const SAFETY_SCAN = (agents) => {
+  const dirs = {};
+  for (const a of agents) {
+    const dir = a.kind === 'project' && a.repo ? a.repo : `${HOME}/${a.kind === 'project' ? 'projects' : a.kind === 'domain' ? 'domains' : ''}${a.kind === 'project' || a.kind === 'domain' ? '/' : ''}${a.id}`;
+    const show = dir.replace('/Users/ada', '~');
+    let d = { path: show, in_repo: !!a.repo, settings: null, local: null, mcp_json: [], mcp_local: [], local_not_ignored: false };
+    if (a.kind === 'domain' || (a.kind === 'project' && !a.repo)) d.settings = safetyFacts(`${show}/.claude/settings.json`, { deny: ['mcp__github', 'mcp__linear'] });
+    if (a.repo === `${CODE}/site`) {
+      d.settings = safetyFacts(`${show}/.claude/settings.json`, { allow: ['Bash(curl:*)', 'Bash(npm test)'] });
+      d.mcp_json = [{ name: 'figma', type: 'stdio', command: 'npx', package: 'figma-developer-mcp', host: null }];
+    }
+    if (a.repo === `${CODE}/shop`) {
+      d.settings = safetyFacts(`${show}/.claude/settings.json`, { hooks: [{ event: 'SessionStart', count: 1 }], deny: ['mcp__github', 'mcp__linear', 'WebFetch', 'WebSearch'] });
+      d.local = safetyFacts(`${show}/.claude/settings.local.json`, { allow: ['Bash(pnpm test)'] });
+      d.local_not_ignored = true;
+      d.mcp_json = [{ name: 'db', type: 'stdio', command: 'npx', package: '@modelcontextprotocol/server-postgres', host: null }, { name: 'stripe', type: 'stdio', command: 'npx', package: '@stripe/mcp', host: null }];
+    }
+    dirs[dir] = d;
+  }
+  return {
+    user: {
+      config_dir: '~/.claude',
+      settings: safetyFacts('~/.claude/settings.json', { allow: ['WebSearch', 'WebFetch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
+      managed: [],
+      mcp: [{ name: 'github', type: 'http', command: null, package: null, host: 'api.githubcopilot.com' }, { name: 'linear', type: 'http', command: null, package: null, host: 'mcp.linear.app' }],
+      plugins: [{ name: 'frontend-design', marketplace: 'claude-plugins', enabled: false }, { name: 'superpowers', marketplace: 'obra', enabled: true }],
+      marketplaces: [{ name: 'obra', repo: 'obra/superpowers-marketplace' }],
+    },
+    dirs,
+  };
+};
+const SAFETY_PRIVACY = 'Names only, read from files on this computer: rule text (with anything secret-looking replaced by [redacted]), MCP server names, command and package names, plugin names. Never an env value, a header, a hook command or a URL past its host. Nothing is sent anywhere, no process is started, and nothing is changed: every fix is text for you to apply.';
+
 const humanize = (id) => { const s = String(id).replace(/[-_]+/g, ' ').trim(); return s.charAt(0).toUpperCase() + s.slice(1); };
 
 function importedClaudeMd(a, c, owner) {
@@ -507,6 +548,9 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     st.transcripts = new Map();
     st.otherCommits = fx.otherCommits || {};
     st.digest = { enabled: false, day: 1, hour: 8, last_sent_at: null };
+    st.safetyAccepted = {};
+    // Ada told Clawdling the superpowers plugin (skills only) reads and sends nothing.
+    st.safetyTags = { superpowers: [] };
     st.otel = { enabled: false, blocked: false };
     st.accounts = [];
     st.disc = discDefaults();
@@ -1135,6 +1179,15 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     return [201, { agent: publicAgent(a), created: true, cloned: false }];
   }
 
+  function safetyBody() {
+    const placed = st.agents.map((a) => ({ ...a, dir: a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`,
+      cwd: a.kind === 'project' && a.repo ? a.repo : a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`, addDirs: [] }));
+    const channels = { telegram: { configured: !!st.channels.telegram.configured, enabled: !!st.channels.telegram.enabled, paired: !!st.channels.telegram.paired }, imessage: { enabled: !!st.channels.imessage.enabled, saved: !!st.channels.imessage.handle } };
+    const out = auditSafety({ scan: SAFETY_SCAN(placed), agents: placed, org: { home: HOME, channels, donnaTools: ['Bash(clawdling spawn *)', 'Bash(clawdling send *)', 'Bash(clawdling ls)', `Read(/${HOME}/**)`], cto: { allow: ['Bash(clawdling report --all --json)'], ask: ['Bash(clawdling send *)'], deny: ['WebFetch', 'WebSearch'] } },
+      accepted: st.safetyAccepted || {}, tags: st.safetyTags || {}, home: '/Users/ada', platform: 'darwin' });
+    return { ...out, took_ms: 4.2, privacy: SAFETY_PRIVACY };
+  }
+
   function setupBody() {
     const projects = [];
     for (const a of st.agents) {
@@ -1491,6 +1544,22 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       return;
     }
     if (p === '/api/setup' && m === 'GET') { send(res, 200, setupBody()); return; }
+    if (p === '/api/setup/safety' && m === 'GET') { send(res, 200, safetyBody()); return; }
+    if ((p === '/api/setup/safety/accept' || p === '/api/setup/safety/tag') && m === 'POST') {
+      const b = body || {};
+      if (p.endsWith('/accept')) {
+        st.safetyAccepted = { ...(st.safetyAccepted || {}) };
+        if (b.reason === null || b.reason === undefined) delete st.safetyAccepted[b.agent];
+        else if (String(b.reason).trim().length < 3) { send(res, 400, { error: 'say why you accept this risk (a few words)' }); return; }
+        else st.safetyAccepted[b.agent] = { reason: String(b.reason).trim(), at: new Date().toISOString() };
+      } else {
+        st.safetyTags = { ...(st.safetyTags || {}) };
+        if (b.caps === null || b.caps === undefined) delete st.safetyTags[b.server];
+        else st.safetyTags[b.server] = b.caps;
+      }
+      send(res, 200, safetyBody());
+      return;
+    }
     if (p === '/api/setup/promote' && m === 'POST') {
       const name = String(body.name || '');
       const list = body.scope === 'repo' ? ((SETUP_REPOS[body.repo] || {}).agents || []) : SETUP_USER.agents;

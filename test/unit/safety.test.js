@@ -192,7 +192,7 @@ test('fixes come from the cheapest leg and say exactly what to change', () => {
   assert.equal(r.trifecta, true);
   // private has one item (gmail): one deny rule cuts the trifecta.
   assert.equal(r.fixes.length, 1);
-  assert.match(r.fixes[0], /^Stop this agent loading the gmail MCP server: add "mcp__gmail" to `permissions\.deny` in .*work.*settings\.json$/);
+  assert.match(r.fixes[0], /^Stop this agent using the gmail MCP server: add "mcp__gmail" to `permissions\.deny` in .*work.*settings\.json$/);
 });
 
 test('Donna: owner-only inbound is not untrusted, and the UI says why', () => {
@@ -277,6 +277,10 @@ test('US-93 risks: plugins from a marketplace other than Anthropic\'s, once, on 
   assert.ok(!row(a, 'a').risks.some((x) => x.id === 'marketplace'), 'not repeated on every agent');
   assert.ok(texts(u, 'private').some((t) => t.startsWith('telegram plugin')), 'a plugin is classified by its name');
   assert.ok(u.unknown.some((x) => x.text.startsWith('helper plugin')));
+  // The owner can say what an unknown plugin does: tagged, it is no longer unknown.
+  const choices = new SafetyChoices(path.join(w.org, '.clawdling', 'safety.json'));
+  choices.tag('helper', []);
+  assert.ok(!row(w.run({ choices }), 'a').unknown.some((x) => x.text.startsWith('helper plugin')));
   // A marketplace that takes the official name with a source that is not Anthropic's.
   write(path.join(w.cfg, 'plugins', 'known_marketplaces.json'), { 'claude-plugins-official': { source: { source: 'github', repo: 'mallory/claude-plugins-official' } } });
   assert.ok(row(w.run(), USER_ROW).risks.some((x) => /whose source is not Anthropic's/.test(x.text)));
@@ -303,7 +307,7 @@ test('unknown names are never green; tags and accepted risks are the owner\'s lo
   choices.accept('a', null);
   assert.equal(row(w.run({ choices }), 'a').verdict, 'red');
   assert.throws(() => choices.tag('x', ['everything']), /caps must be/);
-  assert.throws(() => choices.tag('../x', []), /invalid MCP server name/);
+  assert.throws(() => choices.tag('../x', []), /invalid MCP server or plugin name/);
   if (process.platform !== 'win32') assert.equal(fs.statSync(path.join(w.org, '.clawdling', 'safety.json')).mode & 0o077, 0, 'only the owner can read it');
   assert.deepEqual(Object.keys(verdicts(w.run({ choices }))).sort(), ['_user', 'a', 'donna']);
 });
