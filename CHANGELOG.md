@@ -9,14 +9,17 @@
   just now", or "nothing done in 7 days" on a new org) were drawn at the centre, over your own
   disc. It now sits on the outer ring like any other project. New e2e checks, at 1440 and 390 wide
   in dark and light, on a new org and a busy one: nothing on the map overlaps your disc.
-- **The report card leads with the outcome, and a recovered error is no longer a warning**
+- **The report card leads with the outcome, and a tool error along the way is no longer a warning**
   (issue #31). A session that searched for a file that wasn't there, read one that didn't exist
   yet, then passed its tests showed amber "2 steps hit an error along the way", and the closing
   line was cut before "go test ./... passed". Now:
   - a check result in the agent's closing message (the last sentence that says tests, a build or
-    a lint passed or failed) is the row's first line, whole and in the agent's own words;
-  - the count of tool calls that came back with an error reads "2 hiccups along the way", in the
-    same quiet grey as the file count (the Timeline still lists each one, in red).
+    a lint passed or failed; not a plan, an instruction or a check it did not run) is the row's
+    first line, in the agent's own words and whole up to 300 characters; the rest of the closing
+    line follows it, without repeating it;
+  - the count of tool calls that came back with an error (a search that matched nothing, a
+    permission you declined) reads "2 hiccups along the way", in the same quiet grey as the file
+    count. A failed check still says so in the outcome line, and the Timeline lists each error.
 
   Sessions already counted before 1.5.2 keep their saved closing line; the outcome line shows for
   sessions that end from now on.

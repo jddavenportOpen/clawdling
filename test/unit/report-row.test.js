@@ -10,7 +10,7 @@ import { LedgerReader, lastLine, outcomeLine, summarize } from '../../server/led
 import { mergeParts } from '../../server/report.js';
 import { restLine } from '../../web/lib/model.js';
 
-// The closing message of the real 2.1.308 run the Studio review filmed (r15-real).
+// The closing message of a real Claude Code 2.1.308 run (one README section, then go test).
 const REAL = 'I created `hello/README.md` with a short "Running the tests" section (it didn\'t exist). `cd hello && go test ./...` passed: `hello/reverse` is `ok`, and the root `hello` package has no test files. Glob wasn\'t available in this session, so I read the README path directly instead.';
 const REAL_OUTCOME = 'cd hello && go test ./... passed: hello/reverse is ok, and the root hello package has no test files.';
 
@@ -37,6 +37,11 @@ test('outcomeLine: plans, instructions, conditions and questions are not results
     'Should I run the tests to see if they pass?',
     'Next, the build needs to pass on Windows.',
     'Let me check whether the tests pass.',
+    'Here is the plan: 1. Fix the failing tests. 2. Ship.',
+    "I didn't run the tests because they fail on main.",
+    'I fixed the broken build script.',
+    'I fixed the failing tests.',
+    'Add a check that fails on empty input.',
     '',
     null,
   ]) assert.equal(outcomeLine(t), null, String(t));
@@ -80,4 +85,18 @@ test('restLine: the closing line without the outcome the row already shows', () 
   assert.equal(restLine('I fixed it.', null), 'I fixed it.');
   assert.equal(restLine('I fixed it.', 'The build failed.'), 'I fixed it.');
   assert.equal(restLine(null, 'Tests pass.'), null);
+  assert.equal(restLine('✅', null), '✅', 'a closing line without letters is still a closing line');
+});
+
+test('restLine: a closing line cut inside the outcome never repeats it', () => {
+  const long = `All 24 tests pass across the ${'api, web and worker packages and '.repeat(6)}docs.`;
+  const text = `Done. ${long}`;
+  const line = lastLine(text);
+  const outcome = outcomeLine(text);
+  assert.ok(line.endsWith('…') && !line.includes(outcome), 'the line is cut inside the outcome sentence');
+  assert.equal(outcome, long);
+  assert.equal(restLine(line, outcome), 'Done.');
+  const only = lastLine(long);
+  assert.equal(restLine(only, outcomeLine(long)), null, 'nothing but the outcome: no second line');
+  assert.equal(restLine('I fixed the parser and the build pass…', 'All 24 tests pass.'), 'I fixed the parser and the build pass…', 'a cut line that is not the outcome stays');
 });

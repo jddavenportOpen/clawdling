@@ -197,7 +197,14 @@ export const liveModeLabel = (mode) => (mode ? LIVE_LABEL[mode] || mode : null);
  * sentence of the same closing message), or null when nothing else is left.
  */
 export function restLine(line, outcome) {
-  if (!line) return null;
-  const rest = outcome && line.includes(outcome) ? line.replace(outcome, ' ').replace(/\s{2,}/g, ' ').trim() : line;
-  return /[\p{L}\p{N}]/u.test(rest) ? rest : null;
+  if (!line || !outcome) return line || null;
+  const left = (rest) => (/[\p{L}\p{N}]/u.test(rest) ? rest : null);
+  if (line.includes(outcome)) return left(line.replace(outcome, ' ').replace(/\s{2,}/g, ' ').trim());
+  // The line was cut ("…") inside the outcome's sentence: keep what comes before that sentence.
+  if (line.endsWith('…')) {
+    const head = line.slice(0, -1).trimEnd();
+    const starts = [0, ...[...head.matchAll(/[\p{L}\p{N})"'\]][.!?]\s+/gu)].map((m) => m.index + m[0].length)];
+    for (const i of starts) if (i < head.length && outcome.startsWith(head.slice(i))) return left(head.slice(0, i).trim());
+  }
+  return line;
 }

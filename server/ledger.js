@@ -87,15 +87,21 @@ export function lastLine(text, max = 160) {
   return `${head.slice(0, sp > max * 0.5 ? sp : max - 1)}…`;
 }
 
-// A sentence that says how a check went: it names a check and a result ("go test ./... passed",
-// "All 12 tests pass", "The build failed"). Plans, instructions and conditions are not results.
+// A sentence that says how a check went: it names a check, then a result ("go test ./... passed",
+// "All 12 tests pass", "The build failed"). Plans, instructions, conditions, checks that were not
+// run and work on a check ("I fixed the failing tests") are not results.
 const CHECK_WORD = /\b(tests?|test suite|specs?|checks?|builds?|lint|linter|linting|typecheck|type-check|type check|tsc|ci|pytest|vitest|jest|go test|cargo test|npm test)\b/i;
 const RESULT_WORD = /\b(pass|passes|passed|passing|green|fail|fails|failed|failing|failures?|succeeded|succeeds|ok|clean|broke|broken)\b/i;
-const NOT_A_RESULT = /\b(should|will|would|could|can|may|might|need to|needs to|if|unless|let me|to (?:check|verify|confirm|make sure|see))\b|^(run|try|please|next|then)\b/i;
+const NOT_A_RESULT = /\b(should|will|would|could|can|may|might|need to|needs to|if|unless|let me|to (?:check|verify|confirm|make sure|see)|(?:didn't|did not|haven't|have not|couldn't|could not|unable to|not) run|without running)\b|^(run|try|please|next|then|fix|add|make|update|ensure|write|create|implement|remove|change)\b/i;
+
+function reportsResult(s) {
+  const c = CHECK_WORD.exec(s);
+  return !!c && !s.endsWith('?') && RESULT_WORD.test(s.slice(c.index + c[0].length)) && !NOT_A_RESULT.test(s);
+}
 
 /**
  * The outcome in the agent's own last words: the last sentence that reports a check's result,
- * whole (up to `max` characters), or null when the message reports none.
+ * whole (cut at a word past `max` characters), or null when the message reports none.
  */
 export function outcomeLine(text, max = 300) {
   const t = oneLine(String(text || '').replace(/[`*_#>]+/g, ''), 4000).trim();
@@ -107,8 +113,8 @@ export function outcomeLine(text, max = 300) {
     start = m.index + 2;
   }
   if (start < t.length) sentences.push(t.slice(start).trim());
-  const hit = sentences.filter((s) => !s.endsWith('?') && CHECK_WORD.test(s) && RESULT_WORD.test(s) && !NOT_A_RESULT.test(s)).pop();
-  return hit ? cut(hit, max) : null;
+  const hit = sentences.filter(reportsResult).pop();
+  return hit ? lastLine(hit, max) : null;
 }
 
 function newState(file, ino) {

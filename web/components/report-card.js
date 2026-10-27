@@ -158,7 +158,7 @@ function DoneBlock({ r, win, name, now, agentsById }) {
         <span class="rc-facts">
           <span>${plural(d.files_changed, 'file')} changed</span>
           ${d.commits && (d.commits.length || !d.live) ? html`<span>${plural(d.commits.length, 'commit')}</span>` : null}
-          ${d.tool_errors ? html`<span data-testid="rc-hiccups" title=${`${plural(d.tool_errors, 'tool call')} came back with an error, like a search that matched nothing, and the session went on. The Timeline shows each one.`}>${plural(d.tool_errors, 'hiccup')} along the way</span>` : null}
+          ${d.tool_errors ? html`<span data-testid="rc-hiccups" title=${`${plural(d.tool_errors, 'tool call')} came back with an error, like a search that matched nothing or a permission you declined. The Timeline shows each one.`}>${plural(d.tool_errors, 'hiccup')} along the way</span>` : null}
           ${d.transcript === 'gone' ? html`<span class="rc-gone" title="Claude Code deleted this session's transcript (its retention cleanup). Clawdling kept its summary.">Transcript gone, kept summary only</span>` : null}
         </span>
       </button>
