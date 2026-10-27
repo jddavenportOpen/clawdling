@@ -22,7 +22,9 @@ export async function startRealServer({ repo = process.env.CLAWDLING_E2E_REPO ||
   for (const f of [cli, fakeClaude]) {
     if (!fs.existsSync(f)) throw new Error(`CLAWDLING_E2E_REAL needs ${f} (set CLAWDLING_E2E_REPO to a checkout with the server)`);
   }
-  const home = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-web-e2e-')));
+  // .native: on Windows it also turns 8.3 short names (C:\Users\RUNNER~1) into the real ones, which
+  // Claude Code's file rules can express (the CTO seat refuses a folder they cannot).
+  const home = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-web-e2e-')));
   const socket = `clawdling-webe2e-${process.pid}-${crypto.randomBytes(3).toString('hex')}`;
   const env = { ...process.env };
   for (const k of PARENT_VARS) delete env[k];
