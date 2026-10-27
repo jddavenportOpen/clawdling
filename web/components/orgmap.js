@@ -37,6 +37,7 @@ const trunc = (s, n) => (s && s.length > n ? `${s.slice(0, n - 1)}…` : s || ''
 
 // Spread items on a circle near their ideal angles while keeping >= gap apart.
 function relaxCircle(items, gap) {
+  for (const it of items) it.angle = it.ideal; // (one item too: it keeps its ideal angle)
   if (items.length < 2) return;
   items.sort((a, b) => a.ideal - b.ideal);
   for (const it of items) it.angle = it.ideal;
