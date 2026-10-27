@@ -2,7 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { cliAllow } from './hooks.js';
+import { absPathRule, cliAllow, runtimeDeny } from './hooks.js';
 import { PKG_ROOT, runtimePaths } from './paths.js';
 import {
   HttpError,
@@ -22,7 +22,9 @@ import {
 
 export const TEMPLATES_DIR = path.join(PKG_ROOT, 'templates');
 export const CONTEXT_MAX_BYTES = 200 * 1024;
-export const RESERVED_IDS = new Set(['donna', 'scratch']);
+export const RESERVED_IDS = new Set(['donna', 'scratch', 'cto']);
+// The CTO seat (1.7): one per org, in <org>/cto, beside Donna.
+export const CTO_ID = 'cto';
 // Stored agent permission modes (null = ask; see permissions.js). 'default' is Claude Code's own
 // name for asking first, kept from 1.1.0.
 const PERMISSION_MODES = new Set(['ask', 'default', 'acceptEdits', 'plan', 'inherit']);
@@ -94,6 +96,45 @@ export function orgSettings(platform = process.platform) {
   return JSON.stringify(json, null, 2) + '\n';
 }
 
+/**
+ * The CTO seat's permissions (1.7), from templates/cto/settings.json: the report and session list
+ * run without asking; reviews/ may be written; `clawdling send` and `clawdling spawn` are ASK rules,
+ * which beat an allow rule from any other settings layer, so every cross-agent message shows Claude
+ * Code's own prompt; the web, its own CLAUDE.md and its settings are denied. File rules need an
+ * absolute-path rule for the seat's folder (hooks.js absPathRule): a path with rule syntax in it gets
+ * none, and then the CTO asks before writing its review (fileRules: false).
+ */
+export function ctoPermissions({ dir, home, platform = process.platform }) {
+  const tpl = JSON.parse(readTemplate('cto/settings.json')).permissions;
+  const base = absPathRule('X', dir, platform); // "X(//abs/dir/**)" or null
+  const root = base ? base.slice(2, -4) : null; // "//abs/dir"
+  const expand = (list) => {
+    const out = [];
+    for (const r of list) {
+      if (r.includes('{{cto}}')) {
+        if (root) out.push(r.replace('{{cto}}', root));
+        continue;
+      }
+      out.push(r);
+      // On Windows the agent's shell may be PowerShell: the same command rules for that tool.
+      if (platform === 'win32' && r.startsWith('Bash(')) out.push(r.replace(/^Bash\(/, 'PowerShell('));
+    }
+    return out;
+  };
+  return {
+    allow: expand(tpl.allow),
+    ask: expand(tpl.ask),
+    deny: [...expand(tpl.deny), ...runtimeDeny(home, platform)],
+    fileRules: !!root,
+  };
+}
+
+/** The text of the CTO folder's .claude/settings.json. */
+export function ctoSettingsText({ dir, home, platform = process.platform }) {
+  const { allow, ask, deny } = ctoPermissions({ dir, home, platform });
+  return JSON.stringify({ $schema: 'https://json.schemastore.org/claude-code-settings.json', permissions: { allow, ask, deny } }, null, 2) + '\n';
+}
+
 function writeIfMissing(file, content) {
   if (fs.existsSync(file)) return false;
   fs.writeFileSync(file, content);
@@ -121,7 +162,8 @@ function backupThenWrite(file, content, backupDir, home) {
 const BASE_SKILLS = ['handoff', 'new-agent'];
 // Skills whose text the cockpit vouches for: kept exactly as this version ships them.
 const FRESH_SKILLS = new Set(['remote-access']);
-const SKILLS_FOR = { root: [...BASE_SKILLS, 'onboard-project', 'remote-access'], project: [...BASE_SKILLS, 'onboard-project'], domain: BASE_SKILLS, chief: BASE_SKILLS };
+// The CTO gets none: it does not create agents, and its memory is its reviews.
+const SKILLS_FOR = { root: [...BASE_SKILLS, 'onboard-project', 'remote-access'], project: [...BASE_SKILLS, 'onboard-project'], domain: BASE_SKILLS, chief: BASE_SKILLS, cto: [] };
 
 function skillFile(dir, skill) {
   return path.join(dir, '.claude', 'skills', skill, 'SKILL.md');
@@ -135,7 +177,7 @@ function installSkills(dir, backupDir, home, kind = 'root') {
 
 /** Create (or, with backupDir, refresh) one agent folder. Memory files are never overwritten. */
 function scaffoldAgent({ home, kind, agent, owner, domainName, agentIds, backupDir, date = today() }) {
-  const dir = kind === 'chief' ? path.join(home, 'donna') : path.join(home, KIND_DIRS[kind], agent.id);
+  const dir = kind === 'chief' ? path.join(home, 'donna') : kind === 'cto' ? path.join(home, CTO_ID) : path.join(home, KIND_DIRS[kind], agent.id);
   ensureDir(path.join(dir, 'memory'));
   const tplDir = kind === 'chief' ? 'donna' : kind;
   const vars = {
@@ -156,6 +198,10 @@ function scaffoldAgent({ home, kind, agent, owner, domainName, agentIds, backupD
   writeIfMissing(path.join(dir, 'memory', 'NOW.md'), renderTemplate(readTemplate(`${tplDir}/NOW.md`), vars));
   writeIfMissing(path.join(dir, 'memory', 'LOG.md'), renderTemplate(readTemplate('LOG.md'), vars));
   installSkills(dir, backupDir, home, kind);
+  if (kind === 'cto') {
+    ensureDir(path.join(dir, 'reviews'));
+    backupThenWrite(path.join(dir, '.claude', 'settings.json'), ctoSettingsText({ dir, home }), backupDir, home);
+  }
   return dir;
 }
 
@@ -385,6 +431,9 @@ export class OrgStore {
       id === 'donna'
         ? [['chief', path.join(this.home, 'donna')]]
         : [
+            // An org from before 1.7 may have a domain or project with the id "cto": it keeps it
+            // (createCto refuses to add the seat until it is renamed or archived).
+            ...(id === CTO_ID ? [['cto', path.join(this.home, CTO_ID)]] : []),
             ['domain', path.join(this.home, 'domains', id)],
             ['project', path.join(this.home, 'projects', id)],
           ];
@@ -406,6 +455,8 @@ export class OrgStore {
     const out = [];
     const donna = this.agent('donna');
     if (donna) out.push(donna);
+    const cto = this.cto();
+    if (cto) out.push(cto);
     for (const kind of ['domain', 'project']) {
       const base = path.join(this.home, KIND_DIRS[kind]);
       let names = [];
@@ -473,6 +524,54 @@ export class OrgStore {
     const agentIds = this.agents().map((x) => x.id).filter((x) => x !== 'donna').concat(id);
     scaffoldAgent({ home: this.home, kind, agent, owner, domainName, agentIds });
     return this.agent(id);
+  }
+
+  /** The CTO seat, or null when the org has none. */
+  cto() {
+    const a = this.agent(CTO_ID);
+    return a && a.kind === 'cto' ? a : null;
+  }
+
+  /** "Add a CTO" (1.7): the seat's folder from templates/cto, beside Donna. One per org. */
+  createCto() {
+    if (this.cto()) throw conflict('This org already has a CTO.');
+    if (this.locate(CTO_ID)) throw conflict('An agent called "cto" already exists. Rename or archive it first, then add the CTO.');
+    const owner = this.read().owner || 'the owner';
+    const agent = {
+      id: CTO_ID,
+      kind: 'cto',
+      name: 'CTO',
+      mission: `${owner}'s CTO: reads every project's receipts each week and asks ${owner} the decisions that matter`,
+      icon: 'compass',
+      color: '#3E63DD',
+      repo: null,
+      domain: null,
+      model: null,
+      // Always "Ask before editing": the seat never runs in another mode (sessions.js).
+      permission_mode: null,
+      created_at: new Date().toISOString(),
+    };
+    scaffoldAgent({ home: this.home, kind: 'cto', agent, owner, agentIds: [] });
+    return this.cto();
+  }
+
+  /** Rewrite the CTO folder's settings file from this version's template (an older or edited copy). */
+  refreshCtoSettings() {
+    const a = this.cto();
+    if (!a) return false;
+    const file = path.join(a.dir, '.claude', 'settings.json');
+    const want = ctoSettingsText({ dir: a.dir, home: this.home });
+    let have = null;
+    try {
+      have = fs.readFileSync(file, 'utf8');
+    } catch {
+      // missing
+    }
+    if (have === want) return false;
+    ensureDir(path.dirname(file));
+    if (have !== null) fs.writeFileSync(`${file}.old`, have);
+    writeFileAtomic(file, want, 0o644);
+    return true;
   }
 
   require(id) {

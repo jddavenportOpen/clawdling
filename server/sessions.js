@@ -148,11 +148,14 @@ export function dialogFromScreen(screen) {
  * one bare word gets a trailing space so it can never be dispatched as a claude subcommand
  * (`claude -- update` would otherwise run `claude update`).
  */
+// A cross-agent message from the CTO seat: `clawdling send <sid> "..."` or `clawdling spawn <agent> "..."`.
+export const SEND_CMD_RE = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\b/;
+
 export function safePositional(prompt) {
   return /\s/.test(prompt) ? prompt : `${prompt} `;
 }
 
-export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsPath, model, effort, permissionMode, addDirs = [], appendSystemPromptFile, prompt }) {
+export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsPath, model, effort, permissionMode, addDirs = [], extraArgs = [], appendSystemPromptFile, prompt }) {
   const a = [];
   if (resume) a.push('--resume', resumeId || sid);
   else a.push('--session-id', sid);
@@ -161,6 +164,7 @@ export function buildClaudeArgs({ sid, resume = false, resumeId, name, settingsP
   if (model) a.push(`--model=${model}`);
   if (effort) a.push(`--effort=${effort}`);
   if (permissionMode) a.push('--permission-mode', permissionMode); // see cliPermissionMode()
+  a.push(...extraArgs);
   for (const d of addDirs) a.push('--add-dir', d);
   if (appendSystemPromptFile) a.push('--append-system-prompt-file', appendSystemPromptFile);
   if (prompt) a.push('--', safePositional(prompt));
@@ -379,6 +383,8 @@ export class SessionManager {
       choices: rec.status === 'needs_you' && ANSWERABLE.has(rec.waiting_on) && Array.isArray(rec.choices) ? rec.choices : null,
       // Claude asked a question (AskUserQuestion) or wants a plan approved: the chat shows a card.
       asking: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && rec.asking ? rec.asking : null,
+      // The CTO seat's message waiting for the owner's yes or no (shown with Claude Code's prompt).
+      pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.command : null,
       // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
       background: isLive(rec.status) ? this.runtime.get(rec.sid)?.background ?? null : null,
       resumable: rec.status === 'ended',
@@ -815,7 +821,12 @@ export class SessionManager {
     } catch (err) {
       this.logger?.warn?.(`before launch: ${err.message}`);
     }
-    const ownSettings = typeof extra.settingsPath === 'string' && rec.guard !== 'remote-access' ? extra.settingsPath : null;
+    // The CTO seat (1.7) always runs with its own settings file (cto.js): its narrow allow-list, ask
+    // rules for every cross-agent message, Clawdling's hooks; the owner's user-level settings and MCP
+    // servers do not load, and it is always "Ask before editing". No detailed timeline for it.
+    const seat = target.kind === 'cto' ? (this.seatLaunch ? this.seatLaunch(rec, target) : null) : null;
+    if (target.kind === 'cto' && !seat) throw new HttpError(500, 'the CTO seat cannot start without its settings');
+    const ownSettings = !seat && typeof extra.settingsPath === 'string' && rec.guard !== 'remote-access' ? extra.settingsPath : null;
     // While this launch is starting, an end event from the previous run must not remove its file.
     this.rt(rec.sid).launchingSettings = ownSettings;
     const args = buildClaudeArgs({
@@ -823,11 +834,13 @@ export class SessionManager {
       resume,
       resumeId: rec.claude_session_id || rec.sid,
       name: `${rec.agent_name}: ${rec.title || 'new session'}`,
-      settingsPath: rec.guard === 'remote-access' && this.paths.hooksSettingsRemote ? this.paths.hooksSettingsRemote : ownSettings || this.paths.hooksSettings,
+      settingsPath: seat ? seat.settingsPath : rec.guard === 'remote-access' && this.paths.hooksSettingsRemote ? this.paths.hooksSettingsRemote : ownSettings || this.paths.hooksSettings,
       model: rec.model,
       effort: rec.effort,
-      permissionMode: cliPermissionMode(rec.permission_mode, this.modeChoices),
-      addDirs: this.addDirsFor(target, rec.cwd),
+      permissionMode: cliPermissionMode(seat ? 'ask' : rec.permission_mode, this.modeChoices),
+      extraArgs: seat ? ['--setting-sources', 'project,local', '--strict-mcp-config'] : [],
+      // The seat reads the report, not other agents' folders: the org is not added to it.
+      addDirs: seat ? [] : this.addDirsFor(target, rec.cwd),
       appendSystemPromptFile: ctxFile,
       prompt,
     });
@@ -1149,6 +1162,15 @@ export class SessionManager {
       if (card && typeof p.tool_use_id === 'string' && p.tool_use_id) rec.pending_ask = { tool_id: p.tool_use_id.slice(0, 100), ...card };
     } else if (event !== 'Notification') {
       rec.pending_ask = null;
+    }
+    // The CTO seat's hooks report every tool call (cto.js): the cross-agent message it is about to
+    // send, kept so the cockpit can show it beside Claude Code's own prompt. Any other tool call, or
+    // the end of the turn, clears it, so a prompt is never shown with the wrong command.
+    if (event === 'PreToolUse') {
+      const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
+      rec.pending_cmd = cmd && SEND_CMD_RE.test(cmd) && typeof p.tool_use_id === 'string' && p.tool_use_id ? { tool_id: p.tool_use_id.slice(0, 100), command: cmd.slice(0, 4000) } : null;
+    } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
+      if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === p.tool_use_id) rec.pending_cmd = null;
     }
     const before = rec.transcript_path;
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);

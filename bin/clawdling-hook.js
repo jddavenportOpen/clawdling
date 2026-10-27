@@ -87,6 +87,15 @@ async function main() {
     const input = payload.tool_input && typeof payload.tool_input === 'object' ? payload.tool_input : null;
     if (event === 'PreToolUse' && input && JSON.stringify(input).length <= 64 * 1024) slim.tool_input = input;
   }
+  // The CTO seat (1.7) reports every tool call: its id and name, and the command only when it is a
+  // cross-agent message (`clawdling send` / `clawdling spawn`), which the cockpit shows beside
+  // Claude Code's own prompt. No other command or input is forwarded.
+  if ((event === 'PreToolUse' || event === 'PostToolUse') && !slim.tool_name && typeof payload.tool_name === 'string') {
+    slim.tool_name = clip(payload.tool_name, 100);
+    slim.tool_use_id = clip(payload.tool_use_id, 100);
+    const cmd = payload.tool_input && typeof payload.tool_input.command === 'string' ? payload.tool_input.command : '';
+    if (event === 'PreToolUse' && (payload.tool_name === 'Bash' || payload.tool_name === 'PowerShell') && /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\b/.test(cmd)) slim.tool_input = { command: clip(cmd, 4000) };
+  }
   const record = { event, sid, payload: slim, ts: new Date().toISOString(), ...(process.env.CLAWDLING_LAUNCH ? { launch: process.env.CLAWDLING_LAUNCH } : {}) };
   let token = '';
   let port = Number(process.env.CLAWDLING_PORT) || 0;

@@ -39,7 +39,7 @@ const money = (x, complete = true) => (!Number.isFinite(x) || (!complete && !(x 
  * The message, exactly as sent. `org` is Reports.orgReport({window: '7d'}); `labels` maps agent id
  * to its approved name. Agents with nothing done, nothing waiting and no usage are counted, not listed.
  */
-export function digestText(org, { labels = {} } = {}) {
+export function digestText(org, { labels = {}, cto = null } = {}) {
   const name = (a) => (Object.hasOwn(labels, a.id) ? safeName(labels[a.id]) : 'Another agent');
   const active = (org.agents || []).filter((a) => a.done > 0 || a.needs > 0 || a.cost_usd > 0);
   active.sort((a, b) => b.cost_usd - a.cost_usd || b.done - a.done);
@@ -57,6 +57,8 @@ export function digestText(org, { labels = {} } = {}) {
     const low = used[used.length - 1];
     lines.push(`Most usage: ${name(top)} (${money(top.cost_usd)}). Least: ${name(low)} (${money(low.cost_usd)}).`);
   }
+  // The CTO's line (1.7, its own opt-in): its headline and how many decisions wait.
+  if (typeof cto === 'string' && cto) lines.push(cto);
   const complete = !(org.totals && org.totals.complete === false);
   lines.push(`Total: ${money(org.totals?.week_usd ?? 0, complete)}${complete || !(org.totals?.week_usd > 0) ? '' : ' (part unknown)'}. Usage is a list-price equivalent, not a bill: on Pro and Max it is included in your plan. Open the cockpit for the details.`);
   return lines.join('\n');
@@ -102,7 +104,7 @@ export class Digest {
     if (st.last_sent_week === isoWeek(now) || now > next + 6 * 86400000) next = weekSendTime(now + 7 * 86400000, st);
     let preview = null;
     try {
-      preview = digestText(this.reports.orgReport({ window: '7d' }), { labels });
+      preview = digestText(this.reports.orgReport({ window: '7d' }), { labels, cto: this.ctoLine ? this.ctoLine() : null });
     } catch (err) {
       preview = null;
       this.logger?.warn?.(`monday report preview: ${err.message}`);
@@ -173,7 +175,7 @@ export class Digest {
     const week = isoWeek(now);
     if (st.last_sent_week === week) return { sent: false, why: 'sent this week' };
     if (now < weekSendTime(now, st)) return { sent: false, why: 'not yet' };
-    const text = digestText(this.reports.orgReport({ window: '7d' }), { labels: st.labels });
+    const text = digestText(this.reports.orgReport({ window: '7d' }), { labels: st.labels, cto: this.ctoLine ? this.ctoLine() : null });
     this.sending = true;
     // Counted before sending, like the needs-you ping: a failed send never turns into a retry storm.
     st.last_sent_week = week;

@@ -83,6 +83,7 @@ import { Evals, parseCells } from './evals/runner.js';
 import { fixMessage } from './claims.js';
 import { commitHooks, detectStack } from './stack.js';
 import { Digest } from './digest.js';
+import { Cto } from './cto.js';
 import { KINDS as OTLP_KINDS, INGEST_MAX_BYTES, OtelState, RateLimit, SECRET_HEADER, TraceStore, enrich, envBlock, normalize, preflight, sessionHeaders } from './otel.js';
 import { Accounts } from './accounts.js';
 import { HttpError, badRequest, ensureDir, execFileP, isUuid, isValidAgentId, notFound, readJson, shq, writeFileAtomic, writeJson } from './util.js';
@@ -486,13 +487,29 @@ export async function startServer(opts = {}) {
       } catch {
         ship = null;
       }
-      return { ship, checkup: evals.latest(agentId) };
+      return { ship, checkup: evals.latest(agentId), checkup_previous: evals.previous(agentId), cheaper: evals.cheaper(agentId) };
     };
     const transcripts = sessions.transcripts;
     const configDir = claudeConfigDir(cEnv);
 
     // The Monday report (1.5, opt-in): one message a week to the paired channel, through the pinger.
     const digest = new Digest({ paths, org, reports, pinger, events, logger });
+    // The CTO seat (1.7): its launch settings, the weekly review (opt-in), its line in the Monday report.
+    const cto = new Cto({ paths, org, sessions, reports, events, logger });
+    sessions.seatLaunch = (rec, target) => cto.launchSettings(rec, target, { nodePath, hookScript, stopFailure: supportsStopFailure(versionLine) });
+    digest.ctoLine = () => {
+      try {
+        return cto.digestLine();
+      } catch (err) {
+        logger.warn(`cto: monday report line: ${err.message}`);
+        return null;
+      }
+    };
+    try {
+      if (org.refreshCtoSettings()) logger.info("cto: rewrote the CTO folder's settings file from this version's template");
+    } catch (err) {
+      logger.warn(`cto: could not refresh the CTO folder's settings: ${err.message}`);
+    }
 
     // The detailed timeline (1.5, beta, off by default): Claude Code's own OpenTelemetry, received on
     // /otlp from this computer only, with this org's secret. Its settings go only into Clawdling's own
@@ -1482,6 +1499,23 @@ export async function startServer(opts = {}) {
         }
         return [200, { ...out, detailed: otelState.read().enabled }];
       }],
+      // The whole org for the CTO seat (1.7), schema 2: computed status, receipts, links. Read-only.
+      ['GET', /^\/api\/report\/all$/, async (req, m, res, url) => [200, await reports.allReport({ window: url.searchParams.get('window') || '7d', thresholds: cto.state().thresholds })]],
+      // The CTO seat. Adding it, running a review (it spends the plan) and its schedule work only on
+      // the computer itself; a paired device can read reviews.
+      ['GET', /^\/api\/cto$/, async () => [200, await cto.view()]],
+      ['POST', /^\/api\/cto$/, () => {
+        const a = cto.create();
+        publishOrg('agent_created', a.id);
+        return [201, a];
+      }, { local: true }],
+      ['GET', /^\/api\/cto\/estimate$/, async () => [200, await cto.estimate()]],
+      ['POST', /^\/api\/cto\/review$/, async () => [201, await cto.startReview()], { local: true }],
+      ['GET', /^\/api\/cto\/reviews\/(\d{4}-W\d{2})$/, (req, m) => [200, cto.review(m[1])]],
+      ['POST', /^\/api\/cto\/settings$/, async (req) => {
+        cto.configure(await jsonBody(req));
+        return [200, await cto.view()];
+      }, { local: true }],
       // The Monday report: status with the exact text it would send now; {enabled?, day?, hour?}.
       ['GET', /^\/api\/digest$/, () => [200, digest.status()]],
       ['POST', /^\/api\/digest$/, async (req) => [200, digest.configure(await jsonBody(req))]],
@@ -1854,6 +1888,7 @@ export async function startServer(opts = {}) {
     const traceTimer = setInterval(tracePrune, 3600000);
     traceTimer.unref?.();
     digest.start(testMode && Number(env.CLAWDLING_DIGEST_CHECK_MS) > 0 ? Number(env.CLAWDLING_DIGEST_CHECK_MS) : undefined);
+    cto.start(testMode && Number(env.CLAWDLING_CTO_CHECK_MS) > 0 ? Number(env.CLAWDLING_CTO_CHECK_MS) : undefined);
 
     const urlHost = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host.includes(':') ? `[${host}]` : host;
     const baseUrl = `http://${urlHost}:${port}`;
@@ -1869,6 +1904,7 @@ export async function startServer(opts = {}) {
       imessage.stop();
       pinger.stop();
       digest.stop();
+      cto.stop();
       clearInterval(traceTimer);
       reports.stopped = true;
       checks.stop();
@@ -1913,6 +1949,7 @@ export async function startServer(opts = {}) {
       checks,
       evals,
       digest,
+      cto,
       otel: { state: otelState, traces },
       backend,
       tmux: backend,

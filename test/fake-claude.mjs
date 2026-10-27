@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
+import { fileURLToPath } from 'node:url';
 
 const argv = process.argv.slice(2);
 const log = (entry) => {
@@ -452,6 +453,93 @@ async function planApproval(plan, { file = false } = {}) {
   return { approved: PLAN_CHOICES[r.approve] };
 }
 
+// ------------------------------------------------ the CTO seat's weekly review (1.7)
+const CLI_JS = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'bin', 'clawdling.js');
+
+/** Run the real clawdling CLI (by path, so it works the same on every OS), as a recorded Bash call. */
+function clawdlingTool(args, shown) {
+  const id = `toolu_c${crypto.randomBytes(5).toString('hex')}`;
+  transcript('assistant', { id: `msg_${id}`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 200, output_tokens: 40 }, content: [{ type: 'tool_use', id, name: 'Bash', input: { command: shown, description: 'Clawdling' } }] }, { requestId: `req_${id}` });
+  let out = '';
+  let ok = true;
+  try {
+    out = execFileSync(process.execPath, [CLI_JS, ...args], { encoding: 'utf8', env: process.env, timeout: 30000, windowsHide: true });
+  } catch (e) {
+    ok = false;
+    out = `${e.stdout || ''}${e.stderr || ''}` || e.message;
+  }
+  transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: out.slice(0, 20000), ...(ok ? {} : { is_error: true }) }] });
+  return { ok, out };
+}
+
+async function ctoReview() {
+  const rep = clawdlingTool(['report', '--all', '--json', '--window', '7d'], 'clawdling report --all --json --window 7d');
+  if (!rep.ok) return `I could not read the report: ${rep.out.trim().slice(0, 200)}`;
+  const r = JSON.parse(rep.out);
+  const order = { project: 0, domain: 1 };
+  const agents = [...r.agents].sort((a, b) => (order[a.kind] ?? 2) - (order[b.kind] ?? 2));
+  const lines = [`# CTO review, ${r.week}`, `Headline: ${agents.filter((a) => a.status.label === 'at_risk').length} at risk, ${agents.filter((a) => a.status.label === 'stalled').length} stalled, ${agents.filter((a) => a.status.label === 'on_track').length} on track.`];
+  for (const a of agents) {
+    const override = process.env.FAKE_CLAUDE_CTO_OVERRIDE === a.id;
+    const label = override ? (a.status.label === 'on_track' ? 'At risk' : 'On track') : a.status.text;
+    lines.push(`## ${a.name}: ${label}`);
+    for (const why of a.status.reasons.slice(0, 2)) lines.push(`- ${why.text} [${why.receipt}]`);
+    lines.push(`- Usage this week: $${(a.cost.week_usd || 0).toFixed(2)} at list price [${a.cost.receipt}]`);
+    if (override) lines.push(`- Override: the latest session reads as finished work to me [${a.cost.receipt}]`);
+  }
+  if (process.env.FAKE_CLAUDE_CTO_UNCITED === '1') lines.push('- Everything else looks fine.');
+  if (process.env.FAKE_CLAUDE_CTO_BADID === '1') lines.push('- A receipt that does not exist [R-session-00000000]');
+  const flagged = agents.filter((a) => a.status.label === 'at_risk' || a.status.label === 'stalled');
+  const picks = (flagged.length ? flagged : agents.filter((a) => a.kind === 'project').slice(0, 1)).slice(0, 3);
+  const questions = picks.map((a) => ({ question: `${a.name}: what should happen next?`, header: a.name.slice(0, 12), multiSelect: false, options: [{ label: `Ask ${a.name} to look at it`, description: a.status.reasons[0]?.text || 'A status update.' }, { label: `Leave ${a.name} for now`, description: 'No message is sent.' }] }));
+  lines.push('## Decisions');
+  questions.forEach((q, i) => lines.push(`${i + 1}. ${q.question}`));
+  const file = path.join(process.cwd(), 'reviews', `${r.week}.md`);
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const wid = `toolu_w${crypto.randomBytes(5).toString('hex')}`;
+  transcript('assistant', { id: `msg_${wid}`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 300, output_tokens: 600 }, content: [{ type: 'tool_use', id: wid, name: 'Write', input: { file_path: file, content: '(review)' } }] }, { requestId: `req_${wid}` });
+  fs.writeFileSync(file, lines.join('\n') + '\n');
+  transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: wid, content: `File created successfully at: ${file}` }] });
+  if (!questions.length) return `I wrote reviews/${r.week}.md. Nothing to decide this week.`;
+  const answers = await askUserQuestion(questions);
+  if (!answers) return `I wrote reviews/${r.week}.md. You declined the decisions.`;
+  const results = [];
+  for (const [i, q] of questions.entries()) {
+    const a = picks[i];
+    if (!/^Ask /.test(answers[q.question] || '')) continue;
+    const message = `Your CTO review flagged this: ${a.status.reasons[0]?.text || 'a status check'}. Please look at it and say what you will do.`;
+    const ls = clawdlingTool(['ls', '--json'], 'clawdling ls --json');
+    const live = ls.ok ? JSON.parse(ls.out).find((s) => s.agent === a.id && s.status !== 'ended') : null;
+    const args = live ? ['send', live.sid.slice(0, 8), message] : ['spawn', a.id, message];
+    const shown = `clawdling ${args[0]} ${args[1]} "${message}"`;
+    const id = `toolu_d${crypto.randomBytes(5).toString('hex')}`;
+    await runHook('PreToolUse', { tool_name: 'Bash', tool_input: { command: shown, description: 'Deliver the message' }, tool_use_id: id });
+    process.stdout.write('\x1b[2J\x1b[H');
+    const asked = select({ header: [' Bash command', `   ${shown}`, '   Deliver the message', '', ' Do you want to proceed?'], choices: ['Yes', `Yes, and don't ask again for clawdling ${args[0]} commands`, 'No, and tell Claude what to do differently (esc)'], numbered: true });
+    await runHook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+    const choice = await asked;
+    transcript('assistant', { id: `msg_${id}`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 100, output_tokens: 60 }, content: [{ type: 'tool_use', id, name: 'Bash', input: { command: shown, description: 'Deliver the message' } }] }, { requestId: `req_${id}` });
+    if (choice === 2) {
+      transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed." }] }, { toolUseResult: 'User rejected tool use' });
+      fs.appendFileSync(file, `Declined: ${message}\n`);
+      results.push(`${a.name}: declined`);
+      continue;
+    }
+    let out = '';
+    let ok = true;
+    try {
+      out = execFileSync(process.execPath, [CLI_JS, ...args], { encoding: 'utf8', env: process.env, timeout: 30000, windowsHide: true });
+    } catch (e) {
+      ok = false;
+      out = `${e.stdout || ''}${e.stderr || ''}`;
+    }
+    transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: out.slice(0, 2000), ...(ok ? {} : { is_error: true }) }] });
+    await runHook('PostToolUse', { tool_name: 'Bash', tool_use_id: id });
+    results.push(`${a.name}: ${ok ? (live ? 'sent' : 'started') : 'failed'}`);
+  }
+  return `I wrote reviews/${r.week}.md.${results.length ? ` ${results.join('; ')}.` : ''}`;
+}
+
 async function trustDialog() {
   if (!fs.existsSync(path.join(process.cwd(), '.fake-claude-trust'))) return true;
   process.stdout.write('\x1b[2J\x1b[H');
@@ -515,6 +603,21 @@ async function interactive() {
       const answer = ['yes', 'yes, always', 'no'][choice];
       process.stdout.write(`assistant: permission answered (${answer}), done\n> `);
       await runHook('Stop', { stop_hook_active: false, last_assistant_message: `permission answered (${answer}), done` });
+      return;
+    }
+    // "Run this week's review" (1.7, the CTO seat): run `clawdling report --all --json`, write
+    // reviews/<week>.md citing its receipts, ask up to three decisions (AskUserQuestion), then for
+    // each "Ask <agent> ..." answer ask permission to run `clawdling send <sid> "..."` (or `spawn`),
+    // and run it through the real CLI if allowed; a declined one is noted in the review.
+    // FAKE_CLAUDE_CTO_UNCITED=1 adds an uncited bullet, FAKE_CLAUDE_CTO_BADID=1 cites an id that
+    // does not exist, FAKE_CLAUDE_CTO_OVERRIDE=<agent id> disagrees with that agent's label.
+    if (/run this week's review/i.test(text)) {
+      inSelect = true;
+      const said = await ctoReview().catch((e) => `the review failed: ${e.message}`);
+      inSelect = false;
+      transcript('assistant', { role: 'assistant', model: 'claude-sonnet-5', content: [{ type: 'text', text: said }] });
+      process.stdout.write(`assistant: ${said}\n> `);
+      await runHook('Stop', { stop_hook_active: false, last_assistant_message: said });
       return;
     }
     // "ask?" / "ask2?": AskUserQuestion (one question; or two, the second multiSelect). "plan?": ExitPlanMode.
