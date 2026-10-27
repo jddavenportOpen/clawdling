@@ -32,7 +32,9 @@ export function evidenceText(c) {
   if (c.label === 'verified') return `\`${k.cmd}\` passed at ${time(k.at)}, after the last edit${k.ship ? ' (ship check)' : ''}.`;
   if (c.label === 'contradicted') return `\`${k.cmd}\` failed at ${time(k.at)}${k.first_error_line ? `: ${k.first_error_line}` : '.'}`;
   if (c.label === 'no_changes') return 'This session changed no file, so there was nothing to check.';
-  if (c.unclear) return 'A check after the last edit showed a failure that this record cannot tie to the claim (piped, chained, only some tests, or a ship check in the scratch copy).';
+  if (c.unclear && k && k.ship) return `The ship check at ${time(k.at)} failed in the scratch copy (\`${k.cmd}\`${k.first_error_line ? `: ${k.first_error_line}` : ''}). A failure there keeps the claim Not verified; it never marks it Contradicted, because the copy is not the agent's environment.`;
+  if (c.unclear && k) return `\`${k.cmd}\` at ${time(k.at)} showed a failure, but in a way that cannot be tied to this claim (piped, chained, or only some tests). Run the check on its own to get a receipt.`;
+  if (c.unclear) return 'A check after the last edit showed a failure that cannot be tied to this claim.';
   return c.kind === 'tests' ? `No ${c.needs && c.needs.length ? c.needs.join(' or ') : 'test'} check ran after the last edit.` : 'No check ran after the last edit.';
 }
 

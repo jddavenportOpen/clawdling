@@ -76,7 +76,7 @@ test.describe('claim receipts (mock-only)', () => {
     // The Verified block counts the week's claims by label.
     const v = page.getByTestId('rc-verified');
     await expect(v.locator('[data-claim="contradicted"] .rc-claim-n')).toHaveText('1');
-    await expect(v).toContainText('Not verified: no check ran after it (not an accusation)');
+    await expect(v).toContainText('Not verified: no check ran after it, or one that cannot be tied to it (not an accusation)');
   });
 });
 

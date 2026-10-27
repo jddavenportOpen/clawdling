@@ -574,7 +574,7 @@ test('review 8: wrappers are seen through; a failure whose owner cannot be told 
   assert.equal(labelClaim(a).label, 'contradicted', 'timeout is seen through: it is a plain run of the tests');
   const [a2] = claimsOf([prompt('x'), edit(), bash('./scripts/ci.sh', 'Exit code 1\nFAIL src/cart.test.js', true), bash('npm run lint', 'All checks passed'), say('Done.')]);
   assert.equal(labelClaim(a2).label, 'not_verified', 'an unknown script that failed with a runner\'s marks');
-  assert.match(badgeText(labelClaim(a2)), /cannot tie/);
+  assert.match(badgeText(labelClaim(a2)), /cannot be tied to this claim/);
   for (const cmd of ['timeout 600 npm test', 'cross-env CI=1 npm test', 'xvfb-run npm test', 'dotenv -- npm test', 'npm exec -- jest']) assert.ok(checkOf(cmd), cmd);
   const [b] = claimsOf([prompt('x'), edit(), bash('npm test'), bash('npm run build && npm test', 'Exit code 1\nnot ok 1\n# fail 1', true), say('Done. All tests pass.')]);
   assert.equal(labelClaim(b).label, 'not_verified', 'the failure may be the tests\'');

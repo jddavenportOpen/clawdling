@@ -121,7 +121,7 @@ export function ReportCard({ id, agent }) {
     ${fresh ? html`
       <ul class="report-glance" aria-label="At a glance">
         <li><button type="button" class="glance" onClick=${() => go('#rc-done')}><span class="glance-n">${fresh.done.length}</span><span class="glance-l">${fresh.done.length === 1 ? 'session' : 'sessions'} with work done</span></button></li>
-        <li><button type="button" class=${`glance ${needs.length ? 'tone-needs' : ''}`} onClick=${() => go('#rc-needs')}><span class="glance-n">${needs.length}</span><span class="glance-l">${needs.length === 1 ? 'thing needs' : 'things need'} you</span></button></li>
+        <li><button type="button" class=${`glance ${needs.length || (fresh.contradicted || []).length ? 'tone-needs' : ''}`} onClick=${() => go('#rc-needs')}><span class="glance-n">${needs.length + (fresh.contradicted || []).length}</span><span class="glance-l">${needs.length + (fresh.contradicted || []).length === 1 ? 'thing needs' : 'things need'} you</span></button></li>
         <li><button type="button" class="glance" onClick=${() => go('#rc-cost')}><span class="glance-n">${!fresh.cost.total_usd && !fresh.cost.complete ? 'Unknown' : `${usd(fresh.cost.total_usd).replace(/^about /, '')}${fresh.cost.complete ? '' : '+'}`}</span><span class="glance-l">of usage at list price${fresh.cost.complete ? '' : ', plus some unknown'}</span></button></li>
         <li><button type="button" class=${`glance ${fresh.next.stale ? 'tone-needs' : ''}`} onClick=${() => go('#rc-next')}><span class="glance-n">${fresh.next.empty ? 'None' : agoText(fresh.next.updated_at, now) || 'Written'}</span><span class="glance-l">${fresh.next.empty ? 'next steps written yet' : 'next steps last updated'}</span></button></li>
       </ul>
@@ -179,7 +179,7 @@ function NeedsBlock({ needs, name, now, agentsById, server = [], contradicted = 
   // A finished turn whose claim a check contradicted (1.6): the same row, saying so, with the fix.
   const bad = (sid) => server.find((x) => x.sid === sid && x.kind === 'contradicted');
   // The count is the rail's (1.5); ended sessions a check contradicted are listed under their own heading.
-  return html`<${Block} id="rc-needs" title="Needs you" count=${needs.length} tone=${needs.length || contradicted.length ? 'amber' : ''} testid="rc-needs">
+  return html`<${Block} id="rc-needs" title="Needs you" count=${needs.length} tone=${needs.length || contradicted.length ? 'amber' : ''} sub=${contradicted.length ? `live sessions, plus ${plural(contradicted.length, 'ended session')} below` : null} testid="rc-needs">
     ${needs.length ? html`<ul class="rc-list">${needs.map((s) => {
       const c = !isBlocked(s) && bad(s.sid);
       return html`<li key=${s.sid}>
@@ -221,7 +221,7 @@ function VerifiedBlock({ v, id, name, now, kind }) {
         <span class="rc-claim-n">${c[l] || 0}</span><span class="rc-claim-l"><${Icon} name=${CLAIM_LABEL[l].icon} size=${11} /> ${CLAIM_LABEL[l].text}</span></li>`)}
     </ul>${c.no_changes ? html`<p class="rc-note">And ${plural(c.no_changes, 'claim')} from sessions that changed no file.</p>` : null}`
       : html`<p class="rc-empty">No "done" claims in the last 7 days. When ${name} says it finished, Clawdling checks the session's record and labels it here.</p>`}
-    <p class="rc-label">Verified: a check passed after the agent's last edit. Not verified: no check ran after it (not an accusation). Contradicted: a check after it failed.</p>
+    <p class="rc-label">Verified: a check passed after the agent's last edit. Not verified: no check ran after it, or one that cannot be tied to it (not an accusation). Contradicted: a check after it failed.</p>
     ${kind === 'project' ? html`<h3 class="rc-sub-h">Ship check</h3>
       ${!ship || !ship.available ? html`<p class="rc-note">A ship check needs the project's repo on this computer.</p>`
         : !ship.configured ? html`<p class="rc-note">Not set up yet. <button type="button" class="link-btn" onClick=${tab}>Set up a ship check</button>: a few commands you approve once (tests, build), run in a scratch copy.</p>`

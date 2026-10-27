@@ -906,10 +906,12 @@ export function labelClaim(c, { approved = [], detected = [], shipRuns = [], com
   // The session's own failure, with a ship-check pass after it: the two disagree (an environment
   // difference, a flaky test). Not verified, never Contradicted, never Verified.
   for (const f of standing) if (f.canonical && !f.ship && checks.some((p) => p.ship && p.ok && Date.parse(p.at) >= Date.parse(f.at) && (p.kinds.includes(f.kind) || (f.kind === 'check' && p.kinds.includes('test'))))) f.canonical = false;
-  const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: x.first_error_line || null, ...(x.ship ? { ship: true } : {}) } : null);
+  // (A runner's glyph and timing are noise in a sentence: "✖ adds (0.44ms)" reads "adds".)
+  const tidy = (line) => (line ? String(line).replace(/^[\u2716\u2718\u2717\u2715\u00d7]\s*/, '').replace(/\s*\(\d+(\.\d+)?\s*m?s\)\s*$/, '') || line : null);
+  const strip = (x) => (x ? { cmd: oneLine(String(x.cmd || ''), 300), at: x.at, ok: x.ok, first_error_line: tidy(x.first_error_line), ...(x.ship ? { ship: true } : {}) } : null);
   const canonFail = standing.filter((x) => x.canonical).pop();
   if (canonFail) return { label: 'contradicted', check: strip(canonFail) };
-  if (standing.length) return { label: 'not_verified', check: null, unclear: true };
+  if (standing.length) return { label: 'not_verified', check: strip(standing[standing.length - 1]), unclear: true };
   const passes = checks.filter((x) => x.ok && counts(x));
   const enough = needs ? needs.every((n) => passes.some((x) => (x.ship ? x.kinds.includes(n) : x.kind === n))) : passes.length > 0;
   if (enough) return { label: 'verified', check: strip(passes[passes.length - 1]) };
@@ -1132,6 +1134,8 @@ export function badgeText(l, { time = (iso) => whenText(iso) } = {}) {
   if (l.label === 'verified') return `Verified: \`${l.check.cmd}\` passed at ${time(l.check.at)}, after the last edit${l.check.ship ? ' (ship check)' : ''}`;
   if (l.label === 'contradicted') return `Contradicted: \`${l.check.cmd}\` failed at ${time(l.check.at)}${l.check.first_error_line ? `: ${l.check.first_error_line}` : ''}`;
   if (l.label === 'no_changes') return 'No changes made';
-  if (l.unclear) return 'Not verified: a check after the last edit showed a failure this record cannot tie to it';
+  if (l.unclear && l.check && l.check.ship) return `Not verified: the ship check at ${time(l.check.at)} failed in the scratch copy (\`${l.check.cmd}\`${l.check.first_error_line ? `: ${l.check.first_error_line}` : ''})`;
+  if (l.unclear && l.check) return `Not verified: \`${l.check.cmd}\` at ${time(l.check.at)} showed a failure that cannot be tied to this claim`;
+  if (l.unclear) return 'Not verified: a check after the last edit showed a failure that cannot be tied to this claim';
   return 'Not verified: no check ran after the last edit';
 }
