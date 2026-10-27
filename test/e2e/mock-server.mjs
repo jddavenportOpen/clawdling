@@ -324,7 +324,7 @@ const FIXTURES = {
           { id: 'toolu_mockcto2', sid: asking.sid, at: iso(3 * MIN), state: 'waiting', questions: [q('Spring half marathon')], answers: null },
         ],
         deliveries: [
-          { id: 'toolu_mockcto3', sid: done.sid, at: iso(140 * MIN), verb: 'send', to: site.sid.slice(0, 8), command: `clawdling send ${site.sid.slice(0, 8)} "${flagged}"`, state: 'sent', note: null },
+          { id: 'toolu_mockcto3', sid: done.sid, at: iso(140 * MIN), verb: 'send', to: site.sid.slice(0, 8), command: `clawdling send ${site.sid.slice(0, 8)} "${flagged.replace(/"/g, '\\"')}"`, state: 'sent', note: null },
           { id: 'toolu_mockcto4', sid: done.sid, at: iso(130 * MIN), verb: 'spawn', to: 'marathon', command: `clawdling spawn marathon "${stalled}"`, state: 'declined', note: null },
         ],
       },

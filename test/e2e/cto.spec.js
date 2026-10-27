@@ -3,7 +3,7 @@
 // Claude Code's permission prompt for the exact `clawdling send|spawn` command, and the review page
 // with its lint, receipt links, decisions and messages. Against the real server the fake claude
 // writes the review and asks; against the mock the "cto" fixture carries one of every marker.
-// Set CLAWDLING_E2E_SHOTS=<dir> to save screenshots of each screen (real-server run).
+// Set CLAWDLING_E2E_SHOTS=<dir> to save screenshots of each screen.
 import fs from 'node:fs';
 import path from 'node:path';
 import { test, expect } from '@playwright/test';
@@ -205,6 +205,7 @@ test.describe('the CTO seat (mock)', () => {
     await page.getByTestId('cto-run').click();
     const dlg = page.getByTestId('cto-cost-dialog');
     await expect(dlg.getByTestId('cto-cost-line')).toHaveText('This starts one Claude Code session on your plan, about $0.18 to $0.54 list-price equivalent.');
+    await shot(page, 'mock-cost-dialog');
     await expect(dlg).toContainText("Based on the size of the CTO's prompt");
     await page.getByTestId('cto-cost-go').click();
     await expect.poll(async () => (await api('GET', '/api/cto')).running).toBeTruthy();
@@ -266,6 +267,7 @@ test.describe('the CTO seat (mock)', () => {
 
     // An agent with no section.
     await expect(page.getByTestId('cto-missing')).toHaveText('No section for Home (Quiet).');
+    await shot(page.getByTestId('cto-review'), 'mock-review-markers');
 
     // The file itself, as text.
     await review.getByRole('button', { name: 'Show the file' }).click();
