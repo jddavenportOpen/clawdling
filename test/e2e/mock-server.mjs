@@ -672,7 +672,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function setStatus(s, status, extra = {}) {
     Object.assign(s, extra, { status });
-    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; s.pending_cmd = null; s.pending_cmd_plain = null; s.pending_cmd_send = null; }
+    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; s.pending_cmd = null; s.pending_cmd_plain = null; s.pending_cmd_send = null; s.pending_cmd_id = null; }
     if (status === 'ended') { s.ended_at = new Date().toISOString(); }
     else s.ended_at = null;
     s.last_activity_at = new Date().toISOString();
@@ -1638,7 +1638,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const body = await readBody(req);
       const s1 = st.sessions.get(body.sid);
       if (!s1) { send(res, 404, { error: 'no such session' }); return; }
-      setStatus(s1, 'needs_you', { waiting_on: 'permission_prompt', notification: 'Claude needs your permission to use Bash', choices: [{ option: 1, label: '1. Yes' }, { option: 2, label: '2. No, and tell Claude what to do differently (esc)' }], pending_cmd: body.command, pending_cmd_plain: body.plain !== false, pending_cmd_send: body.send !== false });
+      setStatus(s1, 'needs_you', { waiting_on: 'permission_prompt', notification: 'Claude needs your permission to use Bash', choices: [{ option: 1, label: '1. Yes' }, { option: 2, label: '2. No, and tell Claude what to do differently (esc)' }], pending_cmd: body.command, pending_cmd_plain: body.plain !== false, pending_cmd_send: body.send !== false, pending_cmd_id: body.tool_id || 'toolu_mockprompt' });
       send(res, 204);
       return;
     }

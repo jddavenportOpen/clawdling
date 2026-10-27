@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { after, before, test } from 'node:test';
-import { ROOT, cli, killTmux, openViewer, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
+import { ROOT, cli, cliResult, killTmux, openViewer, readJsonFile, request, rmrf, startServerProc, tempHome, testEnv, uniqueSocket, waitFor } from '../helpers.mjs';
 import { RECEIPT_RE } from '../../server/receipts.js';
 
 let home;
@@ -288,14 +288,18 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   assert.ok(p1.choices.length >= 2);
   assert.equal(p1.pending_cmd_plain, true, 'one plain message: the cockpit offers Yes and No');
   assert.equal(p1.choices.length, 2, 'Yes and No only');
-  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: p1.choices.length }, asOwner())).status, 200);
+  // A one-tap answer must name the prompt it was shown for.
+  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: p1.choices.length }, asOwner())).status, 409);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: p1.choices.length, cmd_tool_id: 'toolu_other' }, asOwner())).status, 409);
+  const a1 = await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: p1.choices.length, cmd_tool_id: p1.pending_cmd_id }, asOwner());
+  assert.equal(a1.status, 200, a1.text);
   // Shop has a live session: `clawdling send`. Approve it.
   const p2 = await waitFor(async () => {
     const v = await status(sid);
     return v.status === 'needs_you' && v.pending_cmd && /^clawdling send /.test(v.pending_cmd) && Array.isArray(v.choices) && v.choices.length ? v : null;
   }, { label: 'send prompt', timeout: 30000 });
   assert.match(p2.pending_cmd, new RegExp(`^clawdling send ${shopSid.slice(0, 8)} "Your CTO review flagged this`));
-  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: 1 }, asOwner())).status, 200);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: 1, cmd_tool_id: p2.pending_cmd_id }, asOwner())).status, 200);
   await waitFor(async () => /Your CTO review flagged this/.test((await status(shopSid)).last_message || ''), { label: 'the message reached Shop', timeout: 30000 });
   await waitFor(async () => (await status(sid)).status === 'ready', { label: 'review done', timeout: 30000 });
   // Kept when the turn ended (its Stop), before anyone opened the page or the CTO view.
@@ -371,6 +375,30 @@ test('a "No" typed in the terminal that stops the turn also makes it the owner\'
   assert.match(v.last_message, /You said no, so Claude stopped/);
   viewer.close();
   await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+});
+
+test('a Yes typed in the terminal never reads as a No', async () => {
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'website', prompt: 'permission? interrupt' })).body;
+  const p = await waitFor(async () => {
+    const v = await status(s.sid);
+    return v.status === 'needs_you' && Array.isArray(v.choices) && v.choices.length ? v : null;
+  }, { label: 'the prompt', timeout: 20000 });
+  const yes = p.choices.find((c) => /^\s*\d+[.)]\s*Yes\s*$/i.test(c.label));
+  const viewer = await openViewer(srv, s.sid);
+  viewer.send({ t: 'in', data: String(yes.option) });
+  const v = await waitFor(async () => {
+    const x = await status(s.sid);
+    return x.status === 'ready' ? x : null;
+  }, { label: 'ready after a typed Yes', timeout: 20000 });
+  assert.match(v.last_message, /permission answered \(yes\)/);
+  viewer.close();
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+});
+
+test('clawdling ls never falls back to its offline copy when pointed elsewhere, and the copy carries no agent words', async () => {
+  const r = cliResult(['ls', '--json', '--port', '1'], { env, home });
+  assert.notEqual(r.code, 0, 'pointed at another port: no fallback');
+  assert.ok(!/flagged this|You said no/.test(`${r.stdout}${r.stderr}`));
 });
 
 test('the lint flags uncited bullets, ids that do not exist, and a label the CTO overrode (with its reason)', async () => {

@@ -15,12 +15,19 @@ import path from 'node:path';
 export const CROSS_AGENT_RE = /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i;
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
+// What the seat may use with Claude Code's own rules deciding (reads, its question cards, its list).
+const PLAIN_TOOLS = new Set(['Read', 'Grep', 'Glob', 'LS', 'AskUserQuestion', 'TodoWrite', 'ExitPlanMode']);
+// No subagents, workflows or watchers: they run beside the seat's own thread, so a prompt on screen
+// might not belong to the newest tool call, and their calls land in other transcripts.
+const DENIED_TOOLS = new Set(['Agent', 'Task', 'Workflow', 'Monitor', 'WebFetch', 'WebSearch']);
 const WEEK_FILE = /^\d{4}-W\d{2}\.md$/;
 
 export const ASK_SEND = 'Clawdling: the CTO wants to message another agent. Read the exact message, then say yes or no.';
 export const ASK_OTHER = 'Clawdling: the CTO seat runs only the report and the session list without asking.';
 export const ASK_WRITE = 'Clawdling: the CTO seat writes only its weekly review file without asking.';
 export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it asks.';
+export const ASK_UNKNOWN = 'Clawdling: the CTO seat asks before using a tool it does not know.';
+export const DENY_TOOL = 'Clawdling: the CTO seat does not start subagents, workflows or watchers, and has no web.';
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
 /**
@@ -88,10 +95,12 @@ export function seatDecision(payload, { home, now = Date.now() }) {
   const p = payload && typeof payload === 'object' ? payload : {};
   if (typeof p.tool_name !== 'string' || !p.tool_name) return { decision: 'ask', reason: ASK_UNREADABLE };
   const input = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
+  if (DENIED_TOOLS.has(p.tool_name)) return { decision: 'deny', reason: DENY_TOOL };
   if (SHELL_TOOLS.has(p.tool_name)) {
     const cmd = typeof input.command === 'string' ? input.command : '';
-    if (CROSS_AGENT_RE.test(cmd)) return { decision: 'ask', reason: ASK_SEND };
-    if (plainRead(cmd)) return { decision: 'allow', reason: ALLOW_READ };
+    if (CROSS_AGENT_RE.test(cmd.slice(0, 4001))) return { decision: 'ask', reason: ASK_SEND };
+    // A read runs without a prompt only in the foreground (a background task lives on, with its own words).
+    if (plainRead(cmd) && !input.run_in_background) return { decision: 'allow', reason: ALLOW_READ };
     return { decision: 'ask', reason: ASK_OTHER };
   }
   if (FILE_TOOLS.has(p.tool_name)) {
@@ -99,7 +108,8 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     if (p.tool_name !== 'NotebookEdit' && reviewFile(home, file, p.cwd, now)) return null;
     return { decision: 'ask', reason: ASK_WRITE };
   }
-  return null;
+  if (PLAIN_TOOLS.has(p.tool_name)) return null;
+  return { decision: 'ask', reason: ASK_UNKNOWN };
 }
 
 /** The hook's stdout for a decision (Claude Code's PreToolUse JSON), or '' for none. */

@@ -511,7 +511,8 @@ async function ctoReview() {
     const ls = clawdlingTool(['ls', '--json'], 'clawdling ls --json');
     const live = ls.ok ? JSON.parse(ls.out).find((s) => s.agent === a.id && s.status !== 'ended') : null;
     const args = live ? ['send', live.sid.slice(0, 8), message] : ['spawn', a.id, message];
-    const shown = `clawdling ${args[0]} ${args[1]} "${message}"`;
+    // As a shell would need it: quotes and other specials inside the message escaped.
+    const shown = `clawdling ${args[0]} ${args[1]} "${message.replace(/["\\$`]/g, '\\$&')}"`;
     const id = `toolu_d${crypto.randomBytes(5).toString('hex')}`;
     await runHook('PreToolUse', { tool_name: 'Bash', tool_input: { command: shown, description: 'Deliver the message' }, tool_use_id: id });
     process.stdout.write('\x1b[2J\x1b[H');

@@ -318,7 +318,7 @@ function QuestionBanner({ s, mobile, accent, onTerminal }) {
   const shown = s.choices.slice(0, QUESTION_MAX);
   const answer = async (option) => {
     setBusy(option);
-    await answerDialog(s.sid, option, { focus: !mobile });
+    await answerDialog(s.sid, option, { focus: !mobile, cmdToolId: s.kind === 'cto' ? s.pending_cmd_id : null });
     setBusy(0);
   };
   // The CTO seat: a one-tap answer only for exactly one plain message to an agent. Anything else

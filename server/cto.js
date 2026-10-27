@@ -236,14 +236,16 @@ export class Cto {
     const a = this.org.cto();
     const past = [];
     try {
-      for (const s of this.reports.summaries({ agent: CTO_ID })) if (s.turns > 0 && s.cost && s.cost.usd > 0) past.push(s.cost.usd);
+      // Weekly reviews only: a short chat between reviews says nothing about what a review costs.
+      const reviewSids = new Set(this.ctoSessions().filter((x) => x.review_week).map((x) => x.sid));
+      for (const s of this.reports.summaries({ agent: CTO_ID })) if (reviewSids.has(s.sid) && s.turns > 0 && s.cost && s.cost.usd > 0) past.push(s.cost.usd);
     } catch {
       // no receipts
     }
     past.sort((x, y) => x - y);
     if (past.length) {
       const mid = past[Math.floor(past.length / 2)];
-      return { low_usd: round2(mid * 0.6), high_usd: round2(Math.max(mid * 1.6, 0.01)), based_on: `the median of the CTO's last ${past.length} session${past.length === 1 ? '' : 's'} (about $${mid.toFixed(2)})`, label: COST_LABEL };
+      return { low_usd: round2(mid * 0.6), high_usd: round2(Math.max(mid * 1.6, 0.01)), based_on: `the median of the CTO's last ${past.length} weekly review${past.length === 1 ? '' : 's'} (about $${mid.toFixed(2)})`, label: COST_LABEL };
     }
     let reportBytes = 20000;
     try {
@@ -383,9 +385,18 @@ export class Cto {
         decisions.push({ id: ask.tool_id, sid: s.sid, at: s.last_activity_at, state: 'waiting', answers: null, questions: (ask.card.questions || []).map((q) => ({ question: oneLine(String(q.question || ''), 300), options: (q.options || []).map((o) => oneLine(String(o.label || ''), 120)) })) });
       }
       // A message waiting for the owner's yes or no right now.
-      if (s.pending_cmd && (titled || nowWeek) && !deliveries.some((d) => d.command === s.pending_cmd && d.state === 'pending')) {
-        const ps = parseSend(s.pending_cmd);
-        deliveries.push({ id: null, sid: s.sid, at: s.last_activity_at, verb: ps.verb, command: s.pending_cmd, plain: ps.plain && s.pending_cmd_plain !== false, message: ps.plain ? ps.message : null, to: ps.target, state: 'asking', note: null });
+      if (s.pending_cmd && (titled || nowWeek)) {
+        if (s.pending_cmd_send !== false) {
+          if (!deliveries.some((d) => d.command === s.pending_cmd && d.state === 'pending')) {
+            const ps = parseSend(s.pending_cmd);
+            deliveries.push({ id: null, sid: s.sid, at: s.last_activity_at, verb: ps.verb, command: s.pending_cmd, plain: ps.plain && s.pending_cmd_plain !== false, message: ps.plain ? ps.message : null, to: ps.target, state: 'asking', note: null });
+          }
+        } else {
+          // Another command waiting for your yes or no: shown once, as asking.
+          const same = commands.find((c) => c.command === s.pending_cmd && c.state === 'pending');
+          if (same) same.state = 'asking';
+          else commands.push({ id: null, sid: s.sid, at: s.last_activity_at, command: s.pending_cmd, state: 'asking', note: null });
+        }
       }
     }
     // Keep the final states; merge what was kept before (sessions end, transcripts go).
@@ -641,7 +652,8 @@ export class Cto {
     if (!this.org.cto()) return { ran: false, why: 'no seat' };
     const now = this.now();
     const week = isoWeek(now);
-    if (st.last_run_week === week) return { ran: false, why: 'ran this week' };
+    // ISO-week names sort in order: a clock set back never runs an earlier week again.
+    if (st.last_run_week && st.last_run_week >= week) return { ran: false, why: 'ran this week' };
     if (now < weekSendTime(now, st)) return { ran: false, why: 'not yet' };
     this.running = true;
     try {
@@ -650,7 +662,7 @@ export class Cto {
       const fresh = this.state();
       // The week may have turned while the estimate was built: the run belongs to the week it starts in.
       if (isoWeek(this.now()) !== week) return { ran: false, why: 'the week changed' };
-      if (!fresh.enabled || fresh.last_run_week === week || this.now() < weekSendTime(this.now(), fresh)) return { ran: false, why: !fresh.enabled ? 'off' : 'changed' };
+      if (!fresh.enabled || (fresh.last_run_week && fresh.last_run_week >= week) || this.now() < weekSendTime(this.now(), fresh)) return { ran: false, why: !fresh.enabled ? 'off' : 'changed' };
       Object.assign(st, fresh);
       const spent = this.weekSpend();
       // Counted before starting, like the Monday report: a failure never turns into a retry storm.

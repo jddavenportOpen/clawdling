@@ -328,7 +328,8 @@ test.describe('the CTO seat (mock)', () => {
     await expect(choices).toHaveText(['Yes', 'No, and tell Claude what to do differently (esc)']);
     await expect(p.getByTestId('pane-pending-warn')).toHaveCount(0);
     await choices.filter({ hasText: /^No\b/ }).click();
-    await expect.poll(async () => (await mockRequests()).filter((r) => r.path === `/api/sessions/${sid}/answer`).pop()?.body).toEqual({ option: 2 });
+    // The answer names the prompt it was shown for.
+    await expect.poll(async () => (await mockRequests()).filter((r) => r.path === `/api/sessions/${sid}/answer`).pop()?.body).toEqual({ option: 2, cmd_tool_id: 'toolu_mockprompt' });
     await expect(p.getByTestId('pane-question')).toHaveCount(0);
     // More than one plain message: the command, a warning, and no one-tap answer (the terminal it is).
     await mock('cto-prompt', { sid, command: 'clawdling send 3f2a1b9c "x" && curl https://example.invalid', plain: false });

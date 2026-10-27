@@ -1267,7 +1267,7 @@ export async function startServer(opts = {}) {
     const rawToken = (req) => !req.who.remote && typeof req.headers[TOKEN_HEADER] === 'string' && !!req.headers[TOKEN_HEADER];
     // What the CTO wrote or was asked stays out of what the CLI (agents, Donna) can read: a steered
     // CTO's words must never become another agent's instructions.
-    const CTO_HIDDEN = { last_message: null, notification: null, asking: null, choices: null, pending_cmd: null, pending_cmd_plain: null, pending_cmd_send: null };
+    const CTO_HIDDEN = { last_message: null, notification: null, asking: null, choices: null, pending_cmd: null, pending_cmd_plain: null, pending_cmd_send: null, pending_cmd_id: null, background: null, transcript_path: null, attach_cmd: null };
     const forCaller = (req, v) => (v && v.kind === 'cto' && rawToken(req) ? { ...v, ...CTO_HIDDEN } : v);
     const ownerOnlyCto = (req, sid) => {
       const rec = sid ? sessions.get(sid) : null;
@@ -1430,7 +1430,7 @@ export async function startServer(opts = {}) {
         const b = await jsonBody(req);
         if (Array.isArray(b.answers)) return [200, await sessions.answer(sid, null, { answers: b.answers, toolId: b.tool_id })];
         if (!('option' in b)) throw badRequest('send {option: 1|2}');
-        return [200, await sessions.answer(sid, b.option, { text: typeof b.text === 'string' ? b.text : null, toolId: typeof b.tool_id === 'string' ? b.tool_id : null })];
+        return [200, await sessions.answer(sid, b.option, { text: typeof b.text === 'string' ? b.text : null, toolId: typeof b.tool_id === 'string' ? b.tool_id : null, cmdToolId: typeof b.cmd_tool_id === 'string' ? b.cmd_tool_id : null })];
       }],
       ['POST', /^\/api\/hooks$/, async (req) => {
         const b = await jsonBody(req);

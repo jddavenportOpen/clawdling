@@ -85,6 +85,21 @@ function promptCommand(text) {
   return lines.slice(Math.max(0, q - 6), q).map((l) => l.trim()).filter(Boolean).join(' / ');
 }
 
+/** Type into a session's terminal, as the owner does in the cockpit (its cookie, the terminal socket). */
+async function typeInTerminal(sid, data) {
+  const { default: WebSocket } = await import('ws');
+  const ws = new WebSocket(`${base.replace(/^http/, 'ws')}/ws/term/${sid}`, { headers: { cookie: `cl_token=${tok}`, origin: base } });
+  await new Promise((resolve, reject) => {
+    ws.once('open', resolve);
+    ws.once('error', reject);
+    ws.once('unexpected-response', (req, res) => reject(new Error(`terminal socket refused: ${res.statusCode}`)));
+  });
+  await sleep(500);
+  ws.send(JSON.stringify({ t: 'in', data }));
+  await sleep(800);
+  ws.close();
+}
+
 const choice = (s, re) => (s.choices || []).find((c) => re.test(String(c.label).replace(/^\s*\d+[.)]\s*/, '')));
 
 async function shot(page, name, hash, { wait = 1500 } = {}) {
@@ -153,7 +168,13 @@ async function drive(sid, { done, decide = () => 'decline', onAsk = null, onProm
     if (!pick) throw new Error(`${label}: no ${verdict} choice on the prompt: ${JSON.stringify(again.choices)}`);
     (verdict === 'approve' ? result.approvals : result.declines).push({ session: label, command: cmd.slice(0, 600), via_pending_cmd: !!again.pending_cmd });
     log(`${label}: permission for "${cmd.slice(0, 160)}" -> ${verdict.toUpperCase()}${again.pending_cmd ? ' (shown by the cockpit as the pending message)' : ''}`);
-    await api('POST', `/api/sessions/${sid}/answer`, { option: pick.option });
+    if (again.kind === 'cto' && !(again.pending_cmd_plain && again.pending_cmd_id)) {
+      // The cockpit answers the CTO only for one plain message: anything else is typed in its terminal.
+      await typeInTerminal(sid, String(pick.option));
+      log(`${label}: answered in the terminal (option ${pick.option})`);
+    } else {
+      await api('POST', `/api/sessions/${sid}/answer`, { option: pick.option, ...(again.kind === 'cto' ? { cmd_tool_id: again.pending_cmd_id } : {}) });
+    }
   }
 }
 

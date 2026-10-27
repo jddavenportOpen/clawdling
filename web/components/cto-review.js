@@ -204,7 +204,7 @@ function Decisions({ r }) {
   </section>`;
 }
 
-const COMMAND_STATE = { sent: ['ok', 'You said yes: it ran'], declined: ['bad', 'You said no: it did not run'], failed: ['bad', 'It ran and failed'], pending: ['wait', 'Not answered'] };
+const COMMAND_STATE = { sent: ['ok', 'You said yes: it ran'], declined: ['bad', 'You said no: it did not run'], failed: ['bad', 'It ran and failed'], asking: ['wait', 'Waiting for your yes or no'], pending: ['wait', 'Not answered yet, or still running'] };
 
 /** Every other shell command the CTO asked to run (not a message the page can read as one). */
 function Commands({ list }) {

@@ -563,15 +563,23 @@ answers:
 - **ask** for any Write, Edit, MultiEdit or NotebookEdit other than `<org>/cto/reviews/<YYYY-Www>.md`
   itself, for this ISO week or last week (no other name, no subfolder, no week in the future, which
   would sort as "the latest review"; the CTO page also ignores a future week);
-- **ask** for a tool call it cannot read (no tool name, unreadable input), even with no session.
+- **ask** for a tool call it cannot read (no tool name, unreadable input), even with no session, and
+  for any tool it does not know; a read in the background asks too;
+- **deny** for subagents and workflows (`Agent`, `Task`, `Workflow`), watchers (`Monitor`) and the
+  web: they would run beside the seat's own thread, so a prompt on screen might not belong to the
+  newest tool call, and their calls would land in other transcripts. The template denies `Agent` and
+  `Task` as well.
 
 So the seat runs exactly two things without a prompt, the report and the session list, and writes
 only its weekly review file; everything else shows Claude Code's own prompt, every time. On a
 cross-agent prompt Claude Code then offers only Yes and No (seen on 2.1.308), never "don't ask
 again".
 
-**One-tap answers only for one plain message.** In the cockpit, the CTO's prompts get Yes and No
-buttons only when the prompt is for exactly one plain `clawdling send|spawn` message (below). Any
+**One-tap answers only for one plain message, bound to it.** In the cockpit, the CTO's prompts get
+Yes and No buttons only when the prompt is for exactly one plain `clawdling send|spawn` message
+(below). The answer names that tool call, and the server presses a key only if that call is still
+the pending one and its exact command is the prompt on screen; otherwise it refuses (`409`) and
+asks you to answer in the terminal. Any
 other prompt from the seat (another command, a file outside its reviews, a message in an unusual
 spelling) shows what it is, with the command when it is a shell command, and is answered in the
 terminal ("Show the terminal"). The hook prints its answer first, even when the Clawdling server is not running. If the hook
@@ -583,7 +591,10 @@ header; the cockpit uses its cookie, a paired device its own key. With the CLI's
 refuses (`403`) to add the seat, start or change its schedule, start a CTO session, type into one,
 answer its prompts, restart, resume, rename, re-model or end it, attach to its terminal, or read its
 transcript, Timeline, claims or report; and it hands out CTO sessions without what the CTO wrote or
-is asking (last message, notification, question, choices, pending command). Donna's "today so far"
+is asking (last message, notification, question, choices, pending command, background tasks'
+descriptions, transcript path). When the cockpit is not running, `clawdling ls` prints only each
+session's plain facts from its saved copy (never what an agent wrote or is asking), and never falls
+back when it was pointed at another `--port` or `--home`. Donna's "today so far"
 leaves the CTO out. Every other agent's settings (and Donna's) deny reading and writing anywhere in
 `<org>/cto/`. So no agent and not Donna can start the CTO, put words in front of it, press Yes for
 it, plant files in its folder, or take its words as their own instructions. (This tells the CLI
@@ -680,11 +691,13 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
 ### The schedule
 
 - **Off by default.** Settings shows the estimated cost of one review before you turn it on.
-- **Once per ISO week** at the day and hour you pick (Monday 08:00 by default), or at the next start
+- **Once per ISO week**, never an earlier week again (a clock set back does not repeat one), at the
+  day and hour you pick (Monday 08:00 by default), or at the next start
   that week; the week is counted before the run starts, so a failure never retries. Turned on after
   this week's time, the first run is next week.
 - **A weekly cap** (default $2.00, list-price equivalent): before a run, the CTO's spend this ISO
-  week from its receipts plus the high end of the estimate must fit under it, or the week is skipped
+  week from its receipts plus the high end of the estimate (the median of its past weekly reviews,
+  never of its short chats) must fit under it, or the week is skipped
   once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
   is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - It starts the same seat with the same settings; it can only start a review, never anything else.

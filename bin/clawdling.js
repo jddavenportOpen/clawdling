@@ -589,9 +589,12 @@ async function cmdLs(args) {
   try {
     list = await api(ctx, 'GET', '/api/sessions');
   } catch (e) {
-    const data = readJson(ctx.paths.sessions, null);
+    // Only when the cockpit is not running here (never when pointed elsewhere with --port/--home),
+    // and only the plain facts of each session: never what an agent wrote or is asking.
+    const data = args.flags.port || args.flags.home ? null : readJson(ctx.paths.sessions, null);
     if (!data) throw e;
-    list = data.sessions || [];
+    const SAFE = ['sid', 'agent', 'agent_name', 'kind', 'title', 'status', 'model', 'effort', 'created_at', 'last_activity_at', 'ended_at', 'tmux_name'];
+    list = (data.sessions || []).map((r) => Object.fromEntries(SAFE.filter((k) => k in r).map((k) => [k, r[k]])));
     stale = true;
   }
   if (!args.flags.all) list = list.filter((s) => s.status !== 'ended');

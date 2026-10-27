@@ -257,6 +257,10 @@ test('the seat policy: exact read-only report and ls are allowed, the weekly fil
   for (const bad of [`${home}/cto/CLAUDE.md`, `${home}/cto/.claude/settings.json`, `${home}/cto/reviews/../CLAUDE.md`, `${home}/cto/reviews/notes.md`, `${home}/cto/reviews/sub/2026-W44.md`, `${home}/cto/reviews/.clawdling/server.json`, `${home}/projects/web/memory/NOW.md`, `${home}/cto/reviews`, '/etc/passwd']) assert.deepEqual(w(bad), { decision: 'ask', reason: ASK_WRITE }, bad);
   assert.deepEqual(seatDecision({ tool_name: 'NotebookEdit', tool_input: { notebook_path: `${home}/cto/reviews/2026-W44.md` } }, { home }), { decision: 'ask', reason: ASK_WRITE });
   assert.equal(seatDecision({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } }, { home }), null, 'reads stay with Claude Code\'s rules');
+  for (const t of ['Agent', 'Task', 'Workflow', 'Monitor', 'WebFetch', 'WebSearch']) assert.equal(seatDecision({ tool_name: t, tool_input: {} }, { home }).decision, 'deny', t);
+  assert.equal(seatDecision({ tool_name: 'SomeNewTool', tool_input: {} }, { home }).decision, 'ask', 'a tool it does not know is asked about');
+  assert.equal(sh('clawdling report --all --json').decision, 'allow');
+  assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'clawdling report --all --json', run_in_background: true } }, { home }).decision, 'ask', 'not in the background');
   assert.equal(seatDecision({ tool_name: 'AskUserQuestion', tool_input: {} }, { home }), null);
   assert.equal(seatDecision({}, { home }).decision, 'ask', 'a call it cannot read is asked about');
   assert.equal(seatDecision(null, { home }).decision, 'ask');

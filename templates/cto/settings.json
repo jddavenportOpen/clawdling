@@ -17,6 +17,8 @@
     "deny": [
       "WebFetch",
       "WebSearch",
+      "Agent",
+      "Task",
       "Write({{cto}}/CLAUDE.md)",
       "Edit({{cto}}/CLAUDE.md)",
       "Write({{cto}}/.claude/**)",

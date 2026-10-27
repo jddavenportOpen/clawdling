@@ -390,6 +390,7 @@ export class SessionManager {
       pending_cmd: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.command : null,
       // ...and whether it is exactly one message the cockpit can show whole (else: read the terminal).
       pending_cmd_plain: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.send !== false && !rec.pending_cmd.cut && parseSend(rec.pending_cmd.command, rec.pending_cmd.tool).plain : null,
+      pending_cmd_id: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.tool_id : null,
       // Whether it is a message to another agent at all (the seat's other commands are shown too).
       pending_cmd_send: rec.status === 'needs_you' && rec.waiting_on === 'permission_prompt' && !rec.asking && rec.pending_cmd ? rec.pending_cmd.send !== false : null,
       // Background work still running in this session (Watching): {count, tasks}, or null = unknown.
@@ -1421,7 +1422,7 @@ export class SessionManager {
     }
   }
 
-  async answerNow(rec, option, { text = null, answers = null, toolId = null } = {}) {
+  async answerNow(rec, option, { text = null, answers = null, toolId = null, cmdToolId = null } = {}) {
     const sid = rec.sid;
     if (rec.status !== 'needs_you' || !ANSWERABLE.has(rec.waiting_on)) {
       throw conflict('this session is not waiting on a question that can be answered here');
@@ -1438,6 +1439,13 @@ export class SessionManager {
       if (!typed) throw badRequest('text is empty');
       if (rec.asking?.kind !== 'plan') throw badRequest('text answers only a plan ("Tell Claude what to change")');
     }
+    // The CTO seat: a one-tap answer only to the prompt the cockpit showed, one plain message to an
+    // agent, named by its tool call, and only while that very command is the prompt on screen.
+    const seatPrompt = rec.kind === 'cto' && rec.waiting_on === 'permission_prompt' && !planCard;
+    const pc = rec.pending_cmd;
+    if (seatPrompt && !(pc && cmdToolId && pc.tool_id === cmdToolId && pc.send !== false && !pc.cut && parseSend(pc.command, pc.tool).plain)) {
+      throw conflict('Answer this CTO prompt in the terminal: the cockpit answers it only for one plain message to an agent, the one it showed you.');
+    }
     const rt = this.rt(sid);
     const target = rec.pane_id || `=${rec.tmux_name}:`;
     const wait = (rt.dialogSeenAt || 0) + DIALOG_ARM_MS - Date.now();
@@ -1446,6 +1454,10 @@ export class SessionManager {
     let chosen = null;
     for (let attempt = 0; attempt < 8 && !chosen; attempt++) {
       const screen = await this.backend.screenText(target);
+      // The command on screen must be the one shown (spaces and line wraps aside).
+      if (seatPrompt && !String(screen).replace(/\s+/g, '').includes(pc.command.replace(/\s+/g, '').slice(0, 120))) {
+        throw conflict('The prompt on screen is not the message the cockpit showed. Answer it in the terminal.');
+      }
       if ((planCard || typed !== null) && !isPlanScreen(screen)) throw conflict('the plan is no longer on screen');
       const c = parseChoices(screen);
       if (!c) {
@@ -1645,10 +1657,11 @@ export class SessionManager {
     if (!rec || !rt?.control || rt.control.closed || !data) return;
     rt.control.sendBytes(Buffer.from(data.slice(0, 65536), 'utf8'));
     if (rec.status === 'needs_you' && (rec.waiting_on === 'permission_prompt' || rec.waiting_on === 'elicitation_dialog') && /\r|^[1-9]$|^\x1b$/.test(data)) {
-      // Esc, or the digit of a choice that says No (the choices read off the screen). An Enter is
-      // not counted: the highlighted choice is usually Yes, and a Yes must never read as a No.
+      // Esc, the digit of a choice that says No (the choices read off the screen), or an Enter (the
+      // arrows may have moved onto No). A Yes never reads as a No: the watcher acts only on Claude
+      // Code's own "⎿ Interrupted" line, which appears only after a No.
       const label = /^[1-9]$/.test(data) ? (rec.choices || []).find((c) => c.option === Number(data))?.label : null;
-      const saidNo = data === '\x1b' || (!!label && /^\s*(?:\d+[.)]\s*)?no\b/i.test(label));
+      const saidNo = data === '\x1b' || /\r/.test(data) || (!!label && /^\s*(?:\d+[.)]\s*)?no\b/i.test(label));
       const wasPermission = rec.waiting_on === 'permission_prompt' && rec.asking?.kind !== 'plan' && saidNo;
       rec.status = 'working';
       rec.notification = null;

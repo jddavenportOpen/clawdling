@@ -363,16 +363,19 @@ export async function restartSession(sid) {
   }
 }
 
-export async function answerDialog(sid, option, { focus = false } = {}) {
+export async function answerDialog(sid, option, { focus = false, cmdToolId = null } = {}) {
   try {
-    const s = await api.answer(sid, option);
+    // The CTO's prompts name the tool call they were shown for (sessions.js checks it is the one on screen).
+    const s = cmdToolId ? await api.answerWith(sid, { option, cmd_tool_id: cmdToolId }) : await api.answer(sid, option);
     if (s && s.sid) mergeSession(s);
     else mergeSession({ sid, waiting_on: null, choices: null });
     const v = terms.get(sid);
     if (v && focus) v.focus();
     return true;
   } catch (e) {
-    if (e && e.status === 409) {
+    if (e && e.status === 409 && cmdToolId) {
+      toast(e.message || 'Answer it in the terminal.', { ms: 5200 });
+    } else if (e && e.status === 409) {
       toast('Claude Code is no longer asking. The session has moved on.', { ms: 3600 });
       mergeSession({ sid, waiting_on: null, choices: null });
     } else {
