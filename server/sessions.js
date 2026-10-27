@@ -279,6 +279,16 @@ function sendWs(ws, msg) {
   ws.send(typeof msg === 'string' ? msg : JSON.stringify(msg));
 }
 
+/**
+ * Whether terminal input holds a key a person pressed, not only the terminal's own replies (xterm
+ * answers device, colour and focus queries through the same channel): what is left once escape
+ * sequences are removed (a lone Esc stays).
+ */
+export function typedKeys(data) {
+  // eslint-disable-next-line no-control-regex
+  return String(data).replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[PX^_][^\x1b]*\x1b\\|O.)/g, '').length > 0;
+}
+
 export class SessionManager {
   constructor({ paths, org, events, backend, tmux, claudeBin, socket, shimDir, env, logger, getPort, accounts, modeChoices }) {
     this.accounts = accounts || null;
@@ -1599,7 +1609,7 @@ export class SessionManager {
    * resized first and the snapshot is cut at that geometry: a window taller than the viewer would
    * otherwise push the real content off the viewer's screen.
    */
-  attachViewer(sid, ws, { cols, rows } = {}) {
+  attachViewer(sid, ws, { cols, rows } = {}, { onInput } = {}) {
     const rec = this.records.get(sid);
     if (!rec) {
       ws.close(1008, 'no such session');
@@ -1615,7 +1625,10 @@ export class SessionManager {
       } catch {
         return;
       }
-      if (msg?.t === 'in' && typeof msg.data === 'string') this.input(sid, msg.data);
+      if (msg?.t === 'in' && typeof msg.data === 'string') {
+        if (typedKeys(msg.data)) onInput?.(); // a person typed (the owner, for the CTO: the socket is owner-only)
+        this.input(sid, msg.data);
+      }
       else if (msg?.t === 'resize') this.resize(sid, msg.cols, msg.rows, ws);
     });
     const size = validSize(cols, rows);

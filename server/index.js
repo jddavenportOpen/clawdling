@@ -1275,6 +1275,8 @@ export async function startServer(opts = {}) {
         throw new HttpError(403, 'Only you can talk to the CTO, from the cockpit: agents and Donna cannot start, message, answer for, restart or end it.');
       }
     };
+    // The owner acting in a scheduled review takes it over: its in-run spend watch ends (cto.handOver).
+    const ownerActs = (sid) => cto.handOver(sid);
     const routes = [
       ['GET', /^\/api\/health$/, async (req, m, res, url) => {
         // Through a remote address, a device that has not signed in learns nothing about this computer.
@@ -1373,6 +1375,7 @@ export async function startServer(opts = {}) {
         const sid = sidParam(m);
         ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
+        ownerActs(sid);
         return [200, await sessions.settings(sid, { model: b.model, effort: b.effort })];
       }],
       ['GET', /^\/api\/accounts$/, () => [200, { accounts: accounts.list() }]],
@@ -1395,6 +1398,7 @@ export async function startServer(opts = {}) {
         const sid = sidParam(m);
         ownerOnlyCto(req, sid);
         const b = await jsonBody(req).catch(() => ({}));
+        ownerActs(sid);
         return [200, await sessions.restart(sid, { cols: b.cols, rows: b.rows })];
       }],
       ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, forCaller(req, sessions.view(sessions.require(sidParam(m))))]],
@@ -1414,6 +1418,7 @@ export async function startServer(opts = {}) {
         const sid = sidParam(m);
         ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
+        ownerActs(sid);
         return [200, await sessions.resume(sid, { cols: b.cols, rows: b.rows })];
       }],
       ['POST', /^\/api\/sessions\/([^/]+)\/send$/, async (req, m) => {
@@ -1421,6 +1426,7 @@ export async function startServer(opts = {}) {
         ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
         if (typeof b.text !== 'string') throw badRequest('send {text, enter}');
+        ownerActs(sid);
         await sessions.send(sid, b.text, b.enter !== false);
         return [204];
       }],
@@ -1428,6 +1434,7 @@ export async function startServer(opts = {}) {
         const sid = sidParam(m);
         ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
+        ownerActs(sid);
         if (Array.isArray(b.answers)) return [200, await sessions.answer(sid, null, { answers: b.answers, toolId: b.tool_id })];
         if (!('option' in b)) throw badRequest('send {option: 1|2}');
         return [200, await sessions.answer(sid, b.option, { text: typeof b.text === 'string' ? b.text : null, toolId: typeof b.tool_id === 'string' ? b.tool_id : null, cmdToolId: typeof b.cmd_tool_id === 'string' ? b.cmd_tool_id : null })];
@@ -1513,6 +1520,7 @@ export async function startServer(opts = {}) {
         if (!last || last.label !== 'contradicted') throw new HttpError(409, 'The last claim in this session is not contradicted any more.');
         const text = fixMessage(last.check);
         if (b.text !== text) throw new HttpError(409, 'The message changed since it was shown. Look at it again before sending.');
+        ownerActs(rec.sid);
         if (rec.status === 'ended') await sessions.resume(rec.sid, {});
         await sessions.send(rec.sid, text, true);
         events.record({ type: 'claims', action: 'fix-sent', sid: rec.sid });
@@ -1865,7 +1873,7 @@ export async function startServer(opts = {}) {
         const size = { cols: url.searchParams.get('cols'), rows: url.searchParams.get('rows') };
         wss.handleUpgrade(req, sock, head, (ws) => {
           if (who.remote) trackRemote(who, () => ws.terminate(), ws);
-          sessions.attachViewer(m[1], ws, size);
+          sessions.attachViewer(m[1], ws, size, { onInput: () => cto.handOver(m[1]) });
         });
       }).catch((err) => {
         logger.error(`upgrade ${url.pathname}: ${err.stack || err.message}`);

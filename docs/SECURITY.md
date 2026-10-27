@@ -652,11 +652,14 @@ through `clawdling.cmd` or PowerShell, no `%`, `^` or `!` (which they expand). A
 into any session, by anyone (a message, or a new session's first message), loses its control
 characters (but tab and line breaks) and every character that can hide or reorder words: Unicode
 tags, bidi controls, private-use characters, the variation selectors no emoji uses, and every other
-format or default-ignorable character, except the four real text needs one at a time (the joiners
-ZWJ and ZWNJ, and the emoji selectors U+FE0E and U+FE0F); more than two of those in a row are cut to
-two. New agents' names and missions (written into their CLAUDE.md) are cleaned the same way. The
+format or default-ignorable character, except the four real text needs (the joiners ZWJ and ZWNJ,
+and the emoji selectors U+FE0E and U+FE0F), at most two of them in a row: a longer run is cut to two. New agents' names and missions (written into their CLAUDE.md) are cleaned the same way. The
 seat's own check refuses (`deny`) any shell command, file write or file path of its own holding one
-of those characters (or such a run), and names it: you could not read what you would be approving. Through PowerShell, any
+of those characters (or such a run), and names it: you could not read what you would be approving.
+It refuses a carriage return the same way (a terminal draws what follows it over what came before):
+in a command or a path always, in written text unless it is part of a CRLF line break. And it refuses
+any shell command longer than 4,000 characters, the most the cockpit shows: what you approve is
+always the whole command. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
 built so a long run of options cannot make them backtrack without end, and every command is capped
 at 4,001 characters before it is matched. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
@@ -721,11 +724,13 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
   is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - **Within the run too.** An interactive Claude Code turn has no budget flag, so while a scheduled
-  review works unattended (until it first waits on you), Clawdling checks the CTO's spend this week
+  review works unattended (until you act in it), Clawdling checks the CTO's spend this week
   every minute; past the weekly cap, or when the spend cannot be counted (a model missing from the
   price table, whose usage would count as $0), it ends the session (it stays resumable) and says so
-  on the CTO page and in Settings. Once it waits on you, or you resume it, it is yours: a review you
-  start or take over yourself is yours to stop.
+  on the CTO page and in Settings. A status is not a hand-over (Clawdling itself marks a slow start
+  "needs you"); once you send it a message, answer it, type in its terminal, resume, restart or change
+  it, it is yours: a review you start or take over yourself is yours to stop. A stop is reported only
+  once the session has ended; if ending it fails, it stays watched and is tried again a minute later.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
   (No check-up runs for the seat: it would run without its own settings and hook.)
   It reads the schedule again after building the estimate, so turning it off (or lowering the cap)

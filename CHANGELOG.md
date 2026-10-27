@@ -41,7 +41,9 @@
   `test/fixtures/report-schema2.golden.json`.
 - **Optional, off by default:** a weekly review (Monday 08:00 by default, at most once per ISO week,
   skipped with a notice when the CTO's spend this week plus the estimate's high end would pass your
-  weekly cap, $2.00 by default; turned on after this week's time, it starts next week), and the
+  weekly cap, $2.00 by default; turned on after this week's time, it starts next week; while it runs
+  unattended its spend is checked every minute, and it is ended, resumable, past the cap or when its
+  spend cannot be counted, until you act in it), and the
   CTO's line in the Monday report, its own switch, previewed exactly, with links removed from the
   headline.
 - **How the seat is locked down.** It starts with its own `--settings` file written into

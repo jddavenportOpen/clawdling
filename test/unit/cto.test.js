@@ -12,7 +12,7 @@ import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, plainHeadline, sc
 import { digestText, isoWeek } from '../../server/digest.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
+import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, DENY_LONG, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
 import { buildHooksSettings, ctoDeny } from '../../server/hooks.js';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-cto-')));
@@ -371,25 +371,48 @@ test('a scheduled review that passes the weekly cap while it works is stopped, w
   const c = new Cto({
     paths: { rt: dir, home: dir },
     org: { cto: () => ({ dir }) },
-    sessions: { get: () => ({ status }), end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+    sessions: { get: () => ({ status }), end: async (sid) => { ended.push(sid); status = 'ended'; }, list: () => [], records: new Map() },
     reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
   });
   fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, last_run_sid: 'sid-1', watch_sid: 'sid-1' }));
   assert.deepEqual(await c.watchSpend(), { stopped: true });
   assert.deepEqual(ended, ['sid-1']);
   assert.match(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).last_skip.why, /was stopped: it had used \$2\.50, past its \$2\.00 weekly cap/);
-  // Once it waits on the owner, it is theirs: no longer watched.
-  status = 'ready';
+  // A status is not a hand-over: Clawdling's own "needs you" on a slow start keeps it watched.
+  ended.length = 0;
+  status = 'needs_you';
   fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
-  assert.deepEqual(await c.watchSpend(), { stopped: false });
+  assert.deepEqual(await c.watchSpend(), { stopped: true });
+  assert.deepEqual(ended, ['sid-1']);
+  // Once the owner acts in it, it is theirs: no longer watched.
+  ended.length = 0;
+  status = 'working';
+  fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
+  c.handOver('sid-other');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).watch_sid, 'sid-1', 'another session: still watched');
+  c.handOver('sid-1');
   assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).watch_sid, null);
+  assert.deepEqual(await c.watchSpend(), { stopped: false });
+  assert.deepEqual(ended, []);
+  // A stop that fails is not recorded as one: it stays watched, and the next minute tries again.
+  const stuck = new Cto({
+    paths: { rt: dir, home: dir },
+    org: { cto: () => ({ dir }) },
+    sessions: { get: () => ({ status: 'working' }), end: async () => { throw new Error('tmux is slow'); }, list: () => [], records: new Map() },
+    reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
+  });
+  fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
+  assert.deepEqual(await stuck.watchSpend(), { stopped: false, retry: true });
+  const after = JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8'));
+  assert.equal(after.watch_sid, 'sid-1');
+  assert.equal(after.last_skip ?? null, null);
   // A model with no price: $0 of known spend, but it cannot be counted, so it is stopped too.
   status = 'working';
   ended.length = 0;
   const unpriced = new Cto({
     paths: { rt: dir, home: dir },
     org: { cto: () => ({ dir }) },
-    sessions: { get: () => ({ status, launched_at: new Date().toISOString() }), end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+    sessions: { get: () => ({ status, launched_at: new Date().toISOString() }), end: async (sid) => { ended.push(sid); status = 'ended'; }, list: () => [], records: new Map() },
     reports: { summaries: () => [], costOf: () => ({ total_usd: 0, complete: false, unknown_models: ['claude-future-9'] }) },
   });
   fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-2' }));
@@ -407,6 +430,20 @@ test('the seat refuses any command or write with characters a person cannot see'
   assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'clawdling ls --json' } }, { home }).decision, 'allow', 'plain text is fine');
   assert.match(seatDecision({ tool_name: 'Bash', tool_input: { command: 'echo a\u200bb' } }, { home }).reason, /U\+200B in command, at character 7/);
   assert.equal(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/x\u202e.md`, content: 'x' } }, { home }).decision, 'deny', 'the path too');
+  // A carriage return draws what follows over what came before; a command past what the cockpit shows.
+  assert.match(seatDecision({ tool_name: 'Bash', tool_input: { command: 'curl x.example #\rclawdling report --json' } }, { home }).reason, /U\+000D in command, at character 17/);
+  assert.equal(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, content: 'a\r\nb\r\n' } }, { home })?.decision === 'deny', false, 'CRLF text is fine');
+  assert.equal(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, content: 'safe\rhidden' } }, { home }).decision, 'deny');
+  assert.equal(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/x\r\n.md`, content: 'x' } }, { home }).decision, 'deny', 'never in a path');
+  const long = `clawdling report --json${' '.repeat(3990)}; clawdling send abc "hi"`;
+  assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: long } }, { home }).reason, DENY_LONG);
+  assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'x'.repeat(4000) } }, { home }).decision, 'ask', 'up to 4,000 characters: shown whole');
   // Text real reviews use passes: an emoji with its selector, a ZWJ emoji, Persian with ZWNJ.
   for (const ok of ['\u26a0\ufe0f At risk', '\ud83d\udc69\u200d\ud83d\udcbb done', 'می\u200cخواهم']) assert.notEqual(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, content: ok } }, { home }).decision, 'deny', ok);
+});
+
+test('only keys a person typed hand a scheduled review over, never the terminal\'s own replies', async () => {
+  const { typedKeys } = await import('../../server/sessions.js');
+  for (const reply of ['\x1b[?1;2c', '\x1b[I', '\x1b[O', '\x1b]11;rgb:0000/0000/0000\x07', '\x1b[12;40R']) assert.equal(typedKeys(reply), false, JSON.stringify(reply));
+  for (const key of ['a', '\r', '\x1b', '1', '\x1b[200~hi\x1b[201~']) assert.equal(typedKeys(key), true, JSON.stringify(key));
 });

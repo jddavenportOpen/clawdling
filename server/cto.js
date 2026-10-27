@@ -713,6 +713,14 @@ export class Cto {
     }
   }
 
+  /** The owner acted in the scheduled review (sent, answered, typed, resumed): from now on it is theirs. */
+  handOver(sid) {
+    const cur = this.state();
+    if (!sid || cur.watch_sid !== sid) return;
+    cur.watch_sid = null;
+    this.save(cur);
+  }
+
   /**
    * A scheduled review runs unattended, and an interactive Claude Code turn has no budget flag: while
    * it works, its spend is checked every minute, and past the weekly cap the session is ended (it
@@ -723,8 +731,9 @@ export class Cto {
     const sid = st.watch_sid;
     const rec = sid ? this.sessions.get(sid) : null;
     if (!rec) return { stopped: false };
-    // Only the unattended part: once it waits on the owner (or ends), the session is theirs.
-    if (rec.status !== 'working' && rec.status !== 'starting') {
+    // Watched in every live status until the owner acts in it (handOver): a status alone is not a
+    // hand-over (Clawdling itself can mark a slow start "needs you" while it runs on unattended).
+    if (rec.status === 'ended') {
       const cur = this.state();
       if (cur.watch_sid === sid) {
         cur.watch_sid = null;
@@ -743,6 +752,8 @@ export class Cto {
     } catch (err) {
       this.logger?.warn?.(`cto: could not stop the scheduled review: ${err.message}`);
     }
+    // Recorded as stopped only once it is: otherwise it stays watched, and the next minute tries again.
+    if (this.sessions.get(sid)?.status !== 'ended') return { stopped: false, retry: true };
     const now = this.state();
     now.watch_sid = null;
     now.last_skip = { week: isoWeek(this.now()), at: new Date(this.now()).toISOString(), why: uncounted && !(spent.usd > st.weekly_cap_usd)

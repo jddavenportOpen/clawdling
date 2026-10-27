@@ -29,6 +29,7 @@ export const ASK_OTHER = 'Clawdling: the CTO seat runs only the report and the s
 export const ASK_WRITE = 'Clawdling: the CTO seat writes only its weekly review file without asking.';
 export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it asks.';
 export const DENY_HIDDEN = 'Clawdling: this has characters a person cannot see, so the CTO seat may not run or write it.';
+export const DENY_LONG = 'Clawdling: this command is longer than the cockpit shows (4,000 characters), so the CTO seat may not run it. Its commands are short: the report, the session list, one message.';
 export const DENY_TOOL = 'Clawdling: the CTO seat uses only its report, its reviews and its questions to you (no subagents, schedules, web or messages outside clawdling send).';
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
@@ -114,11 +115,17 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     for (const [k, v] of texts) {
       const h = hiddenAt(v);
       if (h) return { decision: 'deny', reason: `${DENY_HIDDEN} (${h.code} in ${k}, at character ${h.index + 1})` };
+      // A carriage return sends a terminal's cursor back to the line's start, so what follows is drawn
+      // over what came before: never in a command or a path, and in written text only as CRLF.
+      const cr = k === 'command' || k.endsWith('_path') ? v.indexOf('\r') : v.search(/\r(?!\n)/);
+      if (cr >= 0) return { decision: 'deny', reason: `${DENY_HIDDEN} (U+000D in ${k}, at character ${cr + 1})` };
     }
   }
   if (SHELL_TOOLS.has(p.tool_name)) {
     const cmd = typeof input.command === 'string' ? input.command : '';
-    if (CROSS_AGENT_RE.test(cmd.slice(0, 4001))) return { decision: 'ask', reason: ASK_SEND };
+    // What the owner approves is what the cockpit shows, whole (it shows the first 4,000 characters).
+    if (cmd.length > 4000) return { decision: 'deny', reason: DENY_LONG };
+    if (CROSS_AGENT_RE.test(cmd)) return { decision: 'ask', reason: ASK_SEND };
     // A read runs without a prompt only in the foreground (a background task lives on, with its own words).
     if (plainRead(cmd) && !input.run_in_background) return { decision: 'allow', reason: ALLOW_READ };
     return { decision: 'ask', reason: ASK_OTHER };
