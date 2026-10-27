@@ -1,0 +1,16 @@
+{
+  "schema": 1,
+  "note": "The Claude Code surfaces Clawdling relies on, and the versions checked against them (SPEC-1.8 3.3). `clawdling doctor --contract` checks the installed CLI against this file; the nightly workflow checks each new release and bumps maxChecked. min: Windows hooks use exec form (2.1.139); StopFailure has its own gate (2.1.229, hooks.js).",
+  "min": "2.1.139",
+  "maxChecked": "2.1.308",
+  "checkedAt": "2026-10-27",
+  "flags": ["--session-id", "--resume", "--settings", "--name", "--model", "--effort", "--permission-mode", "--add-dir", "--append-system-prompt", "--output-format", "--max-budget-usd", "--tools", "--allowedTools", "--disallowedTools", "--no-session-persistence", "--json-schema", "--setting-sources", "--strict-mcp-config", "--disable-slash-commands", "--verbose", "--print"],
+  "printFlags": ["--max-budget-usd", "--json-schema", "--tools", "--no-session-persistence"],
+  "hiddenFlags": [["--append-system-prompt-file", "probe.md"], ["--max-turns", "1"]],
+  "hookEvents": ["SessionStart", "UserPromptSubmit", "Stop", "StopFailure", "Notification", "SessionEnd", "PreToolUse", "PostToolUse"],
+  "hookCheck": "claude doctor in a temporary folder whose .claude/settings.json declares every event plus a made-up one: doctor names an unknown event (\"Unknown hook event\"), so the made-up one proves the check ran and ours must not appear. Verified on 2.1.308.",
+  "transcriptTypes": ["user", "assistant"],
+  "history": [
+    { "version": "2.1.308", "checkedAt": "2026-10-27", "ok": true, "by": "the 1.8 build" }
+  ]
+}

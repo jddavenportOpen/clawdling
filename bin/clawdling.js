@@ -34,6 +34,7 @@ const HELP = `clawdling ${VERSION}: an org of Claude Code agents, with a cockpit
 
 Usage:
   clawdling doctor                          check node, claude, the session backend, the org and the server
+  clawdling doctor --contract [--live] [--json]   check this Claude Code against what Clawdling relies on (no model call; --live: one tiny real session)
   clawdling init [--answers FILE | --defaults] [--force]
                                             create the org (default home ~/clawdling)
   clawdling start [--port 4747] [--host 127.0.0.1] [--open]
@@ -1404,8 +1405,80 @@ export function transcriptFormat(paths) {
   }
 }
 
+/** A transcript for the contract: its record types, format, and whether it carries a cost. */
+function liveTranscriptFacts(file) {
+  const types = new Set();
+  let usage = false;
+  for (const l of fs.readFileSync(file, 'utf8').split('\n')) {
+    if (!l.trim()) continue;
+    try {
+      const o = JSON.parse(l);
+      if (o && typeof o.type === 'string') types.add(o.type);
+      if (o && o.type === 'assistant' && o.message && o.message.usage && typeof o.message.usage === 'object') usage = true;
+    } catch {
+      // a torn line
+    }
+  }
+  const s = summarize(new LedgerReader().session(file));
+  return { types: [...types].sort(), format: s.format, costState: types.has('cost-state'), usage };
+}
+
+const CONTRACT_WORD = { ok: 'ok  ', note: 'note', fail: 'FIX ', unchecked: 'n/a ' };
+
+// `clawdling doctor --contract [--live] [--json]`: the update guard (1.8).
+async function cmdContract(ctx, flags) {
+  const { contractChecks, liveCheck, summary, COMPAT, LIVE_COST, LIVE_PROMPT } = await import('../server/contract.js');
+  const { supportsStopFailure } = await import('../server/hooks.js');
+  const env = childEnv();
+  const name = process.env.CLAWDLING_CLAUDE_BIN || 'claude';
+  const bin = which(name, env.PATH || '') || name;
+  const run = (a, o = {}) => runClaudeOut(bin, a, { cwd: o.cwd, env: { ...env, ...(o.env || {}) }, timeout: o.timeout });
+  let lines = await contractChecks({ run, transcript: transcriptFormat(ctx.paths) });
+  if (flags.live) {
+    if (!flags.yes && !flags.json) {
+      if (!process.stdin.isTTY) throw new CliError(`--live runs one real session (${LIVE_COST}): add --yes to run it without asking`);
+      const yes = await askYesNo(`--live runs one real Claude Code session ("${LIVE_PROMPT}", model haiku) in a temporary folder: ${LIVE_COST}. Run it? [y/N] `);
+      if (!yes) throw new CliError('stopped: nothing was run');
+    } else if (flags.json && !flags.yes) throw new CliError(`--live runs one real session (${LIVE_COST}): add --yes`);
+    const v = lines.find((l) => l.id === 'version');
+    const ver = (await run(['--version'])).stdout;
+    lines = lines.concat(await liveCheck({ run, configDir: claudeConfigDirOf(env), parse: liveTranscriptFacts, supportsStopFailure: supportsStopFailure(ver) && v && v.status !== 'fail' }));
+  }
+  const sum = summary(lines);
+  if (flags.json) {
+    console.log(JSON.stringify({ ok: sum.ok, version: ((await run(['--version'])).stdout || '').trim().split('\n')[0] || null, compat: { min: COMPAT.min, maxChecked: COMPAT.maxChecked }, lines, summary: sum }, null, 2));
+  } else {
+    console.log(`clawdling ${VERSION} doctor --contract: this Claude Code against what Clawdling relies on (checked ${COMPAT.min} to ${COMPAT.maxChecked})\n`);
+    for (const l of lines) console.log(`  ${CONTRACT_WORD[l.status] || l.status}  ${l.text}`);
+    console.log(sum.fail ? `\n${sum.fail} thing(s) to fix.` : sum.unchecked ? `\nNo problem found; ${sum.unchecked} line(s) could not be checked offline${flags.live ? '' : ' (`--live` checks them)'}.` : '\nAll good.');
+  }
+  process.exitCode = sum.ok ? 0 : 1;
+}
+
+function claudeConfigDirOf(env) {
+  return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude');
+}
+
+/** `{code, stdout, stderr}` of a claude run (never throws), through the Windows .cmd shim rules. */
+function runClaudeOut(bin, args, opts) {
+  return import('../server/contract.js').then((m) => m.runClaude(bin, args, opts));
+}
+
+function askYesNo(q) {
+  return new Promise((resolve) => {
+    process.stdout.write(q);
+    process.stdin.setEncoding('utf8');
+    process.stdin.once('data', (d) => {
+      process.stdin.pause();
+      resolve(/^y(es)?$/i.test(String(d).trim()));
+    });
+    process.stdin.resume();
+  });
+}
+
 async function cmdDoctor(args) {
   const ctx = context(args.flags);
+  if (args.flags.contract) return cmdContract(ctx, args.flags);
   let bad = 0;
   const ok = (m) => console.log(`  ok    ${m}`);
   const warn = (m) => console.log(`  note  ${m}`);

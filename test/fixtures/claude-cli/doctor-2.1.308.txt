@@ -1,0 +1,30 @@
+Claude Code doctor
+
+Running: npm-global (2.1.308)
+Commit: 0000000
+Platform: darwin-arm64
+Path: /home/user/.local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+Config install method: unknown
+Search: OK (bundled)
+Auto-updates: disabled (set by env: DISABLE_UPDATES)
+Auto-update channel: latest
+Last update attempt: none recorded
+Managed settings (remote): not fetched — no usable credentials for the settings fetch
+Organization policy: not fetched: no API key or claude.ai sign-in for the policy lookup (apiKeyHelper keys are not used for it)
+
+Invalid settings
+- /tmp/clawdling-contract-XXXX/proj/.claude/settings.json › hooks.ClawdlingContractProbe: Unknown hook event "ClawdlingContractProbe" was ignored. Valid events: PreToolUse, PostToolUse, PostToolUseFailure, PostToolBatch, Notification, UserPromptSubmit, UserPromptExpansion, SessionStart, SessionEnd, Stop, StopFailure, SubagentStart, SubagentStop, PreCompact, PostCompact, PreModelSwitch, PostModelSwitch, PermissionRequest, PermissionDenied, Setup, TeammateIdle, TaskCreated, TaskCompleted, Elicitation, ElicitationResult, ConfigChange, WorktreeCreate, WorktreeRemove, InstructionsLoaded, CwdChanged, FileChanged, DirectoryAdded, MessageDisplay
+
+Remote Control
+Remote Control requires a claude.ai subscription. Run claude auth login to sign in with your claude.ai account.
+- Not signed in to claude.ai
+- claude.ai subscription auth not active
+- Sign-in is missing the user:profile scope
+- Organization not resolved
+- Remote Control availability could not be verified (no server response this session)
+
+1 warning found
+- macOS Keychain is not writable. Console login will fail to save your API key.
+  Fix: Run: security unlock-keychain ~/Library/Keychains/login.keychain-db — if that doesn't fix it, your login keychain password may be out of sync with your account password: open Keychain Access, select the 'login' keychain, then Edit → Change Password for Keychain 'login'.
+
+For a full setup checkup that can also fix issues, run /doctor in a Claude Code session.
