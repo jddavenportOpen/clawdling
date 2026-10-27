@@ -1398,7 +1398,8 @@ export async function startServer(opts = {}) {
         const sid = sidParam(m);
         ownerOnlyCto(req, sid);
         const b = await jsonBody(req).catch(() => ({}));
-        ownerActs(sid);
+        // Starting a scheduled review again runs the same unattended review: it stays watched.
+        if (!sessions.get(sid)?.review_week) ownerActs(sid);
         return [200, await sessions.restart(sid, { cols: b.cols, rows: b.rows })];
       }],
       ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, forCaller(req, sessions.view(sessions.require(sidParam(m))))]],

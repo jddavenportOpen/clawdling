@@ -1668,7 +1668,7 @@ ol.cto-dec-list { list-style: decimal; padding-left: 20px; }
 .pill-bad .pill-dot { background: var(--danger); }
 .cto-raw { margin: 18px 0 0; display: flex; gap: 10px; align-items: baseline; }
 .cto-file { margin: 8px 0 0; padding: 12px; max-height: 420px; overflow: auto; background: var(--surface-2); border-radius: var(--r-md); font: 12.5px/1.5 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.dialog-cmd { flex: 1 1 100%; order: 2; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-3); font: 12.5px/1.45 var(--font-mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dialog-cmd { flex: 1 1 100%; order: 2; max-height: 40vh; overflow: auto; padding: 6px 10px; border-radius: var(--r-sm); background: var(--surface-3); font: 12.5px/1.45 var(--font-mono); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; }
 .pane-question .dialog-actions { order: 3; }
 .cto-cap { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--text-2); }
 .cto-cap .input { width: 72px; }

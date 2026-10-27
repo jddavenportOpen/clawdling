@@ -1274,6 +1274,8 @@ export class SessionManager {
     const rec = this.require(sid);
     if (rec.status === 'ended' && !(await this.backend.hasSession(rec.tmux_name))) return this.view(rec);
     await this.backend.killSession(rec.tmux_name);
+    // A kill that did not take (tmux timing out under load) is not an end: the session is still running.
+    if (await this.backend.hasSession(rec.tmux_name)) throw new Error('The session is still running: ending it did not work. Try again.');
     this.markEnded(rec, { notice: null });
     return this.view(rec);
   }

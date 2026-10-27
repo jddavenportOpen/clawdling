@@ -713,6 +713,13 @@ export class Cto {
     }
   }
 
+  /** Whether a session is ended and its claude is no longer running. */
+  async gone(rec) {
+    if (!rec) return true;
+    if (rec.status !== 'ended') return false;
+    return !(await Promise.resolve(this.sessions.backend?.hasSession?.(rec.tmux_name)).catch(() => false));
+  }
+
   /** The owner acted in the scheduled review (sent, answered, typed, resumed): from now on it is theirs. */
   handOver(sid) {
     const cur = this.state();
@@ -733,7 +740,8 @@ export class Cto {
     if (!rec) return { stopped: false };
     // Watched in every live status until the owner acts in it (handOver): a status alone is not a
     // hand-over (Clawdling itself can mark a slow start "needs you" while it runs on unattended).
-    if (rec.status === 'ended') {
+    // Ended means gone: a session marked ended while its claude still runs (a timed-out check) stays watched.
+    if (await this.gone(rec)) {
       const cur = this.state();
       if (cur.watch_sid === sid) {
         cur.watch_sid = null;
@@ -741,6 +749,10 @@ export class Cto {
       }
       return { stopped: false };
     }
+    // Idle on the owner (its turn ended, or a question a hook reported): it spends nothing, so the
+    // owner's own CTO chats passing the cap must not end it (its decisions would vanish). A slow
+    // start Clawdling itself marked "needs you" may be running, so it is checked.
+    if (rec.status === 'ready' || (rec.status === 'needs_you' && rec.waiting_on && rec.waiting_on !== 'startup')) return { stopped: false };
     const spent = this.weekSpend();
     // Spend that cannot be counted (a model missing from the price table, unreadable usage) stops it
     // too: unpriced usage adds $0 and would never pass the cap. A fresh session gets two minutes.
@@ -753,7 +765,7 @@ export class Cto {
       this.logger?.warn?.(`cto: could not stop the scheduled review: ${err.message}`);
     }
     // Recorded as stopped only once it is: otherwise it stays watched, and the next minute tries again.
-    if (this.sessions.get(sid)?.status !== 'ended') return { stopped: false, retry: true };
+    if (!(await this.gone(this.sessions.get(sid)))) return { stopped: false, retry: true };
     const now = this.state();
     now.watch_sid = null;
     now.last_skip = { week: isoWeek(this.now()), at: new Date(this.now()).toISOString(), why: uncounted && !(spent.usd > st.weekly_cap_usd)

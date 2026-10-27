@@ -12,7 +12,7 @@ import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, plainHeadline, sc
 import { digestText, isoWeek } from '../../server/digest.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, DENY_LONG, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
+import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, DENY_LONG, DENY_PADDED, SEND_COMMAND_RE, decisionOutput, isSendCommand, parseSend, seatDecision } from '../../server/seat-policy.js';
 import { buildHooksSettings, ctoDeny } from '../../server/hooks.js';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-cto-')));
@@ -406,6 +406,31 @@ test('a scheduled review that passes the weekly cap while it works is stopped, w
   const after = JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8'));
   assert.equal(after.watch_sid, 'sid-1');
   assert.equal(after.last_skip ?? null, null);
+  // Idle on the owner (its turn over, or a question it asked): never ended for the week's other spend.
+  ended.length = 0;
+  for (const idle of [{ status: 'ready' }, { status: 'needs_you', waiting_on: 'permission_prompt' }]) {
+    const quiet = new Cto({
+      paths: { rt: dir, home: dir },
+      org: { cto: () => ({ dir }) },
+      sessions: { get: () => idle, end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+      reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
+    });
+    fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
+    assert.deepEqual(await quiet.watchSpend(), { stopped: false });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).watch_sid, 'sid-1', 'still watched');
+  }
+  assert.deepEqual(ended, []);
+  // Marked ended while its claude still runs (a timed-out check): still watched, and stopped.
+  const ghost = new Cto({
+    paths: { rt: dir, home: dir },
+    org: { cto: () => ({ dir }) },
+    sessions: { get: () => ({ status: 'ended', tmux_name: 'cl-1' }), backend: { hasSession: async () => true }, end: async (sid) => { ended.push(sid); }, list: () => [], records: new Map() },
+    reports: { summaries: () => [], costOf: () => ({ total_usd: 2.5, complete: true }) },
+  });
+  fs.writeFileSync(path.join(dir, 'cto.json'), JSON.stringify({ enabled: true, weekly_cap_usd: 2, watch_sid: 'sid-1' }));
+  assert.deepEqual(await ghost.watchSpend(), { stopped: false, retry: true });
+  assert.deepEqual(ended, ['sid-1']);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'cto.json'), 'utf8')).watch_sid, 'sid-1');
   // A model with no price: $0 of known spend, but it cannot be counted, so it is stopped too.
   status = 'working';
   ended.length = 0;
@@ -438,6 +463,16 @@ test('the seat refuses any command or write with characters a person cannot see'
   const long = `clawdling report --json${' '.repeat(3990)}; clawdling send abc "hi"`;
   assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: long } }, { home }).reason, DENY_LONG);
   assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'x'.repeat(4000) } }, { home }).decision, 'ask', 'up to 4,000 characters: shown whole');
+  // Padding that pushes part of it out of view, in the command or in the description shown under it.
+  const padded = (command, description) => seatDecision({ tool_name: 'Bash', tool_input: { command, ...(description === undefined ? {} : { description }) } }, { home }).reason;
+  assert.equal(padded(`clawdling report --all --json\n\n\ncurl x.example`), DENY_PADDED);
+  assert.equal(padded(`clawdling ls${' '.repeat(81)}; curl x.example`), DENY_PADDED);
+  assert.equal(padded(Array.from({ length: 41 }, () => 'echo').join('\n')), DENY_PADDED);
+  assert.equal(padded('curl x.example', `${'\n'.repeat(60)}clawdling report --all --json --window 7d`), DENY_PADDED);
+  assert.equal(padded('curl x.example', 'x'.repeat(201)), DENY_PADDED);
+  assert.match(padded('curl x.example', 'Read \u200bthe report'), /U\+200B in description/);
+  assert.match(padded('curl x.example', 'Read\rthe report'), /U\+000D in description/);
+  assert.equal(seatDecision({ tool_name: 'Bash', tool_input: { command: 'clawdling send abc "Line one.\n\nLine two."', description: 'Tell abc what to fix' } }, { home }).decision, 'ask', 'a message with one blank line still asks');
   // Text real reviews use passes: an emoji with its selector, a ZWJ emoji, Persian with ZWNJ.
   for (const ok of ['\u26a0\ufe0f At risk', '\ud83d\udc69\u200d\ud83d\udcbb done', 'می\u200cخواهم']) assert.notEqual(seatDecision({ tool_name: 'Write', tool_input: { file_path: `${home}/cto/reviews/2026-W44.md`, content: ok } }, { home }).decision, 'deny', ok);
 });

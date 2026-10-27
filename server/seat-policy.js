@@ -30,6 +30,7 @@ export const ASK_WRITE = 'Clawdling: the CTO seat writes only its weekly review 
 export const ASK_UNREADABLE = 'Clawdling could not read this tool call, so it asks.';
 export const DENY_HIDDEN = 'Clawdling: this has characters a person cannot see, so the CTO seat may not run or write it.';
 export const DENY_LONG = 'Clawdling: this command is longer than the cockpit shows (4,000 characters), so the CTO seat may not run it. Its commands are short: the report, the session list, one message.';
+export const DENY_PADDED = 'Clawdling: this command (or its description) is padded with blank lines, long runs of spaces or many lines, which can push part of it out of view, so the CTO seat may not run it. Write one plain command, with a one-line description.';
 export const DENY_TOOL = 'Clawdling: the CTO seat uses only its report, its reviews and its questions to you (no subagents, schedules, web or messages outside clawdling send).';
 const ALLOW_READ = 'Clawdling: the report or the session list, read-only.';
 
@@ -99,6 +100,15 @@ function reviewFile(home, file, cwd, now) {
   }
 }
 
+/** Every string in a tool's input, with its key path (`edits[0].new_string`), at most 8 deep and 200 wide. */
+function strings(value, key = '', out = [], depth = 0) {
+  if (typeof value === 'string') out.push([key || 'input', value]);
+  else if (value && typeof value === 'object' && depth < 8) {
+    for (const [k, v] of Object.entries(value).slice(0, 200)) strings(v, Array.isArray(value) ? `${key}[${k}]` : key ? `${key}.${k}` : k, out, depth + 1);
+  }
+  return out;
+}
+
 /**
  * What the seat's hook answers for one tool call: null (let Claude Code's rules decide) or
  * {decision: 'ask' | 'allow', reason}. `home` is the org folder (the seat lives in <home>/cto).
@@ -110,14 +120,14 @@ export function seatDecision(payload, { home, now = Date.now() }) {
   // A command or a write with characters a person cannot see (that could hide or reorder words):
   // refused, whatever it is (the owner could not read what they would be approving), naming it.
   if (SHELL_TOOLS.has(p.tool_name) || FILE_TOOLS.has(p.tool_name)) {
-    const texts = ['command', 'content', 'new_string', 'old_string', 'new_source', 'file_path', 'notebook_path'].filter((k) => typeof input[k] === 'string').map((k) => [k, input[k]]);
-    if (Array.isArray(input.edits)) input.edits.forEach((e, i) => { if (e && typeof e.new_string === 'string') texts.push([`edits[${i}].new_string`, e.new_string]); });
-    for (const [k, v] of texts) {
+    // Every string the call carries (its command, description, text, paths), however nested.
+    for (const [k, v] of strings(input)) {
       const h = hiddenAt(v);
       if (h) return { decision: 'deny', reason: `${DENY_HIDDEN} (${h.code} in ${k}, at character ${h.index + 1})` };
       // A carriage return sends a terminal's cursor back to the line's start, so what follows is drawn
-      // over what came before: never in a command or a path, and in written text only as CRLF.
-      const cr = k === 'command' || k.endsWith('_path') ? v.indexOf('\r') : v.search(/\r(?!\n)/);
+      // over what came before: never in a shell call or a path; in written text only as CRLF.
+      const strict = SHELL_TOOLS.has(p.tool_name) || /_path$/.test(k);
+      const cr = strict ? v.indexOf('\r') : v.search(/\r(?!\n)/);
       if (cr >= 0) return { decision: 'deny', reason: `${DENY_HIDDEN} (U+000D in ${k}, at character ${cr + 1})` };
     }
   }
@@ -125,6 +135,11 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     const cmd = typeof input.command === 'string' ? input.command : '';
     // What the owner approves is what the cockpit shows, whole (it shows the first 4,000 characters).
     if (cmd.length > 4000) return { decision: 'deny', reason: DENY_LONG };
+    // Padding that pushes part of a command (or a description that pushes the command) out of view:
+    // a blank-line run, a long run of spaces, many lines; a description of more than one short line.
+    if (/\n[ \t]*\n[ \t]*\n|[ \t]{81}/.test(cmd) || cmd.split('\n').length > 40) return { decision: 'deny', reason: DENY_PADDED };
+    const desc = typeof input.description === 'string' ? input.description : '';
+    if (desc.length > 200 || /[\n\t]/.test(desc)) return { decision: 'deny', reason: DENY_PADDED };
     if (CROSS_AGENT_RE.test(cmd)) return { decision: 'ask', reason: ASK_SEND };
     // A read runs without a prompt only in the foreground (a background task lives on, with its own words).
     if (plainRead(cmd) && !input.run_in_background) return { decision: 'allow', reason: ALLOW_READ };
