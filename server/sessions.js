@@ -1164,13 +1164,17 @@ export class SessionManager {
       rec.pending_ask = null;
     }
     // The CTO seat's hooks report every tool call (cto.js): the cross-agent message it is about to
-    // send, kept so the cockpit can show it beside Claude Code's own prompt. Any other tool call, or
-    // the end of the turn, clears it, so a prompt is never shown with the wrong command.
+    // send, kept so the cockpit can show it beside Claude Code's own prompt. Claude Code runs a
+    // command (a tool that changes things) on its own: its PreToolUse hook, then its prompt, then
+    // the call. So the prompt on screen belongs to the newest tool call: any other tool call, its
+    // own PostToolUse, or the end of the turn clears the message, and it is never shown with the
+    // wrong prompt.
+    const toolId = typeof p.tool_use_id === 'string' && p.tool_use_id ? p.tool_use_id.slice(0, 100) : null;
     if (event === 'PreToolUse') {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
-      rec.pending_cmd = cmd && SEND_CMD_RE.test(cmd) && typeof p.tool_use_id === 'string' && p.tool_use_id ? { tool_id: p.tool_use_id.slice(0, 100), command: cmd.slice(0, 4000) } : null;
+      rec.pending_cmd = cmd && SEND_CMD_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000) } : null;
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
-      if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === p.tool_use_id) rec.pending_cmd = null;
+      if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
     }
     const before = rec.transcript_path;
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);

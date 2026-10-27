@@ -25,6 +25,7 @@ export const CONTEXT_MAX_BYTES = 200 * 1024;
 export const RESERVED_IDS = new Set(['donna', 'scratch', 'cto']);
 // The CTO seat (1.7): one per org, in <org>/cto, beside Donna.
 export const CTO_ID = 'cto';
+export const CTO_UNGUARDED = "Clawdling cannot write the CTO's file rules for a folder whose path has characters like ( ) ' or accents, so it will not add or start a CTO here.";
 // Stored agent permission modes (null = ask; see permissions.js). 'default' is Claude Code's own
 // name for asking first, kept from 1.1.0.
 const PERMISSION_MODES = new Set(['ask', 'default', 'acceptEdits', 'plan', 'inherit']);
@@ -535,6 +536,8 @@ export class OrgStore {
   /** "Add a CTO" (1.7): the seat's folder from templates/cto, beside Donna. One per org. */
   createCto() {
     if (this.cto()) throw conflict('This org already has a CTO.');
+    // Fail closed, like the needs-you ping: no seat where its file rules cannot be written.
+    if (!ctoPermissions({ dir: path.join(this.home, CTO_ID), home: this.home }).fileRules || !runtimeDeny(this.home).length) throw badRequest(CTO_UNGUARDED);
     if (this.locate(CTO_ID)) throw conflict('An agent called "cto" already exists. Rename or archive it first, then add the CTO.');
     const owner = this.read().owner || 'the owner';
     const agent = {

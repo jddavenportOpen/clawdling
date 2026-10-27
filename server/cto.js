@@ -13,7 +13,8 @@ import path from 'node:path';
 import { isoWeek, weekSendTime } from './digest.js';
 import { buildHooksSettings } from './hooks.js';
 import { PRICES, localDay, priceFor } from './ledger.js';
-import { CTO_ID, ctoPermissions } from './org.js';
+import { CTO_ID, CTO_UNGUARDED, ctoPermissions } from './org.js';
+import { runtimeDeny } from './hooks.js';
 import { COST_LABEL } from './report.js';
 import { REVIEW_MAX_BYTES, lintReview } from './review-lint.js';
 import { ReceiptIndex } from './receipts.js';
@@ -26,6 +27,7 @@ const WEEK_RE = /^\d{4}-W\d{2}$/;
 const DEFAULT_CAP = 2;
 const TRANSCRIPT_MAX = 32 * 1024 * 1024;
 const SEND_RE = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\b/;
+const BUSY = new Set(['starting', 'working', 'needs_you']);
 
 /**
  * The seat's --settings file: Clawdling's hooks, with the tool hooks for every tool (the hook
@@ -36,6 +38,14 @@ const SEND_RE = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\b/;
 export function ctoLaunchSettings({ nodePath, hookScript, stopFailure, home, dir, platform = process.platform }) {
   const s = buildHooksSettings({ nodePath, hookScript, platform, stopFailure, home });
   for (const ev of ['PreToolUse', 'PostToolUse']) s.hooks[ev] = s.hooks[ev].map((g) => ({ hooks: g.hooks })); // no matcher: every tool
+  // The seat's PreToolUse also answers for it (server/seat-policy.js): "ask" for any command but the
+  // report and the session list, and for any write outside reviews/, whatever allow rules exist.
+  for (const g of s.hooks.PreToolUse) {
+    for (const h of g.hooks) {
+      if (Array.isArray(h.args)) h.args.push('cto');
+      else h.command = `${h.command} cto`;
+    }
+  }
   const { allow, ask, deny } = ctoPermissions({ dir, home, platform });
   s.permissions = { allow, ask, deny };
   return s;
@@ -164,6 +174,7 @@ export class Cto {
 
   /** The seat's launch settings file, written fresh before every start (sessions.seatLaunch). */
   launchSettings(rec, target, { nodePath, hookScript, stopFailure }) {
+    if (!ctoPermissions({ dir: target.dir, home: this.paths.home }).fileRules || !runtimeDeny(this.paths.home).length) throw new HttpError(409, CTO_UNGUARDED);
     const file = path.join(this.paths.rt, 'cto-launch-settings.json');
     writeJson(file, ctoLaunchSettings({ nodePath, hookScript, stopFailure, home: this.paths.home, dir: target.dir }), 0o600);
     return { settingsPath: file };
@@ -335,28 +346,48 @@ export class Cto {
    * in Clawdling." The headline is the CTO's own words: one line, capped, links removed, so a review
    * written under a prompt injection cannot put a link on the owner's phone.
    */
-  digestLine() {
-    if (!this.state().headline_in_digest || !this.org.cto()) return null;
+  digestLine({ preview = false } = {}) {
+    if ((!preview && !this.state().headline_in_digest) || !this.org.cto()) return null;
     const l = this.latest();
-    if (!l) return null;
+    // Only this week's review or last week's, and it says which (the report may go out first).
+    const now = this.now();
+    if (!l || (l.week !== isoWeek(now) && l.week !== isoWeek(now - 7 * 86400000))) return null;
     let h = l.headline ? oneLine(l.headline, 160).replace(/\b(?:https?|ftp|file):\/\/\S+/gi, '[link removed]').replace(/\bwww\.\S+/gi, '[link removed]').replace(/[<>]/g, '') : '';
     h = h.trim();
     const n = l.decisions_waiting;
     const tail = n ? `${n} decision${n === 1 ? '' : 's'} waiting in Clawdling.` : '';
     if (!h && !tail) return null;
-    return `CTO: ${h ? `${h}${/[.!?]$/.test(h) ? '' : '.'}${tail ? ' ' : ''}` : ''}${tail}`;
+    return `CTO, week ${Number(l.week.slice(6))}: ${h ? `${h}${/[.!?]$/.test(h) ? '' : '.'}${tail ? ' ' : ''}` : ''}${tail}`;
   }
 
   // ------------------------------------------------------------------------------ the run
 
-  /** Start this week's review (the owner's click, or the schedule): a new CTO session. */
+  /** A review session still at work or waiting on the owner (a finished one is "ready"). */
+  busyReview() {
+    return this.ctoSessions().find((s) => BUSY.has(s.status) && s.title && /^CTO review, /.test(s.title)) || null;
+  }
+
+  /**
+   * Start this week's review (the owner's click, or the schedule): a new CTO session. A review still
+   * at work, or waiting on the owner, is not doubled; earlier reviews that finished are ended first
+   * (they stay resumable), so weekly runs do not pile up idle Claude Code sessions.
+   */
   async startReview({ scheduled = false } = {}) {
     this.require();
-    const live = this.ctoSessions().find((s) => s.status !== 'ended' && s.title && /^CTO review, /.test(s.title));
-    if (live && !scheduled) {
-      const e = conflict('A review is already running. Open it to answer its questions.');
+    const live = this.busyReview();
+    if (live) {
+      const e = conflict('A review is still running or waiting for you. Open it to answer its questions.');
       e.body = { sid: live.sid };
       throw e;
+    }
+    for (const s of this.ctoSessions()) {
+      if (s.status === 'ready' && s.title && /^CTO review, /.test(s.title)) {
+        try {
+          await this.sessions.end(s.sid);
+        } catch (err) {
+          this.logger?.warn?.(`cto: could not end the earlier review ${s.sid}: ${err.message}`);
+        }
+      }
     }
     const week = isoWeek(this.now());
     const s = await this.sessions.spawn({ agent: CTO_ID, prompt: `${REVIEW_PROMPT} The week is ${week}.`, title: `CTO review, ${week}` });
@@ -394,7 +425,7 @@ export class Cto {
       week: isoWeek(now),
       reviews: this.reviews(),
       latest: a ? this.latest() : null,
-      running: sessions.find((s) => s.status !== 'ended' && s.title && /^CTO review, /.test(s.title))?.sid || null,
+      running: a ? this.busyReview()?.sid || null : null,
       permissions: perms,
       schedule: {
         enabled: st.enabled,
@@ -409,6 +440,8 @@ export class Cto {
       },
       thresholds: st.thresholds,
       headline_in_digest: st.headline_in_digest,
+      // Exactly the line the Monday report would add now (shown before it is turned on).
+      headline_preview: a ? this.digestLine({ preview: true }) : null,
       label: COST_LABEL,
     };
   }

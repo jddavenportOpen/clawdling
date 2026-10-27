@@ -4,9 +4,12 @@
 // tools that ask the person something (AskUserQuestion, ExitPlanMode: the chat's question cards).
 //
 // Contract: never block or alter Claude. It prints nothing (stdout of some hooks is added to the
-// conversation), always exits 0, and gives up after 1.5 seconds. If the event is not delivered
-// (server down, starting, erroring or slow) it is appended to .clawdling/hook-spool.jsonl and
-// replayed when the server starts; the server drops replayed events older than what it has.
+// conversation), always exits 0, and gives up after 1.5 seconds. One exception: registered for the
+// CTO seat (an extra argument "cto", 1.7), its PreToolUse answers "ask" for anything the seat may
+// not do without the owner's yes (server/seat-policy.js), as Claude Code's hook JSON on stdout.
+// If the event is not delivered (server down, starting, erroring or slow) it is appended to
+// .clawdling/hook-spool.jsonl and replayed when the server starts; the server drops replayed
+// events older than what it has.
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -17,9 +20,10 @@ process.on('uncaughtException', done);
 process.on('unhandledRejection', done);
 
 const event = process.argv[2];
+const seat = process.argv[3] === 'cto' ? 'cto' : null;
 const sid = process.env.CLAWDLING_SID;
 const home = process.env.CLAWDLING_HOME;
-if (!sid || !home || !event) done();
+if (!event || (!seat && (!sid || !home))) done();
 let inFlight = null; // the record being delivered, spooled if the deadline hits first
 setTimeout(() => {
   if (inFlight) spool(inFlight);
@@ -64,6 +68,17 @@ async function main() {
   } catch {
     payload = {};
   }
+  // The CTO seat's own check, before anything else (and even with the server down).
+  if (seat === 'cto' && event === 'PreToolUse') {
+    try {
+      const { seatDecision, decisionOutput } = await import('../server/seat-policy.js');
+      const out = decisionOutput(seatDecision(payload, { home: home || '' }));
+      if (out) fs.writeSync(1, `${out}\n`);
+    } catch {
+      // Claude Code's own rules for the seat still apply (send and spawn are ask rules)
+    }
+  }
+  if (!sid || !home) return done();
   // Only what the server needs; keep the request small and fast.
   const slim = {
     session_id: payload.session_id,
