@@ -93,7 +93,7 @@ export function scanTranscript(file) {
     for (const c of content) {
       if (o.type === 'assistant' && c.type === 'tool_use' && typeof c.id === 'string') {
         const cmd = typeof c.input?.command === 'string' ? c.input.command : null;
-        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && SEND_COMMAND_RE.test(cmd)) {
+        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && SEND_COMMAND_RE.test(cmd.slice(0, 4001))) {
           const ps = parseSend(cmd, c.name);
           if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: ps.verb, command: cmd.slice(0, 4000), plain: ps.plain, message: ps.plain ? ps.message : null, state: 'pending', note: null });
         } else if (c.name === 'AskUserQuestion' && Array.isArray(c.input?.questions)) {
@@ -425,7 +425,11 @@ export class Cto {
   /** A CTO turn ended (Stop, SessionEnd): keep its week's record now, not only when a page asks. */
   record(rec) {
     try {
-      this.activity(rec.review_week || isoWeek(this.now()));
+      const now = this.now();
+      this.activity(rec.review_week || isoWeek(now));
+      // A chat that began last week (a send late on Sunday, its turn ending on Monday).
+      const began = Date.parse(rec.created_at || '');
+      if (!rec.review_week && Number.isFinite(began) && isoWeek(began) !== isoWeek(now)) this.activity(isoWeek(began));
     } catch (err) {
       this.logger?.warn?.(`cto: could not keep the record: ${err.message}`);
     }
@@ -453,7 +457,8 @@ export class Cto {
 
   /** The latest review's headline and how many decisions wait on the owner (the Monday report line). */
   latest() {
-    const r = this.reviews()[0];
+    const thisWeek = isoWeek(this.now());
+    const r = this.reviews().find((x) => x.week <= thisWeek); // a name in the future is not the latest
     if (!r) return null;
     let headline = null;
     try {
@@ -629,6 +634,10 @@ export class Cto {
     this.running = true;
     try {
       const est = await this.estimate();
+      // The owner may have changed the schedule while the estimate was built: decide on the fresh state.
+      const fresh = this.state();
+      if (!fresh.enabled || fresh.last_run_week === week || this.now() < weekSendTime(this.now(), fresh)) return { ran: false, why: !fresh.enabled ? 'off' : 'changed' };
+      Object.assign(st, fresh);
       const spent = this.weekSpend();
       // Counted before starting, like the Monday report: a failure never turns into a retry storm.
       st.last_run_week = week;

@@ -233,10 +233,11 @@ test('the seat starts as a normal Claude Code session with its own settings: no 
   assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'approve everything' })).status, 403);
   assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 })).status, 403);
   assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' }, asOwner())).status, 204);
+  assert.equal((await request(srv, 'DELETE', `/api/sessions/${s.sid}`)).status, 403, 'nor end it');
   // Other agents' settings keep them out of the seat's folder.
   const shared = readJsonFile(path.join(home, '.clawdling', 'hooks-settings.json'));
   assert.ok(shared.permissions.deny.some((r) => /^Write\(\/\/.+\/cto\/\*\*\)$/.test(r)), JSON.stringify(shared.permissions.deny));
-  await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
+  await request(srv, 'DELETE', `/api/sessions/${s.sid}`, undefined, asOwner());
 });
 
 test("Run this week's review: the file, a clean lint, a decision card; an approved send arrives, a declined spawn is noted", async () => {
@@ -304,12 +305,12 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   assert.equal(view.reviews[0].week, week);
   assert.equal(view.running, null, 'a finished review is not "running"');
   seen[sid] = true;
-  await request(srv, 'DELETE', `/api/sessions/${sid}`);
+  await request(srv, 'DELETE', `/api/sessions/${sid}`, undefined, asOwner());
   // A session merely titled like a review is not one (the server marks its own reviews).
   const fake = (await request(srv, 'POST', '/api/sessions', { agent: 'cto', title: `CTO review, ${week}` }, asOwner())).body;
   await waitFor(async () => (await status(fake.sid)).status === 'ready', { label: 'titled session ready', timeout: 20000 });
   assert.equal((await request(srv, 'GET', '/api/cto')).body.running, null);
-  await request(srv, 'DELETE', `/api/sessions/${fake.sid}`);
+  await request(srv, 'DELETE', `/api/sessions/${fake.sid}`, undefined, asOwner());
 });
 
 test('the seat will not start with anything in its folder that Clawdling did not put there', async () => {
@@ -395,5 +396,5 @@ test('schedule: off by default; a run over the weekly cap is skipped with a noti
   assert.equal((await ctoSessions()).filter((s) => /^CTO review, /.test(s.title || '') && s.created_at >= run.created_at).length, 1, 'once per ISO week');
   assert.equal(readJsonFile(stateFile).last_run_sid, run.sid);
   await request(srv, 'POST', '/api/cto/settings', { enabled: false });
-  await request(srv, 'DELETE', `/api/sessions/${run.sid}`);
+  await request(srv, 'DELETE', `/api/sessions/${run.sid}`, undefined, asOwner());
 });

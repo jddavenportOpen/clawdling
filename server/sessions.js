@@ -1181,7 +1181,7 @@ export class SessionManager {
     if (event === 'PreToolUse') {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
       // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
-      rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash' } : null;
+      rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd.slice(0, 4001)) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash' } : null;
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
     }
@@ -1203,7 +1203,7 @@ export class SessionManager {
     }
     if (event === 'Stop' || event === 'UserPromptSubmit') setTimeout(() => this.refreshBackground(rec), 300).unref?.();
     if (titleChanged) this.events.record({ type: 'rename', sid, title: rec.title, auto: true });
-    if (event === 'Stop' || event === 'SessionEnd') this.onTurnEnd?.(rec); // the CTO's record (cto.js)
+    if (event === 'Stop' || event === 'StopFailure' || event === 'SessionEnd') this.onTurnEnd?.(rec); // the CTO's record (cto.js)
     if (statusChanged) this.onStatusChange(rec);
     else {
       this.scheduleSave();
@@ -1640,10 +1640,14 @@ export class SessionManager {
     if (!rec || !rt?.control || rt.control.closed || !data) return;
     rt.control.sendBytes(Buffer.from(data.slice(0, 65536), 'utf8'));
     if (rec.status === 'needs_you' && (rec.waiting_on === 'permission_prompt' || rec.waiting_on === 'elicitation_dialog') && /\r|^[1-9]$|^\x1b$/.test(data)) {
+      const wasPermission = rec.waiting_on === 'permission_prompt' && rec.asking?.kind !== 'plan';
       rec.status = 'working';
       rec.notification = null;
       rec.waiting_on = null;
       this.onStatusChange(rec);
+      // A "No" (or Esc) typed in the terminal can stop the turn with no Stop hook, like one from the
+      // cockpit: watch the screen the same way (it changes nothing unless it reads "Interrupted").
+      if (wasPermission) this.watchInterrupt(rec);
     }
   }
 

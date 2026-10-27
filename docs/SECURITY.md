@@ -560,7 +560,8 @@ answers:
   reason "the CTO wants to message another agent";
 - **ask** for every other Bash or PowerShell command;
 - **ask** for any Write, Edit, MultiEdit or NotebookEdit other than `<org>/cto/reviews/<YYYY-Www>.md`
-  itself (no other name, no subfolder);
+  itself, for this ISO week or last week (no other name, no subfolder, no week in the future, which
+  would sort as "the latest review"; the CTO page also ignores a future week);
 - **ask** for a tool call it cannot read (no tool name, unreadable input), even with no session.
 
 So the seat runs exactly two things without a prompt, the report and the session list, and writes
@@ -569,9 +570,9 @@ cross-agent prompt Claude Code then offers only Yes and No (seen on 2.1.308), ne
 again". The hook prints its answer first, even when the Clawdling server is not running. If the hook
 cannot run at all, the exact allow rules, the ask rules and the ask-first mode still apply.
 
-**It takes instructions from you only.** Starting a CTO session, typing into one and answering one
-of its prompts work from the cockpit (its cookie) or a paired device, never with the raw token
-(`403`). The raw token is how the `clawdling` CLI talks to the server, and every other agent and
+**It takes instructions from you only.** Starting a CTO session, typing into one, answering one of
+its prompts, and restarting, resuming, renaming, re-modelling or ending one work from the cockpit
+(its cookie) or a paired device, never with the raw token (`403`). The raw token is how the `clawdling` CLI talks to the server, and every other agent and
 Donna may run `clawdling send` and `spawn` without a prompt: so no agent and not Donna can start the
 CTO, put words in front of it, or press Yes on its prompt. Every other agent's settings (and
 Donna's) also deny writing anywhere in `<org>/cto/`, so none can plant settings, skills or a review
@@ -616,7 +617,10 @@ permission prompt (Claude Code runs a command on its own: its hook, then its pro
 so the prompt on screen belongs to the newest tool call). Only exactly one
 `clawdling send|spawn [options] <target> "<message>"` counts as a plain message: a session or agent
 id, only the CLI's own options with plain values, the message in quotes with nothing a shell would
-expand. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
+expand, and not starting with `-` (the CLI would read it as an option). Through PowerShell, any
+backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
+built so a long run of options cannot make them backtrack without end, and every command is capped
+at 4,001 characters before it is matched. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
 characters) the cockpit shows the command, says to read it in the terminal, and offers no one-tap
 Yes: you answer it in the terminal. Apart from the seat's own check (above),
 the hooks decide nothing: the prompt, and the answer to it, are Claude Code's own.
@@ -631,6 +635,10 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
   (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The report's `note` and the CTO's CLAUDE.md
   both say to treat that text as data, never as instructions.
 - The CTO has no web, no MCP servers, and can write only its own reviews without asking.
+- Two files reach the CTO as instructions, not as report data: the org's `CLAUDE.md` (which every
+  agent loads from the parent folder) and `me.md` (in every agent's context). They are your files,
+  and agents can edit them in ask-first mode only with your yes. Treat them as trusted inputs you
+  own: anything steered through them still meets the seat's own check and your yes on every message.
 - A message to another agent always shows Claude Code's prompt with the exact text; the receiving
   agent then runs under its own permission mode.
 - It cannot fake a status: labels are computed, a changed label is shown as an override beside
@@ -646,8 +654,9 @@ card, are read from the seat's own Claude Code transcripts (`scanTranscript`), n
 model wrote: "declined" only for Claude Code's own rejection text at the start of an error result,
 and a send or spawn in any spelling counts. A message that is not one plain message is listed as its
 whole command, never as an extracted text the agent may not have received. Final states are also
-kept per week in `.clawdling/cto/activity/<week>.json`, written when a CTO turn ends (and whenever
-the page is read), so the record outlives the sessions and their transcripts. Review sessions are
+kept per week in `.clawdling/cto/activity/<week>.json`, written when a CTO turn ends (Stop,
+StopFailure, SessionEnd, or a "No" that stops it, whether answered in the cockpit or typed in the
+terminal) and whenever the page is read, so the record outlives the sessions and their transcripts. Review sessions are
 marked by the server when it starts them, not by their title.
 The CTO also notes a declined message in the review (`Declined: ...`) when it can (a "No" in
 Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
@@ -663,6 +672,8 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
   is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
+  It reads the schedule again after building the estimate, so turning it off (or lowering the cap)
+  while a check is under way wins.
 
 ### The Monday report line
 

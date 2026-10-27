@@ -59,19 +59,35 @@ export function plainRead(cmd) {
   return true;
 }
 
-/** True when `file` (absolute, or relative to `cwd`) is <home>/cto/reviews/<YYYY-Www>.md exactly. */
-function reviewFile(home, file, cwd) {
+/** "2026-W44": the ISO week (Monday first) of a time, in local time (as digest.js isoWeek). */
+function isoWeekOf(ms) {
+  const d = new Date(ms);
+  const day = (d.getDay() + 6) % 7;
+  const thursday = new Date(d.getFullYear(), d.getMonth(), d.getDate() - day + 3);
+  const firstThursday = new Date(thursday.getFullYear(), 0, 4);
+  const week = 1 + Math.round(((thursday - firstThursday) / 86400000 - 3 + ((firstThursday.getDay() + 6) % 7)) / 7);
+  return `${thursday.getFullYear()}-W${String(week).padStart(2, '0')}`;
+}
+
+/**
+ * True when `file` (absolute, or relative to `cwd`) is <home>/cto/reviews/<week>.md exactly, for this
+ * ISO week or last week (a name far in the future would sort as "the latest review").
+ */
+function reviewFile(home, file, cwd, now) {
   if (typeof file !== 'string' || !file || !home) return false;
   const dir = path.resolve(home, 'cto', 'reviews');
   const abs = path.resolve(typeof cwd === 'string' && cwd ? cwd : path.join(home, 'cto'), file);
-  return path.dirname(abs) === dir && WEEK_FILE.test(path.basename(abs));
+  const name = path.basename(abs);
+  if (path.dirname(abs) !== dir || !WEEK_FILE.test(name)) return false;
+  const week = name.slice(0, -3);
+  return week === isoWeekOf(now) || week === isoWeekOf(now - 7 * 86400000);
 }
 
 /**
  * What the seat's hook answers for one tool call: null (let Claude Code's rules decide) or
  * {decision: 'ask' | 'allow', reason}. `home` is the org folder (the seat lives in <home>/cto).
  */
-export function seatDecision(payload, { home }) {
+export function seatDecision(payload, { home, now = Date.now() }) {
   const p = payload && typeof payload === 'object' ? payload : {};
   if (typeof p.tool_name !== 'string' || !p.tool_name) return { decision: 'ask', reason: ASK_UNREADABLE };
   const input = p.tool_input && typeof p.tool_input === 'object' ? p.tool_input : {};
@@ -83,7 +99,7 @@ export function seatDecision(payload, { home }) {
   }
   if (FILE_TOOLS.has(p.tool_name)) {
     const file = typeof input.file_path === 'string' ? input.file_path : typeof input.notebook_path === 'string' ? input.notebook_path : '';
-    if (p.tool_name !== 'NotebookEdit' && reviewFile(home, file, p.cwd)) return null;
+    if (p.tool_name !== 'NotebookEdit' && reviewFile(home, file, p.cwd, now)) return null;
     return { decision: 'ask', reason: ASK_WRITE };
   }
   return null;
@@ -98,7 +114,9 @@ export function decisionOutput(d) {
 // A send or spawn as a command of its own: `clawdling` (by any path or shim name) right before the
 // verb, after options only. Narrower than CROSS_AGENT_RE (which the seat's "ask" uses): the review
 // page's list and the cockpit's banner use it, so `clawdling report send-x` is not a message.
-export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?(?:\s|\\\n)+(?:--[a-z-]+(?:[ =](?:"[^"]*"|'[^']*'|[^\s"';&|]+))?(?:\s|\\\n)+)*(?:send|spawn)(?=\s|$)/i;
+// (An option's value may not start with "-": otherwise "--a --a --a ..." splits in exponentially
+// many ways and a failing match never ends. Callers also cap the input at 4,001 characters.)
+export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?(?:\s|\\\r?\n|`\r?\n)+(?:--[a-z-]+(?:[ =](?:"[^"]*"|'[^']*'|[^\s"';&|-][^\s"';&|]*))?(?:\s|\\\r?\n|`\r?\n)+)*(?:send|spawn)(?=\s|$)/i;
 
 // The CLI's own options for send and spawn, with the shape of their values.
 const SEND_OPTIONS = { '--model': /^[A-Za-z0-9._:\[\]-]{1,80}$/, '--effort': /^[a-z]{1,10}$/, '--account': /^[A-Za-z0-9._-]{1,60}$/, '--cols': /^\d{1,4}$/, '--rows': /^\d{1,4}$/ };
@@ -116,7 +134,8 @@ export function parseSend(cmd, tool = 'Bash') {
   const loose = /\b(send|spawn)\b/i.exec(s);
   const notPlain = { plain: false, verb: loose ? loose[1].toLowerCase() : 'send', target: null, message: s };
   if (/[\r\n]/.test(s) || s.length > 4000) return notPlain;
-  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][A-Za-z0-9._:\[\]-]+)?\s+)*)([A-Za-z0-9][A-Za-z0-9-]{0,63})\s+("(?:[^"\\$`]|\\["\\])*"|'[^']*')\s*$/.exec(s);
+  // Option values may not start with "-" (one way to split the options, so no runaway backtracking).
+  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][A-Za-z0-9._:\[\]][A-Za-z0-9._:\[\]-]*)?\s+)*)([A-Za-z0-9][A-Za-z0-9-]{0,63})\s+("(?:[^"\\$`]|\\["\\])*"|'[^']*')\s*$/.exec(s);
   if (!m) return notPlain;
   // Every option must be the CLI's own, with a value of its shape.
   const opts = m[2].trim() ? m[2].trim().split(/\s+/) : [];
@@ -128,8 +147,11 @@ export function parseSend(cmd, tool = 'Bash') {
     if (v === undefined || !SEND_OPTIONS[flag].test(v)) return notPlain;
   }
   const q = m[4];
-  // PowerShell has its own quoting (a backslash is not an escape): only the simplest message counts.
-  if (tool === 'PowerShell' && /[\\"'`$]/.test(q.slice(1, -1))) return notPlain;
+  // PowerShell has its own quoting (a backslash is not an escape; curly quotes are quotes): only the
+  // simplest message counts there.
+  if (tool === 'PowerShell' && /[\\"'`$\u2018-\u201f]/.test(q.slice(1, -1))) return notPlain;
   const message = q[0] === '"' ? q.slice(1, -1).replace(/\\(["\\])/g, '$1') : q.slice(1, -1);
+  // The CLI reads any argument starting with "-" as an option, quoted or not.
+  if (/^\s*-/.test(message)) return notPlain;
   return { plain: true, verb: m[1], target: m[3], message };
 }

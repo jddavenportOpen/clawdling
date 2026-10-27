@@ -1267,7 +1267,7 @@ export async function startServer(opts = {}) {
     const ownerOnlyCto = (req, sid) => {
       const rec = sid ? sessions.get(sid) : null;
       if ((sid ? rec && rec.kind === 'cto' : true) && !req.who.remote && typeof req.headers[TOKEN_HEADER] === 'string' && req.headers[TOKEN_HEADER]) {
-        throw new HttpError(403, 'Only you can talk to the CTO, from the cockpit: agents and Donna cannot start it, message it or answer for it.');
+        throw new HttpError(403, 'Only you can talk to the CTO, from the cockpit: agents and Donna cannot start, message, answer for, restart or end it.');
       }
     };
     const routes = [
@@ -1366,6 +1366,7 @@ export async function startServer(opts = {}) {
       // Model / effort chips: the session restarts on the same conversation (--resume) with the new --model / --effort, only between turns.
       ['POST', /^\/api\/sessions\/([^/]+)\/settings$/, async (req, m) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
         return [200, await sessions.settings(sid, { model: b.model, effort: b.effort })];
       }],
@@ -1387,19 +1388,26 @@ export async function startServer(opts = {}) {
       // "Start again" for a session stuck on "not signed in" (or a stalled start): a new claude.
       ['POST', /^\/api\/sessions\/([^/]+)\/restart$/, async (req, m) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const b = await jsonBody(req).catch(() => ({}));
         return [200, await sessions.restart(sid, { cols: b.cols, rows: b.rows })];
       }],
       ['GET', /^\/api\/sessions\/([^/]+)$/, (req, m) => [200, sessions.view(sessions.require(sidParam(m)))]],
       ['PATCH', /^\/api\/sessions\/([^/]+)$/, async (req, m) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
         if (!('title' in b)) throw badRequest('send {title}');
         return [200, sessions.rename(sid, b.title)];
       }],
-      ['DELETE', /^\/api\/sessions\/([^/]+)$/, async (req, m) => [200, await sessions.end(sidParam(m))]],
+      ['DELETE', /^\/api\/sessions\/([^/]+)$/, async (req, m) => {
+        const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
+        return [200, await sessions.end(sid)];
+      }],
       ['POST', /^\/api\/sessions\/([^/]+)\/resume$/, async (req, m) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
         return [200, await sessions.resume(sid, { cols: b.cols, rows: b.rows })];
       }],
@@ -1485,6 +1493,7 @@ export async function startServer(opts = {}) {
       // Claim receipts for one session's chat, and "Ask the agent to fix it" (the exact text shown).
       ['GET', /^\/api\/sessions\/([^/]+)\/claims$/, (req, m) => [200, reports.sessionClaims(sessions.require(sidParam(m)))]],
       ['POST', /^\/api\/sessions\/([^/]+)\/fix$/, async (req, m) => {
+        ownerOnlyCto(req, sidParam(m));
         const rec = sessions.require(sidParam(m));
         const b = await jsonBody(req);
         const c = reports.sessionClaims(rec);
