@@ -71,7 +71,7 @@ of three labels:
   after it. The label quotes the first error line, the claim waits in **Needs you**, and **Ask the agent to fix it** sends one message,
   which you see before it goes.
 
-![Receipts under an agent's "done" messages: Verified, Not verified, Contradicted](docs/img/verified-done.png)
+![A receipt under an agent's "Done": Contradicted, quoting the failed test, with Ask the agent to fix it](docs/img/verified-done.png)
 
 No model judges anything: the label is a fact from Claude Code's own transcript, so it is free and
 instant. To get more receipts:
@@ -91,7 +91,7 @@ instant. To get more receipts:
 - **Try a cheaper model.** The same check-up across models and effort levels; Clawdling recommends
   the cheapest one that holds up, and changes nothing until you click "Use this".
 
-![An agent's check-up: the score, each case with the judge's reasons, and Try a cheaper model](docs/img/checkup.png)
+![An agent's Check-up tab: the last ship check and the check-up score, case by case](docs/img/checkup.png)
 
 The report card gets a **Verified** block (the week's claims by label, the last ship check and the
 last check-up), and the org map shows each agent's last check-up. Everything stays on your computer:

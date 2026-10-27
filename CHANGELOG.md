@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.6.0 (2026-10-27)
+
+**Verified done: when an agent says it is done, you see whether its record backs that up.**
+
+- **Claim receipts.** Under an agent's "done", "fixed", "tests pass" or "builds", one label read from
+  the session's own record: **Verified** (a plain run of the check, `npm test` or your approved
+  command, passed after the agent's last change, and nothing after it could have changed the work),
+  **Contradicted** (a plain run failed after the last change, with output showing checks that ran and
+  failed), **Not verified** (the default: no check, or a record that cannot tell, such as a piped or
+  chained run, only some tests, or a script that ran afterwards), or **No changes made**. A
+  Contradicted claim waits in **Needs you**, and **Ask the agent to fix it** sends one message you
+  see first. No model is asked whether the work is done, and nothing runs to label a claim.
+- **The ship check.** Pick, once, the commands that prove a project works. Each is shown exactly,
+  with what it does, and runs only after you approve it, in a scratch git worktree of the repo (your
+  live repo is never touched), with credentials and the org `.env` kept out, every git filter and
+  hook switched off, and a private temp folder. A pass can verify a claim the session left
+  unchecked; a failure keeps claims Not verified (the copy is not the agent's environment, so it
+  never marks a claim Contradicted on its own).
+- **Agent check-ups.** Five questions drafted from the agent's own files (its job, its next step,
+  what is not its job, its house rules, its last handoff), in the format of `claude plugin eval`.
+  You read and approve them first; each runs with `claude -p` in a scratch copy of the agent with
+  read-only tools, on your plan, with the cost shown first and a hard cap. A judge model grades
+  answers three times, and before any agent run it must fail an empty answer and pass each reference
+  answer, or the suite says "judge unreliable" and spends nothing more.
+- **Try a cheaper model.** The same cases on cheaper models and efforts, scored and priced; the
+  cheapest that holds is recommended, and "Use this" changes only the agent's own `agent.json`.
+- **Everywhere:** a Verified block on the report card, each agent's last check-up on the org map,
+  and `clawdling check` / `clawdling checkup` for scripts (exit codes 0, 1, 2).
+
+Reviewed in fourteen rounds by Claude (`xhigh`) and GPT Codex. The claim rules lean to Not verified
+whenever the record cannot tell; known limits are tracked as issues #23 to #28 and #32 to #40.
+
 ## 1.5.1 (2026-10-26)
 
 **Two fixes found while filming the 1.5 demo with Claude Code 2.1.308.**
