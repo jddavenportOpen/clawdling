@@ -56,14 +56,25 @@
   the command of a `clawdling send|spawn`. Adding the seat, starting a review and every CTO setting
   work only on the computer itself; a paired phone can read reviews and answer the CTO's prompts.
 
-Reviews: TBD.
+Reviews: top tier, because the seat can message other agents and the schedule spends your plan.
+A fresh Claude reviewer at `xhigh` failed rounds 1 to 12, every Medium fixed, and passed round 13
+(no Medium or higher; its Lows are issues #51 and #52). The normal-tier reviewer (Claude, `high`)
+passed round 7 (Lows: issues #47 to #50). A third-party visual review of the real run's screenshots
+passed round 2. The GPT (Codex) second-model review is pending: both ChatGPT plans were out of
+quota on 2026-10-27.
 
-Tests: TBD. New unit suites `status-rules` (every rule, its window edges, flat cost, a new agent,
+Tests: 697 per backend (tmux: 689 pass, 8 skipped; pty: 690 pass, 7 skipped; 0 failed); end to
+end 180 pass against the mock server and 62 against the real one. New unit suites `status-rules` (every rule, its window edges, flat cost, a new agent,
 At risk over Stalled, domains never Stalled) and `cto` (receipt ids, agent text, the index, the
 lint, the seat's permissions on POSIX and Windows, the launch settings, the transcript scan, the
 Monday line); integration `cto` (an org in every state, the schema 2 golden shape, Add a CTO, the
 seat's launch flags, a full review with one approved send and one declined spawn, the lint's flags,
-the schedule and its cap). Real run: TBD.
+the schedule and its cap). Real run, on Claude Code 2.1.308 in a fresh home with three agents: Add a
+CTO in under 30 s; a review with 6 findings, all cited, its labels equal to Clawdling's (notes-app
+At risk on a failed ship check, ar-justify On track on a verified claim, Health Quiet); one decision
+answered, one bound message approved and delivered, nothing sent unasked; about 2 minutes and
+$0.38 list-price. Also fixed: the iMessage poller now waits out a chat.db write lock instead of
+failing (it was a macOS CI flake).
 
 ## 1.6.0 (2026-10-27)
 
