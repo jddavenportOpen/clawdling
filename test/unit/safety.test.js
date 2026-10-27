@@ -197,18 +197,20 @@ test('fixes come from the cheapest leg and say exactly what to change', () => {
   assert.match(r.fixes[1], /^Stop this agent using the gmail MCP server: add "mcp__gmail" to `permissions\.deny` in .*work.*settings\.json$/);
 });
 
-test('Donna: owner-only inbound is not untrusted, and the UI says why', () => {
-  const w = world({ user: { permissions: { allow: ['WebFetch', 'Bash(*)'] } }, claudeJson: { mcpServers: { gmail: { command: 'gmail-mcp' } } } });
-  const a = w.run({ channels: { telegram: { configured: true, enabled: true, paired: true }, imessage: { enabled: true, saved: true } } });
+test('Donna: owner-only inbound is not untrusted; her row also covers her cockpit sessions', () => {
+  const quiet = world();
+  const a = quiet.run({ channels: { telegram: { configured: true, enabled: true, paired: true }, imessage: { enabled: true, saved: true } } });
   const d = row(a, 'donna');
-  assert.equal(d.chips.untrusted.length, 0, 'the user level does not load in her turns');
+  assert.equal(d.chips.untrusted.length, 0);
   assert.ok(texts(d, 'private').some((t) => t.startsWith('iMessage')));
-  assert.ok(texts(d, 'private').some((t) => /every agent's folder in the org/.test(t)));
+  assert.ok(texts(d, 'private').some((t) => t.startsWith('the org folder')));
   assert.ok(texts(d, 'sends').some((t) => t.startsWith('Telegram')));
   assert.equal(d.trifecta, false);
   assert.ok(d.notes.some((n) => /not untrusted input/.test(n)));
-  assert.ok(d.notes.some((n) => /do not load in her text-message turns/.test(n)));
-  assert.equal(d.mode, "Don't ask (only her allow-list)");
+  assert.ok(d.notes.some((n) => /the sessions you open with her in the cockpit load it like any agent's/.test(n)));
+  // Your setup reaches her cockpit sessions: WebFetch and gmail make her red there.
+  const busy = world({ user: { permissions: { allow: ['WebFetch'] } }, claudeJson: { mcpServers: { gmail: { command: 'gmail-mcp' } } } });
+  assert.equal(row(busy.run(), 'donna').verdict, 'red');
 });
 
 test('the CTO: reads the report (agent-written text), sends nothing, never red', () => {
@@ -612,4 +614,38 @@ test('round-2 lows: unreadable rules are unknown, remote "helper" names are unkn
   assert.ok(!u.unknown.some((x) => x.text.startsWith('time MCP server')), 'a local one is');
   assert.ok(row(a, 'pkg').risks.some((r) => r.id === 'session_start' && r.file.endsWith('settings.local.json')));
   assert.ok(!row(a, 'own').risks.some((r) => r.id === 'auto_mode'), 'its own acceptEdits wins over your auto');
+});
+
+// ------------------------------------------------------------------------------ review round 3
+
+test('round 3: gh review/close, hyphenated AWS verbs, uv pip, npm create, python3 -m, wrapper-only rules', () => {
+  const caps = (r) => (shellRuleCapsOf(r) || { caps: [] }).caps.join(',');
+  assert.equal(caps('gh pr review:*'), 'sends');
+  assert.equal(caps('gh issue close *'), 'sends');
+  assert.equal(caps('aws ses send-email:*'), 'sends');
+  assert.equal(caps('aws s3api put-object:*'), 'sends');
+  assert.equal(caps('uv pip install:*'), 'private,untrusted,sends');
+  assert.equal(caps('npm create:*'), 'private,untrusted,sends');
+  assert.equal(caps('python3 -m:*'), 'private,untrusted,sends');
+  assert.equal(caps('python3 -m pytest:*'), '', 'a named module stays quiet');
+  assert.equal(caps('sudo -u root:*'), 'private,untrusted,sends');
+  assert.equal(caps('timeout 30:*'), 'private,untrusted,sends');
+  assert.equal(caps('gh --repo o/r pr:*'), 'private,untrusted,sends');
+  assert.equal(caps('gi*'), 'private,untrusted,sends');
+});
+
+test('round 3: calendar servers are all three (invites come from anyone); shared docs are untrusted too', () => {
+  assert.deepEqual([...classifyName('google-calendar').caps].sort(), ['private', 'sends', 'untrusted']);
+  assert.deepEqual([...classifyName('confluence').caps].sort(), ['private', 'untrusted']);
+  assert.deepEqual([...classifyName('obsidian').caps], ['private']);
+});
+
+test('round 3: an unknown defaultMode is "unknown: review"; an official marketplace name needs Anthropic\'s source', () => {
+  const w = world({ user: { permissions: { defaultMode: 'ask' } }, agents: [{ id: 'a', kind: 'domain', mode: 'inherit' }] });
+  const u = row(w.run(), USER_ROW);
+  assert.ok(u.unknown.some((x) => /defaultMode/.test(x.text)));
+  assert.match(u.mode, /Claude Code's default/);
+  const m = world({ user: { enabledPlugins: { 'x@claude-plugins-official': true } } });
+  write(path.join(m.cfg, 'plugins', 'known_marketplaces.json'), { 'claude-plugins-official': { source: { source: 'url', url: 'https://evil.example/m.json' } } });
+  assert.ok(row(m.run(), USER_ROW).risks.some((r) => r.id === 'marketplace' && /whose source is not Anthropic's/.test(r.text)));
 });

@@ -408,7 +408,7 @@ const SAFETY_SCAN = (agents) => {
     const dir = a.kind === 'project' && a.repo ? a.repo : `${HOME}/${a.kind === 'project' ? 'projects' : a.kind === 'domain' ? 'domains' : ''}${a.kind === 'project' || a.kind === 'domain' ? '/' : ''}${a.id}`;
     const show = dir.replace('/Users/ada', '~');
     let d = { path: show, in_repo: !!a.repo, settings: null, local: null, mcp_json: [], mcp_local: [], local_not_ignored: false };
-    if (a.kind === 'domain' || (a.kind === 'project' && !a.repo)) d.settings = safetyFacts(`${show}/.claude/settings.json`, { deny: ['mcp__github', 'mcp__linear'] });
+    if (a.kind === 'domain' || a.kind === 'chief' || (a.kind === 'project' && !a.repo)) d.settings = safetyFacts(`${show}/.claude/settings.json`, { deny: ['mcp__github', 'mcp__linear'] });
     if (a.repo === `${CODE}/site`) {
       d.settings = safetyFacts(`${show}/.claude/settings.json`, { allow: ['WebFetch', 'Bash(curl:*)', 'Bash(npm test)'] });
       d.mcp_json = [{ name: 'figma', type: 'stdio', command: 'npx', package: 'figma-developer-mcp', host: null }];
@@ -1181,7 +1181,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function safetyBody() {
     const placed = st.agents.map((a) => ({ ...a, dir: a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`,
-      cwd: a.kind === 'project' && a.repo ? a.repo : a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`, addDirs: a.kind === 'chief' || a.kind === 'cto' ? [] : [HOME] }));
+      cwd: a.kind === 'project' && a.repo ? a.repo : a.kind === 'chief' || a.kind === 'cto' ? `${HOME}/${a.id}` : `${HOME}/${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}`, addDirs: a.kind === 'cto' ? [] : [HOME] }));
     const channels = { telegram: { configured: !!st.channels.telegram.configured, enabled: !!st.channels.telegram.enabled, paired: !!st.channels.telegram.paired }, imessage: { enabled: !!st.channels.imessage.enabled, saved: !!st.channels.imessage.handle } };
     const out = auditSafety({ scan: SAFETY_SCAN(placed), agents: placed, org: { home: HOME, channels, donnaTools: ['Bash(clawdling spawn *)', 'Bash(clawdling send *)', 'Bash(clawdling ls)', `Read(/${HOME}/**)`], cto: { allow: ['Bash(clawdling report --all --json)'], ask: ['Bash(clawdling send *)'], deny: ['WebFetch', 'WebSearch'] } },
       accepted: st.safetyAccepted || {}, tags: st.safetyTags || {}, home: '/Users/ada', platform: 'darwin' });

@@ -42,7 +42,7 @@ test.describe('setup safety', () => {
     await expect(health.locator('[data-cap="sends"]')).toContainText('nothing by name');
     // Donna: her inbound is the owner's own, and the UI says why.
     await rowOf(page, 'donna').locator('.safety-row-head').click();
-    await expect(rowOf(page, 'donna')).toContainText('Your own Claude Code settings and MCP servers do not load in her text-message turns.');
+    await expect(rowOf(page, 'donna')).toContainText('Her text-message turns load none of your Claude Code setup (only her allow-list); the sessions you open with her in the cockpit load it like any agent');
     await expect(sec).toContainText('Green means no trifecta found by name, not “secure”.');
     await page.screenshot({ path: test.info().outputPath('safety-1280.png'), fullPage: false });
   });

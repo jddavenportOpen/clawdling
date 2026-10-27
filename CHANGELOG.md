@@ -15,8 +15,9 @@ Code setup for the lethal trifecta, offline, by name only.**
 - **Exactly what each agent loads.** Your settings, managed settings, the session folder's own
   `.claude/settings.json` and `settings.local.json` (Claude Code reads no other folder's), your MCP
   servers and the repo's `.mcp.json`, your plugins, and the permission mode Clawdling starts it in:
-  your own auto mode does not reach an agent that asks first, and the audit knows. Donna loads none
-  of your setup, and only your paired chat reaches her: her row says so.
+  your own auto mode does not reach an agent that asks first, and the audit knows. Donna's text
+  turns load none of your setup and only your paired chat reaches them; the sessions you open with
+  her in the cockpit load it like any agent's. Her row covers both, and says so.
 - **Setup risks, each with its file:** a SessionStart hook in a repo's own settings (the npm-worm
   vector), bypass permissions or auto mode, an MCP server a repo defines, a `settings.local.json` no
   `.gitignore` covers, a plugin from a marketplace other than Anthropic's official one.

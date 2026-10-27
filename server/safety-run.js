@@ -71,7 +71,8 @@ function placeOf(a, home) {
       // repo missing: the agent folder
     }
   }
-  const addDirs = a.kind === 'cto' || a.kind === 'chief' ? [] : cwd === home ? [] : [home];
+  // The CTO seat reads the report, not the org folder; everyone else gets the org folder (Donna too).
+  const addDirs = a.kind === 'cto' ? [] : cwd === home ? [] : [home];
   return { ...a, cwd, addDirs };
 }
 

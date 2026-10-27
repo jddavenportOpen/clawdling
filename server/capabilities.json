@@ -64,7 +64,7 @@
     },
     {
       "id": "calendar",
-      "label": "calendar",
+      "label": "calendar (invites come from anyone)",
       "words": [
         "calendar",
         "gcal",
@@ -72,12 +72,14 @@
         "calendly"
       ],
       "caps": [
-        "private"
+        "private",
+        "untrusted",
+        "sends"
       ]
     },
     {
       "id": "drive",
-      "label": "files and docs",
+      "label": "shared files and docs",
       "words": [
         "drive",
         "gdrive",
@@ -88,13 +90,25 @@
         "gdocs",
         "sheets",
         "notion",
-        "obsidian",
-        "notes",
-        "evernote",
         "confluence",
         "sharepoint",
         "airtable",
         "coda"
+      ],
+      "caps": [
+        "private",
+        "untrusted"
+      ]
+    },
+    {
+      "id": "notes",
+      "label": "your notes",
+      "words": [
+        "obsidian",
+        "notes",
+        "evernote",
+        "bear",
+        "apple-notes"
       ],
       "caps": [
         "private"
@@ -418,8 +432,9 @@
         "sends"
       ],
       "bare_caps": [
-        "sends",
-        "untrusted"
+        "private",
+        "untrusted",
+        "sends"
       ],
       "why": "sends this folder's content out",
       "read_verbs": [
@@ -482,13 +497,17 @@
         "composer"
       ],
       "verbs": [
-        "run",
-        "exec",
-        "x",
-        "dlx",
-        "install",
         "add",
-        "i"
+        "create",
+        "dlx",
+        "exec",
+        "i",
+        "init",
+        "install",
+        "pip",
+        "run",
+        "tool",
+        "x"
       ],
       "caps": [
         "private",
@@ -525,25 +544,35 @@
       ],
       "verbs": [
         "api",
-        "create",
+        "close",
         "comment",
-        "edit",
-        "post",
-        "upload",
-        "send",
-        "push",
-        "deploy",
-        "publish",
-        "put",
-        "cp",
-        "sync",
         "copy",
-        "release",
+        "cp",
+        "create",
+        "delete",
+        "deploy",
+        "edit",
+        "exec",
+        "fork",
         "gist",
         "invoke",
+        "merge",
+        "note",
+        "post",
+        "publish",
+        "push",
+        "put",
+        "release",
+        "reopen",
+        "review",
         "run",
-        "exec",
-        "ssh"
+        "send",
+        "set",
+        "share",
+        "ssh",
+        "sync",
+        "transfer",
+        "upload"
       ],
       "caps": [
         "sends"
@@ -608,16 +637,18 @@
         "start-process"
       ],
       "flags": [
-        "-c",
-        "-e",
         "--eval",
-        "-p",
         "--print",
-        "run",
-        "-x",
-        "x",
+        "-c",
         "-command",
-        "-encodedcommand"
+        "-e",
+        "-encodedcommand",
+        "-m",
+        "-p",
+        "-r",
+        "-x",
+        "run",
+        "x"
       ],
       "caps": [
         "private",
@@ -627,7 +658,7 @@
       "why": "runs any code"
     }
   ],
-  "commands_note": "A Bash or PowerShell allow rule gives the caps of every entry it matches (unioned). Words are matched after wrappers (sudo -u x, env A=b, timeout 30, nice -n 5, xargs...) and leading NAME=value assignments are skipped. match 'any': a wildcard rule for the command. match 'verbs': the rule names one of the verbs (with 'wildcard': true, only a wildcard rule ending right after the verb, like `npm run:*`); a bare wildcard for the command gives 'bare_caps'; 'read_verbs' add 'read_caps'; with 'groups': true a wildcard after one subcommand (`gh pr:*`, `aws s3:*`) counts as bare. match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags. Commands not listed here are not classified: names only.",
+  "commands_note": "A Bash or PowerShell allow rule gives the caps of every entry it matches (unioned). Words are matched after wrappers (sudo -u x, env A=b, timeout 30, nice -n 5, xargs...) and leading NAME=value assignments are skipped. match 'any': a wildcard rule for the command. match 'verbs': the rule names one of the verbs (with 'wildcard': true, only a wildcard rule ending right after the verb, like `npm run:*`); a bare wildcard for the command gives 'bare_caps'; 'read_verbs' add 'read_caps'; with 'groups': true a wildcard after one subcommand (`gh pr:*`, `aws s3:*`) counts as bare. match 'bare': a wildcard rule for the interpreter itself, or for one of its run-this-code flags. Commands not listed here are not classified: names only. A hyphenated verb also matches on its first part (send-email -> send, put-object -> put). For 'bare', a flag counts only when the wildcard follows it directly (`python3 -m:*`, not `python3 -m pytest:*`).",
   "wrappers": [
     "sudo",
     "env",

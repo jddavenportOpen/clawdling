@@ -941,10 +941,12 @@ folder only, not from the folders above it; checked with `claude doctor` on 2.1.
   auto mode on current versions (permissions.js). It also gets the org folder (`--add-dir`), which
   holds `me.md` and every agent's notes: private data, on every row but Donna's and the CTO's (they
   have their own entries).
-- Donna: managed settings and her folder's (`--setting-sources project,local`), no MCP server at all
-  (`--strict-mcp-config`), `dontAsk` with her allow-list, and her channel: Telegram (sends: replies)
-  and iMessage (private: it reads Messages; sends: replies). Her inbound is the paired owner only, so
-  it is not untrusted input, and the row says so.
+- Donna, twice over, and her row is both together: her text-message turns (managed settings and her
+  folder's, `--setting-sources project,local`; no MCP server, `--strict-mcp-config`; `dontAsk` with
+  her allow-list; her channel: Telegram, sends: replies; iMessage, private: it reads Messages, and
+  sends: replies; her inbound is the paired owner only, so it is not untrusted input, and the row says
+  so), and the sessions you open with her in the cockpit, which load your setup like a domain agent's
+  (her mode, your settings, MCP servers, plugins and the org folder).
 - the CTO: managed settings and its folder's (`--setting-sources project`), no MCP server, its rules
   (1.7). Private: the org report; untrusted: the agent-written text in it; nothing sends.
 - "Everything (user level)": what a plain `claude` loads anywhere on this computer.
@@ -953,8 +955,9 @@ Clawdling never reads; the user-level row says so when there is one.
 
 **Classification, by name** (`server/capabilities.json`). An MCP server's key, the basename of its
 command, its first package-like argument and its URL's host are split into words and matched
-against word lists: mail, chat, issues and code hosts are all three; calendar, files and docs, CRM,
-databases and payments are private (payments also send); browsers and fetchers are untrusted and
+against word lists: mail, chat, calendar (invites come from anyone, and an invite is mail), issues
+and code hosts are all three; shared files and docs are private and untrusted; your notes, CRM and
+databases are private; payments are private and send; browsers and fetchers are untrusted and
 send; search is untrusted; a short list of local helpers is known and harmless. A name that matches
 nothing is **unknown: review**, never safe. Permission rules: `WebFetch` (untrusted and sends: a URL
 is a channel), `WebSearch` (untrusted), `Read(//…)` and `Read(~/…)` outside the agent's folder
@@ -1024,7 +1027,7 @@ stay where they are.
 
 `clawdling doctor --contract [--json]` makes no model call:
 - (a) `claude --version` against `min`..`maxChecked` (newer is a note, not a failure);
-- (b) the flags in `claude --help`, and the hidden ones through one `claude -p` run whose argument
+- (b) the flags in `claude --help` (on an option's own line, not a mention in another's description), and the hidden ones through one `claude -p` run whose argument
   parser stops at a made-up flag after them (`error: unknown option` names the first unknown one; the
   run also has no prompt, closed stdin, no tools, nothing persisted and an unreachable API address);
 - (c) the hook events, through `claude doctor` in a temporary folder whose `.claude/settings.json`

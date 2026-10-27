@@ -1515,7 +1515,10 @@ export function ruleText(rule) {
 
 /** Is a word (a package, a host label) a pasted token rather than a name? */
 function tokenish(s) {
-  return redactSecrets(s) !== s || scrubTokens(s) !== s;
+  const t = String(s);
+  // A key longer than any name is not a name (and a 20 MB key must not cost a redaction pass).
+  if (t.length > 400) return true;
+  return redactSecrets(t) !== t || scrubTokens(t) !== t;
 }
 
 /** The package-like name of an MCP stdio server: `@scope/name` or `name`, version dropped; else null. */

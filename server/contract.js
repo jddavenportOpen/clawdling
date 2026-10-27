@@ -60,7 +60,9 @@ export function versionCheck(versionLine, compat = COMPAT) {
   return line('version', 'ok', `Claude Code ${s} (Clawdling checked ${compat.min} to ${compat.maxChecked})`);
 }
 
-const flagRe = (f) => new RegExp(`(^|[\\s,(\\[])${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[\\s,=<\\[)]|$)`, 'm');
+// Only where an option is defined (a help line indented at most a few spaces, after its short form and
+// aliases), never a mention in another option's description, which wraps far deeper.
+const flagRe = (f) => new RegExp(`^[ \\t]{0,6}(?:-[A-Za-z],\\s*)?(?:--?[\\w-]+,\\s*)*${f.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[\\s,=<\\[]|$)`, 'm');
 
 /** (b) every flag Clawdling passes is listed in `claude --help`. */
 export function flagsCheck(help, compat = COMPAT) {

@@ -74,13 +74,17 @@ function unwrap(toks) {
     while (i < toks.length - 1 && /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i])) i++;
   };
   assignments(); // `FOO=1 curl ...`
-  while (i < toks.length - 1 && WRAPPERS.has(toks[i].split(/[\\/]/).pop().toLowerCase())) {
+  let wrapped = false;
+  while (i < toks.length && WRAPPERS.has(toks[i].split(/[\\/]/).pop().toLowerCase())) {
+    wrapped = true;
     i++;
-    while (i < toks.length - 1 && (/^-/.test(toks[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || /^\d+[smhd]?$/.test(toks[i]))) {
-      if (WRAPPER_VALUE_FLAGS.has(toks[i]) && i < toks.length - 2) i++;
+    while (i < toks.length && (/^-/.test(toks[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(toks[i]) || /^\d+[smhd]?$/.test(toks[i]))) {
+      if (WRAPPER_VALUE_FLAGS.has(toks[i])) i++;
       i++;
     }
   }
+  // Only a wrapper and its options (`sudo -u root:*`, `timeout 30:*`): whatever command follows.
+  if (wrapped && i >= toks.length) return [];
   return toks.slice(i);
 }
 
@@ -106,8 +110,8 @@ export function shellRuleCaps(content) {
   const partial = /^[^\s:*]+\*$/.test(raw) ? raw.slice(0, -1).split(/[\\/]/).pop().toLowerCase() : null;
   if (partial !== null) {
     for (const e of TABLE.commands) {
-      const w = e.match !== 'verbs' && e.words.find((x) => x.startsWith(partial));
-      if (w) hit(e.caps, `${e.why} (covers ${w})`);
+      const w = e.words.find((x) => x.startsWith(partial));
+      if (w) hit(e.match === 'verbs' ? e.bare_caps || e.caps : e.caps, `${e.why} (covers ${w})`);
     }
     if (WRAPPERS.has(partial) || [...WRAPPERS].some((x) => x.startsWith(partial))) hit(ALL, 'runs any command');
   }
@@ -126,6 +130,10 @@ export function shellRuleCaps(content) {
       continue;
     }
     const toks = unwrap(all);
+    if (!toks.length) {
+      if (wildcard) hit(ALL, 'runs any command');
+      continue;
+    }
     const first = toks[0].split(/[\\/]/).pop().toLowerCase().replace(/\.exe$/, '');
     // A wrapper with nothing after it but the wildcard (`sudo:*`, `env *`): any command.
     if (toks.length === 1 && WRAPPERS.has(first) && wildcard) {
@@ -133,21 +141,32 @@ export function shellRuleCaps(content) {
       continue;
     }
     const rest = toks.slice(1).map((t) => t.toLowerCase());
+    // The words, without options and their values (`gh --repo o/r pr view`, `aws --profile x s3 cp`).
+    const words = [];
+    for (let k = 0; k < rest.length; k++) {
+      if (/^--?(repo|profile|region|project|hostname|account|context)$/.test(rest[k]) || rest[k] === '-r' || rest[k] === '-R') {
+        k++;
+        continue;
+      }
+      if (!rest[k].startsWith('-')) words.push(rest[k]);
+    }
+    const isVerb = (list, w) => list.includes(w) || (w.includes('-') && list.includes(w.split('-')[0]));
     for (const e of TABLE.commands) {
       if (!e.words.includes(first)) continue;
       if (e.match === 'any' && wildcard) hit(e.caps, e.why);
       else if (e.match === 'verbs') {
         const reads = e.read_verbs || [];
         // `gh pr:*`, `aws s3:*`: a wildcard after one subcommand group is as wide as the command.
-        const group = e.groups && wildcard && rest.length === 1 && !e.verbs.includes(rest[0]) && !reads.includes(rest[0]);
-        if (wildcard && (rest.length === 0 || group)) hit(e.bare_caps || e.caps, e.why);
+        const group = e.groups && wildcard && words.length === 1 && !isVerb(e.verbs, words[0]) && !isVerb(reads, words[0]);
+        if (wildcard && (words.length === 0 || group)) hit(e.bare_caps || e.caps, e.why);
         else if (e.wildcard) {
-          if (wildcard && rest.length === 1 && e.verbs.includes(rest[0])) hit(e.caps, e.why);
+          // `npm run:*`, `uv pip install:*`, `uv tool run:*`: a runner verb, then only the wildcard.
+          if (wildcard && words.length >= 1 && words.length <= 2 && isVerb(e.verbs, words[words.length - 1]) && words.slice(0, -1).every((w) => isVerb(e.verbs, w))) hit(e.caps, e.why);
         } else {
-          if (rest.some((r) => e.verbs.includes(r))) hit(e.caps, e.why);
-          if (reads.some((v) => rest.includes(v))) hit(e.read_caps || ['untrusted'], 'reads what others wrote');
+          if (words.some((r) => isVerb(e.verbs, r))) hit(e.caps, e.why);
+          if (words.some((r) => isVerb(reads, r))) hit(e.read_caps || ['untrusted'], 'reads what others wrote');
         }
-      } else if (e.match === 'bare' && wildcard && (rest.length === 0 || (e.flags || []).includes(rest[0]))) hit(e.caps, e.why);
+      } else if (e.match === 'bare' && wildcard && (rest.length === 0 || (rest.length === 1 && (e.flags || []).includes(rest[0])))) hit(e.caps, e.why);
     }
   }
   return caps.size ? { caps: ALL.filter((x) => caps.has(x)), why } : null;
@@ -227,6 +246,7 @@ function capsFor(view, { tags = {} } = {}) {
   const allRules = (kind) => view.layers.flatMap((l) => (l.facts ? (l.facts[kind] || []).map((r) => ({ rule: r, parsed: parseRule(r), layer: l })) : []));
   const deny = allRules('deny').map((x) => x.parsed).filter(Boolean);
   const allowed = allRules('allow').filter((x) => x.parsed && !deny.some((d) => denies(d, x.parsed)));
+  for (const l of view.layers) if (l.facts && l.facts.default_mode === 'other') unknown.push({ text: '`defaultMode` set to a mode Clawdling does not know', source: l.file, why: 'unknown: check the mode name' });
   // A rule Clawdling cannot read once a secret in it is hidden (or cut short) is never assumed harmless.
   for (const x of allRules('allow')) if (!x.parsed) unknown.push({ text: `\`${x.rule}\` allowed`, source: x.layer.file, why: 'unknown: a rule Clawdling could not read after hiding a secret in it' });
   const toolDenied = (tool) => deny.some((d) => d.tool === tool && (d.content === null || /^\s*:?\*\s*$/.test(d.content)));
@@ -270,7 +290,7 @@ function capsFor(view, { tags = {} } = {}) {
     if (!webClosed) add('untrusted', `${what} (the web can be read without asking)`, mode.source, mode.fix);
   }
 
-  // Every agent but Donna and the CTO also gets the org folder (--add-dir): you, and every agent's notes.
+  // Every agent but the CTO also gets the org folder (--add-dir): you, and every agent's notes.
   if (view.orgFolder) add('private', 'the org folder: your me.md and every agent\'s notes (`--add-dir`, Clawdling)', 'Clawdling', null);
 
   // Extra folders that are the home folder (or a big folder in it).
@@ -330,7 +350,7 @@ function risksFor(view) {
     // A user-level switch shows on the user-level row, and on an agent only when it applies to its
     // sessions (the agent uses "Your Claude Code setting"); the agent's own files always show.
     // ...and only from the layer whose mode wins (a folder's own mode beats yours).
-    const show = !(userLevel(l) && view.overridesMode) && !(userLevel(l) && !view.isUserRow && !view.inheritsMode) && !(userLevel(l) && view.mode && view.mode.source !== l.file && (f.default_mode === 'auto' || f.default_mode === 'bypassPermissions'));
+    const show = !(userLevel(l) && view.overridesMode) && !(userLevel(l) && !view.isUserRow && !view.inheritsMode) && !(!view.overridesMode && view.mode && view.mode.source !== l.file && (f.default_mode === 'auto' || f.default_mode === 'bypassPermissions'));
     const note = view.overridesMode ? ` Clawdling starts this agent in "${view.overridesMode}" mode, so it applies when you run claude here yourself.` : '';
     if (show && (f.default_mode === 'bypassPermissions' || f.skip_bypass_prompt)) {
       const what = f.default_mode === 'bypassPermissions' ? 'turns on bypass permissions mode (`defaultMode: bypassPermissions`)' : 'turns off the warning before bypass permissions mode (`skipDangerousModePermissionPrompt`)';
@@ -446,7 +466,7 @@ export const CLI_DEFAULT_MODE = 'auto';
 function modeFrom(layers, userFile) {
   // Claude Code's precedence: managed, then local, then project, then user.
   for (const kind of ['managed', 'local', 'project', 'user']) {
-    for (const l of layers) if (l.kind === kind && l.facts && l.facts.default_mode) return { name: l.facts.default_mode, source: l.file, fix: `remove \`defaultMode\` from ${l.file}, or pick a mode for this agent in Clawdling` };
+    for (const l of layers) if (l.kind === kind && l.facts && l.facts.default_mode && l.facts.default_mode !== 'other') return { name: l.facts.default_mode, source: l.file, fix: `remove \`defaultMode\` from ${l.file}, or pick a mode for this agent in Clawdling` };
   }
   return { name: CLI_DEFAULT_MODE, isDefault: true, source: "Claude Code's default (no settings file picks a mode)", fix: `set \`defaultMode\` in ${userFile} to the mode that asks first ("manual" on recent versions, "default" before), or pick a mode for this agent in Clawdling` };
 }
@@ -464,10 +484,15 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   const u = scan.user || {};
   const official = new Set(TABLE.official_marketplaces);
   const repoOf = new Map((u.marketplaces || []).map((m) => [m.name, m.repo]));
+  // An official marketplace name counts only with Anthropic's own source, when its source is listed.
+  const sourceOk = (mk) => {
+    if (!repoOf.has(mk)) return true;
+    const repo = repoOf.get(mk);
+    return !!repo && TABLE.official_owners.includes(String(repo).split('/')[0].toLowerCase());
+  };
   const plugins = (u.plugins || []).map((p) => {
     const named = !!p.marketplace && official.has(p.marketplace);
-    const repo = p.marketplace ? repoOf.get(p.marketplace) : null;
-    const ownerOk = !repo || TABLE.official_owners.includes(String(repo).split('/')[0].toLowerCase());
+    const ownerOk = sourceOk(p.marketplace);
     return { ...p, official: named && ownerOk, claims: named && !ownerOk };
   });
   const pluginSource = `${u.config_dir || '~/.claude'}${platform === 'win32' ? '\\' : '/'}settings.json (plugins)`;
@@ -511,25 +536,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
     ];
     const base = { id: a.id, name: a.name || a.id, kind: a.kind, folder: d.path || cwd };
     let view;
-    if (a.kind === 'chief') {
-      // Donna's text-message turns: only her folder's settings (no user level), no MCP servers at
-      // all, "dontAsk" with her own allow-list, and her channel.
-      const own = [];
-      const notes = [];
-      const tg = (org.channels && org.channels.telegram) || {};
-      const im = (org.channels && org.channels.imessage) || {};
-      if (im.enabled) own.push({ cap: 'private', text: 'iMessage: reads your Messages to find your texts', source: 'Clawdling (Donna\'s channel)' });
-      if (tg.configured && tg.enabled !== false) own.push({ cap: 'sends', text: 'Telegram: replies to your chat', source: 'Clawdling (Donna\'s channel)' });
-      if (im.enabled) own.push({ cap: 'sends', text: 'iMessage: replies to your handle', source: 'Clawdling (Donna\'s channel)' });
-      if ((tg.configured && tg.paired) || im.enabled) notes.push('Only your own paired Telegram chat and your own iMessage handle reach Donna, so what she is sent is not untrusted input.');
-      if (tg.configured && !tg.paired) notes.push('Telegram is not paired yet: until it is, Donna answers nobody.');
-      notes.push('Your own Claude Code settings and MCP servers do not load in her text-message turns.');
-      view = {
-        layers: [...(u.managed || []).map((f) => ({ kind: 'managed', file: f.file, facts: f })), ...folderLayers, { kind: 'clawdling', file: 'Clawdling (Donna\'s allow-list)', facts: { allow: org.donnaTools || [] } }],
-        mcp: [], plugins: [], pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, own, notes,
-        mode: { name: 'dontAsk', label: "Don't ask (only her allow-list)", source: 'Clawdling' },
-      };
-    } else if (a.kind === 'cto') {
+    if (a.kind === 'cto') {
       const cto = org.cto || {};
       view = {
         layers: [...(u.managed || []).map((f) => ({ kind: 'managed', file: f.file, facts: f })), ...folderLayers.filter((l) => l.kind === 'project'), { kind: 'clawdling', file: 'Clawdling (the CTO seat)', facts: { allow: cto.allow || [], ask: cto.ask || [], deny: cto.deny || [] } }],
@@ -559,9 +566,8 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         const at = key.lastIndexOf('@');
         const name = at > 0 ? key.slice(0, at) : key;
         const mk = at > 0 ? key.slice(at + 1) : null;
-        const repo = mk ? repoOf.get(mk) : null;
         const named = !!mk && official.has(mk);
-        const ownerOk = !repo || TABLE.official_owners.includes(String(repo).split('/')[0].toLowerCase());
+        const ownerOk = !mk || sourceOk(mk);
         return { name, marketplace: mk, enabled: on, official: named && ownerOk, source: `${l.file} (plugins)` };
       })).filter((x) => !plugins.some((p) => p.name === x.name && p.marketplace === x.marketplace && p.enabled));
       view = {
@@ -570,6 +576,24 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         notes: ['It also loads everything at the user level (the first row).'],
         localNotIgnored: isRepo && d.local_not_ignored ? d.local ? d.local.file : `${d.path}/.claude/settings.local.json` : null,
       };
+      if (a.kind === 'chief') {
+        // Donna, twice over: her text-message turns (only her folder's settings, no MCP server, "dontAsk"
+        // with her allow-list, her channel) and the sessions you open with her in the cockpit, which
+        // load your setup like any agent's. The row is the worse of both: everything together.
+        const tg = (org.channels && org.channels.telegram) || {};
+        const im = (org.channels && org.channels.imessage) || {};
+        const own = [];
+        if (im.enabled) own.push({ cap: 'private', text: 'iMessage: reads your Messages to find your texts', source: 'Clawdling (Donna\'s channel)' });
+        if (tg.configured && tg.enabled !== false) own.push({ cap: 'sends', text: 'Telegram: replies to your chat', source: 'Clawdling (Donna\'s channel)' });
+        if (im.enabled) own.push({ cap: 'sends', text: 'iMessage: replies to your handle', source: 'Clawdling (Donna\'s channel)' });
+        const notes = [];
+        if ((tg.configured && tg.paired) || im.enabled) notes.push('Only your own paired Telegram chat and your own iMessage handle reach Donna, so what she is sent is not untrusted input.');
+        if (tg.configured && !tg.paired) notes.push('Telegram is not paired yet: until it is, Donna answers nobody.');
+        notes.push('Her text-message turns load none of your Claude Code setup (only her allow-list); the sessions you open with her in the cockpit load it like any agent\'s. This row covers both.');
+        view.layers = [...view.layers, { kind: 'clawdling', file: 'Clawdling (Donna\'s allow-list)', facts: { allow: org.donnaTools || [] } }];
+        view.own = own;
+        view.notes = notes;
+      }
     }
     pending.push({ base, view, kind: a.kind });
   }

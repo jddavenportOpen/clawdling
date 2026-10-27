@@ -282,3 +282,11 @@ test('summary: checked_all only when every surface was really checked (the trans
   assert.equal(u.ok, true, 'nothing failed');
   assert.equal(u.checked_all, false, 'but the nightly will not bump on it');
 });
+
+test('a flag mentioned only in another flag\'s description is not "listed"', () => {
+  const help = fixture('help-2.1.308.txt').split('\n').filter((l) => !/^\s*-r, --resume/.test(l)).join('\n');
+  assert.ok(/--resume/.test(help), 'the mentions are still there');
+  const r = flagsCheck(help);
+  assert.equal(r.status, 'fail');
+  assert.match(r.text, /no longer lists --resume/);
+});

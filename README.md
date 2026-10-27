@@ -177,8 +177,9 @@ allowed", "`Bash(curl:*)` allowed") and which file it comes from.
 - **A shield on every agent** on the org map and on its report card, and the same verdict in the
   CTO's weekly report.
 - **Per agent, exactly what loads.** Clawdling starts each agent in its own permission mode, so your
-  own auto mode does not reach it, and the audit knows. Donna loads none of your setup, and only
-  your own paired chat reaches her, so her inbox is not untrusted input; her row says so.
+  own auto mode does not reach it, and the audit knows. Donna's text turns load none of your setup,
+  and only your own paired chat reaches them, so her inbox is not untrusted input; the sessions you
+  open with her in the cockpit load your setup like any agent's. Her row covers both, and says so.
 
 It reads names only: rule text (anything secret-looking replaced by `[redacted]`), MCP server names
 and their command, package and host, plugin names. Never an `env` value, a header, a hook command or
