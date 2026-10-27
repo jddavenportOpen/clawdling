@@ -99,6 +99,8 @@ export function parseRoute(hash = location.hash) {
   if (head === 'donna') return { name: 'donna' };
   if (head === 'settings') return { name: 'settings', section: rest[0] || null };
   if (head === 'agent' && rest[0]) return { name: 'agent', id: decodeURIComponent(rest[0]), tab: rest[1] || 'overview' };
+  // A receipt's link to a session (1.7): the cockpit, with that session open.
+  if (head === 's' && /^[0-9a-f-]{36}$/.test(rest[0] || '')) return { name: 'cockpit', sid: rest[0] };
   return { name: 'cockpit' };
 }
 

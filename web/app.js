@@ -3,7 +3,7 @@ import { render } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { html } from './lib/html.js';
 import { setState, getState, useStore } from './lib/store.js';
-import { initialState, parseRoute, togglePalette, toggleRail, focusPaneIndex, closeOverlay, goHome } from './lib/actions.js';
+import { initialState, parseRoute, togglePalette, toggleRail, focusPaneIndex, closeOverlay, goHome, focusSession, navigate } from './lib/actions.js';
 import { boot } from './lib/live.js';
 import { initTheme } from './lib/theme.js';
 import { shortcutOf, eventInTerminal, isTypingTarget } from './lib/keys.js';
@@ -70,6 +70,22 @@ function App() {
     if (v) setTimeout(() => v.focus(), 0);
     return undefined;
   }, [route.name, route.id]);
+
+  // #/s/<sid> (a receipt's link to a session, 1.7): open that session once the list has it.
+  useEffect(() => {
+    if (!route.sid || auth !== 'ok') return undefined;
+    const sid = route.sid;
+    const tryOpen = () => {
+      if (!getState().sessions[sid]) return false;
+      focusSession(sid, { route: false });
+      navigate('#/');
+      return true;
+    };
+    if (tryOpen()) return undefined;
+    const t = setInterval(() => { if (tryOpen()) clearInterval(t); }, 300);
+    const stop = setTimeout(() => clearInterval(t), 10000);
+    return () => { clearInterval(t); clearTimeout(stop); };
+  }, [route.sid, auth]);
 
   if (auth !== 'ok') {
     if (booting) return html`<div class="splash" aria-label="Loading Clawdling"><span class="splash-mark"><${Mark} size=${28} /></span></div>`;

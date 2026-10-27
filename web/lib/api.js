@@ -160,6 +160,15 @@ export const api = {
   evalEstimate: (id, { k = 1, models = '' } = {}) => request('GET', `/api/agents/${enc(id)}/evals/estimate?k=${enc(String(k))}${models ? `&models=${enc(models)}` : ''}`),
   runEvals: (id, body) => request('POST', `/api/agents/${enc(id)}/evals/run`, body),
   applyModel: (id, body) => request('POST', `/api/agents/${enc(id)}/evals/apply`, body),
+  // 1.7, the CTO seat. {exists, agent, week, reviews, latest, running, permissions, schedule, thresholds}.
+  cto: () => request('GET', '/api/cto'),
+  addCto: () => request('POST', '/api/cto', {}),
+  ctoEstimate: () => request('GET', '/api/cto/estimate'),
+  // Starts this week's review: a new CTO session (only on the computer itself).
+  ctoReview: () => request('POST', '/api/cto/review', {}),
+  // {week, text, lint, labels, receipts, decisions, deliveries}
+  ctoReviewFor: (week) => request('GET', `/api/cto/reviews/${enc(week)}`),
+  setCto: (body) => request('POST', '/api/cto/settings', body),
   channels: () => request('GET', '/api/channels'),
   notify: () => request('GET', '/api/notify'),
   setNotify: (needsYou) => request('POST', '/api/notify', { needs_you: !!needsYou }),

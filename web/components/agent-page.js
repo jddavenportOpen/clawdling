@@ -14,6 +14,7 @@ import { relTime, longTime, isMac } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 import { ReportCard } from './report-card.js';
 import { CheckupTab } from './checkup.js';
+import { CtoPage } from './cto-review.js';
 
 const MAX_BYTES = 200 * 1024;
 
@@ -74,18 +75,18 @@ export function AgentPage({ id, tab: asked = 'overview' }) {
     </header>
 
     <div class="tabs" role="tablist" aria-label=${`${info.name} sections`}>
-      ${[['overview', 'Overview', null], ['sessions', `Sessions`, live.length + g.recent.length], ['checkup', 'Check-up', null], ['context', 'Context', null], ['memory', 'Memory', null]].map(([t, label, n]) => html`
+      ${(info.kind === 'cto' ? [['overview', 'Reviews', null], ['sessions', `Sessions`, live.length + g.recent.length], ['context', 'Context', null], ['memory', 'Memory', null]] : [['overview', 'Overview', null], ['sessions', `Sessions`, live.length + g.recent.length], ['checkup', 'Check-up', null], ['context', 'Context', null], ['memory', 'Memory', null]]).map(([t, label, n]) => html`
         <button role="tab" aria-selected=${tab === t ? 'true' : 'false'} class=${`tab-btn ${tab === t ? 'is-on' : ''}`} onClick=${() => setTab(t)} data-tab-btn=${t}>
           ${label}${n ? html`<span class="sec-count">${n}</span>` : null}</button>`)}
     </div>
 
     <div class="tab-panel" role="tabpanel">
-      ${tab === 'overview' ? html`<${ReportCard} id=${id} agent=${info} />` : null}
-      ${tab === 'checkup' ? html`<${CheckupTab} key=${`cu-${id}`} id=${id} agent=${info} now=${now} />` : null}
+      ${tab === 'overview' ? (info.kind === 'cto' ? html`<${CtoPage} id=${id} />` : html`<${ReportCard} id=${id} agent=${info} />`) : null}
+      ${tab === 'checkup' && info.kind !== 'cto' ? html`<${CheckupTab} key=${`cu-${id}`} id=${id} agent=${info} now=${now} />` : null}
       ${tab === 'sessions' ? html`<${AgentSessions} live=${live} recent=${g.recent} now=${now} agentsById=${agentsById} name=${info.name} id=${id} />` : null}
       ${tab === 'context' ? html`<${FileEditor} key=${`ctx-${id}`} id=${id} field="claude_md" file="CLAUDE.md"
         value=${detail ? detail.claude_md || '' : null} err=${err}
-        help=${html`Every session of ${info.name} starts with this file, on top of the org's CLAUDE.md and me.md.`}
+        help=${info.kind === 'cto' ? html`Every session of the CTO starts with this file: its rules, the review format, how it delivers a decision. Edit it like any agent's. The CTO itself cannot change it.` : html`Every session of ${info.name} starts with this file, on top of the org's CLAUDE.md and me.md.`}
         onSaved=${() => { setReload((x) => x + 1); refreshOrg(); }} />` : null}
       ${tab === 'memory' ? html`<div class="memory-grid">
         <${FileEditor} key=${`now-${id}`} id=${id} field="now_md" file="memory/NOW.md" value=${detail ? detail.now_md || '' : null} err=${err}

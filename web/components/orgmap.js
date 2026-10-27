@@ -9,7 +9,8 @@ import { useStore } from '../lib/store.js';
 import { Icon, AgentIcon, hasIcon } from './icons.js';
 import { StatusGlyph } from './status.js';
 import { api } from '../lib/api.js';
-import { startSession, focusSession, navigate, openOverlay, dismissImportCard } from '../lib/actions.js';
+import { startSession, focusSession, navigate, openOverlay, dismissImportCard, toast, errorToast } from '../lib/actions.js';
+import { refreshOrg } from '../lib/live.js';
 import { agentStats, sessionName, statusText, KIND_LABEL, STATUS_LABEL, countNeedsYou } from '../lib/model.js';
 import { relTime, clamp, prefersReducedMotion, tildify, plural } from '../lib/util.js';
 import { load, save } from '../lib/prefs.js';
@@ -102,6 +103,26 @@ export function layoutOrg(agents, ownerName, { setup = false } = {}) {
     edges.push({ kind: 'spoke', from: chief ? chief.id : '__owner', to: n.id, angle: n.angle, r0: r1, r1: R2 - (n.kind === 'cluster' ? 19 : R_DOMAIN) });
   });
 
+  // The CTO (1.7) sits on Donna's orbit too, linked to you: at the angle near Donna that is
+  // furthest from every domain's spoke (spokes start on this orbit at their domain's angle).
+  const cto = agents.find((a) => a.kind === 'cto');
+  if (cto) {
+    const taken = [-Math.PI / 2, ...ring.map((n) => n.angle)];
+    const dist = (a, b) => Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+    let best = -Math.PI / 2 + 0.9;
+    let bestGap = -1;
+    for (let k = 0; k <= 20; k += 1) {
+      for (const side of [1, -1]) {
+        const a = -Math.PI / 2 + side * (0.6 + k * 0.05);
+        const gap = Math.min(...taken.map((t) => dist(a, t)));
+        if (gap > bestGap + 1e-6) { best = a; bestGap = gap; }
+      }
+    }
+    const [x, y] = polar(r1, best);
+    nodes.push({ id: cto.id, kind: 'cto', agent: cto, x, y, r: R_CHIEF, label: cto.name, sub: 'Reviews your projects', angle: best });
+    edges.push({ kind: 'cto', from: '__owner', to: cto.id, angle: best });
+  }
+
   // Outer ring: projects start at their domain's angle, then relax apart.
   const outer = [];
   for (const n of ring) {
@@ -140,7 +161,7 @@ export function layoutOrg(agents, ownerName, { setup = false } = {}) {
       maxX = Math.max(maxX, lx0 + w + 6, n.x + n.r);
       minY = Math.min(minY, n.ly - 18, n.y - n.r - 12);
       maxY = Math.max(maxY, n.ly + 18, n.y + n.r + 12);
-    } else if (n.kind === 'chief') {
+    } else if (n.kind === 'chief' || n.kind === 'cto') {
       // Above the node: to its right, the label and "Chief of staff" crossed the first spokes.
       n.lx = n.x;
       n.ly = n.y - n.r - 30; // clear of the needs and selection rings (r + 9)
@@ -338,6 +359,17 @@ export function OrgMap() {
     });
   }, [sdata]);
 
+  const addCto = async () => {
+    try {
+      await api.addCto();
+      await refreshOrg();
+      setSel('cto');
+      toast('Your CTO is ready. Open it to run its first weekly review.', { tone: 'ok', ms: 4200 });
+    } catch (e) {
+      errorToast('Could not add a CTO', e);
+    }
+  };
+
   return html`<div class=${`page map-page ${selNode || setupSel ? 'has-panel' : ''}`} data-testid="org-map" data-setup-layer=${layer ? 'on' : 'off'}>
     <header class="page-bar">
       <div class="page-bar-main">
@@ -357,6 +389,7 @@ export function OrgMap() {
       </div>
       <button class=${`btn btn-quiet layer-btn ${layer ? 'is-on' : ''}`} onClick=${toggleLayer} aria-pressed=${layer ? 'true' : 'false'}
         title="Show the Claude Code setup every session loads" data-testid="map-setup-toggle"><${Icon} name="layers" /> Claude Code setup</button>
+      ${!orgError && org && !agents.some((a) => a.kind === 'cto') ? html`<button class="btn btn-quiet" onClick=${addCto} data-testid="map-add-cto" title="A seat beside Donna that reviews your projects each week, with receipts"><${Icon} name="compass" /> Add a CTO</button>` : null}
       <button class="btn btn-quiet" onClick=${() => openOverlay({ type: 'wizard' })}><${Icon} name="user-plus" /> New agent</button>
     </header>
     <div class="map-body">
@@ -376,6 +409,11 @@ export function OrgMap() {
                 const hot = related && related.has(e.to) && related.has(e.from);
                 if (e.kind === 'core') {
                   return html`<line class=${`edge edge-core ${hot ? 'is-hot' : ''}`} x1="0" y1=${-R_OWNER} x2="0" y2=${-L.rings.R1 + R_CHIEF} />`;
+                }
+                if (e.kind === 'cto') {
+                  const [x1, y1] = polar(R_OWNER, e.angle);
+                  const [x2, y2] = polar(L.rings.R1 - R_CHIEF, e.angle);
+                  return html`<line class=${`edge edge-core ${hot ? 'is-hot' : ''}`} x1=${x1} y1=${y1} x2=${x2} y2=${y2} />`;
                 }
                 if (e.kind === 'spoke') {
                   const [x1, y1] = polar(e.r0, e.angle);
@@ -428,8 +466,9 @@ function MapNode({ n, st, rep, now, selected, dim, reduced, adds, onSelect, onHo
   // The usage line sits on the far side of the label from the node (below a label under it, above
   // one over it, under a label beside it).
   const below = n.base === 'hanging';
-  const uy = n.ly - n.y + (n.kind === 'chief' ? -15 : below ? (n.sub && n.kind !== 'project' ? 31 : 15) : n.base === 'middle' ? 15 : 0);
-  const ly = n.ly - n.y + (use && n.base === 'auto' && n.kind !== 'chief' ? -15 : 0);
+  const top = n.kind === 'chief' || n.kind === 'cto';
+  const uy = n.ly - n.y + (top ? -15 : below ? (n.sub && n.kind !== 'project' ? 31 : 15) : n.base === 'middle' ? 15 : 0);
+  const ly = n.ly - n.y + (use && n.base === 'auto' && !top ? -15 : 0);
   // Amber only when Claude asked something; green when it is your turn; blue while working.
   const tone = st.blocked ? 'needs' : st.turn ? 'ready' : st.working ? 'working' : 'idle';
   const count = tone === 'needs' || tone === 'ready' ? st.needs : st.live;
@@ -456,7 +495,7 @@ function MapNode({ n, st, rep, now, selected, dim, reduced, adds, onSelect, onHo
       <title>Its repo adds its own Claude Code setup</title><circle r="6" /><circle class="setup-badge-dot" r="2.2" /></g>` : null}
     <text class="node-label" x=${n.lx - n.x} y=${ly} text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.text}</text>
     ${use ? html`<text class="node-usage" x=${n.lx - n.x} y=${uy} text-anchor=${n.anchor} dominant-baseline=${n.base} data-usage=${n.id}>${use.short}</text>` : null}
-    ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (n.kind === 'chief' ? 14 : 16)}
+    ${n.sub && n.kind !== 'project' ? html`<text class="node-sub" x=${n.lx - n.x} y=${n.ly - n.y + (top ? 14 : 16)}
       text-anchor=${n.anchor} dominant-baseline=${n.base}>${n.sub}</text>` : null}
   </g>`;
 }
@@ -563,7 +602,7 @@ function MapPanel({ n, rep, sessions, onClose, agents, ownerName, repoSetup, set
       <div class="panel-actions">
         <button class="btn btn-quiet" onClick=${() => startSession(n.id).catch(() => {})} data-testid="panel-new-session"
           disabled=${blocked} title=${blocked ? BLOCKED_TITLE : undefined}><${Icon} name="plus" /> New session</button>
-        <button class="btn btn-quiet" onClick=${() => navigate(`#/agent/${encodeURIComponent(n.id)}`)} data-testid="panel-open-agent">Open report card</button>
+        <button class="btn btn-quiet" onClick=${() => navigate(`#/agent/${encodeURIComponent(n.id)}`)} data-testid="panel-open-agent">${n.kind === 'cto' ? 'Open the reviews' : 'Open report card'}</button>
       </div>
       ${n.kind === 'project' && repoSetup !== undefined ? html`<section class="panel-adds" data-testid="panel-repo-adds">
         <h3 class="panel-h">Its repo adds <span class="panel-h-sub">on top of your own setup</span></h3>

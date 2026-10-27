@@ -11,7 +11,7 @@ import { api } from '../lib/api.js';
 import { matches, isMac } from '../lib/util.js';
 import { BLOCKED_TITLE, useStartBlocked } from './health-banner.js';
 
-const GROUPS = [['chief', 'Chief of staff'], ['domain', 'Domains'], ['project', 'Projects'], ['scratch', 'No agent']];
+const GROUPS = [['chief', 'Chief of staff'], ['cto', 'CTO'], ['domain', 'Domains'], ['project', 'Projects'], ['scratch', 'No agent']];
 // A plain claude in the org folder, no agent context: for one-off questions.
 const SCRATCH = { id: 'scratch', kind: 'scratch', name: 'Scratch', icon: 'terminal', mission: 'A plain claude in your org folder, with no agent context or memory.' };
 

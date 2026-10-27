@@ -137,7 +137,7 @@ export function countNeedsYou(sessions) {
   return n;
 }
 
-export const KIND_LABEL = { chief: 'Chief of staff', domain: 'Domain', project: 'Project' };
+export const KIND_LABEL = { chief: 'Chief of staff', cto: 'CTO', domain: 'Domain', project: 'Project' };
 
 // One check in /api/health passed (`{ok: true}`).
 export function ok(x) {
@@ -160,13 +160,13 @@ export function healthProblems(health) {
 
 export function agentFolder(a) {
   if (!a) return '';
-  if (a.kind === 'chief') return `${a.id}/`;
+  if (a.kind === 'chief' || a.kind === 'cto') return `${a.id}/`;
   return `${a.kind === 'project' ? 'projects' : 'domains'}/${a.id}/`;
 }
 
 // Donna first, then domains, then projects, each in the server's order.
 export function sortAgents(agents) {
-  const rank = { chief: 0, domain: 1, project: 2 };
+  const rank = { chief: 0, cto: 1, domain: 2, project: 3 };
   return [...agents].sort((a, b) => (rank[a.kind] ?? 3) - (rank[b.kind] ?? 3));
 }
 

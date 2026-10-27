@@ -6,6 +6,7 @@ const P = {
   home: () => html`<path d="M2.5 7.4 8 2.6l5.5 4.8"/><path d="M4 6.3v7.2h8V6.3"/><path d="M6.6 13.5V10h2.8v3.5"/>`,
   plus: () => html`<path d="M8 3.2v9.6M3.2 8h9.6"/>`,
   search: () => html`<circle cx="7" cy="7" r="4.3"/><path d="m10.3 10.3 3.2 3.2"/>`,
+  compass: () => html`<circle cx="8" cy="8" r="5.8"/><path d="m10.6 5.4-1.5 3.7-3.7 1.5 1.5-3.7z"/>`,
   map: () => html`<circle cx="8" cy="8" r="1.7"/><circle cx="8" cy="8" r="5.6"/><circle cx="12.4" cy="4.6" r="1.35" class="fill"/>`,
   user: () => html`<circle cx="8" cy="5.4" r="2.6"/><path d="M3 13.5c.8-2.7 2.8-4.1 5-4.1s4.2 1.4 5 4.1"/>`,
   'user-plus': () => html`<circle cx="6.4" cy="5.4" r="2.5"/><path d="M1.9 13.5c.7-2.6 2.5-4 4.5-4s3.8 1.4 4.5 4"/><path d="M12.6 4.4v4.2M10.5 6.5h4.2"/>`,
@@ -90,7 +91,7 @@ export function Mark({ size = 18 }) {
 export function AgentIcon({ agent, size = 16 }) {
   const name = agent && agent.icon;
   if (hasIcon(name)) return html`<${Icon} name=${name} size=${size} />`;
-  const fallback = agent && agent.kind === 'chief' ? 'chat' : agent && agent.kind === 'project' ? 'folder' : null;
+  const fallback = agent && agent.kind === 'chief' ? 'chat' : agent && agent.kind === 'cto' ? 'compass' : agent && agent.kind === 'project' ? 'folder' : null;
   if (fallback && !(agent && agent.name)) return html`<${Icon} name=${fallback} size=${size} />`;
   const letter = ((agent && (agent.name || agent.id)) || '?').trim().charAt(0).toUpperCase();
   return html`<span class="initial" aria-hidden="true">${letter}</span>`;

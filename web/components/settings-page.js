@@ -93,6 +93,7 @@ export function SettingsPage() {
       </section>
       <${NotifyCard} />
       <${MondayCard} />
+      <${CtoCard} />
       <${DetailedTimelineCard} />
       <${AccountsCard} />
       <section class="card" aria-labelledby="set-server">
@@ -288,6 +289,85 @@ function MondayCard() {
       <pre class="monday-preview" data-testid="monday-preview">${st.preview}</pre>` : null}
     ${st && !st.enabled && canOn && st.preview_labels ? html`<p class="set-note">Turning it on approves these agent names for the report: ${Object.values(st.preview_labels).join(', ') || 'none'}. An agent added later is called "Another agent" until you turn it off and on.</p>` : null}
     ${st && st.last_sent_at ? html`<p class="set-note">Last sent ${new Date(st.last_sent_at).toLocaleString()}${st.last_error ? ` (it did not go through: ${st.last_error})` : ''}.</p>` : null}
+  </section>`;
+}
+
+// The CTO seat (1.7): the weekly review (off by default; the estimate shown before it is on, a
+// weekly cap), its line in the Monday report (its own opt-in, previewed), and the status thresholds.
+const THRESHOLDS = [
+  ['stalled_days', 'Stalled after', 'days with nothing finished and NOW.md untouched'],
+  ['needs_hours', 'At risk when something waits on you for', 'hours'],
+  ['checkup_drop', 'At risk when the check-up score falls by', 'points'],
+  ['cost_rise_pct', 'At risk when usage rises by', '% week over week, with no more finished work'],
+  ['cost_min_usd', '…counting only weeks over', 'dollars of usage'],
+];
+
+function CtoCard() {
+  const health = useStore((s) => s.health);
+  const [v, setV] = useState(null);
+  const [est, setEst] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [cap, setCap] = useState('');
+  const remote = !!(health && health.remote);
+  useEffect(() => { api.cto().then((x) => { setV(x); setCap(String(x.schedule.weekly_cap_usd)); }).catch(() => setV({ error: true })); }, []);
+  useEffect(() => {
+    if (!v || !v.exists || v.schedule.enabled) return undefined;
+    let live = true;
+    api.ctoEstimate().then((x) => { if (live) setEst(x); }).catch(() => {});
+    return () => { live = false; };
+  }, [v && v.exists, v && v.schedule && v.schedule.enabled]);
+  const change = async (body) => {
+    setBusy(true);
+    try {
+      const x = await api.setCto(body);
+      setV(x);
+      setCap(String(x.schedule.weekly_cap_usd));
+    } catch (e) {
+      errorToast('Could not change the CTO settings', e);
+    }
+    setBusy(false);
+  };
+  const capN = Number(cap);
+  const capOk = Number.isFinite(capN) && capN > 0 && capN <= 100;
+  if (!v) return html`<section class="card" aria-labelledby="set-cto"><h2 id="set-cto" class="card-title">CTO</h2><p class="set-note">Checking…</p></section>`;
+  if (v.error) return html`<section class="card" aria-labelledby="set-cto"><h2 id="set-cto" class="card-title">CTO</h2><p class="set-note">Could not load the CTO settings.</p></section>`;
+  if (!v.exists) {
+    return html`<section class="card" aria-labelledby="set-cto" data-testid="cto-card">
+      <h2 id="set-cto" class="card-title">CTO</h2>
+      <p class="set-note">A CTO reads every project's receipts each week and asks you up to three decisions. Add one from the <a href="#/map">org map</a> ("Add a CTO").</p>
+    </section>`;
+  }
+  const sc = v.schedule;
+  return html`<section class="card" aria-labelledby="set-cto" data-testid="cto-card">
+    <h2 id="set-cto" class="card-title">CTO</h2>
+    <div class="set-row"><span class="set-label" id="set-cto-on">Run the CTO review every ${DAY_NAMES[sc.day]} at ${hourText(sc.hour)}<span class="set-sub">${remote ? 'Turn this on or off at the computer Clawdling runs on.'
+      : sc.enabled ? `Next one: ${sc.next_at ? new Date(sc.next_at).toLocaleString([], { weekday: 'long', hour: 'numeric', minute: '2-digit' }) : 'next week'}. At most once a week; if Clawdling is not running then, it runs when it next starts that week.`
+      : est ? `Off. Turned on, it starts one Claude Code session a week on your plan, about $${est.low_usd.toFixed(2)} to $${est.high_usd.toFixed(2)} each time (list-price equivalent, not a bill), and skips a week that would go over your weekly cap.`
+      : 'Off. Estimating what a weekly review costs…'}</span></span>
+      <label class="switch"><input type="checkbox" checked=${!!sc.enabled} disabled=${busy || remote || (!sc.enabled && !capOk)} onChange=${(e) => change(e.currentTarget.checked ? { enabled: true, weekly_cap_usd: capN } : { enabled: false })}
+        aria-labelledby="set-cto-on" data-testid="cto-schedule-switch" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    <div class="set-row is-stacked"><span class="set-label" id="set-cto-when">When and how much<span class="set-sub">Your computer's local time. Before each run, what the CTO used this week plus the high end of the estimate must fit under the weekly cap.</span></span>
+      <span class="monday-when cto-when">
+        <select class="select" aria-label="Day" value=${String(sc.day)} disabled=${busy || remote} onChange=${(e) => change({ day: Number(e.currentTarget.value) })} data-testid="cto-day">
+          ${[1, 2, 3, 4, 5, 6, 0].map((d) => html`<option value=${String(d)}>${DAY_NAMES[d]}</option>`)}</select>
+        <select class="select" aria-label="Hour" value=${String(sc.hour)} disabled=${busy || remote} onChange=${(e) => change({ hour: Number(e.currentTarget.value) })} data-testid="cto-hour">
+          ${Array.from({ length: 24 }, (_, h) => html`<option value=${String(h)}>${hourText(h)}</option>`)}</select>
+        <label class="cto-cap">Weekly cap $<input class="input" inputmode="decimal" value=${cap} disabled=${busy || remote} onInput=${(e) => setCap(e.currentTarget.value)}
+          onBlur=${() => { if (capOk && capN !== sc.weekly_cap_usd) change({ weekly_cap_usd: capN }); }} aria-label="Weekly cap in dollars" data-testid="cto-cap" /></label>
+      </span></div>
+    ${sc.last_skip ? html`<p class="set-note tone-amber-text" data-testid="cto-card-skip">${sc.last_skip.why}</p>` : null}
+    <p class="set-note">Used by the CTO this week: $${(sc.spent_this_week.usd || 0).toFixed(2)}${sc.spent_this_week.complete ? '' : ' (part unknown)'} (list-price equivalent).</p>
+    <div class="set-row"><span class="set-label" id="set-cto-digest">Add the CTO's headline to the Monday report<span class="set-sub">Off by default. Only the headline line and how many decisions wait go to your paired chat, never the review. Links are removed.</span></span>
+      <label class="switch"><input type="checkbox" checked=${!!v.headline_in_digest} disabled=${busy || remote} onChange=${(e) => change({ headline_in_digest: e.currentTarget.checked })}
+        aria-labelledby="set-cto-digest" data-testid="cto-digest-switch" /><span class="switch-ui" aria-hidden="true"></span></label></div>
+    ${v.headline_preview ? html`<p class="set-note">${v.headline_in_digest ? 'The Monday report adds this line now:' : 'Turned on, the Monday report would add exactly this line now:'}</p><pre class="monday-preview" data-testid="cto-digest-preview">${v.headline_preview}</pre>` : null}
+    <details class="cto-thresholds">
+      <summary>Status rules</summary>
+      <p class="set-note">Clawdling computes each agent's status from receipts with fixed rules; you can tune the numbers.</p>
+      ${THRESHOLDS.map(([k, label, unit]) => html`<label class="cto-th"><span>${label}</span>
+        <input class="input" type="number" min="0" step="any" value=${String(v.thresholds[k])} disabled=${busy || remote} aria-label=${`${label} ${unit}`}
+          onChange=${(e) => change({ thresholds: { [k]: Number(e.currentTarget.value) } })} data-testid=${`cto-th-${k}`} /><span class="rc-label">${unit}</span></label>`)}
+    </details>
   </section>`;
 }
 

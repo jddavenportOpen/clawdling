@@ -322,7 +322,8 @@ function QuestionBanner({ s, mobile, accent }) {
   };
   return html`<div class="pane-dialog pane-question" role="group" aria-label="Claude Code is asking" data-testid="pane-question" data-dialog=${s.waiting_on}>
     <${StatusGlyph} status="needs_you" label=${false} />
-    <span class="dialog-text" data-testid="pane-question-text">${s.notification || 'Claude Code is asking for your permission.'}</span>
+    <span class="dialog-text" data-testid="pane-question-text">${s.pending_cmd ? 'Send this message to another agent?' : s.notification || 'Claude Code is asking for your permission.'}</span>
+    ${s.pending_cmd ? html`<code class="dialog-cmd" data-testid="pane-pending-cmd">${s.pending_cmd}</code>` : null}
     <span class="dialog-actions">
       ${shown.map((c, i) => html`<button key=${c.option} class=${`btn ${i === 0 && accent ? 'btn-primary' : 'btn-quiet'} btn-sm dialog-choice`} title=${choiceLabel(c)}
         onClick=${() => answer(c.option)} disabled=${!!busy} data-option=${c.option} data-testid="question-choice">
