@@ -247,6 +247,7 @@ function newRecord(fields) {
     effort: fields.effort ?? null,
     account: fields.account ?? null,
     purpose: fields.purpose ?? null,
+    review_week: fields.review_week ?? null,
     guard: fields.guard ?? null,
     permission_mode: fields.permission_mode ?? null,
     cwd: fields.cwd,
@@ -371,6 +372,7 @@ export class SessionManager {
       effort: rec.effort || null,
       account: rec.account || null,
       purpose: rec.purpose || null,
+      review_week: rec.review_week || null,
       permission_mode: rec.permission_mode,
       live_mode: rec.live_mode || null,
       cwd: rec.cwd,
@@ -745,7 +747,7 @@ export class SessionManager {
     return which(this.claudeBin, this.env.PATH || '');
   }
 
-  async spawn({ agent, prompt, model, effort, account, purpose, title, cols, rows } = {}) {
+  async spawn({ agent, prompt, model, effort, account, purpose, title, cols, rows, reviewWeek = null } = {}) {
     if (typeof agent !== 'string' || !agent) throw badRequest('agent is required');
     const target = this.resolveTarget(agent);
     if (prompt !== undefined && prompt !== null && typeof prompt !== 'string') throw badRequest('prompt must be a string');
@@ -768,6 +770,8 @@ export class SessionManager {
       effort: effort || target.effort || null,
       account: accountId,
       purpose: purpose === 'signin' ? 'signin' : null,
+      // The CTO's weekly review (1.7): set only by the server's own review run, never by a request.
+      review_week: target.kind === 'cto' && typeof reviewWeek === 'string' && /^\d{4}-W\d{2}$/.test(reviewWeek) ? reviewWeek : null,
       // A Use from anywhere setup chat runs with the guard hook (and keeps it on resume).
       guard: /^\s*\/remote-access\b/.test(text) ? 'remote-access' : null,
       permission_mode: target.permission_mode || null,
@@ -1178,10 +1182,8 @@ export class SessionManager {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
       // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
       rec.pending_cmd = cmd && CROSS_AGENT_RE.test(cmd) && toolId ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000 } : null;
-      if (rec.kind === 'cto') rec.seat_tool = toolId || 'unknown';
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
-      if (event !== 'PostToolUse' || !rec.seat_tool || rec.seat_tool === toolId) rec.seat_tool = null;
     }
     const before = rec.transcript_path;
     const { statusChanged, titleChanged } = applyHookEvent(rec, event, p);
@@ -1201,6 +1203,7 @@ export class SessionManager {
     }
     if (event === 'Stop' || event === 'UserPromptSubmit') setTimeout(() => this.refreshBackground(rec), 300).unref?.();
     if (titleChanged) this.events.record({ type: 'rename', sid, title: rec.title, auto: true });
+    if (event === 'Stop' || event === 'SessionEnd') this.onTurnEnd?.(rec); // the CTO's record (cto.js)
     if (statusChanged) this.onStatusChange(rec);
     else {
       this.scheduleSave();
@@ -1382,9 +1385,6 @@ export class SessionManager {
       throw conflict(`the session is waiting for your answer in the terminal (${rec.notification || rec.waiting_on}); answer it in the cockpit first`);
     }
     if (!isLive(rec.status)) throw conflict('that session has ended');
-    // The CTO seat: while one of its tool calls is in flight, a prompt for it may be on screen before
-    // its Notification arrives, and typed text (or Enter) would answer it. Its yes is the owner's.
-    if (rec.kind === 'cto' && rec.seat_tool) throw conflict('the CTO is in the middle of a step (it may be asking your permission): wait for it, or answer in the cockpit');
     const target = rec.pane_id || `=${rec.tmux_name}:`;
     if (clean) await this.backend.paste(target, clean);
     if (enter !== false) {
@@ -1495,7 +1495,6 @@ export class SessionManager {
             rec.waiting_on = null;
             rec.notification = null;
             rec.pending_cmd = null;
-            rec.seat_tool = null;
             rec.last_message = 'You said no, so Claude stopped. Tell it what to do instead.';
             this.onStatusChange(rec);
             return;

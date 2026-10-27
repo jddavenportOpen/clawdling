@@ -19,7 +19,7 @@ import { COST_LABEL } from './report.js';
 import { REVIEW_MAX_BYTES, lintReview } from './review-lint.js';
 import { ReceiptIndex } from './receipts.js';
 import { checkThresholds, normalizeThresholds } from './status-rules.js';
-import { CROSS_AGENT_RE, parseSend } from './seat-policy.js';
+import { SEND_COMMAND_RE, parseSend } from './seat-policy.js';
 import { HttpError, badRequest, conflict, notFound, oneLine, readJson, writeJson } from './util.js';
 
 export const CHECK_MS = 10 * 60000;
@@ -93,8 +93,9 @@ export function scanTranscript(file) {
     for (const c of content) {
       if (o.type === 'assistant' && c.type === 'tool_use' && typeof c.id === 'string') {
         const cmd = typeof c.input?.command === 'string' ? c.input.command : null;
-        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && CROSS_AGENT_RE.test(cmd)) {
-          if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: parseSend(cmd).verb, command: cmd.slice(0, 4000), state: 'pending', note: null });
+        if ((c.name === 'Bash' || c.name === 'PowerShell') && cmd && SEND_COMMAND_RE.test(cmd)) {
+          const ps = parseSend(cmd);
+          if (!sends.has(c.id)) sends.set(c.id, { id: c.id, at: o.timestamp || null, verb: ps.verb, command: cmd.slice(0, 4000), plain: ps.plain, message: ps.plain ? ps.message : null, state: 'pending', note: null });
         } else if (c.name === 'AskUserQuestion' && Array.isArray(c.input?.questions)) {
           if (!asks.has(c.id)) asks.set(c.id, { id: c.id, at: o.timestamp || null, questions: c.input.questions.slice(0, 4).map((q) => ({ question: oneLine(String(q?.question || ''), 300), options: (Array.isArray(q?.options) ? q.options : []).slice(0, 6).map((x) => oneLine(String(x?.label || ''), 120)) })), answers: null, state: 'waiting' });
         }
@@ -134,7 +135,7 @@ export function plainHeadline(text) {
   return oneLine(String(text || ''), 160)
     .replace(/[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '')
     .replace(/\b[a-z][a-z0-9+.-]{1,20}:(?:\/\/)?[^\s]*/gi, (m) => (/^(?:https?|ftp|file|mailto|tel|sms|javascript|data|tg|imessage|facetime):/i.test(m) || m.includes('//') ? '[link removed]' : m))
-    .replace(/(\w)\.(?=[A-Za-z])/g, '$1\u2024')
+    .replace(/[.\u3002\uff0e\uff61](?=\S)/g, '\u2024')
     .replace(/[<>]/g, '')
     .trim();
 }
@@ -192,6 +193,22 @@ export class Cto {
   /** The seat's launch settings file, written fresh before every start (sessions.seatLaunch). */
   launchSettings(rec, target, { nodePath, hookScript, stopFailure }) {
     if (!ctoPermissions({ dir: target.dir, home: this.paths.home }).fileRules || !runtimeDeny(this.paths.home).length) throw new HttpError(409, CTO_UNGUARDED);
+    // Its folder holds only what Clawdling wrote: no link for reviews/ or .claude/, and nothing in
+    // .claude/ but its settings (no skills, commands, agents or local settings to load).
+    const odd = [];
+    for (const d of ['', 'reviews', '.claude']) {
+      try {
+        if (fs.lstatSync(path.join(target.dir, d)).isSymbolicLink()) odd.push(d || 'the CTO folder');
+      } catch {
+        // not there yet
+      }
+    }
+    try {
+      for (const n of fs.readdirSync(path.join(target.dir, '.claude'))) if (n !== 'settings.json' && n !== 'settings.json.old') odd.push(`.claude/${n}`);
+    } catch {
+      // no .claude yet: refreshCtoSettings writes it
+    }
+    if (odd.length) throw new HttpError(409, `The CTO will not start: its folder has ${odd.map((x) => `"${x}"`).join(', ')}, which Clawdling did not put there. Remove ${odd.length === 1 ? 'it' : 'them'}, then start it again.`);
     // The folder's own settings file, this version's, at every start (an edited copy is kept as .old).
     this.org.refreshCtoSettings();
     const file = path.join(this.paths.rt, 'cto-launch-settings.json');
@@ -331,8 +348,11 @@ export class Cto {
       return Number.isFinite(t) ? isoWeek(t) : null;
     };
     for (const s of this.ctoSessions()) {
-      const titled = /^CTO review, (\d{4}-W\d{2})$/.exec(s.title || '')?.[1] || null;
+      // A review session (marked by the server, not by its title) belongs to its week.
+      const titled = s.review_week || null;
       if (titled && titled !== week) continue;
+      // Any other session only if its life touches the week.
+      if (!titled && (weekOf(s.created_at) > week || (weekOf(s.last_activity_at || s.created_at) || week) < week)) continue;
       const rec = this.sessions.get(s.sid);
       if (!rec) continue;
       let file = null;
@@ -341,7 +361,7 @@ export class Cto {
       } catch {
         file = null;
       }
-      const scan = file ? scanTranscript(file) : { deliveries: [], decisions: [] };
+      const scan = file ? this.scan(file) : { deliveries: [], decisions: [] };
       const mine = (it) => (titled ? true : weekOf(it.at) === week);
       for (const d of scan.decisions) if (mine(d)) decisions.push({ ...d, sid: s.sid });
       for (const d of scan.deliveries) if (mine(d)) deliveries.push({ ...d, sid: s.sid, to: deliveryTarget(d.command) });
@@ -352,7 +372,10 @@ export class Cto {
         decisions.push({ id: ask.tool_id, sid: s.sid, at: s.last_activity_at, state: 'waiting', answers: null, questions: (ask.card.questions || []).map((q) => ({ question: oneLine(String(q.question || ''), 300), options: (q.options || []).map((o) => oneLine(String(o.label || ''), 120)) })) });
       }
       // A message waiting for the owner's yes or no right now.
-      if (s.pending_cmd && (titled || nowWeek) && !deliveries.some((d) => d.command === s.pending_cmd && d.state === 'pending')) deliveries.push({ id: null, sid: s.sid, at: s.last_activity_at, verb: parseSend(s.pending_cmd).verb, command: s.pending_cmd, to: deliveryTarget(s.pending_cmd), state: 'asking', note: null });
+      if (s.pending_cmd && (titled || nowWeek) && !deliveries.some((d) => d.command === s.pending_cmd && d.state === 'pending')) {
+        const ps = parseSend(s.pending_cmd);
+        deliveries.push({ id: null, sid: s.sid, at: s.last_activity_at, verb: ps.verb, command: s.pending_cmd, plain: ps.plain && s.pending_cmd_plain !== false, message: ps.plain ? ps.message : null, to: ps.target, state: 'asking', note: null });
+      }
     }
     // Keep the final states; merge what was kept before (sessions end, transcripts go).
     const file = path.join(this.paths.rt, 'cto', 'activity', `${week}.json`);
@@ -378,6 +401,34 @@ export class Cto {
     allDecisions.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
     allDeliveries.sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
     return { decisions: allDecisions, deliveries: allDeliveries };
+  }
+
+  /** A transcript's decisions and deliveries, read again only when the file changed. */
+  scan(file) {
+    this.scans = this.scans || new Map();
+    let key = null;
+    try {
+      const st = fs.statSync(file);
+      key = `${st.size}:${st.mtimeMs}`;
+    } catch {
+      return { deliveries: [], decisions: [] };
+    }
+    const hit = this.scans.get(file);
+    if (hit && hit.key === key) return hit.result;
+    const result = scanTranscript(file);
+    this.scans.delete(file);
+    this.scans.set(file, { key, result });
+    while (this.scans.size > 64) this.scans.delete(this.scans.keys().next().value);
+    return result;
+  }
+
+  /** A CTO turn ended (Stop, SessionEnd): keep its week's record now, not only when a page asks. */
+  record(rec) {
+    try {
+      this.activity(rec.review_week || isoWeek(this.now()));
+    } catch (err) {
+      this.logger?.warn?.(`cto: could not keep the record: ${err.message}`);
+    }
   }
 
   /** One review for its page: the text, the lint, receipt links, computed labels, decisions, deliveries. */
@@ -437,7 +488,7 @@ export class Cto {
 
   /** A review session still at work or waiting on the owner (a finished one is "ready"). */
   busyReview() {
-    return this.ctoSessions().find((s) => BUSY.has(s.status) && s.title && /^CTO review, /.test(s.title)) || null;
+    return this.ctoSessions().find((s) => BUSY.has(s.status) && s.review_week) || null;
   }
 
   /**
@@ -454,8 +505,9 @@ export class Cto {
       throw e;
     }
     for (const s of this.ctoSessions()) {
-      if (s.status === 'ready' && s.title && /^CTO review, /.test(s.title)) {
+      if (s.status === 'ready' && s.review_week) {
         try {
+          this.activity(s.review_week); // keep its record first
           await this.sessions.end(s.sid);
         } catch (err) {
           this.logger?.warn?.(`cto: could not end the earlier review ${s.sid}: ${err.message}`);
@@ -463,7 +515,7 @@ export class Cto {
       }
     }
     const week = isoWeek(this.now());
-    const s = await this.sessions.spawn({ agent: CTO_ID, prompt: `${REVIEW_PROMPT} The week is ${week}.`, title: `CTO review, ${week}` });
+    const s = await this.sessions.spawn({ agent: CTO_ID, prompt: `${REVIEW_PROMPT} The week is ${week}.`, title: `CTO review, ${week}`, reviewWeek: week });
     this.events?.record?.({ type: 'cto', action: scheduled ? 'scheduled-review' : 'review', sid: s.sid, week });
     return s;
   }
@@ -581,8 +633,8 @@ export class Cto {
       // Counted before starting, like the Monday report: a failure never turns into a retry storm.
       st.last_run_week = week;
       st.last_run_at = new Date(now).toISOString();
-      if (spent.error) {
-        st.last_skip = { week, at: st.last_run_at, why: "This week's CTO review was skipped: Clawdling could not count what the CTO has used this week, so it could not check the weekly cap." };
+      if (spent.error || spent.complete === false) {
+        st.last_skip = { week, at: st.last_run_at, why: "This week's CTO review was skipped: Clawdling could not fully count what the CTO has used this week, so it could not check the weekly cap." };
         this.save(st);
         this.events?.record?.({ type: 'cto', action: 'skipped', week });
         return { ran: false, why: 'spend unknown', notice: st.last_skip.why };

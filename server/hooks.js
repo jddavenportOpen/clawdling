@@ -97,6 +97,13 @@ export function runtimeDeny(home, platform = process.platform) {
   return ['Read', 'Edit'].map((t) => absPathRule(t, rt, platform)).filter(Boolean);
 }
 
+/** Write and Edit of <org>/cto/ (the CTO seat's folder), for every other agent. */
+export function ctoDeny(home, platform = process.platform) {
+  if (!home) return [];
+  const dir = `${String(home).replace(/[\\/]+$/, '')}${platform === 'win32' ? '\\' : '/'}cto`;
+  return ['Write', 'Edit'].map((t) => absPathRule(t, dir, platform)).filter(Boolean);
+}
+
 /**
  * The generated --settings file: our hooks plus the clawdling allow-list.
  * macOS / Linux: shell form, every path single-quoted for `sh -c`.
@@ -125,7 +132,9 @@ export function buildHooksSettings({ nodePath, hookScript, platform = process.pl
       : { type: 'command', command: `${shq(nodePath)} ${shq(guardScript)}`, timeout: 5 };
     hooks.PreToolUse.unshift({ matcher: GUARDED_TOOLS, hooks: [guard] });
   }
-  const deny = runtimeDeny(home, platform);
+  // Agents keep out of Clawdling's runtime folder, and out of the CTO seat's folder (1.7): no agent
+  // may write the seat's settings, skills or reviews (the seat's own settings replace these).
+  const deny = [...runtimeDeny(home, platform), ...ctoDeny(home, platform)];
   // A setup chat's hooks cannot be switched off by a settings file in the org folder.
   // env: the detailed timeline's OpenTelemetry settings (otel.js), only while it is on.
   return { hooks, permissions: { allow: cliAllow(platform), ...(deny.length ? { deny } : {}) }, ...(guardScript ? { disableAllHooks: false } : {}), ...(env && typeof env === 'object' ? { env } : {}) };

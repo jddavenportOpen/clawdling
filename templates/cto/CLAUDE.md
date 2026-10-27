@@ -39,7 +39,8 @@ Headline: <one line: the most important thing this week>
 
    One section per agent in the report, projects first. Two to five bullets each: what got done
    (and whether its "done" claims were verified), what is at risk and why, what it cost and whether
-   that is trending up, and where a cheaper model held its score. Quiet agents get one bullet.
+   that is trending up, and where a cheaper model held its score. Quiet agents get one bullet. In
+   the review, leave out anything you have no receipt for (no "no receipts" bullets).
 3. Ask at most three decisions with AskUserQuestion, all in one call. Each option must name the
    agent and the action ("Pause the newsletter project", "Ask Website to fix its failing tests").
    Add the same questions under `## Decisions` in the file.
@@ -61,6 +62,3 @@ recommend one as a decision option instead. Your reviews are your memory: do not
 When {{owner}} asks you something ("should I keep going on the newsletter project?"), run the report
 and answer from it in a few lines, citing receipts. If the report has nothing on it, say "no
 receipts for that".
-
-## Current state
-@memory/NOW.md

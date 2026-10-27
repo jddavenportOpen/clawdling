@@ -515,11 +515,12 @@ async function ctoReview() {
     const id = `toolu_d${crypto.randomBytes(5).toString('hex')}`;
     await runHook('PreToolUse', { tool_name: 'Bash', tool_input: { command: shown, description: 'Deliver the message' }, tool_use_id: id });
     process.stdout.write('\x1b[2J\x1b[H');
-    const asked = select({ header: [' Bash command', `   ${shown}`, '   Deliver the message', '', ' Do you want to proceed?'], choices: ['Yes', `Yes, and don't ask again for clawdling ${args[0]} commands`, 'No, and tell Claude what to do differently (esc)'], numbered: true });
+    // Like Claude Code 2.1.308 when a hook answers "ask": only Yes and No, never "don't ask again".
+    const asked = select({ header: [' Bash command', `   ${shown}`, '   Deliver the message', '', ' Do you want to proceed?'], choices: ['Yes', 'No, and tell Claude what to do differently (esc)'], numbered: true });
     await runHook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
     const choice = await asked;
     transcript('assistant', { id: `msg_${id}`, role: 'assistant', model: 'claude-sonnet-5', usage: { input_tokens: 100, output_tokens: 60 }, content: [{ type: 'tool_use', id, name: 'Bash', input: { command: shown, description: 'Deliver the message' } }] }, { requestId: `req_${id}` });
-    if (choice === 2) {
+    if (choice === 1) {
       transcript('user', { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: true, content: "The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed." }] }, { toolUseResult: 'User rejected tool use' });
       fs.appendFileSync(file, `Declined: ${message}\n`);
       results.push(`${a.name}: declined`);

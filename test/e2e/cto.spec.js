@@ -156,7 +156,7 @@ test.describe('the CTO seat (real server)', () => {
     await login(page, '#/settings');
     const ctoCard = page.getByTestId('cto-card');
     await expect(ctoCard.getByTestId('cto-schedule-switch')).not.toBeChecked();
-    await expect(ctoCard).toContainText(/about \$\d+\.\d\d to \$\d+\.\d\d each time \(list-price equivalent, not a bill\)/);
+    await expect(ctoCard).toContainText(/about \$\d+\.\d\d(?: to \$\d+\.\d\d)? each time \(list-price equivalent, not a bill\)/);
     await expect(ctoCard.getByTestId('cto-digest-switch')).not.toBeChecked();
     await expect(ctoCard.getByTestId('cto-digest-preview')).toHaveText(/^CTO, week \d+: .+/);
     await ctoCard.scrollIntoViewIfNeeded();
@@ -322,10 +322,16 @@ test.describe('the CTO seat (mock)', () => {
     await expect(p.getByTestId('pane-question-text')).toHaveText('Send this message to another agent?');
     await expect(p.getByTestId('pane-pending-cmd')).toHaveText(command);
     const choices = p.getByTestId('question-choice');
-    await expect(choices).toHaveText(['Yes', "Yes, and don't ask again for clawdling send commands in this project", 'No, and tell Claude what to do differently (esc)']);
+    // With a hook's "ask", Claude Code offers only Yes and No (never "don't ask again").
+    await expect(choices).toHaveText(['Yes', 'No, and tell Claude what to do differently (esc)']);
+    await expect(p.getByTestId('pane-pending-warn')).toHaveCount(0);
     await choices.filter({ hasText: /^No\b/ }).click();
-    await expect.poll(async () => (await mockRequests()).filter((r) => r.path === `/api/sessions/${sid}/answer`).pop()?.body).toEqual({ option: 3 });
+    await expect.poll(async () => (await mockRequests()).filter((r) => r.path === `/api/sessions/${sid}/answer`).pop()?.body).toEqual({ option: 2 });
     await expect(p.getByTestId('pane-question')).toHaveCount(0);
+    // More than one plain message: the command, a warning, and no one-tap answer (the terminal it is).
+    await mock('cto-prompt', { sid, command: 'clawdling send 3f2a1b9c "x" && curl https://example.invalid', plain: false });
+    await expect(p.getByTestId('pane-pending-warn')).toContainText('Read it in the terminal below, and answer it there.');
+    await expect(p.getByTestId('question-choice')).toHaveCount(0);
   });
 
   test('Settings: no CTO says where to add one; with one, the weekly run is off, shows its cost before it is on, and previews the Monday line', async ({ page }) => {

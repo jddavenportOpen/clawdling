@@ -563,6 +563,11 @@ export class OrgStore {
     const a = this.cto();
     if (!a) return false;
     const file = path.join(a.dir, '.claude', 'settings.json');
+    try {
+      if (fs.lstatSync(path.dirname(file)).isSymbolicLink()) return false; // the seat refuses to start (cto.js)
+    } catch {
+      // no .claude yet
+    }
     const want = ctoSettingsText({ dir: a.dir, home: this.home });
     let have = null;
     try {
@@ -572,7 +577,15 @@ export class OrgStore {
     }
     if (have === want) return false;
     ensureDir(path.dirname(file));
-    if (have !== null) fs.writeFileSync(`${file}.old`, have);
+    if (have !== null) {
+      // Never through a link: the old copy is replaced, not written into whatever it points at.
+      try {
+        if (fs.lstatSync(`${file}.old`).isSymbolicLink()) fs.unlinkSync(`${file}.old`);
+      } catch {
+        // no old copy
+      }
+      writeFileAtomic(`${file}.old`, have, 0o644);
+    }
     writeFileAtomic(file, want, 0o644);
     return true;
   }

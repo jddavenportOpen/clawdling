@@ -34,7 +34,7 @@
   notes a declined message in the review.
 - **Ask the CTO anything.** A normal chat answers from the same report, citing receipts, or says
   "no receipts for that".
-- **`clawdling report --all [--window] [--json]`**: the whole org as `"schema": 2`, each agent's
+- **`clawdling report --all [--json]`**: the whole org as `"schema": 2`, each agent's
   computed status and every item with a receipt id and a cockpit link (`#/s/<sid>` opens a session).
   Agent-written text in it (titles, last lines, NOW.md) is capped, one line, stripped of control
   characters, and cannot look like a citation. Its shape has a golden file,
@@ -49,7 +49,7 @@
   settings nor a saved "don't ask again" load), `--strict-mcp-config` (no MCP servers), always the
   ask-first mode, and without the org folder added. Its own hook check lets it run only plain
   `clawdling report` and `clawdling ls` (exact options, never `--home` or `--port`) and write only
-  `reviews/<week>.md` without asking; nothing can be typed into it while a step is in flight; the web, its own CLAUDE.md and its settings are denied; everything else asks.
+  `reviews/<week>.md` without asking; it takes instructions from you only (agents and Donna cannot start it, type into it or answer for it, nor write in its folder); the web, its own CLAUDE.md and its settings are denied; everything else asks.
   Its hooks report every tool call, and the hook script forwards only the tool's name and id, plus
   the command of a `clawdling send|spawn`. Adding the seat, starting a review and every CTO setting
   work only on the computer itself; a paired phone can read reviews and answer the CTO's prompts.

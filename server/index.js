@@ -1257,6 +1257,15 @@ export async function startServer(opts = {}) {
       ];
     }
 
+    // The CTO seat (1.7) takes instructions from the owner only: the cockpit (its cookie) or a paired
+    // device. A request with the raw token is the CLI, which every agent and Donna can run without a
+    // prompt (`clawdling send`, `spawn`): it may not start the CTO, type into it or answer for it.
+    const ownerOnlyCto = (req, sid) => {
+      const rec = sid ? sessions.get(sid) : null;
+      if ((sid ? rec && rec.kind === 'cto' : true) && !req.who.remote && typeof req.headers[TOKEN_HEADER] === 'string' && req.headers[TOKEN_HEADER]) {
+        throw new HttpError(403, 'Only you can talk to the CTO, from the cockpit: agents and Donna cannot start it, message it or answer for it.');
+      }
+    };
     const routes = [
       ['GET', /^\/api\/health$/, async (req, m, res, url) => {
         // Through a remote address, a device that has not signed in learns nothing about this computer.
@@ -1334,6 +1343,7 @@ export async function startServer(opts = {}) {
       ['GET', /^\/api\/sessions$/, () => [200, sessions.list()]],
       ['POST', /^\/api\/sessions$/, async (req) => {
         const b = await jsonBody(req);
+        if (b.agent === 'cto' && org.cto()) ownerOnlyCto(req, null);
         // A remote-access setup chat runs exactly the skill text this version ships.
         if (typeof b.prompt === 'string' && /^\s*\/remote-access\b/.test(b.prompt)) {
           org.ensureSkills();
@@ -1391,6 +1401,7 @@ export async function startServer(opts = {}) {
       }],
       ['POST', /^\/api\/sessions\/([^/]+)\/send$/, async (req, m) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
         if (typeof b.text !== 'string') throw badRequest('send {text, enter}');
         await sessions.send(sid, b.text, b.enter !== false);
@@ -1398,6 +1409,7 @@ export async function startServer(opts = {}) {
       }],
       ['POST', /^\/api\/sessions\/([^/]+)\/answer$/, async (req, m) => {
         const sid = sidParam(m);
+        ownerOnlyCto(req, sid);
         const b = await jsonBody(req);
         if (Array.isArray(b.answers)) return [200, await sessions.answer(sid, null, { answers: b.answers, toolId: b.tool_id })];
         if (!('option' in b)) throw badRequest('send {option: 1|2}');

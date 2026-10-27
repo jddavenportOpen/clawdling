@@ -342,7 +342,7 @@ function CtoCard() {
     <h2 id="set-cto" class="card-title">CTO</h2>
     <div class="set-row"><span class="set-label" id="set-cto-on">Run the CTO review every ${DAY_NAMES[sc.day]} at ${hourText(sc.hour)}<span class="set-sub">${remote ? 'Turn this on or off at the computer Clawdling runs on.'
       : sc.enabled ? `Next one: ${sc.next_at ? new Date(sc.next_at).toLocaleString([], { weekday: 'long', hour: 'numeric', minute: '2-digit' }) : 'next week'}. At most once a week; if Clawdling is not running then, it runs when it next starts that week.`
-      : est ? `Off. Turned on, it starts one Claude Code session a week on your plan, about $${est.low_usd.toFixed(2)} to $${est.high_usd.toFixed(2)} each time (list-price equivalent, not a bill), and skips a week that would go over your weekly cap.`
+      : est ? `Off. Turned on, it starts one Claude Code session a week on your plan, about ${est.low_usd.toFixed(2) === est.high_usd.toFixed(2) ? `$${est.high_usd.toFixed(2)}` : `$${est.low_usd.toFixed(2)} to $${est.high_usd.toFixed(2)}`} each time (list-price equivalent, not a bill), and skips a week that would go over your weekly cap.`
       : 'Off. Estimating what a weekly review costs…'}</span></span>
       <label class="switch"><input type="checkbox" checked=${!!sc.enabled} disabled=${busy || remote || (!sc.enabled && !capOk)} onChange=${(e) => change(e.currentTarget.checked ? { enabled: true, weekly_cap_usd: capN } : { enabled: false })}
         aria-labelledby="set-cto-on" data-testid="cto-schedule-switch" /><span class="switch-ui" aria-hidden="true"></span></label></div>

@@ -196,7 +196,8 @@ async function main() {
   tok = fs.readFileSync(path.join(ORG, '.clawdling', 'token'), 'utf8').trim();
   base = `http://127.0.0.1:${info.port}`;
   api = async (method, p, body) => {
-    const res = await fetch(base + p, { method, headers: { 'x-clawdling-token': tok, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+    // As the owner, through the cockpit's cookie (the CTO takes no instructions from the CLI's token).
+    const res = await fetch(base + p, { method, headers: { cookie: `cl_token=${tok}`, ...(body ? { 'content-type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
     const text = await res.text();
     const data = text ? JSON.parse(text) : null;
     if (!res.ok) {

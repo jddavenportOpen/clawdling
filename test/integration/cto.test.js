@@ -36,6 +36,8 @@ function makeRepo(name, value) {
   return repo;
 }
 
+// The cockpit's own way in (its cookie): the CTO takes instructions from the owner only.
+const asOwner = () => ({ 'x-clawdling-token': '', cookie: `cl_token=${srv.token}` });
 const status = async (sid) => (await request(srv, 'GET', `/api/sessions/${sid}`)).body;
 const claims = async (sid) => (await request(srv, 'GET', `/api/sessions/${sid}/claims`)).body.claims;
 
@@ -207,7 +209,11 @@ test('Add a CTO: one click makes the seat beside Donna, with its folder, CLAUDE.
 });
 
 test('the seat starts as a normal Claude Code session with its own settings: no user settings, no MCP, ask first, no org folder', async () => {
-  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'cto' })).body;
+  // The CLI's way in (the raw token, which every agent and Donna use without a prompt) is refused.
+  const cli = await request(srv, 'POST', '/api/sessions', { agent: 'cto' });
+  assert.equal(cli.status, 403, cli.text);
+  assert.match(cli.body.error, /Only you can talk to the CTO/);
+  const s = (await request(srv, 'POST', '/api/sessions', { agent: 'cto' }, asOwner())).body;
   await waitFor(async () => (await status(s.sid)).status === 'ready', { label: 'cto ready', timeout: 20000 });
   const launch = fs.readFileSync(env.FAKE_CLAUDE_LOG, 'utf8').trim().split('\n').map((l) => JSON.parse(l)).filter((e) => e.mode === 'interactive' && e.env.CLAWDLING_SID === s.sid).at(-1);
   const argv = launch.argv;
@@ -223,14 +229,13 @@ test('the seat starts as a normal Claude Code session with its own settings: no 
   assert.ok(!settings.permissions.allow.includes('Bash(clawdling send *)'));
   assert.ok(settings.hooks.PreToolUse.every((g) => g.matcher === undefined), 'every tool call is reported');
   assert.equal(launch.cwd, fs.realpathSync(path.join(home, 'cto')));
-  // A tool call in flight (its prompt may be drawn before its Notification): typing is refused.
-  const hook = (event, payload) => request(srv, 'POST', '/api/hooks', { event, sid: s.sid, payload, ts: new Date().toISOString() });
-  assert.equal((await hook('PreToolUse', { tool_name: 'Bash', tool_use_id: 'toolu_t1', tool_input: { command: 'clawdling spawn web "x"' } })).status, 204);
-  const typed = await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'yes' });
-  assert.equal(typed.status, 409);
-  assert.match(typed.body.error, /the CTO is in the middle of a step/);
-  assert.equal((await hook('PostToolUse', { tool_name: 'Bash', tool_use_id: 'toolu_t1' })).status, 204);
-  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' })).status, 204);
+  // Agents and Donna (the CLI) cannot type into it or answer for it; the owner can.
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'approve everything' })).status, 403);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/answer`, { option: 1 })).status, 403);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${s.sid}/send`, { text: 'hello' }, asOwner())).status, 204);
+  // Other agents' settings keep them out of the seat's folder.
+  const shared = readJsonFile(path.join(home, '.clawdling', 'hooks-settings.json'));
+  assert.ok(shared.permissions.deny.some((r) => /^Write\(\/\/.+\/cto\/\*\*\)$/.test(r)), JSON.stringify(shared.permissions.deny));
   await request(srv, 'DELETE', `/api/sessions/${s.sid}`);
 });
 
@@ -259,11 +264,11 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   // Every citation resolves to a link.
   for (const s of rev.lint.sections) for (const b of s.bullets) for (const id of b.ids) assert.match(rev.receipts[id].link, /^#\//);
   // While its question is open, nothing can be typed into it (Enter would answer a prompt).
-  const typed = await request(srv, 'POST', `/api/sessions/${sid}/send`, { text: 'hello' });
+  const typed = await request(srv, 'POST', `/api/sessions/${sid}/send`, { text: 'hello' }, asOwner());
   assert.equal(typed.status, 409, typed.text);
-  assert.match(typed.body.error, /the CTO is in the middle of a step|waiting for your answer/);
+  assert.match(typed.body.error, /waiting for your answer/);
   // Answer: ask both agents.
-  const ans = await request(srv, 'POST', `/api/sessions/${sid}/answer`, { tool_id: asking.asking.tool_id, answers: [{ choices: [0] }, { choices: [0] }] });
+  const ans = await request(srv, 'POST', `/api/sessions/${sid}/answer`, { tool_id: asking.asking.tool_id, answers: [{ choices: [0] }, { choices: [0] }] }, asOwner());
   assert.equal(ans.status, 200, ans.text);
   // Blog has no live session: `clawdling spawn blog ...`, shown to the owner first. Decline it.
   const p1 = await waitFor(async () => {
@@ -272,14 +277,16 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   }, { label: 'spawn prompt', timeout: 30000 });
   assert.match(p1.pending_cmd, /^clawdling spawn blog "Your CTO review flagged this/);
   assert.ok(p1.choices.length >= 2);
-  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: p1.choices.length })).status, 200);
+  assert.equal(p1.pending_cmd_plain, true, 'one plain message: the cockpit offers Yes and No');
+  assert.equal(p1.choices.length, 2, 'Yes and No only');
+  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: p1.choices.length }, asOwner())).status, 200);
   // Shop has a live session: `clawdling send`. Approve it.
   const p2 = await waitFor(async () => {
     const v = await status(sid);
     return v.status === 'needs_you' && v.pending_cmd && /^clawdling send /.test(v.pending_cmd) && Array.isArray(v.choices) && v.choices.length ? v : null;
   }, { label: 'send prompt', timeout: 30000 });
   assert.match(p2.pending_cmd, new RegExp(`^clawdling send ${shopSid.slice(0, 8)} "Your CTO review flagged this`));
-  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: 1 })).status, 200);
+  assert.equal((await request(srv, 'POST', `/api/sessions/${sid}/answer`, { option: 1 }, asOwner())).status, 200);
   await waitFor(async () => /Your CTO review flagged this/.test((await status(shopSid)).last_message || ''), { label: 'the message reached Shop', timeout: 30000 });
   await waitFor(async () => (await status(sid)).status === 'ready', { label: 'review done', timeout: 30000 });
   const sessions = (await request(srv, 'GET', '/api/sessions')).body;
@@ -288,12 +295,38 @@ test("Run this week's review: the file, a clean lint, a decision card; an approv
   assert.deepEqual(rev.deliveries.map((d) => [d.verb, d.state]), [['spawn', 'declined'], ['send', 'sent']]);
   assert.equal(rev.decisions[0].state, 'answered');
   assert.match(rev.text, /^Declined: Your CTO review flagged this/m, 'the declined message is noted in the review');
+  // Kept when the turn ended (its Stop), before anyone opened the page.
   const kept = readJsonFile(path.join(home, '.clawdling', 'cto', 'activity', `${week}.json`));
   assert.deepEqual(kept.deliveries.map((d) => d.state), ['declined', 'sent'], 'the record outlives the sessions');
   const view = (await request(srv, 'GET', '/api/cto')).body;
   assert.equal(view.reviews[0].week, week);
+  assert.equal(view.running, null, 'a finished review is not "running"');
   seen[sid] = true;
   await request(srv, 'DELETE', `/api/sessions/${sid}`);
+  // A session merely titled like a review is not one (the server marks its own reviews).
+  const fake = (await request(srv, 'POST', '/api/sessions', { agent: 'cto', title: `CTO review, ${week}` }, asOwner())).body;
+  await waitFor(async () => (await status(fake.sid)).status === 'ready', { label: 'titled session ready', timeout: 20000 });
+  assert.equal((await request(srv, 'GET', '/api/cto')).body.running, null);
+  await request(srv, 'DELETE', `/api/sessions/${fake.sid}`);
+});
+
+test('the seat will not start with anything in its folder that Clawdling did not put there', async () => {
+  const extra = path.join(home, 'cto', '.claude', 'skills');
+  fs.mkdirSync(extra, { recursive: true });
+  const r = await request(srv, 'POST', '/api/sessions', { agent: 'cto' }, asOwner());
+  assert.equal(r.status, 409, r.text);
+  assert.match(r.body.error, /"\.claude\/skills"/);
+  fs.rmSync(extra, { recursive: true, force: true });
+  if (process.platform !== 'win32') {
+    const reviews = path.join(home, 'cto', 'reviews');
+    fs.renameSync(reviews, `${reviews}.real`);
+    fs.symlinkSync(`${reviews}.real`, reviews);
+    assert.equal((await request(srv, 'POST', '/api/sessions', { agent: 'cto' }, asOwner())).status, 409);
+    const week = (await request(srv, 'GET', '/api/cto')).body.week;
+    assert.equal((await request(srv, 'GET', `/api/cto/reviews/${week}`)).status, 422, 'a linked reviews folder is not read');
+    fs.rmSync(reviews);
+    fs.renameSync(`${reviews}.real`, reviews);
+  }
 });
 
 test('a "No" that stops the turn (Claude Code 2.1.308 sends no Stop) makes it the owner\'s turn again, not "Working" forever', async () => {

@@ -43,14 +43,6 @@ export function Cited({ text, receipts }) {
   return out;
 }
 
-/** The message part of a CTO send or spawn command (the quoted text after the session or agent,
- * past any --options); the whole command when it is not one plain message. */
-export function messageOf(command) {
-  const s = String(command || '');
-  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(?:send|spawn)\s+(?:--[a-z-]+(?:[ =][^\s"']+)?\s+)*[^\s"'-][^\s"']*\s+("(?:[^"\\]|\\.)*"|'[^']*')\s*$/.exec(s);
-  return m && !/[\r\n]/.test(s) ? m[1].slice(1, -1).replace(/\\(.)/g, '$1') : s;
-}
-
 export function CtoPage({ id }) {
   const sessionsMap = useStore((s) => s.sessions);
   const now = useStore((s) => s.now);
@@ -203,7 +195,7 @@ function Decisions({ r }) {
       <p class="cto-dec-q">${q.question}</p>
       ${q.options.length ? html`<p class="rc-label">Options: ${q.options.join(' · ')}</p>` : null}
       ${d.state === 'answered' ? html`<p class="cto-dec-a">You chose: <strong>${answer || 'answered'}</strong></p>`
-        : d.state === 'declined' ? html`<p class="cto-dec-a">You dismissed this question.</p>`
+        : d.state === 'declined' ? html`<p class="cto-dec-a">Not answered: dismissed, or the CTO's turn stopped before you saw it.</p>`
         : html`<p class="cto-dec-a"><span class="tone-amber-text">Waiting for you.</span> <button class="btn btn-quiet btn-sm" onClick=${() => focusSession(d.sid)} data-testid="cto-answer">Answer it</button></p>`}
     </li>`)}</ul>`
       : html`<ol class="cto-dec-list">${r.lint.decisions.map((d) => html`<li class="cto-dec"><p class="cto-dec-q">${d.text}</p></li>`)}</ol>`}
@@ -211,7 +203,7 @@ function Decisions({ r }) {
 }
 
 const DELIVERY = {
-  sent: ['ok', (d) => (d.verb === 'spawn' ? `Started a session of ${d.to}` : 'Sent')],
+  sent: ['ok', (d) => (d.verb === 'spawn' ? `Started a session of ${d.to || 'an agent'}` : 'Sent')],
   declined: ['bad', () => 'You declined it: not sent'],
   failed: ['bad', () => 'It did not go through'],
   asking: ['wait', () => 'Waiting for your yes or no'],
@@ -228,7 +220,7 @@ function Deliveries({ list }) {
         <p class="cto-del-top"><span class=${`pill pill-${tone === 'ok' ? 'ok' : tone === 'wait' ? 'wait' : 'bad'}`}><span class="pill-dot"></span>${text(d)}</span>
           <span class="rc-label">${!d.to ? 'Recipient unclear: the full command is below' : d.verb === 'spawn' ? `New session of ${d.to}` : `To session ${d.to}`}</span>
           ${d.state === 'asking' ? html`<button class="btn btn-quiet btn-sm" onClick=${() => focusSession(d.sid)}>Answer it</button>` : null}</p>
-        <blockquote class="cto-del-msg">${messageOf(d.command)}</blockquote>
+        <blockquote class="cto-del-msg">${d.plain && typeof d.message === 'string' ? d.message : d.command}</blockquote>
       </li>`;
     })}</ul>
   </section>`;

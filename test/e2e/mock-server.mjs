@@ -324,8 +324,8 @@ const FIXTURES = {
           { id: 'toolu_mockcto2', sid: asking.sid, at: iso(3 * MIN), state: 'waiting', questions: [q('Spring half marathon')], answers: null },
         ],
         deliveries: [
-          { id: 'toolu_mockcto3', sid: done.sid, at: iso(140 * MIN), verb: 'send', to: site.sid.slice(0, 8), command: `clawdling send ${site.sid.slice(0, 8)} "${flagged.replace(/"/g, '\\"')}"`, state: 'sent', note: null },
-          { id: 'toolu_mockcto4', sid: done.sid, at: iso(130 * MIN), verb: 'spawn', to: 'marathon', command: `clawdling spawn marathon "${stalled}"`, state: 'declined', note: null },
+          { id: 'toolu_mockcto3', sid: done.sid, at: iso(140 * MIN), verb: 'send', to: site.sid.slice(0, 8), command: `clawdling send ${site.sid.slice(0, 8)} "${flagged.replace(/"/g, '\\"')}"`, plain: true, message: flagged, state: 'sent', note: null },
+          { id: 'toolu_mockcto4', sid: done.sid, at: iso(130 * MIN), verb: 'spawn', to: 'marathon', command: `clawdling spawn marathon "${stalled}"`, plain: true, message: stalled, state: 'declined', note: null },
         ],
       },
     };
@@ -572,7 +572,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       reviews: r ? [{ week: r.week, bytes: Buffer.byteLength(r.text), updated_at: r.updated_at }] : [],
       latest: r ? { week: r.week, headline, decisions_waiting: waiting } : null,
       running: a ? ctoRunning()?.sid || null : null,
-      permissions: a ? { allow: ['Bash(clawdling report *)', 'Bash(clawdling ls)', `Write(/${HOME}/cto/reviews/**)`], ask: ['Bash(clawdling send *)', 'Bash(clawdling spawn *)'], deny: ['WebFetch', 'WebSearch'], file_rules: [] } : null,
+      permissions: a ? { allow: ['Bash(clawdling report --all --json --window 7d)', 'Bash(clawdling report --all --json)', 'Bash(clawdling ls --json)', 'Bash(clawdling ls)', `Write(/${HOME}/cto/reviews/*.md)`, `Edit(/${HOME}/cto/reviews/*.md)`], ask: ['Bash(clawdling send *)', 'Bash(clawdling spawn *)'], deny: ['WebFetch', 'WebSearch'], file_rules: [] } : null,
       schedule: { enabled: c.enabled, day: c.day, hour: c.hour, weekly_cap_usd: c.weekly_cap_usd, last_run_week: null, last_run_at: null, last_skip: c.last_skip, next_at: next, spent_this_week: { usd: 0.42, complete: true } },
       thresholds: c.thresholds,
       headline_in_digest: c.headline_in_digest,
@@ -672,7 +672,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
 
   function setStatus(s, status, extra = {}) {
     Object.assign(s, extra, { status });
-    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; s.pending_cmd = null; }
+    if (status !== 'needs_you') { s.notification = extra.notification || null; s.waiting_on = null; s.choices = null; s.asking = null; s.pending_cmd = null; s.pending_cmd_plain = null; }
     if (status === 'ended') { s.ended_at = new Date().toISOString(); }
     else s.ended_at = null;
     s.last_activity_at = new Date().toISOString();
@@ -1638,7 +1638,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
       const body = await readBody(req);
       const s1 = st.sessions.get(body.sid);
       if (!s1) { send(res, 404, { error: 'no such session' }); return; }
-      setStatus(s1, 'needs_you', { waiting_on: 'permission_prompt', notification: 'Claude needs your permission to use Bash', choices: permissionChoices('clawdling send'), pending_cmd: body.command });
+      setStatus(s1, 'needs_you', { waiting_on: 'permission_prompt', notification: 'Claude needs your permission to use Bash', choices: [{ option: 1, label: '1. Yes' }, { option: 2, label: '2. No, and tell Claude what to do differently (esc)' }], pending_cmd: body.command, pending_cmd_plain: body.plain !== false });
       send(res, 204);
       return;
     }

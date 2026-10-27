@@ -569,10 +569,13 @@ cross-agent prompt Claude Code then offers only Yes and No (seen on 2.1.308), ne
 again". The hook prints its answer first, even when the Clawdling server is not running. If the hook
 cannot run at all, the exact allow rules, the ask rules and the ask-first mode still apply.
 
-**Nothing can be typed into it mid-step.** While one of the seat's tool calls is in flight (from
-its PreToolUse to its PostToolUse or the end of the turn), the server refuses to type into its
-session (`409`), whoever asks: another agent's `clawdling send`, Donna, or the API. A permission
-prompt can be on screen a moment before Clawdling hears about it, and a typed Enter would answer it.
+**It takes instructions from you only.** Starting a CTO session, typing into one and answering one
+of its prompts work from the cockpit (its cookie) or a paired device, never with the raw token
+(`403`). The raw token is how the `clawdling` CLI talks to the server, and every other agent and
+Donna may run `clawdling send` and `spawn` without a prompt: so no agent and not Donna can start the
+CTO, put words in front of it, or press Yes on its prompt. Every other agent's settings (and
+Donna's) also deny writing anywhere in `<org>/cto/`, so none can plant settings, skills or a review
+in the seat's folder.
 
 ### How it starts
 
@@ -582,7 +585,12 @@ prompt can be on screen a moment before Clawdling hears about it, and a typed En
   `.clawdling/` is denied to agents' file tools, so the seat cannot edit what it starts with. The
   folder's `.claude/settings.json` holds the same lists for you to read; at every server start and
   every seat start it is rewritten from this version's template if it differs (an edited copy is
-  kept as `settings.json.old`), and the seat is denied writing anywhere in its `.claude/`.
+  kept as `settings.json.old`, never written through a link), and the seat is denied writing
+  anywhere in its `.claude/`.
+- **Its folder holds only what Clawdling wrote.** A start is refused (`409`, saying what it found)
+  when the seat's folder, its `reviews/` or its `.claude/` is a link, or when `.claude/` holds
+  anything but `settings.json` (and its `.old`): no skills, commands, subagents or local settings
+  can load into it. Its CLAUDE.md does not import its memory files.
 - **`--setting-sources project`**: neither your user-level Claude Code settings nor the seat
   folder's `settings.local.json` load into it (their allow rules, hooks, environment, default model;
   a saved "don't ask again" has no effect). Managed (policy) settings still apply, as Claude Code
@@ -605,9 +613,12 @@ clawdling's `send` or `spawn` (the same test as the seat's check). No other comm
 tool input leaves the hook. The server keeps that command until any other tool call, the matching
 PostToolUse, the end of the turn or a new prompt, and shows it only while the session waits on a
 permission prompt (Claude Code runs a command on its own: its hook, then its prompt, then the call,
-so the prompt on screen belongs to the newest tool call). When the command is more than one plain
-`clawdling send|spawn <target> "<message>"`, or was cut at 4,000 characters, the cockpit says so
-and asks you to read it in the terminal before you answer. Apart from the seat's own check (above),
+so the prompt on screen belongs to the newest tool call). Only exactly one
+`clawdling send|spawn [options] <target> "<message>"` counts as a plain message: a session or agent
+id, only the CLI's own options with plain values, the message in quotes with nothing a shell would
+expand. For anything else (more than one command, a `$` or backtick in the message, a cut at 4,000
+characters) the cockpit shows the command, says to read it in the terminal, and offers no one-tap
+Yes: you answer it in the terminal. Apart from the seat's own check (above),
 the hooks decide nothing: the prompt, and the answer to it, are Claude Code's own.
 
 ### Prompt injection through the report
@@ -633,8 +644,11 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
 Whether a message was sent, declined, failed or is waiting, and what you answered on a decision
 card, are read from the seat's own Claude Code transcripts (`scanTranscript`), not from what the
 model wrote: "declined" only for Claude Code's own rejection text at the start of an error result,
-and a message in any spelling counts. Final states are also kept per week in
-`.clawdling/cto/activity/<week>.json`, so the record outlives the sessions and their transcripts.
+and a send or spawn in any spelling counts. A message that is not one plain message is listed as its
+whole command, never as an extracted text the agent may not have received. Final states are also
+kept per week in `.clawdling/cto/activity/<week>.json`, written when a CTO turn ends (and whenever
+the page is read), so the record outlives the sessions and their transcripts. Review sessions are
+marked by the server when it starts them, not by their title.
 The CTO also notes a declined message in the review (`Declined: ...`) when it can (a "No" in
 Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
 
@@ -646,8 +660,8 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   this week's time, the first run is next week.
 - **A weekly cap** (default $2.00, list-price equivalent): before a run, the CTO's spend this ISO
   week from its receipts plus the high end of the estimate must fit under it, or the week is skipped
-  once, with a notice on the CTO page and in Settings. If the spend cannot be counted, the week is
-  skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
+  once, with a notice on the CTO page and in Settings. If the spend cannot be fully counted, the week
+  is skipped too. The cap governs the schedule only; a review or chat you start yourself is yours.
 - It starts the same seat with the same settings; it can only start a review, never anything else.
 
 ### The Monday report line
@@ -655,8 +669,9 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
 Off by default and separate from the Monday report's own switch; Settings shows the exact line
 first. When on, the Monday report adds one line, `CTO, week <N>: <headline>. N decisions waiting in
 Clawdling.`, from this week's or last week's review only: one line, 160 characters, any `scheme:`
-link replaced by `[link removed]`, a dot inside a domain-like word turned into a one-dot leader so
-no chat app makes it tappable, invisible characters and `<` `>` dropped.
+link replaced by `[link removed]`, every dot-like character inside a word (`.`, and the full-width
+and ideographic ones) turned into a one-dot leader so no chat app makes a domain or address
+tappable, invisible characters and `<` `>` dropped.
 Nothing else from a review leaves the computer, and it goes through the Monday report's sender and
 rules.
 
@@ -664,11 +679,12 @@ rules.
 
 A phone or browser paired through Use from anywhere can read the CTO page and its reviews
 (`GET /api/cto`, `/api/cto/reviews/:week`, `/api/cto/estimate`, `/api/report/all`), and, like any
-session, open the CTO's chat, answer its decision cards and say yes or no to its messages. Adding
+session, open the CTO's chat, answer its decision cards and say yes or no to its messages (it is
+your device). Adding
 the seat, the "Run this week's review" button and every CTO setting (the schedule, the cap, the
 thresholds, the Monday line) work only from the computer Clawdling runs on (`403` through a remote
 address; on a LAN address with `--host` the token alone is not enough). Starting a chat with the CTO
-is open to a paired device like any agent's session.
+is open to a paired device like any agent's session, and closed to the CLI's raw token (see above).
 
 ## Agents
 

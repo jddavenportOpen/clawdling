@@ -779,8 +779,11 @@ change time, else the oldest one after it).
   hook runs with an extra argument, `cto`, and answers "allow" for one plain `clawdling report` /
   `clawdling ls` with only the listed options, and "ask" for any other shell command, any `send` or
   `spawn` in any spelling, any write but `reviews/<YYYY-Www>.md`, and any call it cannot read
-  (`server/seat-policy.js`; exact grammar in SECURITY.md). While one of its tool calls is in flight,
-  typing into its session is refused (`409`).
+  (`server/seat-policy.js`; exact grammar in SECURITY.md). Starting, typing into or answering a CTO
+  session with the raw token (the CLI every agent and Donna use) is refused (`403`); the cockpit and
+  paired devices can. Other agents' settings deny writes in `<org>/cto/`. A start is refused
+  (`409`) when its folder, `reviews/` or `.claude/` is a link or `.claude/` holds anything but its
+  settings. Review sessions carry `review_week`, set only by the server's own review run.
 - **Where it cannot be protected.** In an org whose path has characters Claude Code's rules cannot
   express, `POST /api/cto` answers 400 and a start answers 409: no seat without its file rules.
 - **CLAUDE.md rules** (editable in the Context tab; the CTO cannot change it): your only source is

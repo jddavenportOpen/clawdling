@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { which } from '../paths.js';
 import { commandFor, prependPath, spawnOptions } from '../platform.js';
 import { clampText, isUuid, oneLine, readTail } from '../util.js';
-import { runtimeDeny } from '../hooks.js';
+import { ctoDeny, runtimeDeny } from '../hooks.js';
 
 export const DONNA_TIMEOUT_MS = 180000;
 
@@ -47,7 +47,7 @@ export function buildDonnaArgs({ sessionId, resume, home, ctxFile, model }) {
   a.push('--setting-sources', 'project,local');
   a.push('--strict-mcp-config');
   // Her Read allow covers the org folder; Clawdling's runtime folder (the owner token) is not hers.
-  const deny = runtimeDeny(home);
+  const deny = [...runtimeDeny(home), ...ctoDeny(home)];
   if (deny.length) a.push('--disallowedTools', ...deny); // variadic: ends at the next option
   a.push('--allowedTools', ...donnaAllowedTools(home)); // variadic: must stay last
   return a;

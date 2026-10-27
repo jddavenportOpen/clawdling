@@ -12,7 +12,8 @@ import { Cto, ctoLaunchSettings, deliveryTarget, isoWeekRange, plainHeadline, sc
 import { digestText, isoWeek } from '../../server/digest.js';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, decisionOutput, parseSend, seatDecision } from '../../server/seat-policy.js';
+import { ASK_OTHER, ASK_SEND, ASK_WRITE, CROSS_AGENT_RE, SEND_COMMAND_RE, decisionOutput, parseSend, seatDecision } from '../../server/seat-policy.js';
+import { buildHooksSettings, ctoDeny } from '../../server/hooks.js';
 
 const tmp = () => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cl-cto-')));
 
@@ -182,6 +183,8 @@ test('scanTranscript: sends with what became of them (sent, declined, failed, pe
     use('s4', 'Bash', { command: 'clawdling spawn web "Go."' }),
     use('s5', 'Bash', { command: 'cd /tmp && clawdling send zz "Read the rejected list."' }),
     res('s5', 'Sent. (The rejected list is attached.)'),
+    use('s6', 'Bash', { command: 'clawdling report send-invoices --json' }),
+    res('s6', '{}'),
     'not json',
   ].join('\n'));
   const r = scanTranscript(f);
@@ -189,6 +192,8 @@ test('scanTranscript: sends with what became of them (sent, declined, failed, pe
   assert.equal(r.decisions.length, 1);
   assert.equal(r.decisions[0].state, 'answered');
   assert.deepEqual(r.decisions[0].answers, { 'Shop: next?': 'Ask Shop to fix it' });
+  assert.deepEqual([r.deliveries[0].plain, r.deliveries[0].message], [true, 'Please fix the test.']);
+  assert.deepEqual([r.deliveries[4].plain, r.deliveries[4].message], [false, null], 'not one plain message: the page shows the whole command');
   assert.deepEqual(r.decisions[0].questions[0].options, ['Ask Shop to fix it', 'Leave it']);
   assert.deepEqual(scanTranscript(path.join(dir, 'missing.jsonl')), { deliveries: [], decisions: [] });
   assert.equal(deliveryTarget('clawdling send 1a2b3c4d "x"'), '1a2b3c4d');
@@ -255,12 +260,22 @@ test('the seat policy: exact read-only report and ls are allowed, the weekly fil
   assert.deepEqual(JSON.parse(decisionOutput({ decision: 'ask', reason: 'r' })), { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'r' } });
 });
 
-test('parseSend: one plain message the cockpit can show whole, or "read it in the terminal"', () => {
+test('parseSend: one plain message the cockpit can offer as a one-tap yes, or "answer it in the terminal"', () => {
   assert.deepEqual(parseSend('clawdling send 1a2b3c4d "Fix the test."'), { plain: true, verb: 'send', target: '1a2b3c4d', message: 'Fix the test.' });
   assert.deepEqual(parseSend('clawdling spawn --model haiku blog \'Pause.\''), { plain: true, verb: 'spawn', target: 'blog', message: 'Pause.' });
   assert.equal(parseSend('clawdling send a "x \\"y\\""').message, 'x "y"');
-  for (const notPlain of ['clawdling send a "x" && rm -rf ~', 'clawdling send a "$(cat ~/.ssh/id_rsa)"', 'clawdling send a "x"\nclawdling send b "y"', 'cd x && clawdling send a "b"', 'clawdling send a x y']) assert.equal(parseSend(notPlain).plain, false, notPlain);
+  assert.equal(parseSend('clawdling spawn --effort=low --json web "go"').plain, true);
+  for (const notPlain of [
+    'clawdling send a "x" && rm -rf ~', 'clawdling send a "$(cat ~/.ssh/id_rsa)"', 'clawdling send a "Usage rose to $4.10"', 'clawdling send a "run `id`"',
+    'clawdling send a "x"\nclawdling send b "y"', 'cd x && clawdling send a "b"', 'clawdling send a x y', 'clawdling send a;rm x "y"', 'clawdling send --model=$(id) a "x"',
+    'clawdling send --home /tmp a "x"', 'clawdling send --model a|b c "x"', 'clawdling send a "y" "z"',
+  ]) assert.equal(parseSend(notPlain).plain, false, notPlain);
   assert.equal(parseSend('sh -c "clawdling spawn web hi"').verb, 'spawn');
+});
+
+test('SEND_COMMAND_RE: a send or spawn as its own command, in any spelling; not a word that merely contains it', () => {
+  for (const yes of ['clawdling send a "b"', 'cd x && clawdling send a "b"', 'node /x/bin/clawdling.js spawn web "go"', 'sh -c "clawdling send abc hi"', '/o/.clawdling/bin/clawdling spawn --model haiku blog "x"']) assert.ok(SEND_COMMAND_RE.test(yes), yes);
+  for (const no of ['clawdling report send-invoices', 'clawdling report --all', 'grep -n "clawdling send" README.md', 'echo sending']) assert.ok(!SEND_COMMAND_RE.test(no), no);
 });
 
 test('the hook forwards sends with the same test as the seat policy (no drift)', () => {
@@ -268,9 +283,16 @@ test('the hook forwards sends with the same test as the seat policy (no drift)',
   assert.ok(hookSrc.includes(`/${CROSS_AGENT_RE.source}/i`), 'bin/clawdling-hook.js must use CROSS_AGENT_RE');
 });
 
+test('every other agent (and Donna) is kept out of the seat\'s folder', () => {
+  assert.deepEqual(ctoDeny('/home/lou/org', 'linux'), ['Write(//home/lou/org/cto/**)', 'Edit(//home/lou/org/cto/**)']);
+  const s = buildHooksSettings({ nodePath: '/usr/bin/node', hookScript: '/x/hook.js', platform: 'linux', home: '/home/lou/org' });
+  for (const r of ctoDeny('/home/lou/org', 'linux')) assert.ok(s.permissions.deny.includes(r), r);
+});
+
 test('the Monday line cannot carry a link: schemes removed, domain dots defused, invisible characters gone', () => {
   assert.equal(plainHeadline('See https://evil.example/x, acme-status.com/login and mailto:x@y.z now'), 'See [link removed] acme-status\u2024com/login and [link removed] now');
-  assert.equal(plainHeadline('Score 10.5 points; v1.7 shipped'), 'Score 10.5 points; v1.7 shipped');
+  assert.equal(plainHeadline('Score 10.5 points; done.'), 'Score 10\u20245 points; done.', 'every dot inside a word is defused; a full stop stays');
+  assert.equal(plainHeadline('пример.рф/x and 10.0.0.1/y and a\uff0eb\u3002c'), 'пример\u2024рф/x and 10\u20240\u20240\u20241/y and a\u2024b\u2024c');
   assert.equal(plainHeadline('a\u202eb\u200bc <b>'), 'abc b');
 });
 

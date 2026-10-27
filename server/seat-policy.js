@@ -95,15 +95,39 @@ export function decisionOutput(d) {
   return JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: d.decision, permissionDecisionReason: d.reason } });
 }
 
+// A send or spawn as a command of its own: `clawdling` (by any path or shim name) right before the
+// verb, after options only. Narrower than CROSS_AGENT_RE (which the seat's "ask" uses): the review
+// page's list and the cockpit's banner use it, so `clawdling report send-x` is not a message.
+export const SEND_COMMAND_RE = /(?:^|[\s;&|(`"'])(?:[^\s;&|"'`]*[\\/])?clawdling(?:\.cmd|\.ps1|\.js)?["']?\s+(?:--[a-z-]+(?:[ =][^\s"';&|]+)?\s+)*(?:send|spawn)(?=\s|$)/;
+
+// The CLI's own options for send and spawn, with the shape of their values.
+const SEND_OPTIONS = { '--model': /^[A-Za-z0-9._:\[\]-]{1,80}$/, '--effort': /^[a-z]{1,10}$/, '--account': /^[A-Za-z0-9._-]{1,60}$/, '--cols': /^\d{1,4}$/, '--rows': /^\d{1,4}$/ };
+const SEND_FLAGS = new Set(['--json', '--no-enter']);
+
 /**
  * A cross-agent command as the cockpit shows it: {plain, verb, target, message}. `plain` only for
- * exactly one `clawdling send|spawn <target> "<message>"` (one line, one quoted message, nothing
- * else), the only form the cockpit offers as one tap; anything else says "read it in the terminal".
+ * exactly one `clawdling send|spawn [options] <target> "<message>"`: the target a session id or
+ * agent id, only the CLI's own options with plain values, one message in double quotes (no `$`,
+ * backtick or bare quote inside, which a shell would expand) or single quotes, one line, nothing
+ * else. Only that form is offered as a one-tap yes; anything else is answered in the terminal.
  */
 export function parseSend(cmd) {
   const s = String(cmd || '');
-  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][^\s"']+)?\s+)*)([^\s"'-][^\s"']*)\s+("(?:[^"\\$`]|\\.)*"|'[^']*')\s*$/.exec(s);
-  if (m && !/[\r\n]/.test(s)) return { plain: true, verb: m[1], target: m[3], message: m[4].slice(1, -1).replace(/\\(.)/g, '$1') };
   const loose = /\b(send|spawn)\b/i.exec(s);
-  return { plain: false, verb: loose ? loose[1].toLowerCase() : 'send', target: null, message: s };
+  const notPlain = { plain: false, verb: loose ? loose[1].toLowerCase() : 'send', target: null, message: s };
+  if (/[\r\n]/.test(s) || s.length > 4000) return notPlain;
+  const m = /^\s*clawdling(?:\.cmd|\.ps1)?\s+(send|spawn)\s+((?:--[a-z-]+(?:[ =][A-Za-z0-9._:\[\]-]+)?\s+)*)([A-Za-z0-9][A-Za-z0-9-]{0,63})\s+("(?:[^"\\$`]|\\["\\])*"|'[^']*')\s*$/.exec(s);
+  if (!m) return notPlain;
+  // Every option must be the CLI's own, with a value of its shape.
+  const opts = m[2].trim() ? m[2].trim().split(/\s+/) : [];
+  for (let i = 0; i < opts.length; i++) {
+    const [flag, inline] = opts[i].split('=');
+    if (SEND_FLAGS.has(flag) && inline === undefined) continue;
+    if (!SEND_OPTIONS[flag]) return notPlain;
+    const v = inline !== undefined ? inline : opts[++i];
+    if (v === undefined || !SEND_OPTIONS[flag].test(v)) return notPlain;
+  }
+  const q = m[4];
+  const message = q[0] === '"' ? q.slice(1, -1).replace(/\\(["\\])/g, '$1') : q.slice(1, -1);
+  return { plain: true, verb: m[1], target: m[3], message };
 }
