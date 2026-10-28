@@ -568,7 +568,7 @@ US-91 to US-98, in the same order (brief US-86 = US-91 ... US-93 = US-98).
   hooks registered like Clawdling's. SessionStart, UserPromptSubmit and Stop arrived; a transcript
   with the expected records and a cost-state or usage was written.
   - Accept: the folder is removed, and `claude purge` removes the session.
-- **US-97 (P0, Sam; 1.8)** A nightly workflow installs the newest Claude Code on ubuntu, macOS and
+- **US-97 (P0, Sam; 1.8)** A scheduled workflow (twice a day) installs the newest Claude Code on ubuntu, macOS and
   Windows runners and runs `doctor --contract` plus the fixture suites. A new version that passes: a
   pull request bumping `maxChecked`. A failure: an issue "Claude Code <ver> breaks <check>" with the
   failing lines. The README badge reads the compat file.

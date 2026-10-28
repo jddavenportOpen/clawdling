@@ -1,6 +1,6 @@
 name: claude-nightly
 
-# The update guard (SPEC-1.8): every day, the newest Claude Code from npm against what Clawdling
+# The update guard (SPEC-1.8): twice a day, the newest Claude Code from npm against what Clawdling
 # relies on (server/claude-compat.json), on Linux, macOS and Windows. `clawdling doctor --contract`
 # makes no model call, and claude never runs with a login here: no secrets but the job's own token.
 #   - A new version that passes everywhere: a pull request that bumps maxChecked (at most one a day;
@@ -13,7 +13,8 @@ name: claude-nightly
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    # Twice a day: a release is caught within about 12 hours (a run with nothing new skips at once).
+    - cron: '0 9,21 * * *'
   workflow_dispatch:
     inputs:
       version:

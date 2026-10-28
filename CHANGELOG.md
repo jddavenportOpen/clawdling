@@ -40,7 +40,7 @@ Code setup for the lethal trifecta, offline, by name only.**
   newest transcript, and the `-p` flags check-ups use. `--live` runs one haiku session (about $0.01,
   shown first) with Clawdling-style hooks, checks the events, the transcript and its cost, then
   `claude purge` deletes it.
-- **Nightly against every Claude Code release.** A scheduled workflow installs the newest Claude Code
+- **Checked against every Claude Code release.** A workflow, twice a day, installs the newest Claude Code
   on Linux, macOS and Windows runners and runs the contract: a pass opens a pull request that bumps
   `maxChecked`, a break opens "Claude Code <ver> breaks <check>". Dry-run on 2026-10-27: 2.1.312
   passed on all three; a planted break opened its issue. The README badge reads the compat file.

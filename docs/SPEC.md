@@ -1087,7 +1087,7 @@ is a failed line, never ok. The JSON summary has `checked_all`: no failure and n
 "Claude Code <ver> is newer than the last version Clawdling checked (<maxChecked>). It will probably
 work. Run Doctor to check." once per version, dismissible, never blocking a start.
 
-**Nightly** (`.github/workflows/claude-nightly.yml`, daily 09:00 UTC and on demand): the newest
+**Nightly** (`.github/workflows/claude-nightly.yml`, 09:00 and 21:00 UTC and on demand, so a release is caught within about 12 hours): the newest
 `@anthropic-ai/claude-code` from npm, installed on a throwaway runner (never on a user's computer),
 on ubuntu, macOS and Windows: `doctor --contract --json` plus the contract fixture suites
 (`test/unit/claude-contract.test.js`, `test/unit/contract.test.js`). The report job, the only one with

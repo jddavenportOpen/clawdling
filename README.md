@@ -195,8 +195,8 @@ flags check-ups use), and checks them:
 - `clawdling doctor --contract`: on your computer, with no model call, in about a second. Each line
   is ok or a plain sentence with what to do. `--live` adds one tiny real session (about $0.01 on your
   plan, shown first), then has Claude Code delete it.
-- Every night in CI, against the newest Claude Code on Linux, macOS and Windows: a pass bumps the
-  badge above; a break opens an issue the same morning. When yours is newer than the last version
+- Twice a day in CI, against the newest Claude Code on Linux, macOS and Windows: a pass opens a pull
+  request that moves the badge above; a break opens an issue within about 12 hours of the release. When yours is newer than the last version
   checked, the cockpit says so once.
 
 ## What you need
