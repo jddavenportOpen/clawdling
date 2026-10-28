@@ -930,6 +930,13 @@ A pure function, `auditSafety({scan, agents, org, accepted, tags})`, over a name
 no file, opens no socket and starts no process; `scanSafety` (in discover.js, under its rules) does
 the reading, and also starts no process (the `.gitignore` check reads the ignore files itself).
 
+**claude.ai connectors.** MCP servers connected on the owner's claude.ai account load in every session
+signed in with it, and Clawdling cannot list them without asking claude.ai. So every row whose
+sessions load them (the user level, domains, projects, Donna's cockpit sessions) carries one "unknown:
+review" item, "claude.ai MCP server", unless a settings file it loads sets
+`"disableClaudeAiConnectors": true`. The owner can say once what their connectors do (a tag named
+`claude.ai`); then they count like any tagged server.
+
 **Tools granted by skills, commands and subagents.** A skill's or command's `allowed-tools` lets Claude
 use those tools without asking during the turn it runs, and a subagent's `permissionMode` applies
 when the session asks first. The audit reads both from the frontmatter (never the body) of yours

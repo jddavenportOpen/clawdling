@@ -400,7 +400,7 @@ const SETUP_REPOS = {
 // cockpit's Safety section, shields and report-card line are computed from it by the real
 // server/safety.js. The user level loads GitHub and Linear (each one reads private repos and
 // untrusted issues, and can write): the domains deny both in their own folders, as the fix says.
-const SAFETY_DENY = { file: '', allow: [], ask: [], deny: ['mcp__github', 'mcp__linear'], default_mode: null, auto_mode_rules: false, skip_bypass_prompt: false, bypass_disabled: false, home_dirs: [], hooks: [], all_project_mcp: false, plugins: [] };
+const SAFETY_DENY = { file: '', allow: [], ask: [], deny: ['mcp__github', 'mcp__linear'], default_mode: null, auto_mode_rules: false, skip_bypass_prompt: false, bypass_disabled: false, home_dirs: [], hooks: [], all_project_mcp: false, connectors_off: false, plugins: [] };
 const safetyFacts = (file, extra = {}) => ({ ...SAFETY_DENY, deny: [], file, ...extra });
 const SAFETY_SCAN = (agents) => {
   const dirs = {};
@@ -424,7 +424,7 @@ const SAFETY_SCAN = (agents) => {
   return {
     user: {
       config_dir: '~/.claude',
-      settings: safetyFacts('~/.claude/settings.json', { default_mode: 'default', allow: ['WebSearch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
+      settings: safetyFacts('~/.claude/settings.json', { default_mode: 'default', connectors_off: true, allow: ['WebSearch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
       managed: [],
       mcp: [{ name: 'github', type: 'http', command: null, package: null, host: 'api.githubcopilot.com' }, { name: 'linear', type: 'http', command: null, package: null, host: 'mcp.linear.app' }],
       plugins: [{ name: 'frontend-design', marketplace: 'claude-plugins', enabled: false }, { name: 'superpowers', marketplace: 'obra', enabled: true }],

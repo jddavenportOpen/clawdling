@@ -48,12 +48,13 @@ function canSymlink() {
 const NO_LINKS = canSymlink() ? false : 'this system does not let a test create symlinks';
 
 /** A user home with an org folder in it, and the agents a test asks for. */
-function world({ user = null, claudeJson = null, agents = [] } = {}) {
+function world({ user = null, claudeJson = null, agents = [], connectors = false } = {}) {
   const home = tmp();
   const org = path.join(home, 'clawdling');
   const cfg = path.join(home, '.claude');
   fs.mkdirSync(cfg, { recursive: true });
-  if (user) write(path.join(cfg, 'settings.json'), user);
+  // claude.ai connectors are off unless a test turns them on (each one is its own "unknown: review").
+  if (user || !connectors) write(path.join(cfg, 'settings.json'), { ...(connectors ? {} : { disableClaudeAiConnectors: true }), ...(user || {}) });
   if (claudeJson) write(path.join(home, '.claude.json'), claudeJson);
   const list = [{ id: 'donna', name: 'Donna', kind: 'chief', dir: path.join(org, 'donna') }];
   for (const a of agents) {
@@ -713,4 +714,20 @@ test('allowed-tools that are there but cannot be read fail closed; skill hooks a
   assert.ok(r.unknown.some((u) => /allowed-tools` Clawdling could not read/.test(u.text)));
   assert.ok(r.risks.some((k) => k.id === 'repo_grants' && /registers its own hooks/.test(k.text)));
   assert.equal(r.verdict, 'amber');
+});
+
+// ------------------------------------------------------------------------------ review round 6
+
+test('claude.ai connectors: unknown on every row that loads them, until turned off or tagged', () => {
+  const w = world({ connectors: true, agents: [{ id: 'a', kind: 'domain' }] });
+  const a = w.run();
+  for (const id of [USER_ROW, 'donna', 'a']) assert.ok(row(a, id).unknown.some((u) => u.text.startsWith('claude.ai MCP server')), id);
+  assert.equal(row(a, 'a').verdict, 'amber', 'never green on what it cannot see');
+  const choices = new SafetyChoices(path.join(w.org, '.clawdling', 'safety.json'));
+  choices.tag('claude.ai', ['private', 'untrusted', 'sends']);
+  const t = row(w.run({ choices }), 'a');
+  assert.ok(texts(t, 'private').some((x) => x.startsWith('claude.ai MCP server (your claude.ai connectors, tagged by you)')));
+  assert.equal(t.verdict, 'red');
+  const off = world({ connectors: true, agents: [{ id: 'a', kind: 'domain', folder: { disableClaudeAiConnectors: true } }] });
+  assert.ok(!row(off.run(), 'a').unknown.some((u) => u.text.startsWith('claude.ai')), 'its own settings turn them off');
 });

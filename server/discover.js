@@ -1625,6 +1625,7 @@ export function settingsFacts(file, scope = LENIENT, { home } = {}) {
         home_dirs: homeDirs.filter(Boolean),
         hooks,
         all_project_mcp: s.enableAllProjectMcpServers === true,
+        connectors_off: s.disableClaudeAiConnectors === true,
         plugins: isObj(s.enabledPlugins) ? Object.entries(s.enabledPlugins).slice(0, LIST_MAX).map(([k, v]) => [tokenish(k) ? REDACTED : cleanName(k), v === true]).filter(([k]) => k) : [],
       };
     },

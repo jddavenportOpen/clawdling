@@ -349,6 +349,16 @@ function capsFor(view, { tags = {} } = {}) {
     for (const c of k.caps) add(c, what, src, `turn off the ${p.name} plugin (\`/plugin\` in Claude Code) if this agent does not need it`);
   }
 
+  // claude.ai connectors: MCP servers on your claude.ai account load in every session signed in with it.
+  // Clawdling cannot see which without asking claude.ai, so it says so, unless a settings file turns them
+  // off; you can say what yours do (a tag named "claude.ai").
+  if (view.connectors && !view.layers.some((l) => l.facts && l.facts.connectors_off)) {
+    const what = "claude.ai MCP server (your claude.ai account's connectors, like Gmail, Calendar or Drive: Clawdling cannot see which)";
+    const ctag = Object.hasOwn(tags, 'claude.ai') && Array.isArray(tags['claude.ai']) ? tags['claude.ai'].filter((c) => CAPS.includes(c)) : null;
+    if (ctag) for (const c of ctag) add(c, 'claude.ai MCP server (your claude.ai connectors, tagged by you)', 'your claude.ai account', `turn them off for this agent: set \`"disableClaudeAiConnectors": true\` in ${view.denyFile}`);
+    else unknown.push({ text: what, source: 'your claude.ai account', why: 'unknown: check `/mcp` in Claude Code, or set "disableClaudeAiConnectors": true' });
+  }
+
   // What Clawdling itself gives this agent (Donna's channel, the CTO's report).
   for (const o of view.own || []) add(o.cap, o.text, o.source, o.fix || null);
   return { chips, unknown };
@@ -538,7 +548,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
   const userGrants = u.grants || [];
   const userView = {
-    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -609,6 +619,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         layers: [...layers, ...grantLayers(userGrants, true), ...grantLayers(extraGrants, false), ...grantLayers(d.grants || [], false)],
         subagentModes: subagentModes([...userGrants, ...extraGrants, ...(d.grants || [])]),
         grantUnknowns: [...userGrants, ...extraGrants, ...(d.grants || [])],
+        connectors: true,
         repoGrants: [...(isRepo && d.in_repo ? d.grants || [] : []), ...extraRepoGrants],
         mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
         orgFolder,

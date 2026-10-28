@@ -176,7 +176,8 @@ allowed", "`Bash(curl:*)` allowed") and which file it comes from.
 - **Green: no trifecta found by name.** Not "secure": it reads names, not what code does.
 - **A shield on every agent** on the org map and on its report card, and the same verdict in the
   CTO's weekly report.
-- **Per agent, what loads.** Your settings and the folder's, MCP servers, plugins, and the tools a
+- **Per agent, what loads.** Your settings and the folder's, MCP servers (your claude.ai connectors
+  too: Clawdling cannot see which, so it asks you once), plugins, and the tools a
   skill, command or subagent grants itself (`allowed-tools`, `permissionMode`). Clawdling starts each agent in its own permission mode, so your
   own auto mode does not reach it, and the audit knows. Donna's text turns load none of your setup,
   and only your own paired chat reaches them, so her inbox is not untrusted input; the sessions you
