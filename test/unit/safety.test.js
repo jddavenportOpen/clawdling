@@ -782,3 +782,29 @@ test('plugins synced from claude.ai and skills-folder plugins are listed; the cl
   fs.mkdirSync(path.join(off.cfg, 'plugins', 'synced', 'slack'), { recursive: true });
   assert.ok(!texts(row(off.run(), 'a'), 'sends').some((t) => t.startsWith('slack plugin')), 'turned off by name');
 });
+
+// ------------------------------------------------------------------------------ review round 9
+
+test('a subagent\'s inline MCP servers count, by name, command and package only; a repo\'s is repo code', () => {
+  const w = world({ agents: [{ id: 'a', kind: 'domain' }, { id: 'p', kind: 'project', repo: { '.claude/agents/x.md': '---\nname: x\nmcpServers:\n  gmail:\n    command: npx\n    args: ["-y", "@acme/gmail-mcp"]\n    env:\n      TOKEN: ghp_PLANTEDsubagent0123456789abcdefghij\n---\nbody\n' } }] });
+  write(path.join(w.cfg, 'agents', 'browser-tester.md'), '---\nname: browser-tester\ndescription: tests\nmcpServers:\n  - playwright:\n      type: stdio\n      command: npx\n      args: ["-y", "@playwright/mcp@latest"]\n  - github\n---\nbody\n');
+  write(path.join(w.cfg, 'agents', 'odd.md'), '---\nname: odd\nmcpServers: {{{\n---\nbody\n');
+  const a = w.run();
+  const r = row(a, 'a');
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('playwright MCP server (browser)')));
+  assert.ok(r.chips.sends.find((x) => x.text.startsWith('playwright')).source.includes('subagent "browser-tester", mcpServers'));
+  assert.ok(!texts(r, 'private').some((t) => t.startsWith('github')), 'a bare name refers to a server you have');
+  assert.ok(r.unknown.some((u) => /"odd" defines MCP servers Clawdling could not read/.test(u.text)));
+  const p = row(a, 'p');
+  assert.ok(texts(p, 'private').some((t) => t.startsWith('gmail MCP server (mail)')));
+  assert.ok(p.risks.some((k) => k.id === 'repo_mcp' && /subagent "x" starts the gmail MCP server/.test(k.text)));
+  assert.ok(!JSON.stringify(a).includes('PLANTEDsubagent'));
+});
+
+test('plugins your organization turns on in managed settings count everywhere; managed false blocks yours', () => {
+  const w = world({ user: { enabledPlugins: { 'gmail-tools@mine': true } }, agents: [{ id: 'a', kind: 'domain' }] });
+  const f = write(path.join(w.home, 'managed', 'managed-settings.json'), { enabledPlugins: { 'slack@acme-tools': true, 'gmail-tools@mine': false } });
+  const r = row(w.run({ managed: [f] }), 'a');
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('slack plugin (chat)')));
+  assert.ok(!texts(r, 'private').some((t) => t.startsWith('gmail-tools')), 'blocked by managed settings');
+});

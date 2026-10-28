@@ -248,6 +248,7 @@ function capsFor(view, { tags = {} } = {}) {
   const allowed = allRules('allow').filter((x) => x.parsed && !deny.some((d) => denies(d, x.parsed)));
   for (const g of view.grantUnknowns || []) {
     if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
+    if (g.mcp_unreadable) unknown.push({ text: `the subagent "${g.name}" defines MCP servers Clawdling could not read`, source: g.file, why: 'unknown: read its mcpServers' });
     if (g.mode === 'other') unknown.push({ text: `the subagent "${g.name}" sets a \`permissionMode\` Clawdling does not know`, source: g.file, why: 'unknown: check the mode name' });
   }
   for (const f of view.profiles || []) unknown.push({ text: 'a device-management policy for Claude Code', source: f, why: 'unknown: your organization can add settings and MCP servers there that Clawdling cannot read' });
@@ -328,6 +329,8 @@ function capsFor(view, { tags = {} } = {}) {
       ? `${view.isUserRow ? 'stop every session using it' : 'stop this agent using it'}: add "mcp__claude-in-chrome" to \`permissions.deny\` in ${view.denyFile}, or turn "Enabled by default" off in Claude in Chrome`
       : view.isUserRow
       ? `stop every session using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}, or remove it with \`claude mcp remove ${s.name}\``
+      : s.viaSubagent
+        ? `remove the ${s.name} server from the "${s.viaSubagent}" subagent (${s.source.replace(/ \(subagent.*$/, '')}), or add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}`
       : s.scope === 'user'
         ? `stop this agent using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}`
         : `remove the ${s.name} server from ${s.source}`;
@@ -412,7 +415,7 @@ function risksFor(view) {
     if (g.unreadable) add('repo_grants', `This repo's ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read: read it.`, g.file);
   }
   for (const s of view.mcp) {
-    if (s.scope === 'project') add('repo_mcp', `This repo defines the ${s.name} MCP server in .mcp.json: code the repo controls, which runs once you approve it.`, s.source);
+    if (s.scope === 'project') add('repo_mcp', s.viaSubagent ? `This repo's subagent "${s.viaSubagent}" starts the ${s.name} MCP server (\`mcpServers\`): code the repo controls.` : `This repo defines the ${s.name} MCP server in .mcp.json: code the repo controls, which runs once you approve it.`, s.source);
   }
   if (view.localNotIgnored) add('local_not_ignored', 'This repo has a .claude/settings.local.json that no .gitignore rule covers: your personal allow rules (and anything pasted into them) can be committed and published.', view.localNotIgnored);
   // Plugins load in every agent that loads your settings: listed once, on the user-level row.
@@ -505,6 +508,8 @@ function grantLayers(grants, shared) {
   return grants.filter((g) => g.allowed && g.allowed.length).map((g) => ({ kind: 'grant', shared, path: g.file, file: `${g.file} (${g.kind} "${g.name}", allowed-tools)`, facts: { allow: g.allowed } }));
 }
 const subagentModes = (grants) => grants.filter((g) => g.kind === 'subagent' && (g.mode === 'auto' || g.mode === 'bypassPermissions'));
+/** The inline MCP servers subagents define, as MCP entries sourced to their file. */
+const subagentMcp = (grants, scope) => grants.flatMap((g) => (g.mcp || []).map((m) => ({ ...m, scope, source: `${g.file} (subagent "${g.name}", mcpServers)`, viaSubagent: g.name })));
 
 // What Claude Code runs in when nothing picks a mode: auto mode on current versions (permissions.js).
 export const CLI_DEFAULT_MODE = 'auto';
@@ -564,7 +569,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
   const userGrants = u.grants || [];
   const userView = {
-    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], mcp: [...userMcp, ...subagentMcp(userGrants, 'user')], plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -638,7 +643,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         connectors: true,
         profiles: u.profiles || [],
         repoGrants: [...(isRepo && d.in_repo ? d.grants || [] : []), ...extraRepoGrants],
-        mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
+        mcp: [...userMcp, ...folderMcp, ...subagentMcp(userGrants, 'user'), ...subagentMcp(extraGrants.filter((g) => !extraRepoGrants.includes(g)), 'folder'), ...subagentMcp(extraRepoGrants, 'project'), ...subagentMcp(d.grants || [], isRepo && d.in_repo ? 'project' : 'folder')], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
         orgFolder,
         notes: ['It also loads everything at the user level (the first row).'],
         localNotIgnored: isRepo && d.local_not_ignored ? d.local ? d.local.file : `${d.path}/.claude/settings.local.json` : null,

@@ -1853,6 +1853,46 @@ function frontmatterList(fm, key) {
 }
 
 /**
+ * The inline MCP servers a subagent defines (`mcpServers:` as a mapping or a list of one-key
+ * mappings), as mcpFacts would keep them: name, type, command basename, first package, URL host; never
+ * env or headers. A bare name in the list refers to a server you already have and is skipped.
+ * `{servers, unreadable}`: unreadable when the block is there but no server could be read.
+ */
+function subagentServers(fm) {
+  const i = fm.findIndex((l) => /^mcpServers\s*:/.test(l));
+  if (i === -1) return { servers: [], unreadable: false };
+  const block = [];
+  for (let j = i + 1; j < fm.length && !/^[A-Za-z_][\w.-]*\s*:/.test(fm[j]); j++) block.push(fm[j]);
+  const inline = fm[i].replace(/^mcpServers\s*:/, '').trim();
+  const entries = [];
+  let cur = null;
+  let base = null;
+  for (const raw of block) {
+    if (!raw.trim() || raw.trim().startsWith('#')) continue;
+    const ind = raw.length - raw.trimStart().length;
+    const t = raw.trim().replace(/^-\s*/, '');
+    const key = /^["']?([A-Za-z0-9_.@-]{1,100})["']?\s*:(.*)$/.exec(t);
+    if (base === null) base = ind;
+    if (ind <= base && key && (raw.trim().startsWith('-') || ind === base)) {
+      cur = { name: key[1], lines: [key[2]] };
+      entries.push(cur);
+    } else if (cur) cur.lines.push(t);
+  }
+  const servers = [];
+  for (const e of entries.slice(0, LIST_MAX)) {
+    const body = e.lines.join('\n');
+    const cmd = /(?:^|[\s{,])command\s*:\s*["']?([^"',}\s]+)/.exec(body);
+    const url = /(?:^|[\s{,])url\s*:\s*["']?([^"',}\s]+)/.exec(body);
+    const type = /(?:^|[\s{,])type\s*:\s*["']?([a-z]+)/.exec(body);
+    const argsAt = body.search(/(?:^|[\s{,])args\s*:/);
+    const args = argsAt === -1 ? [] : body.slice(argsAt).replace(/^[\s{,]*args\s*:/, '').split(/[\s,\[\]\n]+/).map((x) => x.replace(/^["'-]+|["']+$/g, (m) => (m === '-' ? m : ''))).filter(Boolean);
+    const f = mcpFacts({ [e.name]: { command: cmd ? cmd[1] : undefined, args: args.filter((a) => !/^(env|headers|url|type|command)\s*:?$/.test(a)), url: url ? url[1] : undefined, ...(type ? { type: type[1] } : {}) } });
+    servers.push(...f);
+  }
+  return { servers, unreadable: !servers.length && (entries.length > 0 || (!!inline && inline !== '[]' && inline !== '{}')) };
+}
+
+/**
  * Skills (`skills/<x>/SKILL.md`), commands (`commands/**\/*.md`, depth 3) and subagents (`agents/*.md`)
  * under a `.claude`-style folder that grant tools: `[{kind, name, file, allowed[], mode}]`, only those
  * with `allowed-tools` or a subagent `permissionMode`. Each rule passes ruleText(); nothing else of the
@@ -1873,11 +1913,12 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
     const hooks = /^hooks\s*:/m.test(text); // hooks a skill registers while it runs (event names not read)
     // allowed-tools that are there but cannot be read: never assumed empty.
     const unreadable = hasKey && !allowed.length;
-    if (!allowed.length && !mode && !hooks && !unreadable) return;
+    const sub = kind === 'subagent' ? subagentServers(fm) : { servers: [], unreadable: false };
+    if (!allowed.length && !mode && !hooks && !unreadable && !sub.servers.length && !sub.unreadable) return;
     const nm = /^name\s*:\s*["']?([^"'\n]+)/m.exec(text);
     const name = cleanName(nm ? nm[1].trim() : fallbackName);
     const shown = tildify(file, home).split(/([\\/])/).map((seg) => (seg.length > 1 && tokenish(seg) ? REDACTED : seg)).join('');
-    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: shown, allowed, mode, hooks, unreadable });
+    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: shown, allowed, mode, hooks, unreadable, mcp: sub.servers, mcp_unreadable: sub.unreadable });
   };
   if (kinds.includes('skills')) {
     const sd = path.join(dir, 'skills');
@@ -1950,18 +1991,20 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
       : []
   );
   const settings = fileFacts(path.join(cfg, 'settings.json'), user);
+  const managedFacts = (Array.isArray(managed) ? managed : []).map((f) => fileFacts(f, LENIENT)).filter(Boolean);
   const out = {
     user: {
       config_dir: show(cfg),
       settings,
-      managed: (Array.isArray(managed) ? managed : []).map((f) => fileFacts(f, LENIENT)).filter(Boolean),
+      managed: managedFacts,
       // managed-mcp.json: a fixed set of servers for every session.
       managed_mcp: (Array.isArray(managedMcp) ? managedMcp : []).flatMap((f) => (withJson(f, (j) => mcpFacts(j?.mcpServers)) || []).map((s) => ({ ...s, file: show(f) }))),
       // A device-management profile for Claude Code: its contents are not read.
       profiles: (Array.isArray(profiles) ? profiles : []).filter((f) => isFile(f)).map(show),
       chrome: cj.chrome,
       mcp: cj.user,
-      plugins: listPlugins(cfg, settings ? settings.plugins : []),
+      // Managed enabledPlugins win over yours: true turns a plugin on, false blocks it, at every scope.
+      plugins: listPlugins(cfg, [...(settings ? settings.plugins : []), ...managedFacts.flatMap((m) => m.plugins || [])]),
       marketplaces,
       grants: toolGrants(cfg, user, ['skills', 'commands', 'agents'], home),
     },

@@ -937,7 +937,8 @@ review" item, "claude.ai MCP server", unless the settings it loads set both
 `"disableClaudeAiConnectors": true` and `"syncClaudeAiPlugins": false` (plugins on the account sync in
 after a session starts). Plugins already synced (`plugins/synced/<name>`, as `<name>@synced`) and a
 skills folder that is a plugin (`<name>@skills-dir`) are listed like any plugin, on unless a setting
-turns that name off. The owner can say once what their connectors do (a tag named
+turns that name off; `enabledPlugins` in managed settings wins over every other scope (true turns a
+plugin on, false blocks it). The owner can say once what their connectors do (a tag named
 `claude.ai`); then they count like any tagged server.
 
 **Your organization's servers, and Claude in Chrome.** MCP servers from managed settings
@@ -955,7 +956,9 @@ when the session asks first. The audit reads both from the frontmatter (never th
 `.claude/` (the org folder, a group project's repos):
 each `allowed-tools` rule is classified like an allow rule, sourced to its file; a subagent's `auto`
 or `bypassPermissions` adds that mode's chips on an agent that asks first; and a repo's own skill,
-command or subagent that grants tools, sets a mode or registers hooks is a setup risk
+command or subagent that grants tools, sets a mode or registers hooks is a setup risk; MCP servers a
+subagent defines inline (`mcpServers`, read like any MCP entry, never env or headers) count on every row
+that loads that subagent, and a repo's are `repo_mcp`
 (`repo_grants`). `allowed-tools` that are there but cannot be read are "unknown: review", never
 empty. Not read: folders above the session folder, nested `.claude/skills/` below it (they load
 when Claude first touches that subfolder), and skills a plugin brings.
