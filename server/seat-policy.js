@@ -15,6 +15,17 @@ import { hiddenAt } from './receipts.js';
 // Any way of running clawdling's send or spawn: the shim, the .cmd/.ps1 shims, the script by path,
 // inside another command. Shared by the cockpit's display and the review page's list.
 export const CROSS_AGENT_RE = /clawdling(?:\.cmd|\.ps1|\.js)?["']?\s[\s\S]*?\b(?:send|spawn)\b/i;
+// The verb before the program (`printf 'send …' | xargs clawdling`).
+const VERB_FIRST_RE = /\b(?:send|spawn)\b[\s\S]*?\bclawdling(?:\.cmd|\.ps1|\.js)?\b/i;
+/**
+ * Whether a shell command may deliver a message to another agent, in any spelling the shell would
+ * join back into one: as written, with quotes and backslashes removed (`se""nd`, `s\end`), or with
+ * the verb before the program. Wider than CROSS_AGENT_RE; it only ever names a prompt as a message.
+ */
+export function crossAgent(cmd) {
+  const s = String(cmd).slice(0, 4001);
+  return CROSS_AGENT_RE.test(s) || CROSS_AGENT_RE.test(s.replace(/["'\\`]/g, '')) || VERB_FIRST_RE.test(s.replace(/["'\\`]/g, ''));
+}
 const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 const FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 // What the seat may use with Claude Code's own rules deciding (reads, its question cards, its list).
@@ -117,7 +128,7 @@ function strings(value, key = '', out = [], depth = 0) {
 // padded with them can push its middle out of view (no seat command or description needs one).
 const BLANK_RE = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\u2800\u3164\uffa0]/u;
 // Wide (two-column) characters, roughly East Asian Wide and Fullwidth plus emoji.
-const WIDE_RE = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
+const WIDE_RE = /[\p{Emoji_Presentation}\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
 
 /** Rows a command takes in an 80-column terminal, wide characters counting two columns. */
 export function shownRows(text, cols = 80) {
@@ -162,10 +173,12 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     if (cmd.length > 4000) return { decision: 'deny', reason: DENY_LONG };
     // Padding that pushes part of a command (or a description that pushes the command) out of view:
     // a blank-line run, a long run of spaces, many lines; a description of more than one short line.
-    if (/\n[ \t]*\n[ \t]*\n|[ \t]{81}/.test(cmd) || cmd.split('\n').length > 40 || shownRows(cmd) > 60) return { decision: 'deny', reason: DENY_PADDED };
+    // Joiners and emoji selectors draw nothing, so they are read as absent here: a line of only them is blank.
+    const bare = cmd.replace(/[\u200c\u200d\ufe0e\ufe0f]/gu, '');
+    if (/\n[ \t]*\n[ \t]*\n|[ \t]{81}/.test(bare) || cmd.split('\n').length > 40 || shownRows(cmd) > 60) return { decision: 'deny', reason: DENY_PADDED };
     const desc = typeof input.description === 'string' ? input.description : '';
     if (desc.length > 200 || /[\n\t]/.test(desc)) return { decision: 'deny', reason: DENY_PADDED };
-    if (CROSS_AGENT_RE.test(cmd)) return { decision: 'ask', reason: ASK_SEND };
+    if (crossAgent(cmd)) return { decision: 'ask', reason: ASK_SEND };
     // A read runs without a prompt only in the foreground (a background task lives on, with its own words).
     if (plainRead(cmd) && !input.run_in_background) return { decision: 'allow', reason: ALLOW_READ };
     return { decision: 'ask', reason: ASK_OTHER };

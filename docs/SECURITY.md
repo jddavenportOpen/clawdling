@@ -526,7 +526,7 @@ in `/home/lou/org` (paths are absolute-path rules, `//` plus the path):
 |---|---|
 | **allow** | `Bash(clawdling report --all --json --window 7d)`, `Bash(clawdling report --all --json)`, `Bash(clawdling ls --json)`, `Bash(clawdling ls)` (exact commands, no wildcard), `Read(//home/lou/org/cto/**)`, `Write(//home/lou/org/cto/reviews/*.md)`, `Edit(//home/lou/org/cto/reviews/*.md)` |
 | **ask** | `Bash(clawdling send *)`, `Bash(clawdling spawn *)` |
-| **deny** | `WebFetch`, `WebSearch`, `Write(//home/lou/org/cto/CLAUDE.md)`, `Edit(//home/lou/org/cto/CLAUDE.md)`, `Write(//home/lou/org/cto/.claude/**)`, `Edit(//home/lou/org/cto/.claude/**)`, `Read(//home/lou/org/.clawdling/**)`, `Edit(//home/lou/org/.clawdling/**)` |
+| **deny** | `WebFetch`, `WebSearch`, `Write(//home/lou/org/cto/CLAUDE.md)`, `Edit(//home/lou/org/cto/CLAUDE.md)`, the same for `CLAUDE.local.md` and for any `CLAUDE.md` or `CLAUDE.local.md` deeper in its folder, `Write(//home/lou/org/cto/.claude/**)`, `Edit(//home/lou/org/cto/.claude/**)`, `Read(//home/lou/org/.clawdling/**)`, `Edit(//home/lou/org/.clawdling/**)` |
 
 On Windows each `Bash(...)` rule in allow and ask also comes as the same `PowerShell(...)` rule
 (the agent's shell may be PowerShell), and paths are matched in POSIX form (`C:\Users\lou\org` is
@@ -557,7 +557,8 @@ answers:
   and `ls [--all] [--json]` (no other option, no per-agent report, no pipes, lists, redirection,
   substitution, quotes or line breaks);
 - **ask** for any command that runs clawdling's `send` or `spawn` in any spelling (the shim,
-  `clawdling.cmd`, `clawdling.ps1`, the script by path, inside `sh -c` or after `&&`), with the
+  `clawdling.cmd`, `clawdling.ps1`, the script by path, inside `sh -c` or after `&&`, with quotes or
+  backslashes inside the words, or with the verb before the program as in `xargs`), with the
   reason "the CTO wants to message another agent";
 - **ask** for every other Bash or PowerShell command;
 - **ask** for any Write, Edit, MultiEdit or NotebookEdit other than `<org>/cto/reviews/<YYYY-Www>.md`
@@ -619,9 +620,10 @@ apart from the cockpit; anyone who holds the token itself, by a command you appr
   anywhere in its `.claude/`.
 - **Its folder holds only what Clawdling wrote.** A start is refused (`409`, saying what it found)
   when the seat's folder, its `reviews/` or its `.claude/` is a link, when `reviews/` holds anything
-  but plain files with one name each, or when `.claude/` holds anything but `settings.json` (and its
-  `.old`): no skills, commands, subagents or local settings
-  can load into it. Its CLAUDE.md does not import its memory files.
+  but plain week files (`<YYYY-Www>.md`) with one name each, when `.claude/` holds anything but
+  `settings.json` (and its `.old`), or when there is any instruction file besides its own CLAUDE.md
+  (a `CLAUDE.local.md`, or a `CLAUDE.md` further down): no skills, commands, subagents, local
+  settings or extra instructions can load into it. Its CLAUDE.md does not import its memory files.
 - **`--setting-sources project`**: neither your user-level Claude Code settings nor the seat
   folder's `settings.local.json` load into it (their allow rules, hooks, environment, default model;
   a saved "don't ask again" has no effect). Managed (policy) settings still apply, as Claude Code
@@ -661,7 +663,9 @@ in a shell call or a path always, in written text unless it is part of a CRLF li
 every string the call carries, the command's description included. And it refuses any shell
 command longer than 4,000 characters (the most the cockpit shows), or padded so that part of it
 could sit out of view (a run of blank lines, more than 80 spaces in a row, more than 40 lines or 60
-rows of an 80-column terminal, any blank character other than the ASCII space, tab and line break),
+rows of an 80-column terminal with wide characters and emoji counted as two columns, any blank
+character other than the ASCII space, tab and line break; joiners and emoji selectors, which draw
+nothing, are read as absent for these rules),
 any description longer than one line of 200 characters, and any call with too many parts to check
 whole: what you approve is always the whole command, and the cockpit's command box scrolls on its own. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
@@ -679,7 +683,9 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
 - The report carries no file contents and no prompts; every agent-written string is capped, made
   one line, stripped of control and invisible characters (bidi, zero-width, tags, variation
   selectors), and cannot look like a citation
-  (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The report's `note` and the CTO's CLAUDE.md
+  (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The last lines
+  and notices Claude Code reports are stored already stripped of invisible characters (Unicode
+  tags, bidi controls), so `clawdling ls`, which the seat may run unasked, never hands them on either. The report's `note` and the CTO's CLAUDE.md
   both say to treat that text as data, never as instructions.
 - The CTO has no web, no MCP servers, and can write only its own reviews without asking. Nothing it
   writes reaches another agent or Donna except a message you said yes to (see "It takes instructions
@@ -721,7 +727,7 @@ Claude Code 2.1.308 often stops its turn), but the page does not depend on it.
   day and hour you pick (Monday 08:00 by default), or at the next start
   that week; the week is counted before the run starts, so a failure never retries. Turned on after
   this week's time, the first run is next week.
-- **A weekly cap** (default $2.00, list-price equivalent): before a run, the CTO's spend this ISO
+- **A weekly cap** (default $2.00, list-price equivalent, from $0.01 to $100): before a run, the CTO's spend this ISO
   week from its receipts plus the high end of the estimate (the median of its past weekly reviews with
   a complete cost, never of its short chats; with none yet, from the prompt's size at the top tier's
   price when the seat has no model set) must fit under it, or the week is skipped

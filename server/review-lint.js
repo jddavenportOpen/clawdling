@@ -84,11 +84,18 @@ export function parseReview(text) {
  */
 export function lintReview(text, { receipts = {}, labels = {} } = {}) {
   const r = parseReview(text);
+  // Ids first, and always win; a name maps to its agent only when no id and no other agent has it.
   const byName = new Map();
+  for (const id of Object.keys(labels)) byName.set(id.toLowerCase(), id);
+  const ids = new Set(byName.keys());
+  const names = new Map();
   for (const [id, l] of Object.entries(labels)) {
-    byName.set(id.toLowerCase(), id);
-    if (l && l.name) byName.set(String(l.name).toLowerCase(), id);
+    if (!l || !l.name) continue;
+    const n = String(l.name).toLowerCase();
+    if (ids.has(n)) continue;
+    names.set(n, names.has(n) && names.get(n) !== id ? null : id);
   }
+  for (const [n, id] of names) byName.set(n, id);
   const uncited = [];
   const unknown = [];
   let findings = 0;

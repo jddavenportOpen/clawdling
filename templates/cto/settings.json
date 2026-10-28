@@ -25,6 +25,12 @@
       "ScheduleWakeup",
       "Write({{cto}}/CLAUDE.md)",
       "Edit({{cto}}/CLAUDE.md)",
+      "Write({{cto}}/CLAUDE.local.md)",
+      "Edit({{cto}}/CLAUDE.local.md)",
+      "Write({{cto}}/**/CLAUDE.md)",
+      "Edit({{cto}}/**/CLAUDE.md)",
+      "Write({{cto}}/**/CLAUDE.local.md)",
+      "Edit({{cto}}/**/CLAUDE.local.md)",
       "Write({{cto}}/.claude/**)",
       "Edit({{cto}}/.claude/**)"
     ]

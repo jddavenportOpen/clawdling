@@ -5,7 +5,12 @@
 // Status is driven by these events, never by scraping the screen.
 import { portablePath } from './platform.js';
 import { deriveTitle } from './titles.js';
+import { cleanInput } from './receipts.js';
 import { isUuid, nowIso, oneLine, shq } from './util.js';
+
+// Text Claude Code reports (a last line, a notification), stored for every reader (the CLI's ls, the
+// CTO): one line, with nothing a person cannot see (Unicode tags, bidi controls), as typed input is.
+const shown = (text, n) => oneLine(cleanInput(text), n);
 
 // StopFailure fires instead of Stop when an API error (not signed in, a usage limit, an overload)
 // ended the turn. It is registered only for a Claude Code known to have it (2.1.229+, checked
@@ -43,8 +48,8 @@ const FAILURE_TEXT = {
 
 /** What the cockpit says when a turn ended on an API error (StopFailure). */
 export function stopFailureNotice(error, details) {
-  const what = FAILURE_TEXT[error] || `the turn failed (${oneLine(error || 'unknown error', 60)})`;
-  const extra = typeof details === 'string' && details.trim() ? `: ${oneLine(details, 160)}` : '';
+  const what = FAILURE_TEXT[error] || `the turn failed (${shown(error || 'unknown error', 60)})`;
+  const extra = typeof details === 'string' && details.trim() ? `: ${shown(details, 160)}` : '';
   return `Claude Code stopped: ${what}${extra}. Send your message again to retry.`;
 }
 
@@ -211,7 +216,7 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
       rec.notification = null;
       rec.waiting_on = null;
       if (typeof payload.last_assistant_message === 'string' && payload.last_assistant_message.trim()) {
-        rec.last_message = oneLine(payload.last_assistant_message, 280);
+        rec.last_message = shown(payload.last_assistant_message, 280);
       }
       break;
     }
@@ -229,7 +234,7 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
         rec.notification = stopFailureNotice(error, payload.error_details);
       }
       if (typeof payload.last_assistant_message === 'string' && payload.last_assistant_message.trim()) {
-        rec.last_message = oneLine(payload.last_assistant_message, 280);
+        rec.last_message = shown(payload.last_assistant_message, 280);
       }
       break;
     }
@@ -249,7 +254,7 @@ export function applyHookEvent(rec, event, payload = {}, now = nowIso()) {
       // never replaces a question or an error that is already showing.
       if (type === 'idle_prompt' && (rec.status === 'ready' || rec.status === 'needs_you')) break;
       rec.status = 'needs_you';
-      rec.notification = oneLine(payload.message || payload.title || 'Claude Code needs your attention', 300);
+      rec.notification = shown(payload.message || payload.title || 'Claude Code needs your attention', 300);
       rec.waiting_on = type || 'notification';
       break;
     }
