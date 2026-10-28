@@ -56,5 +56,6 @@ test('buttons have a pressed state that does not move the layout (P2-16)', () =>
 test('README promises no limit it cannot keep (P2-21)', () => {
   const readme = read('README.md');
   assert.doesNotMatch(readme, /only limit/);
-  assert.match(readme, /Clawdling adds no limits of its own/);
+  assert.doesNotMatch(readme, /unlimited|no session caps/i);
+  assert.match(readme, /your Claude plan's usage limits\s+apply as usual/);
 });
