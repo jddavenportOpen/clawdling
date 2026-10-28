@@ -1924,13 +1924,29 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
   if (kinds.includes('skills')) {
     const sd = path.join(dir, 'skills');
     if (dirIn(sd, scope)) {
-      for (const e of listEntries(sd, LIST_MAX).entries) {
-        if (e.name.startsWith('.') || !direntIsDir(sd, e)) continue;
-        const one = path.join(sd, e.name);
-        if (locate(path.join(one, 'SKILL.md'), scope)) take('skill', path.join(one, 'SKILL.md'), e.name);
-        // A folder of skills, like skills/synced/ (skills synced from claude.ai): one level down.
-        else if (dirIn(one, scope)) for (const f of listEntries(one, LIST_MAX).entries) if (!f.name.startsWith('.') && direntIsDir(one, f)) take('skill', path.join(one, f.name, 'SKILL.md'), f.name);
-      }
+      // One read per skill folder, a shared budget, each real folder once; a cut is said, never silent.
+      let budget = WALK_MAX;
+      let cut = false;
+      const seen = new Set();
+      const skillsIn = (folder) => {
+        const rf = dirIn(folder, scope);
+        if (!rf || seen.has(samePathKey(rf))) return;
+        seen.add(samePathKey(rf));
+        const { entries, more } = listEntries(rf, Math.min(LIST_MAX, Math.max(0, budget)));
+        if (more) cut = true;
+        for (const e of entries) {
+          if (budget-- <= 0) {
+            cut = true;
+            return;
+          }
+          if (e.name.startsWith('.') || !direntIsDir(rf, e)) continue;
+          // skills/synced/ holds the skills synced from claude.ai, one level down.
+          if (e.name === 'synced' && folder === sd) skillsIn(path.join(rf, e.name));
+          else take('skill', path.join(rf, e.name, 'SKILL.md'), e.name);
+        }
+      };
+      skillsIn(sd);
+      if (cut) out.unshift({ kind: 'skill', name: 'skills', file: tildify(sd, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
     }
   }
   // Commands and subagents: `.md` files to depth 3 (Claude Code reads both folders recursively). Each
@@ -1959,7 +1975,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
       }
     };
     walk(top, 0);
-    if (cut) out.push({ kind, name: `${kind}s`, file: tildify(top, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
+    if (cut) out.unshift({ kind, name: `${kind}s`, file: tildify(top, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
   };
   if (kinds.includes('commands')) walkMd(path.join(dir, 'commands'), 'command');
   if (kinds.includes('agents')) walkMd(path.join(dir, 'agents'), 'subagent');

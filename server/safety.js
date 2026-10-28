@@ -264,6 +264,7 @@ function capsFor(view, { tags = {} } = {}) {
     // is a deny rule in its own folder, which wins over an allow from any layer.
     const shared = (layer.kind === 'user' || layer.kind === 'managed' || (layer.kind === 'grant' && layer.shared)) && !view.isUserRow;
     const removeFix = shared ? `stop this agent using \`${rule}\`: add it to \`permissions.deny\` in ${view.denyFile}`
+      : layer.kind === 'grant' && /[\\/]skills[\\/]synced[\\/]/.test(layer.path) ? `change the skill on claude.ai (the next sync rewrites ${layer.path}), or set \`"syncClaudeAiSkills": false\``
       : layer.kind === 'grant' ? `remove \`${rule}\` from \`allowed-tools\` in ${layer.path}`
       : `remove \`${rule}\` from \`allow\` in ${where}`;
     if (parsed.tool === 'WebFetch') {

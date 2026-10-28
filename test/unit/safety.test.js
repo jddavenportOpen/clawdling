@@ -843,3 +843,17 @@ test('skills synced from claude.ai (skills/synced/<x>/) are read; the claude.ai 
   assert.ok(r.unknown.some((u) => /claude\.ai account's skills/.test(u.text)));
   assert.notEqual(r.verdict, 'green');
 });
+
+test('the skills read is bounded: hundreds of linked skill folders cost one read each, and a cut is said', { skip: NO_LINKS }, () => {
+  const w = world({ agents: [{ id: 'p', kind: 'project', repo: { 'z/SKILL.md': '---\nname: z\nallowed-tools: WebFetch\n---\n' } }] });
+  const repo = path.join(w.home, 'code', 'p');
+  fs.mkdirSync(path.join(repo, '.claude', 'skills'), { recursive: true });
+  for (let i = 0; i < 600; i++) fs.symlinkSync(path.join(repo, 'z'), path.join(repo, '.claude', 'skills', `s${i}`));
+  const t0 = performance.now();
+  const r = row(w.run(), 'p');
+  assert.ok(performance.now() - t0 < 3000);
+  assert.ok(r.unknown.some((u) => /skills Clawdling did not read/.test(u.text)), 'more than it reads: said');
+  const s = world({ user: { syncClaudeAiSkills: true } });
+  write(path.join(s.cfg, 'skills', 'synced', 'research', 'SKILL.md'), '---\nname: research\nallowed-tools: WebFetch\n---\n');
+  assert.ok(texts(row(s.run(), USER_ROW), 'untrusted').some((x) => x.startsWith('`WebFetch`')));
+});
