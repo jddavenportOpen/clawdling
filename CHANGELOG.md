@@ -47,6 +47,23 @@ Code setup for the lethal trifecta, offline, by name only.**
 - **"Newer than the last version checked."** When your Claude Code is newer than `maxChecked`, the
   cockpit says so once per version, dismissibly, and never blocks a start.
 
+- **Tests.** 770 unit and integration tests on each backend (tmux: 762 pass, 8 skipped; built-in
+  terminal: 763 pass, 7 skipped), 193 e2e against the mock server (2 skipped) and 64 against the real
+  server, 0 failing. New: `test/unit/safety.test.js` (the table, every scope and risk, planted secrets
+  in every field, the audit with sockets, DNS and child_process stubbed to throw, a 200-agent org,
+  a hostile `.gitignore`, hundreds of linked skill folders), `test/unit/claude-contract.test.js` (help,
+  parser and doctor fixtures from 2.1.283, 2.1.304 and 2.1.308, doctored breaks, the live check),
+  `test/integration/safety.test.js`, `test/e2e/safety.spec.js`.
+- **Real run** (a throwaway home, a leased plan, the real Claude Code 2.1.308): a repo with a
+  SessionStart hook and `Bash(curl:*)`, `WebFetch` allowed and a mail MCP server with a fake secret
+  in its env: the project agent is red with all three chips and the SessionStart risk, the CTO's
+  report carries the same verdict, the fake secret is in no output, log or file, and the first audit
+  arrived 0.6 s after start. `doctor --contract --live`: every line ok, nothing left behind.
+- **Reviews.** The audit had the top tier: thirteen rounds of a fresh `claude -p --effort xhigh`
+  reviewer, each Medium fixed, until it passed; the update guard had a `high` reviewer (passed in
+  round 4). The second-model (GPT) review is still owed: both ChatGPT plans were out of quota. The
+  open Lows are issues #55 to #63. A third-party visual review passed US-91 to US-94 and US-98.
+
 ## 1.7.0 (TBD)
 
 **Clawdling 1.7: your CTO. Every Monday it reads your projects' receipts and asks you three questions.**
