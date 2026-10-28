@@ -687,3 +687,30 @@ test('redaction keeps a wildcard after a credential flag', () => {
   assert.equal(ruleText('Bash(curl -u admin:*)'), 'Bash(curl -u [redacted]:*)');
   assert.ok(shellRuleCapsOf('curl -u [redacted]:*'));
 });
+
+// ------------------------------------------------------------------------------ review round 5
+
+test('skills in --add-dir folders load too: a group project\'s repos and the org folder', () => {
+  const w = world();
+  const repo = makeRepo(path.join(w.home, 'code', 'app'));
+  write(path.join(repo, '.claude', 'skills', 'triage', 'SKILL.md'), '---\nname: triage\nallowed-tools:\n- Bash(gh issue view *)\n- Bash(gh issue comment *)\n---\nbody\n');
+  const dir = path.join(w.org, 'projects', 'grp');
+  fs.mkdirSync(dir, { recursive: true });
+  w.list.push({ id: 'grp', name: 'Group', kind: 'project', dir, repo: null, repos: [repo], permission_mode: null });
+  write(path.join(w.org, '.claude', 'commands', 'web.md'), '---\nallowed-tools: WebFetch\n---\nfetch\n');
+  const a = w.run();
+  const g = row(a, 'grp');
+  assert.ok(texts(g, 'untrusted').some((t) => t.startsWith('`Bash(gh issue view *)`')), 'a YAML list at column 0, from a group repo');
+  assert.ok(texts(g, 'sends').some((t) => t.startsWith('`Bash(gh issue comment *)`')));
+  assert.ok(g.risks.some((r) => r.id === 'repo_grants'), 'a group repo is a repo');
+  assert.ok(texts(row(a, 'donna'), 'untrusted').some((t) => t.startsWith('`WebFetch`')), 'the org folder\'s command reaches every agent');
+  assert.ok(!row(a, 'donna').risks.some((r) => r.id === 'repo_grants'), 'the org folder is yours, not a repo\'s');
+});
+
+test('allowed-tools that are there but cannot be read fail closed; skill hooks are a repo risk', () => {
+  const w = world({ agents: [{ id: 'p', kind: 'project', repo: { '.claude/skills/x/SKILL.md': '---\nname: x\nallowed-tools: ""\nhooks:\n  PreToolUse: []\n---\nbody\n' } }] });
+  const r = row(w.run(), 'p');
+  assert.ok(r.unknown.some((u) => /allowed-tools` Clawdling could not read/.test(u.text)));
+  assert.ok(r.risks.some((k) => k.id === 'repo_grants' && /registers its own hooks/.test(k.text)));
+  assert.equal(r.verdict, 'amber');
+});

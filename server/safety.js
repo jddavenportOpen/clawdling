@@ -246,6 +246,10 @@ function capsFor(view, { tags = {} } = {}) {
   const allRules = (kind) => view.layers.flatMap((l) => (l.facts ? (l.facts[kind] || []).map((r) => ({ rule: r, parsed: parseRule(r), layer: l })) : []));
   const deny = allRules('deny').map((x) => x.parsed).filter(Boolean);
   const allowed = allRules('allow').filter((x) => x.parsed && !deny.some((d) => denies(d, x.parsed)));
+  for (const g of view.grantUnknowns || []) {
+    if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
+    if (g.mode === 'other') unknown.push({ text: `the subagent "${g.name}" sets a \`permissionMode\` Clawdling does not know`, source: g.file, why: 'unknown: check the mode name' });
+  }
   for (const l of view.layers) if (l.facts && l.facts.default_mode === 'other') unknown.push({ text: '`defaultMode` set to a mode Clawdling does not know', source: l.file, why: 'unknown: check the mode name' });
   // A rule Clawdling cannot read once a secret in it is hidden (or cut short) is never assumed harmless.
   for (const x of allRules('allow')) if (!x.parsed) unknown.push({ text: `\`${x.rule}\` allowed`, source: x.layer.file, why: 'unknown: a rule Clawdling could not read after hiding a secret in it' });
@@ -387,6 +391,8 @@ function risksFor(view) {
   for (const g of view.repoGrants || []) {
     if (g.allowed.length) add('repo_grants', `This repo's ${g.kind} "${g.name}" lets Claude use ${g.allowed.slice(0, 3).map((r) => `\`${r}\``).join(', ')}${g.allowed.length > 3 ? ` and ${g.allowed.length - 3} more` : ''} without asking (\`allowed-tools\`), even before you trust the folder: read it.`, g.file);
     if (g.mode) add('repo_grants', `This repo's subagent "${g.name}" sets its own permission mode (\`permissionMode: ${g.mode}\`).`, g.file);
+    if (g.hooks) add('repo_grants', `This repo's ${g.kind} "${g.name}" registers its own hooks, which run commands while it is in use: read it.`, g.file);
+    if (g.unreadable) add('repo_grants', `This repo's ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read: read it.`, g.file);
   }
   for (const s of view.mcp) {
     if (s.scope === 'project') add('repo_mcp', `This repo defines the ${s.name} MCP server in .mcp.json: code the repo controls, which runs once you approve it.`, s.source);
@@ -532,7 +538,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
   const userGrants = u.grants || [];
   const userView = {
-    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -586,6 +592,10 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
       }
       const homeAddDirs = (a.addDirs || []).filter((x) => x && home && posix(x) === homePosix).map(() => '~');
       const orgFolder = !!org.home && (a.addDirs || []).some((x) => posix(x) === orgPosix);
+      // Skills, commands and subagents of every --add-dir folder load too; a group's repos are repos.
+      const extra = (a.addDirs || []).map((x) => [path.resolve(x), (scan.add_dirs || {})[path.resolve(x)]]).filter(([, v]) => v);
+      const extraGrants = extra.flatMap(([, v]) => v.grants || []);
+      const extraRepoGrants = extra.filter(([k, v]) => v.in_repo && posix(k) !== orgPosix).flatMap(([, v]) => v.grants || []);
       // Plugins this folder's own settings turn on (a repo can enable one for its sessions).
       const folderPlugins = folderLayers.flatMap((l) => (l.facts.plugins || []).map(([key, on]) => {
         const at = key.lastIndexOf('@');
@@ -596,9 +606,10 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         return { name, marketplace: mk, enabled: on, official: named && ownerOk, source: `${l.file} (plugins)` };
       })).filter((x) => !plugins.some((p) => p.name === x.name && p.marketplace === x.marketplace && p.enabled));
       view = {
-        layers: [...layers, ...grantLayers(userGrants, true), ...grantLayers(orgFolder ? scan.org_grants || [] : [], true), ...grantLayers(d.grants || [], false)],
-        subagentModes: subagentModes([...userGrants, ...(orgFolder ? scan.org_grants || [] : []), ...(d.grants || [])]),
-        repoGrants: isRepo && d.in_repo ? d.grants || [] : [],
+        layers: [...layers, ...grantLayers(userGrants, true), ...grantLayers(extraGrants, false), ...grantLayers(d.grants || [], false)],
+        subagentModes: subagentModes([...userGrants, ...extraGrants, ...(d.grants || [])]),
+        grantUnknowns: [...userGrants, ...extraGrants, ...(d.grants || [])],
+        repoGrants: [...(isRepo && d.in_repo ? d.grants || [] : []), ...extraRepoGrants],
         mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
         orgFolder,
         notes: ['It also loads everything at the user level (the first row).'],

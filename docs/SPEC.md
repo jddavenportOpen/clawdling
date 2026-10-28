@@ -933,11 +933,14 @@ the reading, and also starts no process (the `.gitignore` check reads the ignore
 **Tools granted by skills, commands and subagents.** A skill's or command's `allowed-tools` lets Claude
 use those tools without asking during the turn it runs, and a subagent's `permissionMode` applies
 when the session asks first. The audit reads both from the frontmatter (never the body) of yours
-(`~/.claude/skills|commands|agents`), the session folder's `.claude/` and the org folder's subagents:
+(`~/.claude/skills|commands|agents`), the session folder's `.claude/` and every `--add-dir` folder's
+`.claude/` (the org folder, a group project's repos):
 each `allowed-tools` rule is classified like an allow rule, sourced to its file; a subagent's `auto`
 or `bypassPermissions` adds that mode's chips on an agent that asks first; and a repo's own skill,
-command or subagent that grants tools or sets a mode is a setup risk (`repo_grants`). Not read:
-folders above the session folder, and skills a plugin brings.
+command or subagent that grants tools, sets a mode or registers hooks is a setup risk
+(`repo_grants`). `allowed-tools` that are there but cannot be read are "unknown: review", never
+empty. Not read: folders above the session folder, nested `.claude/skills/` below it (they load
+when Claude first touches that subfolder), and skills a plugin brings.
 
 **What each agent's sessions load** (Claude Code reads `.claude/settings.json` from the session's
 folder only, not from the folders above it; checked with `claude doctor` on 2.1.308):

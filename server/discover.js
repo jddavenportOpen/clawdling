@@ -1830,7 +1830,11 @@ function frontmatterList(fm, key) {
   if (i === -1) return [];
   const inline = fm[i].replace(new RegExp(`^${key}\\s*:`), '').trim().replace(/^\[|\]$/g, '');
   const items = inline ? splitRules(inline) : [];
-  for (let j = i + 1; j < fm.length && /^\s+-\s*/.test(fm[j]); j++) items.push(...splitRules(fm[j].replace(/^\s+-\s*/, '')));
+  // `- item` lines (indented or not), and continuation lines of a multi-line value, until the next key.
+  for (let j = i + 1; j < fm.length && !/^[A-Za-z_][\w.-]*\s*:/.test(fm[j]); j++) {
+    const t = fm[j].trim().replace(/^-\s*/, '').replace(/^\[|\]$/g, '');
+    if (t) items.push(...splitRules(t));
+  }
   return items.slice(0, RULE_MAX);
 }
 
@@ -1847,13 +1851,19 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
     if (!r) return;
     const fm = frontmatterLines(r.text);
     if (!fm.length) return;
+    const text = fm.join('\n');
+    const hasKey = /^allowed-tools\s*:/m.test(text);
     const allowed = frontmatterList(fm, 'allowed-tools').map(ruleText).filter(Boolean);
-    const m = kind === 'subagent' ? /^permissionMode\s*:\s*["']?([A-Za-z]+)/m.exec(fm.join('\n')) : null;
+    const m = kind === 'subagent' ? /^permissionMode\s*:\s*["']?([A-Za-z]+)/m.exec(text) : null;
     const mode = m ? (MODE_NAMES.has(m[1]) ? m[1] : 'other') : null;
-    if (!allowed.length && !mode) return;
-    const nm = /^name\s*:\s*["']?([^"'\n]+)/m.exec(fm.join('\n'));
+    const hooks = /^hooks\s*:/m.test(text); // hooks a skill registers while it runs (event names not read)
+    // allowed-tools that are there but cannot be read: never assumed empty.
+    const unreadable = hasKey && !allowed.length;
+    if (!allowed.length && !mode && !hooks && !unreadable) return;
+    const nm = /^name\s*:\s*["']?([^"'\n]+)/m.exec(text);
     const name = cleanName(nm ? nm[1].trim() : fallbackName);
-    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: tildify(file, home), allowed, mode });
+    const shown = tildify(file, home).split(/([\\/])/).map((seg) => (seg.length > 1 && tokenish(seg) ? REDACTED : seg)).join('');
+    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: shown, allowed, mode, hooks, unreadable });
   };
   if (kinds.includes('skills')) {
     const sd = path.join(dir, 'skills');
@@ -1887,7 +1897,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
  *   user: {settings, managed[], mcp[], plugins[], marketplaces[]}
  *   dirs: {<dir>: {settings, local, mcp_json[], mcp_local[], local_not_ignored, in_repo}}
  */
-export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.homedir(), env = process.env, managed = [], orgHome = null } = {}) {
+export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [], homedir = os.homedir(), env = process.env, managed = [], orgHome = null } = {}) {
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
   const user = scopeOf(cfg, false);
@@ -1936,8 +1946,10 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], homedir = os.
       marketplaces,
       grants: toolGrants(cfg, user, ['skills', 'commands', 'agents'], home),
     },
-    // Subagents in the org folder, which every agent but the CTO gets with --add-dir.
-    org_grants: orgHome ? toolGrants(path.join(path.resolve(orgHome), '.claude'), scopeOf(orgHome, true), ['agents'], home) : [],
+    // Skills, commands and subagents in each --add-dir folder (the org folder, a group's repos), which
+    // Claude Code loads too: {dir: {grants, in_repo}}.
+    add_dirs: Object.fromEntries([...new Set([...(orgHome ? [orgHome] : []), ...(Array.isArray(addDirs) ? addDirs : [])].filter((x) => typeof x === 'string' && isAbsoluteAny(x)).map((x) => path.resolve(x)))]
+      .map((x) => [x, { path: tildify(x, home), in_repo: !!gitDirOf(x), grants: toolGrants(path.join(x, '.claude'), scopeOf(x, true), ['skills', 'commands', 'agents'], home) }])),
     dirs: {},
   };
   for (const dir of list) {

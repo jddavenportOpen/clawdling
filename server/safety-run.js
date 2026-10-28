@@ -71,8 +71,18 @@ function placeOf(a, home) {
       // repo missing: the agent folder
     }
   }
-  // The CTO seat reads the report, not the org folder; everyone else gets the org folder (Donna too).
+  // The CTO seat reads the report, not the org folder; everyone else gets the org folder (Donna too), and
+  // a group project agent each of its repos (sessions.js addDirsFor).
   const addDirs = a.kind === 'cto' ? [] : cwd === home ? [] : [home];
+  if (a.kind === 'project' && !a.repo && Array.isArray(a.repos)) {
+    for (const r of a.repos) {
+      try {
+        if (typeof r === 'string' && r !== cwd && !addDirs.includes(r) && fs.statSync(r).isDirectory()) addDirs.push(r);
+      } catch {
+        // a repo that is gone
+      }
+    }
+  }
   return { ...a, cwd, addDirs };
 }
 
@@ -82,7 +92,7 @@ function placeOf(a, home) {
  */
 export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJsonPath, env = process.env, channels = {}, choices = null, managed, accounts = 0, platform = process.platform } = {}) {
   const placed = agents.filter((a) => a && typeof a.id === 'string').map((a) => placeOf(a, home));
-  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), homedir: userHome, env, managed: managed || managedSettingsPaths(platform, env), orgHome: home });
+  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), addDirs: placed.flatMap((a) => a.addDirs), homedir: userHome, env, managed: managed || managedSettingsPaths(platform, env), orgHome: home });
   const cto = placed.find((a) => a.kind === 'cto' || a.id === CTO_ID);
   let ctoRules = null;
   if (cto) {
