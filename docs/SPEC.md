@@ -952,7 +952,8 @@ signed-in browser, all three; `mcp__claude-in-chrome` denies it.
 **Tools granted by skills, commands and subagents.** A skill's or command's `allowed-tools` lets Claude
 use those tools without asking during the turn it runs, and a subagent's `permissionMode` applies
 when the session asks first. The audit reads both from the frontmatter (never the body) of yours
-(`~/.claude/skills|commands|agents`), the session folder's `.claude/` and every `--add-dir` folder's
+(`~/.claude/skills|commands|agents`), your organization's (the managed settings folder's `.claude/`),
+the session folder's `.claude/` and every `--add-dir` folder's
 `.claude/` (the org folder, a group project's repos):
 each `allowed-tools` rule is classified like an allow rule, sourced to its file; a subagent's `auto`
 or `bypassPermissions` adds that mode's chips on an agent that asks first; and a repo's own skill,

@@ -816,3 +816,18 @@ test('subagents in subfolders of agents/ are read (Claude Code reads the folder 
   assert.ok(texts(r, 'sends').some((t) => t.startsWith('playwright MCP server')));
   assert.ok(texts(r, 'sends').some((t) => /the browser-tester subagent runs in auto mode/.test(t)));
 });
+
+test('subagents and skills your organization deploys in the managed folder reach every row', () => {
+  const w = world({ agents: [{ id: 'a', kind: 'domain' }] });
+  const dir = path.join(w.home, 'managed');
+  const f = write(path.join(dir, 'managed-settings.json'), {});
+  write(path.join(dir, '.claude', 'agents', 'jira-triage.md'), '---\nname: jira-triage\nmcpServers:\n  atlassian:\n    type: http\n    url: https://mcp.atlassian.com/v1/sk-ant-api03-PLANTEDmanagedPATH\n    env:\n      K: ghp_PLANTEDmanagedENV0123456789abcdefghij\n---\nbody\n');
+  write(path.join(dir, '.claude', 'skills', 'research', 'SKILL.md'), '---\nname: research\nallowed-tools: WebFetch\n---\nbody\n');
+  const a = w.run({ managed: [f] });
+  for (const id of [USER_ROW, 'a']) {
+    const r = row(a, id);
+    assert.ok(texts(r, 'sends').some((t) => t.startsWith('atlassian MCP server')), id);
+    assert.ok(texts(r, 'untrusted').some((t) => t.startsWith('`WebFetch`')), id);
+  }
+  assert.ok(!JSON.stringify(a).includes('PLANTEDmanaged'));
+});

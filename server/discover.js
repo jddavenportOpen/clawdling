@@ -1963,7 +1963,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
  *   user: {settings, managed[], mcp[], plugins[], marketplaces[]}
  *   dirs: {<dir>: {settings, local, mcp_json[], mcp_local[], local_not_ignored, in_repo}}
  */
-export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [], homedir = os.homedir(), env = process.env, managed = [], managedMcp = [], profiles = [], orgHome = null } = {}) {
+export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [], homedir = os.homedir(), env = process.env, managed = [], managedMcp = [], managedDirs = [], profiles = [], orgHome = null } = {}) {
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
   const user = scopeOf(cfg, false);
@@ -2017,7 +2017,11 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
       // Managed enabledPlugins win over yours: true turns a plugin on, false blocks it, at every scope.
       plugins: listPlugins(cfg, [...(settings ? settings.plugins : []), ...managedFacts.flatMap((m) => m.plugins || [])]),
       marketplaces,
-      grants: toolGrants(cfg, user, ['skills', 'commands', 'agents'], home),
+      // Yours, and those your organization deploys in the managed settings folder's .claude/.
+      grants: [
+        ...toolGrants(cfg, user, ['skills', 'commands', 'agents'], home),
+        ...(Array.isArray(managedDirs) ? managedDirs : []).flatMap((m) => toolGrants(path.join(m, '.claude'), LENIENT, ['skills', 'commands', 'agents'], home)),
+      ],
     },
     // Skills, commands and subagents in each --add-dir folder (the org folder, a group's repos), which
     // Claude Code loads too: {dir: {grants, in_repo}}.

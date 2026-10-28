@@ -104,7 +104,8 @@ export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJ
     return [f, ...extra];
   });
   const managedMcp = base.map((f) => path.join(path.dirname(f), 'managed-mcp.json'));
-  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), addDirs: placed.flatMap((a) => a.addDirs), homedir: userHome, env, managed: managedFiles, managedMcp, profiles: managed ? [] : managedProfiles(platform), orgHome: home });
+  const managedDirs = [...new Set(base.map((f) => path.dirname(f)))];
+  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), addDirs: placed.flatMap((a) => a.addDirs), homedir: userHome, env, managed: managedFiles, managedMcp, managedDirs, profiles: managed ? [] : managedProfiles(platform), orgHome: home });
   const cto = placed.find((a) => a.kind === 'cto' || a.id === CTO_ID);
   let ctoRules = null;
   if (cto) {
