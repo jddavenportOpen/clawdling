@@ -218,15 +218,40 @@ export class Cto {
     } catch {
       // no .claude yet: refreshCtoSettings writes it
     }
-    // reviews/ holds plain files with one name each: no link through which a review write lands elsewhere.
+    // reviews/ holds plain week files with one name each: no link through which a review write lands
+    // elsewhere, and no other file (a reviews/CLAUDE.md would be read as instructions).
     try {
       for (const n of fs.readdirSync(path.join(target.dir, 'reviews'))) {
         const st = fs.lstatSync(path.join(target.dir, 'reviews', n));
-        if (!st.isFile() || st.nlink !== 1) odd.push(`reviews/${n}`);
+        if (!st.isFile() || st.nlink !== 1 || !/^\d{4}-W\d{2}\.md$/.test(n)) odd.push(`reviews/${n}`);
       }
     } catch {
       // no reviews yet
     }
+    // Its instructions are its CLAUDE.md alone: no CLAUDE.local.md, and no CLAUDE.md further down.
+    // Clawdling puts no link in it either: a link could lead to instructions outside it. The whole
+    // folder is walked (it is small); one too large to walk is refused rather than half checked.
+    let walked = 0;
+    const instructions = (rel) => {
+      let names = [];
+      try {
+        names = fs.readdirSync(path.join(target.dir, rel), { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of names) {
+        const r = rel ? `${rel}/${e.name}` : e.name;
+        if (++walked > 20000) {
+          if (!odd.includes('more files than Clawdling can check')) odd.push('more files than Clawdling can check');
+          return;
+        }
+        if (e.isSymbolicLink()) {
+          if (r !== 'reviews' && r !== '.claude') odd.push(r);
+        } else if (/^CLAUDE(\.local)?\.md$/i.test(e.name) && r !== 'CLAUDE.md') odd.push(r);
+        else if (e.isDirectory() && r !== '.claude' && r !== 'reviews') instructions(r);
+      }
+    };
+    instructions('');
     if (odd.length) throw new HttpError(409, `The CTO will not start: its folder has ${odd.map((x) => `"${x}"`).join(', ')}, which Clawdling did not put there. Remove ${odd.length === 1 ? 'it' : 'them'}, then start it again.`);
     // The folder's own settings file, this version's, at every start (an edited copy is kept as .old).
     this.org.refreshCtoSettings();
@@ -536,7 +561,18 @@ export class Cto {
    * at work, or waiting on the owner, is not doubled; earlier reviews that finished are ended first
    * (they stay resumable), so weekly runs do not pile up idle Claude Code sessions.
    */
-  async startReview({ scheduled = false, week: forWeek = null } = {}) {
+  async startReview(opts = {}) {
+    // One start at a time: a double click, or a click during the schedule's own start, makes one review.
+    if (this.starting) throw conflict('A review is already starting.');
+    this.starting = true;
+    try {
+      return await this.startReviewNow(opts);
+    } finally {
+      this.starting = false;
+    }
+  }
+
+  async startReviewNow({ scheduled = false, week: forWeek = null } = {}) {
     this.require();
     const live = this.busyReview();
     if (live) {
@@ -626,7 +662,7 @@ export class Cto {
       st.hour = b.hour;
     }
     if (b.weekly_cap_usd !== undefined) {
-      if (typeof b.weekly_cap_usd !== 'number' || !Number.isFinite(b.weekly_cap_usd) || b.weekly_cap_usd <= 0 || b.weekly_cap_usd > 100) throw badRequest('weekly_cap_usd must be more than 0 and at most 100');
+      if (typeof b.weekly_cap_usd !== 'number' || !Number.isFinite(b.weekly_cap_usd) || b.weekly_cap_usd < 0.01 || b.weekly_cap_usd > 100) throw badRequest('weekly_cap_usd must be at least 0.01 and at most 100');
       st.weekly_cap_usd = round2(b.weekly_cap_usd);
     }
     if (b.thresholds !== undefined) {

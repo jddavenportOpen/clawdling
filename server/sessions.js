@@ -5,7 +5,7 @@
 // WebSocket viewers; input from viewers goes back to the session. Status comes from Claude Code
 // hooks (see hooks.js). With tmux, sessions outlive the Clawdling server: on start we reconcile the
 // registry with `tmux ls` and reattach. With pty, they end when it stops and stay resumable.
-import { CROSS_AGENT_RE, isSendCommand, parseSend } from './seat-policy.js';
+import { crossAgent, isSendCommand, parseSend } from './seat-policy.js';
 import { cleanInput } from './receipts.js';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -1204,7 +1204,7 @@ export class SessionManager {
       const cmd = p.tool_input && typeof p.tool_input.command === 'string' ? p.tool_input.command : null;
       // Up to 4,001 characters arrive: more than 4,000 means the hook cut it, and the cockpit says so.
       // For the seat, every shell command it is asked about; for others, only a cross-agent message.
-      const send = !!cmd && (CROSS_AGENT_RE.test(cmd.slice(0, 4001)) || isSendCommand(cmd));
+      const send = !!cmd && (crossAgent(cmd) || isSendCommand(cmd));
       rec.pending_cmd = cmd && toolId && (send || rec.kind === 'cto') ? { tool_id: toolId, command: cmd.slice(0, 4000), cut: cmd.length > 4000, tool: p.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash', send } : null;
     } else if (event === 'PostToolUse' || event === 'Stop' || event === 'StopFailure' || event === 'UserPromptSubmit' || event === 'SessionEnd') {
       if (event !== 'PostToolUse' || !rec.pending_cmd || rec.pending_cmd.tool_id === toolId) rec.pending_cmd = null;
@@ -1233,7 +1233,9 @@ export class SessionManager {
     // Idle on the owner, as a hook (not the screen, a timer or a guess) reported it: the turn ended
     // (Stop), or Claude Code asked (a permission, a question, an error). Valid until any status change.
     const idle = (event === 'Stop' && rec.status === 'ready') || (event !== 'SessionStart' && rec.status === 'needs_you' && !!rec.waiting_on && !STARTUP_WAITS.has(rec.waiting_on));
-    rec.idle_hook = idle ? { status: rec.status, waiting_on: rec.waiting_on, seq: (rec.status_seq || 0) + (statusChanged ? 1 : 0) } : null;
+    // A notification that changes nothing (idle_prompt, a minute after a turn ends) keeps the stamp.
+    const keep = !statusChanged && event === 'Notification' && this.idleByHook(rec);
+    if (!keep) rec.idle_hook = idle ? { status: rec.status, waiting_on: rec.waiting_on, seq: (rec.status_seq || 0) + (statusChanged ? 1 : 0) } : null;
     if (statusChanged) this.onStatusChange(rec);
     else {
       this.scheduleSave();

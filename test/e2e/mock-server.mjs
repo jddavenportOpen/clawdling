@@ -658,7 +658,7 @@ export async function startMockServer({ port = 0, host = '127.0.0.1', token = 'm
     }
     if (p === '/api/cto/settings' && m === 'POST') {
       const c = st.cto;
-      if (body.weekly_cap_usd !== undefined && !(Number.isFinite(body.weekly_cap_usd) && body.weekly_cap_usd > 0 && body.weekly_cap_usd <= 100)) { send(res, 400, { error: 'weekly_cap_usd must be more than 0 and at most 100' }); return true; }
+      if (body.weekly_cap_usd !== undefined && !(Number.isFinite(body.weekly_cap_usd) && body.weekly_cap_usd >= 0.01 && body.weekly_cap_usd <= 100)) { send(res, 400, { error: 'weekly_cap_usd must be at least 0.01 and at most 100' }); return true; }
       if (body.day !== undefined && !(Number.isInteger(body.day) && body.day >= 0 && body.day <= 6)) { send(res, 400, { error: 'day must be 0 to 6' }); return true; }
       if (body.hour !== undefined && !(Number.isInteger(body.hour) && body.hour >= 0 && body.hour <= 23)) { send(res, 400, { error: 'hour must be 0 to 23' }); return true; }
       for (const [k, v] of Object.entries(body.thresholds || {})) {

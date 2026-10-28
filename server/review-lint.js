@@ -84,17 +84,25 @@ export function parseReview(text) {
  */
 export function lintReview(text, { receipts = {}, labels = {} } = {}) {
   const r = parseReview(text);
+  // Ids first, and always win; a name maps to its agent only when no id and no other agent has it.
   const byName = new Map();
+  for (const id of Object.keys(labels)) byName.set(id.toLowerCase(), id);
+  const ids = new Set(byName.keys());
+  const names = new Map();
   for (const [id, l] of Object.entries(labels)) {
-    byName.set(id.toLowerCase(), id);
-    if (l && l.name) byName.set(String(l.name).toLowerCase(), id);
+    if (!l || !l.name) continue;
+    const n = String(l.name).toLowerCase();
+    if (ids.has(n)) continue;
+    names.set(n, names.has(n) && names.get(n) !== id ? null : id);
   }
+  for (const [n, id] of names) byName.set(n, id);
   const uncited = [];
   const unknown = [];
   let findings = 0;
   let cited = 0;
   let none = 0;
-  const check = (b, where) => {
+  const foreign = [];
+  const check = (b, where, agent = null) => {
     findings++;
     const ids = citedIds(b.text);
     if (!ids.length) {
@@ -110,6 +118,11 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
       for (const id of bad) unknown.push({ line: b.line, id, where });
       return { ...b, ids, state: 'unknown', bad };
     }
+    // In an agent's section, at least one receipt must be that agent's own: another's proves nothing here.
+    if (agent && !ids.some((id) => !receipts[id]?.agent || receipts[id].agent === agent)) {
+      foreign.push({ line: b.line, ids, where });
+      return { ...b, ids, state: 'other_agent' };
+    }
     cited++;
     return { ...b, ids, state: 'cited' };
   };
@@ -117,7 +130,7 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
   const sections = r.sections.map((s) => {
     const agent = byName.get(s.name.toLowerCase()) || null;
     if (agent) seen.add(agent);
-    const bullets = s.bullets.map((b) => check(b, s.name));
+    const bullets = s.bullets.map((b) => check(b, s.name, agent));
     const override = bullets.find((b) => OVERRIDE_RE.test(b.text));
     const computed = agent ? labels[agent].label : null;
     let state;
@@ -141,10 +154,11 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
   const mismatched = sections.filter((s) => s.state === 'mismatch' || s.state === 'no_label' || s.state === 'unknown_agent');
   const parts = [];
   if (!findings) parts.push('No findings yet');
-  else if (!uncited.length && !unknown.length) parts.push(`${findings} finding${findings === 1 ? '' : 's'}, all cited${none ? ` (${none} say${none === 1 ? 's' : ''} "no receipts")` : ''}`);
+  else if (!uncited.length && !unknown.length && !foreign.length) parts.push(`${findings} finding${findings === 1 ? '' : 's'}, all cited${none ? ` (${none} say${none === 1 ? 's' : ''} "no receipts")` : ''}`);
   else {
     if (uncited.length) parts.push(`${uncited.length} uncited`);
     if (unknown.length) parts.push(`${unknown.length} citation${unknown.length === 1 ? '' : 's'} to a receipt that does not exist`);
+    if (foreign.length) parts.push(`${foreign.length} citing only another agent's receipt`);
   }
   const overridden = sections.filter((s) => s.state === 'overridden').length;
   if (overridden) parts.push(`${overridden} label${overridden === 1 ? '' : 's'} overridden by the CTO`);
@@ -157,11 +171,12 @@ export function lintReview(text, { receipts = {}, labels = {} } = {}) {
     no_receipts: none,
     uncited,
     unknown,
+    other_agent: foreign,
     sections,
     other,
     decisions: r.decisions,
     missing,
     summary: parts.join(' · '),
-    clean: findings > 0 && !uncited.length && !unknown.length && !mismatched.length,
+    clean: findings > 0 && !uncited.length && !unknown.length && !foreign.length && !mismatched.length,
   };
 }

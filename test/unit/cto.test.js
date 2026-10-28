@@ -530,3 +530,18 @@ test('idle on the owner counts only as a hook reported it, until the status next
   assert.equal(idle({ status: 'needs_you', waiting_on: 'trust', status_seq: 3, idle_hook: { status: 'needs_you', waiting_on: 'permission_prompt', seq: 3 } }), false);
   assert.equal(idle({ status: 'ready', waiting_on: null }), false, 'no hook said so');
 });
+
+test('a strict tmux check throws only when it could not finish; any answer from tmux is an answer', async () => {
+  const { Tmux } = await import('../../server/tmux.js');
+  const t = Object.create(Tmux.prototype);
+  const fail = (props) => { t.exec = async () => { throw Object.assign(new Error('tmux'), props); }; };
+  fail({ stderr: "can't find session: =cl-x" });
+  assert.equal(await t.hasSession('cl-x', { strict: true }), false);
+  fail({ stderr: 'server exited unexpectedly' }); // its last session just ended
+  assert.equal(await t.hasSession('cl-x', { strict: true }), false);
+  fail({ killed: true, signal: 'SIGTERM' }); // the 10-second timeout
+  await assert.rejects(t.hasSession('cl-x', { strict: true }));
+  assert.equal(await t.hasSession('cl-x'), false, 'not strict: false, as before');
+  t.exec = async () => ({ stdout: '' });
+  assert.equal(await t.hasSession('cl-x', { strict: true }), true);
+});
