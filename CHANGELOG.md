@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.7.0 (TBD)
+## 1.7.0 (2026-10-27)
 
 **Clawdling 1.7: your CTO. Every Monday it reads your projects' receipts and asks you three questions.**
 
@@ -60,11 +60,14 @@ Reviews: top tier, because the seat can message other agents and the schedule sp
 A fresh Claude reviewer at `xhigh` failed rounds 1 to 12, every Medium fixed, and passed round 13
 (no Medium or higher; its Lows are issues #51 and #52). The normal-tier reviewer (Claude, `high`)
 passed round 7 (Lows: issues #47 to #50). A third-party visual review of the real run's screenshots
-passed round 2. The GPT (Codex) second-model review is pending: both ChatGPT plans were out of
-quota on 2026-10-27.
+passed round 2. The GPT (Codex) second-model review could not run (both ChatGPT plans out of
+quota), so a fresh Claude `xhigh` reviewer with an adversarial brief stood in for it, writing a
+probe test for each finding: rounds 1 and 2 failed (a Medium each, both padding tricks in seat
+commands, plus Lows; all fixed, and its 14 probes are now permanent tests), round 3 passed (Lows:
+issues #64 to #68). The GPT review is still owed and will follow.
 
-Tests: 697 per backend (tmux: 689 pass, 8 skipped; pty: 690 pass, 7 skipped; 0 failed); end to
-end 180 pass against the mock server and 62 against the real one. New unit suites `status-rules` (every rule, its window edges, flat cost, a new agent,
+Tests: 730 per backend (tmux: 722 pass, 8 skipped; pty: 723 pass, 7 skipped; 0 failed); end to
+end 179 pass against the mock server and 61 against the real one. New unit suites `status-rules` (every rule, its window edges, flat cost, a new agent,
 At risk over Stalled, domains never Stalled) and `cto` (receipt ids, agent text, the index, the
 lint, the seat's permissions on POSIX and Windows, the launch settings, the transcript scan, the
 Monday line); integration `cto` (an org in every state, the schema 2 golden shape, Add a CTO, the
