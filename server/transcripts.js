@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cleanInput } from './receipts.js';
 import { isUuid, oneLine } from './util.js';
 
 const PLUMBING = /^\s*<(?:command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat|bash-input|bash-stdout|bash-stderr|system-reminder|user-memory-input)>/;
@@ -57,7 +58,12 @@ function cut(s, max) {
 export const ASK_TOOLS = { AskUserQuestion: 'question', ExitPlanMode: 'plan' };
 const ASK_LIMITS = { questions: 4, options: 12, question: 600, header: 80, label: 200, description: 600, plan: 20000 };
 
-const clipText = (v, max) => (typeof v === 'string' ? (v.length > max ? `${v.slice(0, max - 1)}…` : v) : '');
+// Card text is the agent's own words: nothing a person cannot see (tags, bidi), as typed input.
+const clipText = (v, max) => {
+  if (typeof v !== 'string') return '';
+  const t = cleanInput(v);
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+};
 
 /** What a question card needs from an AskUserQuestion / ExitPlanMode input, bounded; null if unusable. */
 export function askOf(name, input) {

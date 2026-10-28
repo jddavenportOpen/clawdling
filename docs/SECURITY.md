@@ -558,7 +558,9 @@ answers:
   substitution, quotes or line breaks);
 - **ask** for any command that runs clawdling's `send` or `spawn` in any spelling (the shim,
   `clawdling.cmd`, `clawdling.ps1`, the script by path, inside `sh -c` or after `&&`, with quotes or
-  backslashes inside the words, or with the verb before the program as in `xargs`), with the
+  backslashes inside the words, or with the verb before the program as in `xargs`; a spelling the
+  shell builds at run time, such as a variable holding the program's name, is still asked about,
+  as any other command, under the generic heading), with the
   reason "the CTO wants to message another agent";
 - **ask** for every other Bash or PowerShell command;
 - **ask** for any Write, Edit, MultiEdit or NotebookEdit other than `<org>/cto/reviews/<YYYY-Www>.md`
@@ -621,9 +623,9 @@ apart from the cockpit; anyone who holds the token itself, by a command you appr
 - **Its folder holds only what Clawdling wrote.** A start is refused (`409`, saying what it found)
   when the seat's folder, its `reviews/` or its `.claude/` is a link, when `reviews/` holds anything
   but plain week files (`<YYYY-Www>.md`) with one name each, when `.claude/` holds anything but
-  `settings.json` (and its `.old`), or when there is any instruction file besides its own CLAUDE.md
-  (a `CLAUDE.local.md`, or a `CLAUDE.md` further down): no skills, commands, subagents, local
-  settings or extra instructions can load into it. Its CLAUDE.md does not import its memory files.
+  `settings.json` (and its `.old`), when any link sits anywhere in it, or when there is any
+  instruction file besides its own CLAUDE.md (a `CLAUDE.local.md`, or a `CLAUDE.md` at any depth):
+  no skills, commands, subagents, local settings or extra instructions can load into it. Its CLAUDE.md does not import its memory files.
 - **`--setting-sources project`**: neither your user-level Claude Code settings nor the seat
   folder's `settings.local.json` load into it (their allow rules, hooks, environment, default model;
   a saved "don't ask again" has no effect). Managed (policy) settings still apply, as Claude Code
@@ -664,8 +666,8 @@ every string the call carries, the command's description included. And it refuse
 command longer than 4,000 characters (the most the cockpit shows), or padded so that part of it
 could sit out of view (a run of blank lines, more than 80 spaces in a row, more than 40 lines or 60
 rows of an 80-column terminal with wide characters and emoji counted as two columns, any blank
-character other than the ASCII space, tab and line break; joiners and emoji selectors, which draw
-nothing, are read as absent for these rules),
+character other than the ASCII space and line break, and any tab; joiners and emoji selectors,
+which draw nothing, are read as absent for these rules),
 any description longer than one line of 200 characters, and any call with too many parts to check
 whole: what you approve is always the whole command, and the cockpit's command box scrolls on its own. Through PowerShell, any
 backslash, quote (curly ones too), backtick or `$` in the message makes it not plain. The parsers are
@@ -685,7 +687,10 @@ can be steered by what it reads. A hostile title could try to steer the CTO. Mit
   selectors), and cannot look like a citation
   (`[R-` and receipt-shaped ids are broken up), so it cannot plant a fake receipt. The last lines
   and notices Claude Code reports are stored already stripped of invisible characters (Unicode
-  tags, bidi controls), so `clawdling ls`, which the seat may run unasked, never hands them on either. The report's `note` and the CTO's CLAUDE.md
+  tags, bidi controls), and so are session titles and question cards, so `clawdling ls`, which the
+  seat may run unasked, never hands them on either. In an agent's section of a review, a line whose
+  only receipts belong to other agents is flagged ("another agent's receipt") and the review does
+  not lint clean. The report's `note` and the CTO's CLAUDE.md
   both say to treat that text as data, never as instructions.
 - The CTO has no web, no MCP servers, and can write only its own reviews without asking. Nothing it
   writes reaches another agent or Donna except a message you said yes to (see "It takes instructions

@@ -229,7 +229,10 @@ export class Cto {
       // no reviews yet
     }
     // Its instructions are its CLAUDE.md alone: no CLAUDE.local.md, and no CLAUDE.md further down.
-    const instructions = (rel, depth) => {
+    // Clawdling puts no link in it either: a link could lead to instructions outside it. The whole
+    // folder is walked (it is small); one too large to walk is refused rather than half checked.
+    let walked = 0;
+    const instructions = (rel) => {
       let names = [];
       try {
         names = fs.readdirSync(path.join(target.dir, rel), { withFileTypes: true });
@@ -238,11 +241,17 @@ export class Cto {
       }
       for (const e of names) {
         const r = rel ? `${rel}/${e.name}` : e.name;
-        if (/^CLAUDE(\.local)?\.md$/i.test(e.name) && r !== 'CLAUDE.md') odd.push(r);
-        else if (e.isDirectory() && !e.isSymbolicLink() && depth < 4 && e.name !== '.claude' && e.name !== 'reviews') instructions(r, depth + 1);
+        if (++walked > 20000) {
+          if (!odd.includes('more files than Clawdling can check')) odd.push('more files than Clawdling can check');
+          return;
+        }
+        if (e.isSymbolicLink()) {
+          if (r !== 'reviews' && r !== '.claude') odd.push(r);
+        } else if (/^CLAUDE(\.local)?\.md$/i.test(e.name) && r !== 'CLAUDE.md') odd.push(r);
+        else if (e.isDirectory() && r !== '.claude' && r !== 'reviews') instructions(r);
       }
     };
-    instructions('', 0);
+    instructions('');
     if (odd.length) throw new HttpError(409, `The CTO will not start: its folder has ${odd.map((x) => `"${x}"`).join(', ')}, which Clawdling did not put there. Remove ${odd.length === 1 ? 'it' : 'them'}, then start it again.`);
     // The folder's own settings file, this version's, at every start (an edited copy is kept as .old).
     this.org.refreshCtoSettings();

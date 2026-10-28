@@ -1,3 +1,4 @@
+import { cleanInput } from './receipts.js';
 // Session titles, derived locally from the first prompt. Clawdling never calls a model for this.
 export const TITLE_MAX = 48;
 
@@ -49,8 +50,7 @@ export function deriveTitle(text, max = TITLE_MAX) {
 /** Normalise a user-supplied title (rename, spawn). Empty → null. */
 export function cleanTitle(t, max = 120) {
   if (t === null || t === undefined) return null;
-  const s = String(t)
-    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+  const s = cleanInput(String(t).replace(/[\u0000-\u001f\u007f]/g, ' ')) // nothing a person cannot see (tags, bidi)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, max);

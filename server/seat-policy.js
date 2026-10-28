@@ -127,15 +127,16 @@ function strings(value, key = '', out = [], depth = 0) {
 // Characters that draw as blank space but are not the ASCII space, tab or line break: a command
 // padded with them can push its middle out of view (no seat command or description needs one).
 const BLANK_RE = /[\u00a0\u1680\u2000-\u200a\u202f\u205f\u3000\u2800\u3164\uffa0]/u;
-// Wide (two-column) characters, roughly East Asian Wide and Fullwidth plus emoji.
-const WIDE_RE = /[\p{Emoji_Presentation}\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
+// Wide (two-column) characters: emoji, and the East Asian Wide and Fullwidth blocks (Unicode's
+// EastAsianWidth.txt, W and F, by block). JavaScript has no property for it.
+const WIDE_RE = /[\p{Emoji_Presentation}\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\ua960-\ua97f\uac00-\ud7a3\uf900-\ufaff\ufe10-\ufe19\ufe30-\ufe6f\uff00-\uff60\uffe0-\uffe6\u{16fe0}-\u{16fe4}\u{17000}-\u{18cd5}\u{1b000}-\u{1b2fb}\u{1f004}\u{1f0cf}\u{1f18e}\u{1f191}-\u{1f19a}\u{1f200}-\u{1f251}\u{1f300}-\u{1f64f}\u{1f680}-\u{1f6ff}\u{1f7e0}-\u{1f7eb}\u{1f90c}-\u{1f9ff}\u{1fa70}-\u{1faff}\u{20000}-\u{2fffd}\u{30000}-\u{3fffd}\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6\u{1f300}-\u{1faff}\u{20000}-\u{3fffd}]/u;
 
 /** Rows a command takes in an 80-column terminal, wide characters counting two columns. */
 export function shownRows(text, cols = 80) {
   let rows = 0;
   for (const line of String(text).split('\n')) {
     let w = 0;
-    for (const ch of line) w += WIDE_RE.test(ch) ? 2 : 1;
+    for (const ch of line) w = ch === '\t' ? (Math.floor(w / 8) + 1) * 8 : w + (WIDE_RE.test(ch) ? 2 : 1); // a tab moves to the next stop of 8
     rows += Math.max(1, Math.ceil(w / cols));
   }
   return rows;
@@ -175,6 +176,8 @@ export function seatDecision(payload, { home, now = Date.now() }) {
     // a blank-line run, a long run of spaces, many lines; a description of more than one short line.
     // Joiners and emoji selectors draw nothing, so they are read as absent here: a line of only them is blank.
     const bare = cmd.replace(/[\u200c\u200d\ufe0e\ufe0f]/gu, '');
+    // A tab fills up to eight columns of blank, and none of the seat's commands needs one.
+    if (cmd.includes('\t')) return { decision: 'deny', reason: `${DENY_PADDED} (a tab, at character ${cmd.indexOf('\t') + 1})` };
     if (/\n[ \t]*\n[ \t]*\n|[ \t]{81}/.test(bare) || cmd.split('\n').length > 40 || shownRows(cmd) > 60) return { decision: 'deny', reason: DENY_PADDED };
     const desc = typeof input.description === 'string' ? input.description : '';
     if (desc.length > 200 || /[\n\t]/.test(desc)) return { decision: 'deny', reason: DENY_PADDED };
