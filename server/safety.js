@@ -338,6 +338,9 @@ function capsFor(view, { tags = {} } = {}) {
     if (g.mcp_unreadable) unknown.push({ text: `the subagent "${g.name}" defines MCP servers Clawdling could not read`, source: g.file, why: 'unknown: read its mcpServers' });
     if (g.mode === 'other') unknown.push({ text: `the subagent "${g.name}" sets a \`permissionMode\` Clawdling does not know`, source: g.file, why: 'unknown: check the mode name' });
   }
+  if (view.accounts > 0) {
+    unknown.push({ text: `sessions on ${view.accounts === 1 ? 'your other Claude account' : `your ${view.accounts} other Claude accounts`} (~/.clawdling-accounts): each is its own Claude Code folder, with its own settings, MCP servers and claude.ai connectors`, source: '~/.clawdling-accounts', why: 'unknown: Clawdling never reads those folders; check them in Claude Code' });
+  }
   for (const f of view.unread || []) unknown.push({ text: `${f}: there, but larger than Clawdling reads`, source: f, why: 'unknown: read it yourself; Claude Code may load all of it' });
   for (const l of view.layers) if (l.facts && l.facts.rules_not_read) unknown.push({ text: `${l.facts.rules_not_read} permission rule${l.facts.rules_not_read === 1 ? '' : 's'} Clawdling did not read (past the first 5,000 of a list)`, source: l.file, why: 'unknown: review the end of that list' });
   for (const f of view.profiles || []) unknown.push({ text: 'a device-management policy for Claude Code', source: f, why: 'unknown: your organization can add settings and MCP servers there that Clawdling cannot read' });
@@ -440,7 +443,9 @@ function capsFor(view, { tags = {} } = {}) {
   for (const p of [...view.plugins, ...(view.folderPlugins || [])]) {
     if (!p.enabled) continue;
     const ptag = Object.hasOwn(tags, p.name) && Array.isArray(tags[p.name]) ? tags[p.name].filter((c) => CAPS.includes(c)) : null;
-    const k = ptag ? { known: true, caps: new Set(ptag), labels: ['tagged by you'] } : classifyName(p.name);
+    let k = ptag ? { known: true, caps: new Set(ptag), labels: ['tagged by you'] } : classifyName(p.name);
+    // A plugin brings its own servers, hooks and skills: a "local helper" word alone does not clear it.
+    if (!ptag && k.known && !k.caps.size) k = { known: false, caps: new Set(), labels: [] };
     const what = `${p.name} plugin${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
     const src = p.source || view.pluginSource;
     if (!k.known) {
@@ -639,7 +644,7 @@ function modeFrom(layers, userFile) {
  * {accepted: {id: {reason, at}}, tags: {server: caps[]}, home}. Returns {took_ms, rows: [...]},
  * the user level first.
  */
-export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags = {}, home = null, platform = process.platform } = {}) {
+export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags = {}, home = null, platform = process.platform, accounts = 0 } = {}) {
   const t0 = performance.now();
   const opts = { accepted, tags };
   const u = scan.user || {};
@@ -679,7 +684,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
   const userGrants = u.grants || [];
   const userView = {
-    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], unread: u.unread || [], mcp: [...userMcp, ...subagentMcp(userGrants, 'user')], plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], unread: u.unread || [], accounts, mcp: [...userMcp, ...subagentMcp(userGrants, 'user')], plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -754,6 +759,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         subagentModes: subagentModes([...userGrants, ...extraGrants, ...(d.grants || [])]),
         grantUnknowns: [...userGrants, ...extraGrants, ...(d.grants || [])],
         connectors: true,
+        accounts,
         profiles: u.profiles || [],
         unread: [...(u.unread || []), ...(d.unread || [])],
         repoGrants: [...(isRepo && d.in_repo ? d.grants || [] : []), ...extraRepoGrants],

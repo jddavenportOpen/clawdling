@@ -998,8 +998,9 @@ folder only, not from the folders above it; checked with `claude doctor` on 2.1.
 - the CTO: managed settings and its folder's (`--setting-sources project`), no MCP server, its rules
   (1.7). Private: the org report; untrusted: the agent-written text in it; nothing sends.
 - "Everything (user level)": what a plain `claude` loads anywhere on this computer.
-Sessions started on an extra Claude account (1.0.1) load that account's own settings, which
-Clawdling never reads; the user-level row says so when there is one.
+Sessions started on an extra Claude account (1.0.1) load that account's own folder (settings, MCP
+servers, claude.ai connectors), which Clawdling never reads: when there is one, every row that loads
+user-level settings carries an "unknown: review" saying so (never green).
 
 **Classification, by name** (`server/capabilities.json`). An MCP server's key, the basename of its
 command, its first package-like argument and its URL's host are split into words and matched

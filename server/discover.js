@@ -1520,9 +1520,12 @@ const CRED_GLUED_RE = /(^|[\s(])(-u|-p)([^\s"'():*\-][^\s"')]*)/g;
 // mysql and friends take `-p<password>` glued (any letters); redis-cli takes `-a <password>`.
 const MYSQL_RE = /(^|[\s(])((?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow)\b[^)]*?\s)-p(?!\s)([^\s"'():*][^\s"')]*)/g;
 const REDIS_RE = /(^|[\s(])(redis-cli\b[^)]*?\s)(-a|--pass|--user)(\s+|=)([^\s"')*][^\s"')]*)/g;
+// gpg --passphrase x, openssl -passin/-passout pass:x, sqlcmd/bcp -P x, ldapsearch/ldapmodify/ldapadd -w x.
+const MORE_PW_RE = /(^|[\s(])((?:(?:\S*\/)?(?:sqlcmd|bcp)\b[^)]*?\s-P)|(?:(?:\S*\/)?ldap\w*\b[^)]*?\s-w)|--passphrase|-pass(?:in|out))(\s+|=)([^\s"')*][^\s"')]*)/g;
 function redactFlagValues(s) {
   s = s.replace(MYSQL_RE, (m, pre, cmd, val) => (val === REDACTED ? m : `${pre}${cmd}-p${REDACTED}`));
   s = s.replace(REDIS_RE, (m, pre, cmd, flag, sep, val) => (val === REDACTED ? m : `${pre}${cmd}${flag}${sep}${REDACTED}`));
+  s = s.replace(MORE_PW_RE, (m, pre, flag, sep, val) => (val === REDACTED || /^(?:env|file|fd|stdin):/.test(val) ? m : `${pre}${flag}${sep}${REDACTED}`));
   s = s.replace(CRED_GLUED_RE, (m, pre, flag, val) => {
     if (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || !/[:\d]/.test(val)) return m;
     const tail = /:\*$/.test(val) ? ':*' : '';
@@ -1537,7 +1540,15 @@ function redactFlagValues(s) {
 
 export function ruleText(rule) {
   if (typeof rule !== 'string' || !rule) return null;
-  return cleanText(scrubTokens(redactFlagValues(redactSecrets(rule.slice(0, RULE_CHARS)))), 200);
+  // The rule's own wildcard (`...:*)`, `... *)`) is kept out of the redaction, which could take it as
+  // part of a secret's value, and put back after: the audit classifies the rule it really is.
+  const cut = rule.slice(0, RULE_CHARS);
+  const m = /(:\*|\s\*)\)\s*$/.exec(cut);
+  const head = m ? cut.slice(0, m.index) : cut;
+  const tail = m ? `${m[1]})` : '';
+  const red = scrubTokens(redactFlagValues(redactSecrets(head)));
+  const out = cleanText(red, 200 - tail.length);
+  return out ? `${out}${tail}` : null;
 }
 
 /** Is a word (a package, a host label) a pasted token rather than a name? */
@@ -1902,16 +1913,27 @@ function subagentServers(fm) {
   const entries = [];
   let cur = null;
   let base = null;
+  let stray = 0; // lines that neither start, continue nor name a server: said, never dropped
   for (const raw of block) {
     if (!raw.trim() || raw.trim().startsWith('#')) continue;
     const ind = raw.length - raw.trimStart().length;
     const t = raw.trim().replace(/^-\s*/, '');
-    const key = /^["']?([A-Za-z0-9_.@-]{1,100})["']?\s*:(.*)$/.exec(t);
     if (base === null) base = ind;
+    // `- {gmail: {command: npx, ...}}`: the flow form of the same entry.
+    const flow = ind <= base && /^\{\s*["']?([A-Za-z0-9_.@-]{1,100})["']?\s*:(.*)\}\s*$/.exec(t);
+    if (flow) {
+      cur = { name: flow[1], lines: [flow[2]] };
+      entries.push(cur);
+      continue;
+    }
+    const key = /^["']?([A-Za-z0-9_.@-]{1,100})["']?\s*:(.*)$/.exec(t);
     if (ind <= base && key && (raw.trim().startsWith('-') || ind === base)) {
       cur = { name: key[1], lines: [key[2]] };
       entries.push(cur);
-    } else if (cur) cur.lines.push(t);
+    } else if (ind <= base && raw.trim().startsWith('-') && /^["']?[A-Za-z0-9_.@-]{1,100}["']?$/.test(t)) {
+      cur = null; // `- github`: a server you already have, by name
+    } else if (cur && ind > base) cur.lines.push(t);
+    else stray++;
   }
   const servers = [];
   for (const e of entries.slice(0, GRANT_SERVERS_MAX + 1)) {
@@ -1924,7 +1946,7 @@ function subagentServers(fm) {
     const f = mcpFacts({ [e.name]: { command: cmd ? cmd[1] : undefined, args: args.filter((a) => !/^(env|headers|url|type|command)\s*:?$/.test(a)), url: url ? url[1] : undefined, ...(type ? { type: type[1] } : {}) } });
     servers.push(...f);
   }
-  return { servers, unreadable: !servers.length && (entries.length > 0 || (!!inline && inline !== '[]' && inline !== '{}')) };
+  return { servers, unreadable: stray > 0 || (!servers.length && (entries.length > 0 || (!!inline && inline !== '[]' && inline !== '{}'))) };
 }
 
 /**

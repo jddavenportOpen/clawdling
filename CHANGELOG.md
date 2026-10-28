@@ -67,6 +67,9 @@ Code setup for the lethal trifecta, offline, by name only.**
   (`test/unit/safety-probe-*.test.js`). Round 2 found 2 Mediums (thousands of allow and deny rules, or
   of inline subagent servers, stalling the server) and 4 Lows; fixed at the root (an indexed deny
   lookup, a server budget, constant-time de-duplication), and its 5 probes are permanent too.
+  Round 3 found 2 Mediums (extra Claude accounts' folders unread with every row green; a subagent's
+  inline server written as a YAML flow mapping dropped) and 3 Lows; fixed, with its 5 probes permanent.
+  Under the review cap no fourth round ran; the GPT review is owed.
 - **Reviews.** The audit had the top tier: thirteen rounds of a fresh `claude -p --effort xhigh`
   reviewer, each Medium fixed, until it passed; the update guard had a `high` reviewer (passed in
   round 4). The second-model (GPT) review is still owed: both ChatGPT plans were out of quota. The

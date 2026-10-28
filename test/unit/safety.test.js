@@ -318,11 +318,12 @@ test('unknown names are never green; tags and accepted risks are the owner\'s lo
   assert.deepEqual(Object.keys(verdicts(w.run({ choices }))).sort(), ['_user', 'a', 'donna']);
 });
 
-test('extra Claude accounts: a note on the user level, worded for one or several', () => {
-  const w = world();
-  assert.equal(row(w.run(), USER_ROW).notes.length, 0);
-  assert.match(row(w.run({ accounts: 1 }), USER_ROW).notes[0], /^Sessions you start on your other Claude account load/);
-  assert.match(row(w.run({ accounts: 2 }), USER_ROW).notes[0], /^Sessions you start on one of your 2 other Claude accounts load/);
+test('extra Claude accounts: an unknown on every row that loads user-level settings, worded for one or several', () => {
+  const w = world({ agents: [{ id: 'a', kind: 'domain' }] });
+  assert.ok(!row(w.run(), 'a').unknown.some((u) => /Claude account/.test(u.text)));
+  assert.match(row(w.run({ accounts: 1 }), 'a').unknown.find((u) => /Claude account/.test(u.text)).text, /^sessions on your other Claude account/);
+  assert.match(row(w.run({ accounts: 2 }), USER_ROW).unknown.find((u) => /Claude account/.test(u.text)).text, /^sessions on your 2 other Claude accounts/);
+  assert.notEqual(row(w.run({ accounts: 1 }), 'a').verdict, 'green');
 });
 
 test('offlineChannels: what org.json says, for the CLI with no cockpit', () => {
