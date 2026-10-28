@@ -953,9 +953,12 @@ signed-in browser, all three; `mcp__claude-in-chrome` denies it.
 **Present, but not read, is never absent.** A settings file, `.mcp.json` or `~/.claude.json` larger
 than the scans read (20 MB), a skill, command or subagent whose frontmatter does not close in the
 first 64 KB, permission rules past the first 5,000 of a list, and `allowed-tools` past 5,000 rules per
-folder are each an "unknown: review" naming the file. Grant reads have a budget per folder, chips are
-de-duplicated in constant time and shell rules are classified once, so a hostile repo cannot stall
-the server. Paths the audit shows have control, bidi and zero-width characters replaced, and the
+folder, and inline subagent MCP servers past 200 per folder, are each an "unknown: review" naming the
+file. Grant reads have a budget per folder; deny rules are indexed (a lookup per allow rule is linear
+in its length, the same answer as matching every pair); chips and risks are de-duplicated in constant
+time; shell rules and names are classified once, so a hostile repo cannot stall the server. The CTO
+row includes its own folder's skills, commands and subagents. A project in a subfolder of a repo
+outside your home folder is in that repo too. Paths the audit shows have control, bidi and zero-width characters replaced, and the
 CLI strips them again. A project imported from a subfolder of a repo is in that repo (its risks
 apply), and a repo path is resolved before it is looked up.
 

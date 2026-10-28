@@ -38,12 +38,26 @@ function hasWord(name, word) {
  * What the table knows about a name (an MCP server's key, command or package; a plugin's name):
  * `{known, caps: Set, labels: []}`. A name matching only "local helper" is known with no caps.
  */
+// The table's words, normalized once; and each name's answer, worked out once.
+const TABLE_WORDS = TABLE.servers.map((e) => ({ e, words: e.words.map((w) => `-${norm(w)}-`) }));
+const NAME_MEMO = new Map();
 export function classifyName(...names) {
+  const key = names.map((n) => String(n ?? '')).join('\u0000');
+  const hit = NAME_MEMO.get(key);
+  if (hit) return { known: hit.known, caps: new Set(hit.caps), labels: [...hit.labels] };
+  const r = classifyNameOnce(names);
+  if (NAME_MEMO.size > 20000) NAME_MEMO.clear();
+  NAME_MEMO.set(key, r);
+  return { known: r.known, caps: new Set(r.caps), labels: [...r.labels] };
+}
+
+function classifyNameOnce(names) {
+  const normed = names.filter(Boolean).map((n) => `-${norm(n)}-`);
   const caps = new Set();
   const labels = [];
   let known = false;
-  for (const entry of TABLE.servers) {
-    if (!names.some((n) => n && entry.words.some((w) => hasWord(n, w)))) continue;
+  for (const { e: entry, words } of TABLE_WORDS) {
+    if (!normed.some((n) => words.some((w) => n.includes(w)))) continue;
     known = true;
     for (const c of entry.caps) caps.add(c);
     if (entry.caps.length && !labels.includes(entry.label)) labels.push(entry.label);
@@ -230,13 +244,52 @@ export function denies(d, a) {
   return false;
 }
 
-/** Is MCP server `name` denied by a rule like `mcp__name` or `mcp__name__*`? */
-function mcpDenied(name, denyRules) {
-  const want = `mcp__${name}`.toLowerCase();
-  return denyRules.some((r) => {
-    const t = String(r.tool || '').toLowerCase();
-    return (t === want || t === `${want}__*`) && r.content === null;
-  });
+/**
+ * The deny rules of one session, indexed: `match(allow)` gives the deny rule that takes it away (the
+ * same answer as trying denies() on every one), in time linear in the allow rule's length, so a repo
+ * with thousands of allow and deny rules costs thousands of steps, not millions.
+ */
+export function denyIndex(denyList) {
+  const whole = new Map(); // tool -> deny (no content, or *)
+  const exact = new Map(); // tool\0content -> deny
+  const colon = new Map(); // tool\0p -> deny for `p:*` (p and `p ...`)
+  const space = new Map(); // tool\0p -> deny for `p *` (`p ...`)
+  const star = new Map(); // tool\0p -> deny for `p*` (anything starting p)
+  const put = (m, k, d) => {
+    if (!m.has(k)) m.set(k, d);
+  };
+  for (const d of denyList) {
+    if (!d) continue;
+    if (d.content === null || /^\s*:?\*\s*$/.test(d.content)) {
+      put(whole, d.tool, d);
+      continue;
+    }
+    const dr = d.content.trim();
+    if (dr.includes('[redacted]')) continue; // never assumed to match
+    put(exact, `${d.tool}\u0000${dr}`, d);
+    if (/:\*$/.test(dr)) put(colon, `${d.tool}\u0000${dr.slice(0, -2).replace(/\s+$/, '')}`, d);
+    else if (/\s\*$/.test(dr)) put(space, `${d.tool}\u0000${dr.replace(/\s+\*$/, '')}`, d);
+    else if (/\*$/.test(dr)) put(star, `${d.tool}\u0000${dr.slice(0, -1)}`, d);
+  }
+  const match = (a) => {
+    if (!a) return null;
+    if (whole.has(a.tool)) return whole.get(a.tool);
+    if (a.content === null) return null;
+    const ar = a.content.trim();
+    const t = `${a.tool}\u0000`;
+    if (exact.has(t + ar)) return exact.get(t + ar);
+    const base = ar.replace(/:\*$/, '').replace(/\s+\*$/, '');
+    if (colon.has(t + base)) return colon.get(t + base);
+    // Every word-boundary prefix p of base: `p:*` and `p *` take `p ...`.
+    for (let i = base.indexOf(' '); i !== -1; i = base.indexOf(' ', i + 1)) {
+      const p = base.slice(0, i);
+      if (colon.has(t + p)) return colon.get(t + p);
+      if (space.has(t + p)) return space.get(t + p);
+    }
+    if (star.size) for (let i = 0; i <= ar.length; i++) if (star.has(t + ar.slice(0, i))) return star.get(t + ar.slice(0, i));
+    return null;
+  };
+  return { match, whole };
 }
 
 // ---------------------------------------------------------------------------- one agent's view
@@ -260,6 +313,13 @@ function capsFor(view, { tags = {} } = {}) {
   const allRules = (kind) => view.layers.flatMap((l) => (l.facts ? (l.facts[kind] || []).map((r) => ({ rule: r, parsed: parseRule(r), layer: l })) : []));
   const denyRules = allRules('deny').filter((x) => x.parsed);
   const deny = denyRules.map((x) => x.parsed);
+  const dIdx = denyIndex(deny);
+  // `mcp__server` and `mcp__server__*` deny a whole server: one lookup per server.
+  const mcpDeny = new Map();
+  for (const r of deny) {
+    const t = String(r.tool || '').toLowerCase();
+    if (r.content === null && t.startsWith('mcp__')) mcpDeny.set(t.replace(/__\*$/, ''), r);
+  }
   // What a deny rule takes away, said on the row: a green row whose parent is red must show why.
   const taken = [];
   const took = (what, d) => {
@@ -268,7 +328,7 @@ function capsFor(view, { tags = {} } = {}) {
   };
   const allowed = allRules('allow').filter((x) => {
     if (!x.parsed) return false;
-    const d = deny.find((dd) => denies(dd, x.parsed));
+    const d = dIdx.match(x.parsed);
     if (d) took(`\`${x.rule}\``, d);
     return !d;
   });
@@ -284,7 +344,7 @@ function capsFor(view, { tags = {} } = {}) {
   for (const l of view.layers) if (l.facts && l.facts.default_mode === 'other') unknown.push({ text: '`defaultMode` set to a mode Clawdling does not know', source: l.file, why: 'unknown: check the mode name' });
   // A rule Clawdling cannot read once a secret in it is hidden (or cut short) is never assumed harmless.
   for (const x of allRules('allow')) if (!x.parsed) unknown.push({ text: `\`${x.rule}\` allowed`, source: x.layer.file, why: 'unknown: a rule Clawdling could not read after hiding a secret in it' });
-  const toolDenied = (tool) => deny.some((d) => d.tool === tool && (d.content === null || /^\s*:?\*\s*$/.test(d.content)));
+  const toolDenied = (tool) => dIdx.whole.has(tool);
 
   for (const { rule, parsed, layer } of allowed) {
     const where = layer.file;
@@ -348,8 +408,9 @@ function capsFor(view, { tags = {} } = {}) {
 
   // MCP servers, by name.
   for (const s of view.mcp) {
-    if (mcpDenied(s.name, deny)) {
-      const d = deny.find((r) => mcpDenied(s.name, [r]));
+    const md = mcpDeny.get(`mcp__${s.name}`.toLowerCase());
+    if (md) {
+      const d = md;
       if (d) took(`the ${s.name} MCP server`, d);
       continue;
     }
@@ -415,8 +476,12 @@ function capsFor(view, { tags = {} } = {}) {
 /** The risks (US-88 in the spec, US-93 here) one agent's setup carries. */
 function risksFor(view) {
   const risks = [];
+  const seenRisk = new Set();
   const add = (id, text, file) => {
-    if (!risks.some((r) => r.id === id && r.file === file && r.text === text)) risks.push({ id, text, file });
+    const key = `${id}\u0000${file}\u0000${text}`;
+    if (seenRisk.has(key)) return;
+    seenRisk.add(key);
+    risks.push({ id, text, file });
   };
   const userLevel = (l) => l.kind === 'user' || l.kind === 'managed';
   for (const l of view.layers) {
@@ -645,7 +710,10 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
     if (a.kind === 'cto') {
       const cto = org.cto || {};
       view = {
-        layers: [...(u.managed || []).map((f) => ({ kind: 'managed', file: f.file, facts: f })), ...folderLayers.filter((l) => l.kind === 'project'), { kind: 'clawdling', file: 'Clawdling (the CTO seat)', facts: { allow: cto.allow || [], ask: cto.ask || [], deny: cto.deny || [] } }],
+        // Its folder's own skills, commands and subagents load too (project source).
+        layers: [...(u.managed || []).map((f) => ({ kind: 'managed', file: f.file, facts: f })), ...folderLayers.filter((l) => l.kind === 'project'), { kind: 'clawdling', file: 'Clawdling (the CTO seat)', facts: { allow: cto.allow || [], ask: cto.ask || [], deny: cto.deny || [] } }, ...grantLayers(d.grants || [], false)],
+        subagentModes: subagentModes(d.grants || []),
+        grantUnknowns: d.grants || [],
         mcp: [], plugins: [], pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile,
         own: [
           { cap: 'private', text: 'the org report: every agent\'s session titles and last lines', source: 'Clawdling (the CTO seat)' },

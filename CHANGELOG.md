@@ -64,7 +64,9 @@ Code setup for the lethal trifecta, offline, by name only.**
   Mediums (a repo hiding its settings, `.mcp.json` or skill grants by making them too big to read; rules
   past the 300th dropped; a repo of subagent grants stalling the server; terminal escapes in file names
   reaching the CLI) and 4 Lows; all fixed at the root, and its 8 probes are now permanent tests
-  (`test/unit/safety-probe-*.test.js`).
+  (`test/unit/safety-probe-*.test.js`). Round 2 found 2 Mediums (thousands of allow and deny rules, or
+  of inline subagent servers, stalling the server) and 4 Lows; fixed at the root (an indexed deny
+  lookup, a server budget, constant-time de-duplication), and its 5 probes are permanent too.
 - **Reviews.** The audit had the top tier: thirteen rounds of a fresh `claude -p --effort xhigh`
   reviewer, each Medium fixed, until it passed; the update guard had a `high` reviewer (passed in
   round 4). The second-model (GPT) review is still owed: both ChatGPT plans were out of quota. The

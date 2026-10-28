@@ -53,7 +53,8 @@ if (allOk) {
     console.log(`Claude Code ${VERSION} passes; maxChecked is already ${CHECKED}: nothing to bump.`);
     process.exit(0);
   }
-  const branch = `claude-compat/${VERSION}`;
+  // The base is in the name: a dry run's bump (against its own branch) never blocks or closes main's.
+  const branch = `claude-compat/${BASE}/${VERSION}`;
   if (sh('git', ['ls-remote', '--heads', 'origin', branch])) {
     console.log(`${branch} is already proposed.`);
     process.exit(0);
@@ -81,9 +82,9 @@ if (allOk) {
   const url = sh('gh', ['pr', 'create', '--base', BASE, '--head', branch, '--title', `${DRY ? '[dry run] ' : ''}Claude Code ${VERSION}: checked, bump maxChecked`, '--body', body]);
   console.log(`Opened ${url}`);
   // At most one bump open at a time: an older one is superseded by this one.
-  const open = JSON.parse(sh('gh', ['pr', 'list', '--state', 'open', '--author', 'app/github-actions', '--json', 'number,headRefName,isCrossRepository', '--limit', '50']));
+  const open = JSON.parse(sh('gh', ['pr', 'list', '--state', 'open', '--author', 'app/github-actions', '--base', BASE, '--json', 'number,headRefName,baseRefName,isCrossRepository', '--limit', '50']));
   for (const p of open) {
-    if (!p.isCrossRepository && p.headRefName.startsWith('claude-compat/') && p.headRefName !== branch) {
+    if (!p.isCrossRepository && p.baseRefName === BASE && p.headRefName.startsWith(`claude-compat/${BASE}/`) && p.headRefName !== branch) {
       sh('gh', ['pr', 'close', String(p.number), '--delete-branch', '--comment', `Superseded by ${url} (Claude Code ${VERSION}).`]);
     }
   }

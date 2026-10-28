@@ -858,3 +858,16 @@ test('the skills read is bounded: hundreds of linked skill folders cost one read
   write(path.join(s.cfg, 'skills', 'synced', 'research', 'SKILL.md'), '---\nname: research\nallowed-tools: WebFetch\n---\n');
   assert.ok(texts(row(s.run(), USER_ROW), 'untrusted').some((x) => x.startsWith('`WebFetch`')));
 });
+
+// ------------------------------------------------------------------------------ stand-in round 2
+
+test('the indexed deny lookup gives the same answer as denies() on every pair', async () => {
+  const { denies, denyIndex } = await import('../../server/safety.js');
+  const contents = [null, '*', ':*', 'curl', 'curl:*', 'curl *', 'cur*', 'curl -X POST:*', 'curl -X POST', 'git', 'git push:*', 'git push', 'git *', 'gi*', 'http *', 'https:*', 'nc *', 'ncat:*', '[redacted]', 'npm run test:*', 'npm run:*', 'npm *', 'npm'];
+  const rules = [];
+  for (const tool of ['Bash', 'PowerShell']) for (const c of contents) rules.push({ tool, content: c });
+  for (const d of rules) {
+    const idx = denyIndex([d]);
+    for (const a of rules) assert.equal(!!idx.match(a), denies(d, a), `deny ${d.tool}(${d.content}) vs allow ${a.tool}(${a.content})`);
+  }
+});

@@ -1491,6 +1491,7 @@ export function scanSetup({ configDir, claudeJsonPath, repos = [], agents, homed
 
 const RULE_MAX = 5000; // permission rules read per list (a longer list says how many it left unread)
 const GRANT_RULES_MAX = 5000; // allowed-tools rules read per skills/commands/agents folder, all files together
+const GRANT_SERVERS_MAX = 200; // inline MCP servers read per folder, all subagents together
 const RULE_CHARS = 2048; // a longer rule is cut before it is redacted
 const MODE_NAMES = new Set(['default', 'manual', 'acceptEdits', 'plan', 'bypassPermissions', 'auto', 'dontAsk']);
 const PKG_RE = /^[@a-z0-9][\w./-]{0,80}$/;
@@ -1516,7 +1517,12 @@ const CRED_FLAG_RE = /(^|[\s(])(-u|--user|--password|--passwd|--pass|--token|--a
 // The same values glued to their flag: `curl -uadmin:pw`, `mysql -pS3cret` (a value with a ':' or a
 // digit, so `find -print` and `-p22`-style ports stay).
 const CRED_GLUED_RE = /(^|[\s(])(-u|-p)([^\s"'():*\-][^\s"')]*)/g;
+// mysql and friends take `-p<password>` glued (any letters); redis-cli takes `-a <password>`.
+const MYSQL_RE = /(^|[\s(])((?:mysql|mariadb|mysqldump|mysqladmin|mysqlimport|mysqlshow)\b[^)]*?\s)-p(?!\s)([^\s"'():*][^\s"')]*)/g;
+const REDIS_RE = /(^|[\s(])(redis-cli\b[^)]*?\s)(-a|--pass|--user)(\s+|=)([^\s"')*][^\s"')]*)/g;
 function redactFlagValues(s) {
+  s = s.replace(MYSQL_RE, (m, pre, cmd, val) => (val === REDACTED ? m : `${pre}${cmd}-p${REDACTED}`));
+  s = s.replace(REDIS_RE, (m, pre, cmd, flag, sep, val) => (val === REDACTED ? m : `${pre}${cmd}${flag}${sep}${REDACTED}`));
   s = s.replace(CRED_GLUED_RE, (m, pre, flag, val) => {
     if (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || !/[:\d]/.test(val)) return m;
     const tail = /:\*$/.test(val) ? ':*' : '';
@@ -1908,7 +1914,7 @@ function subagentServers(fm) {
     } else if (cur) cur.lines.push(t);
   }
   const servers = [];
-  for (const e of entries.slice(0, LIST_MAX)) {
+  for (const e of entries.slice(0, GRANT_SERVERS_MAX + 1)) {
     const body = e.lines.join('\n');
     const cmd = /(?:^|[\s{,])command\s*:\s*["']?([^"',}\s]+)/.exec(body);
     const url = /(?:^|[\s{,])url\s*:\s*["']?([^"',}\s]+)/.exec(body);
@@ -1930,6 +1936,7 @@ function subagentServers(fm) {
 function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home = os.homedir()) {
   const out = [];
   let rulesLeftToRead = GRANT_RULES_MAX;
+  let serversLeft = GRANT_SERVERS_MAX;
   let rulesCut = false;
   const shownOf = (file) => shownPath(file, home).split(/([\\/])/).map((seg) => (seg.length > 1 && tokenish(seg) ? REDACTED : seg)).join('');
   // A file that is there but not read (too big, or its frontmatter does not close in the bytes read)
@@ -1962,6 +1969,11 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
     // allowed-tools that are there but cannot be read: never assumed empty.
     const unreadable = hasKey && !allowed.length;
     const sub = kind === 'subagent' ? subagentServers(fm) : { servers: [], unreadable: false };
+    if (sub.servers.length > serversLeft) {
+      rulesCut = true;
+      sub.servers = sub.servers.slice(0, Math.max(0, serversLeft));
+    }
+    serversLeft -= sub.servers.length;
     if (!allowed.length && !mode && !hooks && !unreadable && !sub.servers.length && !sub.unreadable) return;
     const nm = /^name\s*:\s*["']?([^"'\n]+)/m.exec(text);
     const name = cleanName(nm ? nm[1].trim() : fallbackName);
@@ -2026,7 +2038,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
   if (kinds.includes('commands')) walkMd(path.join(dir, 'commands'), 'command');
   if (kinds.includes('agents')) walkMd(path.join(dir, 'agents'), 'subagent');
   // More allowed-tools rules, or more grant files, than the audit reads: said first, so no cap hides it.
-  if (rulesCut || out.length > LIST_MAX) out.unshift({ kind: 'rule', name: 'rules', file: shownPath(dir, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
+  if (rulesCut || out.length > LIST_MAX) out.unshift({ kind: 'rule or server', name: 'rules', file: shownPath(dir, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
   return out.slice(0, LIST_MAX);
 }
 
@@ -2112,7 +2124,7 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
     const localFile = path.join(dot, 'settings.local.json');
     const local = fileFacts(localFile, box);
     // A project imported from a subfolder of a repo is in that repo: look up to its root (never past home).
-    const root = gitDirOf(dir) ? dir : findGitRoot(dir, { stopAt: home });
+    const root = gitDirOf(dir) ? dir : findGitRoot(dir, isInside(dir, home) ? { stopAt: home } : {});
     const inRepo = !!root;
     out.dirs[dir] = {
       path: show(dir),

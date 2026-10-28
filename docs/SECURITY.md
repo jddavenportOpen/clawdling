@@ -805,7 +805,8 @@ credentials, so it reads names only:
 
 Every rule's text passes `redactSecrets()` **before** it is classified or shown; then the value after a
 credential flag (`-u`, `--user`, `--password`, `--token`, `--api-key`, `-p` unless it is a number),
-separate or glued to the flag (`-uadmin:pw`, `-pS3cret`), is replaced whatever its length, and so is any run of 20 or more letters and digits that mixes both,
+separate or glued to the flag (`-uadmin:pw`, `-pS3cret`, and after `mysql` any glued `-p` value; after
+`redis-cli`, `-a`), is replaced whatever its length, and so is any run of 20 or more letters and digits that mixes both,
 whatever its format:
 `Bash(curl -H "Authorization: Bearer …")` is shown as `Bash(curl -H "Authorization: Bearer
 [redacted]")`. A package or a host label that looks like a token is dropped. Inside a repo a file is
