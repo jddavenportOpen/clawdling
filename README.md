@@ -6,7 +6,7 @@
 
 Running several Claude Code projects at once? Clawdling gives each one an agent with its own job
 and memory, puts them all on one map, and shows you who's working and who needs you. When an
-agent says "done", it shows the receipt, or says "not verified".
+agent says "done", Clawdling shows the receipt, or says "not verified".
 
 ![The org map: you, Donna your chief of staff, an agent for each area of work and life and one for each project; 8 live, 2 need you](docs/img/org-map.png)
 
@@ -22,40 +22,6 @@ Open source and local: it runs the official `claude` CLI on the Claude plan you 
 your own Mac, Linux or Windows computer. It never handles your credentials, never calls the
 Anthropic API and never edits your Claude settings. Only use claude.ai in a browser?
 [Start here](docs/START-HERE.md).
-
-## What you get
-
-**An org, not one more assistant.** Donna (your chief of staff), an agent for each area of your
-work and life (Work, Health, Money, Home, or whatever you choose) and an agent for each project.
-Each agent is a folder with a `CLAUDE.md` (who it is, what it owns, how it works) and a `memory/`
-it keeps current. Your org is plain files in `~/clawdling`: read them, edit them, put them in git.
-
-**See the whole system.** The org map draws you, Donna, your areas and their projects, with live
-badges and a ring on anything that needs you. Click an agent to see what it knows and start it.
-
-**Many Claude Code sessions, one cockpit.** Every agent opens in one click as a real Claude Code
-session that already knows its job, its history and its tools, so you stop pasting the same
-backstory into each new chat.
-- The rail lists every session by its real name: what needs you, what is working, what ended
-  recently. Focus, Split or Grid layouts; `⌘K` jumps anywhere.
-- When Claude asks you something or wants a plan approved, the chat shows it as a card. Tool
-  permissions still show Claude Code's own buttons, exactly as before.
-- When a turn is over but work it started is still running in the background, the session reads
-  **Watching · N** instead of Ready.
-- With tmux, sessions keep running when you close the browser or restart Clawdling.
-- Optional: a browser notification, or one line to your own paired chat, when an agent needs you.
-
-**Agents that remember.** Every session starts with the org context, the agent's `CLAUDE.md` and
-its `memory/NOW.md`. Before an agent finishes it updates that memory (the `/handoff` skill does
-it), so the next session picks up where the last one stopped.
-
-**A chief of staff you can text.** Pair Donna with your own Telegram bot on any OS (or iMessage,
-on a Mac). Text "have the health agent look at my sleep" and Donna starts the Health agent's
-session, tells you who is on it, and you can watch it in the cockpit. Her tools are deliberately
-narrow: she can start, message, list and end sessions, add an agent, and read your org and its
-report card. She has no other shell, no MCP servers and no writes outside her own memory.
-
-![Donna's page: pair a Telegram bot or iMessage, and her recent messages](docs/img/donna.png)
 
 ## Don't take "done" on faith
 
@@ -96,6 +62,40 @@ run stays under a weekly spend cap you set ($2 to start).
 
 More: [the report card, Timeline and Verified done](docs/RECEIPTS.md), [the CTO](docs/CTO.md), and
 how each is sandboxed in [SECURITY.md](docs/SECURITY.md#verified-done-16).
+
+## What you get
+
+**An org, not one more assistant.** Donna (your chief of staff), an agent for each area of your
+work and life (Work, Health, Money, Home, or whatever you choose) and an agent for each project.
+Each agent is a folder with a `CLAUDE.md` (who it is, what it owns, how it works) and a `memory/`
+it keeps current. Your org is plain files in `~/clawdling`: read them, edit them, put them in git.
+
+**See the whole system.** The org map draws you, Donna, your areas and their projects, with live
+badges and a ring on anything that needs you. Click an agent to see what it knows and start it.
+
+**Many Claude Code sessions, one cockpit.** Every agent opens in one click as a real Claude Code
+session that already knows its job, its history and its tools, so you stop pasting the same
+backstory into each new chat.
+- The rail lists every session by its real name: what needs you, what is working, what ended
+  recently. Focus, Split or Grid layouts; `⌘K` jumps anywhere.
+- When Claude asks you something or wants a plan approved, the chat shows it as a card. Tool
+  permissions still show Claude Code's own buttons, exactly as before.
+- When a turn is over but work it started is still running in the background, the session reads
+  **Watching · N** instead of Ready.
+- With tmux, sessions keep running when you close the browser or restart Clawdling.
+- Optional: a browser notification, or one line to your own paired chat, when an agent needs you.
+
+**Agents that remember.** Every session starts with the org context, the agent's `CLAUDE.md` and
+its `memory/NOW.md`. Before an agent finishes it updates that memory (the `/handoff` skill does
+it), so the next session picks up where the last one stopped.
+
+**A chief of staff you can text.** Pair Donna with your own Telegram bot on any OS (or iMessage,
+on a Mac). Text "have the health agent look at my sleep" and Donna starts the Health agent's
+session, tells you who is on it, and you can watch it in the cockpit. Her tools are deliberately
+narrow: she can start, message, list and end sessions, add an agent, and read your org and its
+report card. She has no other shell, no MCP servers and no writes outside her own memory.
+
+![Donna's page: pair a Telegram bot or iMessage, and her recent messages](docs/img/donna.png)
 
 ## Bring in your projects
 
@@ -206,8 +206,7 @@ Pro's is smaller than Max's, so keep one or two agents busy at a time. When you 
 Claude Code says when it resets and the sessions wait. The free plan does not include Claude Code.
 
 **Does Clawdling add limits or fees?** No per-agent fees, and your Claude plan's usage limits
-apply as usual. Two features that spend your plan on their own have caps you set: the scheduled
-CTO review (a weekly cap) and check-ups (a cap per run), both $2 to start.
+apply as usual. The CTO's Monday review, if you turn it on, stays under a weekly cap you set, and each check-up run has a cap per run. Both start at $2.
 
 **Is the report card's dollar figure what I pay?** No. It is what the same usage would cost at
 Anthropic's list prices, worked out on your computer from Claude Code's own transcripts. On Pro
