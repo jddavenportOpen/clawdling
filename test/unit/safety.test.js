@@ -712,7 +712,7 @@ test('skills in --add-dir folders load too: a group project\'s repos and the org
 test('allowed-tools that are there but cannot be read fail closed; skill hooks are a repo risk', () => {
   const w = world({ agents: [{ id: 'p', kind: 'project', repo: { '.claude/skills/x/SKILL.md': '---\nname: x\nallowed-tools: ""\nhooks:\n  PreToolUse: []\n---\nbody\n' } }] });
   const r = row(w.run(), 'p');
-  assert.ok(r.unknown.some((u) => /allowed-tools` Clawdling could not read/.test(u.text)));
+  assert.ok(r.unknown.some((u) => /allowed-tools` \(or frontmatter\) Clawdling could not read/.test(u.text)));
   assert.ok(r.risks.some((k) => k.id === 'repo_grants' && /registers its own hooks/.test(k.text)));
   assert.equal(r.verdict, 'amber');
 });

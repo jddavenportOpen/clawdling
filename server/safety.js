@@ -93,7 +93,17 @@ function unwrap(toks) {
  * A rule with no command (`Bash`, `Bash(*)`, `Bash(:*)`) is unrestricted: all three. Only commands in
  * capabilities.json are classified (names only); a fixed command with no wildcard is what it says.
  */
+const SHELL_MEMO = new Map(); // the same rule text, met on every agent row: classified once
 export function shellRuleCaps(content) {
+  const key = content === null ? '\u0000' : String(content);
+  if (SHELL_MEMO.has(key)) return SHELL_MEMO.get(key);
+  const r = shellRuleCapsOnce(content);
+  if (SHELL_MEMO.size > 50000) SHELL_MEMO.clear();
+  SHELL_MEMO.set(key, r);
+  return r;
+}
+
+function shellRuleCapsOnce(content) {
   if (content === null || /^\s*:?\*?\s*$/.test(content)) return { caps: [...ALL], why: 'runs any command' };
   const raw = content.trim();
   const caps = new Set();
@@ -240,8 +250,12 @@ function mcpDenied(name, denyRules) {
 function capsFor(view, { tags = {} } = {}) {
   const chips = { private: [], untrusted: [], sends: [] };
   const unknown = [];
+  const seenChip = new Set(); // one Set lookup per chip, not a scan of the list (a repo can bring thousands)
   const add = (cap, text, source, fix) => {
-    if (!chips[cap].some((x) => x.text === text && x.source === source)) chips[cap].push({ text, source, ...(fix ? { fix } : {}) });
+    const key = `${cap}\u0000${text}\u0000${source}`;
+    if (seenChip.has(key)) return;
+    seenChip.add(key);
+    chips[cap].push({ text, source, ...(fix ? { fix } : {}) });
   };
   const allRules = (kind) => view.layers.flatMap((l) => (l.facts ? (l.facts[kind] || []).map((r) => ({ rule: r, parsed: parseRule(r), layer: l })) : []));
   const denyRules = allRules('deny').filter((x) => x.parsed);
@@ -259,11 +273,13 @@ function capsFor(view, { tags = {} } = {}) {
     return !d;
   });
   for (const g of view.grantUnknowns || []) {
-    if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
-    if (g.cut) unknown.push({ text: `${g.kind}s Clawdling did not read (more files or folders than it reads)`, source: g.file, why: 'unknown: read the rest of the folder' });
+    if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` (or frontmatter) Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
+    if (g.cut) unknown.push({ text: `${g.kind}s Clawdling did not read (more than it reads)`, source: g.file, why: 'unknown: read the rest of the folder' });
     if (g.mcp_unreadable) unknown.push({ text: `the subagent "${g.name}" defines MCP servers Clawdling could not read`, source: g.file, why: 'unknown: read its mcpServers' });
     if (g.mode === 'other') unknown.push({ text: `the subagent "${g.name}" sets a \`permissionMode\` Clawdling does not know`, source: g.file, why: 'unknown: check the mode name' });
   }
+  for (const f of view.unread || []) unknown.push({ text: `${f}: there, but larger than Clawdling reads`, source: f, why: 'unknown: read it yourself; Claude Code may load all of it' });
+  for (const l of view.layers) if (l.facts && l.facts.rules_not_read) unknown.push({ text: `${l.facts.rules_not_read} permission rule${l.facts.rules_not_read === 1 ? '' : 's'} Clawdling did not read (past the first 5,000 of a list)`, source: l.file, why: 'unknown: review the end of that list' });
   for (const f of view.profiles || []) unknown.push({ text: 'a device-management policy for Claude Code', source: f, why: 'unknown: your organization can add settings and MCP servers there that Clawdling cannot read' });
   for (const l of view.layers) if (l.facts && l.facts.default_mode === 'other') unknown.push({ text: '`defaultMode` set to a mode Clawdling does not know', source: l.file, why: 'unknown: check the mode name' });
   // A rule Clawdling cannot read once a secret in it is hidden (or cut short) is never assumed harmless.
@@ -313,7 +329,7 @@ function capsFor(view, { tags = {} } = {}) {
   }
 
   // A subagent's own permissionMode applies when the session asks first (default, manual, dontAsk).
-  if (mode && ['default', 'manual', 'dontAsk'].includes(mode.name)) {
+  if (mode && ['default', 'manual', 'dontAsk', 'plan'].includes(mode.name)) {
     for (const g of view.subagentModes || []) {
       const fix = `remove \`permissionMode\` from ${g.file}`;
       const what = `the ${g.name} subagent runs in ${g.mode === 'auto' ? 'auto mode' : 'bypass permissions mode'} (\`permissionMode\`)`;
@@ -598,7 +614,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
   const userGrants = u.grants || [];
   const userView = {
-    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], mcp: [...userMcp, ...subagentMcp(userGrants, 'user')], plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], unread: u.unread || [], mcp: [...userMcp, ...subagentMcp(userGrants, 'user')], plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -610,9 +626,9 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   const pending = [];
   for (const a of agents) {
     if (!a || typeof a.id !== 'string') continue;
-    const cwd = a.cwd || a.dir;
+    const cwd = path.resolve(a.cwd || a.dir);
     const d = (scan.dirs && scan.dirs[cwd]) || {};
-    const isRepo = a.kind === 'project' && !!a.repo && cwd === a.repo;
+    const isRepo = a.kind === 'project' && !!a.repo && cwd === path.resolve(a.repo);
     const folderLayers = [
       ...(d.settings ? [{ kind: 'project', file: d.settings.file, facts: d.settings, repo: isRepo && d.in_repo }] : []),
       ...(d.local ? [{ kind: 'local', file: d.local.file, facts: d.local, repo: isRepo && d.in_repo }] : []),
@@ -671,6 +687,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         grantUnknowns: [...userGrants, ...extraGrants, ...(d.grants || [])],
         connectors: true,
         profiles: u.profiles || [],
+        unread: [...(u.unread || []), ...(d.unread || [])],
         repoGrants: [...(isRepo && d.in_repo ? d.grants || [] : []), ...extraRepoGrants],
         mcp: [...userMcp, ...folderMcp, ...subagentMcp(userGrants, 'user'), ...subagentMcp(extraGrants.filter((g) => !extraRepoGrants.includes(g)), 'folder'), ...subagentMcp(extraRepoGrants, 'project'), ...subagentMcp(d.grants || [], isRepo && d.in_repo ? 'project' : 'folder')], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
         orgFolder,

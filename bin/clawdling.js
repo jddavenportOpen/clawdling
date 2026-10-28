@@ -478,6 +478,17 @@ const SHIELD = { red: 'RED  ', amber: 'AMBER', green: 'GREEN' };
 const CHIP = { private: 'private data', untrusted: 'untrusted input', sends: 'sends out' };
 
 export function printSafety(audit) {
+  // A backstop for the terminal: no control, bidi or zero-width character from a file name or a rule.
+  const raw = console.log;
+  console.log = (...a) => raw(...a.map((x) => String(x).replace(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g, '?')));
+  try {
+    printSafetyRows(audit);
+  } finally {
+    console.log = raw;
+  }
+}
+
+function printSafetyRows(audit) {
   console.log(`Setup safety: the lethal trifecta per agent (checked in ${audit.took_ms} ms, by name only)`);
   for (const r of audit.rows) {
     console.log(`\n${SHIELD[r.verdict]}  ${r.name}: ${r.summary}${r.mode ? ` (${r.mode})` : ''}`);

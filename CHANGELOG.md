@@ -59,6 +59,12 @@ Code setup for the lethal trifecta, offline, by name only.**
   in its env: the project agent is red with all three chips and the SessionStart risk, the CTO's
   report carries the same verdict, the fake secret is in no output, log or file, and the first audit
   arrived 0.6 s after start. `doctor --contract --live`: every line ok, nothing left behind.
+- **Stand-in adversarial review** (in place of the GPT review, quota): a fresh `claude -p --effort
+  xhigh` with a security-and-correctness brief wrote a probe test for each finding. Round 1 found 4
+  Mediums (a repo hiding its settings, `.mcp.json` or skill grants by making them too big to read; rules
+  past the 300th dropped; a repo of subagent grants stalling the server; terminal escapes in file names
+  reaching the CLI) and 4 Lows; all fixed at the root, and its 8 probes are now permanent tests
+  (`test/unit/safety-probe-*.test.js`).
 - **Reviews.** The audit had the top tier: thirteen rounds of a fresh `claude -p --effort xhigh`
   reviewer, each Medium fixed, until it passed; the update guard had a `high` reviewer (passed in
   round 4). The second-model (GPT) review is still owed: both ChatGPT plans were out of quota. The

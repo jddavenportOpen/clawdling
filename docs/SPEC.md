@@ -950,6 +950,15 @@ default (`claudeInChromeDefaultEnabled` in `~/.claude.json`, or the key `CLAUDE_
 settings `env`, by name only), is a built-in `claude-in-chrome` server on every interactive row: your
 signed-in browser, all three; `mcp__claude-in-chrome` denies it.
 
+**Present, but not read, is never absent.** A settings file, `.mcp.json` or `~/.claude.json` larger
+than the scans read (20 MB), a skill, command or subagent whose frontmatter does not close in the
+first 64 KB, permission rules past the first 5,000 of a list, and `allowed-tools` past 5,000 rules per
+folder are each an "unknown: review" naming the file. Grant reads have a budget per folder, chips are
+de-duplicated in constant time and shell rules are classified once, so a hostile repo cannot stall
+the server. Paths the audit shows have control, bidi and zero-width characters replaced, and the
+CLI strips them again. A project imported from a subfolder of a repo is in that repo (its risks
+apply), and a repo path is resolved before it is looked up.
+
 **Tools granted by skills, commands and subagents.** A skill's or command's `allowed-tools` lets Claude
 use those tools without asking during the turn it runs, and a subagent's `permissionMode` applies
 when the session asks first. The audit reads both from the frontmatter (never the body) of yours

@@ -1489,7 +1489,8 @@ export function scanSetup({ configDir, claudeJsonPath, repos = [], agents, homed
 // argument and the host of its URL. Never a hook command, an `env` or `headers` value, a URL's
 // path or query, `apiKeyHelper`, or any other argument. It reads files only: no process, no socket.
 
-const RULE_MAX = 300; // permission rules read per list
+const RULE_MAX = 5000; // permission rules read per list (a longer list says how many it left unread)
+const GRANT_RULES_MAX = 5000; // allowed-tools rules read per skills/commands/agents folder, all files together
 const RULE_CHARS = 2048; // a longer rule is cut before it is redacted
 const MODE_NAMES = new Set(['default', 'manual', 'acceptEdits', 'plan', 'bypassPermissions', 'auto', 'dontAsk']);
 const PKG_RE = /^[@a-z0-9][\w./-]{0,80}$/;
@@ -1512,7 +1513,15 @@ function scrubTokens(s) {
 // A value after a credential flag (`curl -u admin:pw`, `--password pw`, `--token x`), whatever its
 // length; `-p` only when it is not a number (`ssh -p 22` keeps its port).
 const CRED_FLAG_RE = /(^|[\s(])(-u|--user|--password|--passwd|--pass|--token|--api-key|--apikey|--secret|--auth|-p)(\s+|=)(["']?)([^\s"')]+)\4/g;
+// The same values glued to their flag: `curl -uadmin:pw`, `mysql -pS3cret` (a value with a ':' or a
+// digit, so `find -print` and `-p22`-style ports stay).
+const CRED_GLUED_RE = /(^|[\s(])(-u|-p)([^\s"'():*\-][^\s"')]*)/g;
 function redactFlagValues(s) {
+  s = s.replace(CRED_GLUED_RE, (m, pre, flag, val) => {
+    if (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || !/[:\d]/.test(val)) return m;
+    const tail = /:\*$/.test(val) ? ':*' : '';
+    return `${pre}${flag}${REDACTED}${tail}`;
+  });
   return s.replace(CRED_FLAG_RE, (m, pre, flag, sep, q, val) => {
     if (val === REDACTED || (flag === '-p' && /^\d+$/.test(val)) || /^\$/.test(val) || /^:?\*$/.test(val)) return m; // a wildcard stays a wildcard
     const tail = /:\*$/.test(val) ? ':*' : ''; // `-u admin:*` keeps the rule's own `:*`
@@ -1594,6 +1603,7 @@ export function mcpFacts(servers) {
 }
 
 const ruleList = (v) => (Array.isArray(v) ? v.slice(0, RULE_MAX).map(ruleText).filter(Boolean) : []);
+const rulesLeft = (...lists) => lists.reduce((n, v) => n + (Array.isArray(v) ? Math.max(0, v.length - RULE_MAX) : 0), 0);
 
 /**
  * One settings file's facts for the audit, or null when it is not there (or not JSON, or outside
@@ -1626,6 +1636,7 @@ export function settingsFacts(file, scope = LENIENT, { home } = {}) {
         allow: ruleList(p.allow),
         ask: ruleList(p.ask),
         deny: ruleList(p.deny),
+        rules_not_read: rulesLeft(p.allow, p.ask, p.deny),
         default_mode: mode,
         auto_mode_rules: isObj(s.autoMode),
         skip_bypass_prompt: s.skipDangerousModePermissionPrompt === true,
@@ -1814,6 +1825,23 @@ export function gitIgnored(repo, rel, { home = os.homedir(), env = process.env }
 
 // ---- skills, commands and subagents that grant tools (frontmatter only, never the body)
 
+// Characters a file name can hold that must never reach a terminal or a page as they are: C0/C1 control
+// characters (escape sequences), and bidi and zero-width marks (text that reads one way, is another).
+const UNSAFE_CHARS_RE = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+/** A path as the audit shows it: tildified, every unsafe character replaced by "?". */
+export function shownPath(p, home) {
+  return tildify(p, home).replace(UNSAFE_CHARS_RE, '?');
+}
+
+/** A file that exists (inside the scope) but is larger than the scans read: present, not read. */
+function tooBig(file, scope = LENIENT) {
+  const rp = real(file);
+  if (!rp) return false;
+  const st = statSafe(rp);
+  if (!st || !st.isFile() || st.size <= MAX_FILE) return false;
+  return !scope.strict || (!!scope.root && isInside(rp, scope.root));
+}
+
 /** The raw frontmatter lines of a file's head, or []. */
 function frontmatterLines(text) {
   const lines = String(text || '').replace(/^\uFEFF/, '').split(/\r?\n/);
@@ -1850,7 +1878,7 @@ function frontmatterList(fm, key) {
     const t = fm[j].trim().replace(/^-\s*/, '').replace(/^\[|\]$/g, '');
     if (t) items.push(...splitRules(t));
   }
-  return items.slice(0, RULE_MAX);
+  return items;
 }
 
 /**
@@ -1901,14 +1929,33 @@ function subagentServers(fm) {
  */
 function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home = os.homedir()) {
   const out = [];
+  let rulesLeftToRead = GRANT_RULES_MAX;
+  let rulesCut = false;
+  const shownOf = (file) => shownPath(file, home).split(/([\\/])/).map((seg) => (seg.length > 1 && tokenish(seg) ? REDACTED : seg)).join('');
+  // A file that is there but not read (too big, or its frontmatter does not close in the bytes read)
+  // is said, never treated as absent: Claude Code may read all of it.
+  const notRead = (kind, file, fallbackName) => {
+    const name = cleanName(fallbackName);
+    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: shownOf(file), allowed: [], mode: null, hooks: false, unreadable: true, mcp: [], mcp_unreadable: false });
+  };
   const take = (kind, file, fallbackName) => {
     const r = readIn(file, scope);
-    if (!r) return;
+    if (!r) {
+      if (tooBig(file, scope)) notRead(kind, file, fallbackName);
+      return;
+    }
     const fm = frontmatterLines(r.text);
-    if (!fm.length) return;
+    if (!fm.length) {
+      if (/^\uFEFF?---[ \t]*\r?$/m.test(r.text.split('\n')[0] || '')) notRead(kind, file, fallbackName);
+      return;
+    }
     const text = fm.join('\n');
     const hasKey = /^allowed-tools\s*:/m.test(text);
-    const allowed = frontmatterList(fm, 'allowed-tools').map(ruleText).filter(Boolean);
+    const all = frontmatterList(fm, 'allowed-tools');
+    const room = Math.max(0, Math.min(RULE_MAX, rulesLeftToRead));
+    if (all.length > room) rulesCut = true;
+    rulesLeftToRead -= Math.min(all.length, room);
+    const allowed = all.slice(0, room).map(ruleText).filter(Boolean);
     const m = kind === 'subagent' ? /^permissionMode\s*:\s*["']?([A-Za-z]+)/m.exec(text) : null;
     const mode = m ? (MODE_NAMES.has(m[1]) ? m[1] : 'other') : null;
     const hooks = /^hooks\s*:/m.test(text); // hooks a skill registers while it runs (event names not read)
@@ -1918,8 +1965,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
     if (!allowed.length && !mode && !hooks && !unreadable && !sub.servers.length && !sub.unreadable) return;
     const nm = /^name\s*:\s*["']?([^"'\n]+)/m.exec(text);
     const name = cleanName(nm ? nm[1].trim() : fallbackName);
-    const shown = tildify(file, home).split(/([\\/])/).map((seg) => (seg.length > 1 && tokenish(seg) ? REDACTED : seg)).join('');
-    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: shown, allowed, mode, hooks, unreadable, mcp: sub.servers, mcp_unreadable: sub.unreadable });
+    out.push({ kind, name: name && !tokenish(name) ? name : REDACTED, file: shownOf(file), allowed, mode, hooks, unreadable, mcp: sub.servers, mcp_unreadable: sub.unreadable });
   };
   if (kinds.includes('skills')) {
     const sd = path.join(dir, 'skills');
@@ -1946,7 +1992,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
         }
       };
       skillsIn(sd);
-      if (cut) out.unshift({ kind: 'skill', name: 'skills', file: tildify(sd, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
+      if (cut) out.unshift({ kind: 'skill', name: 'skills', file: shownPath(sd, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
     }
   }
   // Commands and subagents: `.md` files to depth 3 (Claude Code reads both folders recursively). Each
@@ -1975,10 +2021,12 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
       }
     };
     walk(top, 0);
-    if (cut) out.unshift({ kind, name: `${kind}s`, file: tildify(top, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
+    if (cut) out.unshift({ kind, name: `${kind}s`, file: shownPath(top, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
   };
   if (kinds.includes('commands')) walkMd(path.join(dir, 'commands'), 'command');
   if (kinds.includes('agents')) walkMd(path.join(dir, 'agents'), 'subagent');
+  // More allowed-tools rules, or more grant files, than the audit reads: said first, so no cap hides it.
+  if (rulesCut || out.length > LIST_MAX) out.unshift({ kind: 'rule', name: 'rules', file: shownPath(dir, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
   return out.slice(0, LIST_MAX);
 }
 
@@ -1992,11 +2040,13 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
   const user = scopeOf(cfg, false);
-  const show = (p) => tildify(p, home);
+  const show = (p) => shownPath(p, home);
   const fileFacts = (f, scope) => {
     const x = settingsFacts(f, scope, { home });
     return x ? { file: show(f), ...x } : null;
   };
+  // Files that are there but larger than the scans read: said ("unknown: review"), never absent.
+  const unreadOf = (files, scope) => files.filter((f) => tooBig(f, scope)).map(show);
   const list = [];
   const seen = new Set();
   for (const d of Array.isArray(dirs) ? dirs : []) {
@@ -2027,11 +2077,13 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
       : []
   );
   const settings = fileFacts(path.join(cfg, 'settings.json'), user);
+  const userUnread = unreadOf([path.join(cfg, 'settings.json'), claudeJsonPath || claudeJsonPathFor(env, home), ...(Array.isArray(managed) ? managed : []), ...(Array.isArray(managedMcp) ? managedMcp : [])], LENIENT);
   const managedFacts = (Array.isArray(managed) ? managed : []).map((f) => fileFacts(f, LENIENT)).filter(Boolean);
   const out = {
     user: {
       config_dir: show(cfg),
       settings,
+      unread: userUnread,
       managed: managedFacts,
       // managed-mcp.json: a fixed set of servers for every session.
       managed_mcp: (Array.isArray(managedMcp) ? managedMcp : []).flatMap((f) => (withJson(f, (j) => mcpFacts(j?.mcpServers)) || []).map((s) => ({ ...s, file: show(f) }))),
@@ -2051,7 +2103,7 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
     // Skills, commands and subagents in each --add-dir folder (the org folder, a group's repos), which
     // Claude Code loads too: {dir: {grants, in_repo}}.
     add_dirs: Object.fromEntries([...new Set([...(orgHome ? [orgHome] : []), ...(Array.isArray(addDirs) ? addDirs : [])].filter((x) => typeof x === 'string' && isAbsoluteAny(x)).map((x) => path.resolve(x)))]
-      .map((x) => [x, { path: tildify(x, home), in_repo: !!gitDirOf(x), grants: toolGrants(path.join(x, '.claude'), scopeOf(x, true), ['skills', 'commands', 'agents'], home) }])),
+      .map((x) => [x, { path: show(x), in_repo: !!gitDirOf(x), grants: toolGrants(path.join(x, '.claude'), scopeOf(x, true), ['skills', 'commands', 'agents'], home) }])),
     dirs: {},
   };
   for (const dir of list) {
@@ -2059,16 +2111,19 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
     const dot = path.join(dir, '.claude');
     const localFile = path.join(dot, 'settings.local.json');
     const local = fileFacts(localFile, box);
-    const inRepo = !!gitDirOf(dir);
+    // A project imported from a subfolder of a repo is in that repo: look up to its root (never past home).
+    const root = gitDirOf(dir) ? dir : findGitRoot(dir, { stopAt: home });
+    const inRepo = !!root;
     out.dirs[dir] = {
       path: show(dir),
       in_repo: inRepo,
+      unread: unreadOf([path.join(dot, 'settings.json'), localFile, path.join(dir, '.mcp.json')], box),
       settings: fileFacts(path.join(dot, 'settings.json'), box),
       local,
       mcp_json: withJson(path.join(dir, '.mcp.json'), (j) => mcpFacts(j?.mcpServers), box),
       mcp_local: cj.byDir.get(dir) || [],
       grants: toolGrants(dot, box, ['skills', 'commands', 'agents'], home),
-      local_not_ignored: !!locate(localFile, box) && inRepo && !gitIgnored(dir, '.claude/settings.local.json', { home, env }),
+      local_not_ignored: !!locate(localFile, box) && inRepo && !gitIgnored(root, path.relative(root, localFile).split(path.sep).join('/'), { home, env }),
     };
   }
   return out;

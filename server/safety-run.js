@@ -63,21 +63,21 @@ export class SafetyChoices {
 
 /** The folder an agent's sessions run in (sessions.js resolveTarget) and its --add-dir folders. */
 function placeOf(a, home) {
-  let cwd = a.dir;
+  let cwd = path.resolve(a.dir);
   if (a.kind === 'project' && a.repo) {
     try {
-      if (fs.statSync(a.repo).isDirectory()) cwd = a.repo;
+      if (fs.statSync(a.repo).isDirectory()) cwd = path.resolve(a.repo); // "/x/app/" and "/x/app" are one folder
     } catch {
       // repo missing: the agent folder
     }
   }
   // The CTO seat reads the report, not the org folder; everyone else gets the org folder (Donna too), and
   // a group project agent each of its repos (sessions.js addDirsFor).
-  const addDirs = a.kind === 'cto' ? [] : cwd === home ? [] : [home];
+  const addDirs = a.kind === 'cto' ? [] : cwd === path.resolve(home) ? [] : [path.resolve(home)];
   if (a.kind === 'project' && !a.repo && Array.isArray(a.repos)) {
     for (const r of a.repos) {
       try {
-        if (typeof r === 'string' && r !== cwd && !addDirs.includes(r) && fs.statSync(r).isDirectory()) addDirs.push(r);
+        if (typeof r === 'string' && path.resolve(r) !== cwd && !addDirs.includes(path.resolve(r)) && fs.statSync(r).isDirectory()) addDirs.push(path.resolve(r));
       } catch {
         // a repo that is gone
       }

@@ -804,8 +804,8 @@ credentials, so it reads names only:
 | Clawdling's own state | Donna's channel (Telegram or iMessage, paired or not), each agent's permission mode, Donna's and the CTO seat's rules, your choices in `.clawdling/safety.json` | tokens, chat content |
 
 Every rule's text passes `redactSecrets()` **before** it is classified or shown; then the value after a
-credential flag (`-u`, `--user`, `--password`, `--token`, `--api-key`, `-p` unless it is a number) is
-replaced whatever its length, and so is any run of 20 or more letters and digits that mixes both,
+credential flag (`-u`, `--user`, `--password`, `--token`, `--api-key`, `-p` unless it is a number),
+separate or glued to the flag (`-uadmin:pw`, `-pS3cret`), is replaced whatever its length, and so is any run of 20 or more letters and digits that mixes both,
 whatever its format:
 `Bash(curl -H "Authorization: Bearer …")` is shown as `Bash(curl -H "Authorization: Bearer
 [redacted]")`. A package or a host label that looks like a token is dropped. Inside a repo a file is
