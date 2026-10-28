@@ -783,9 +783,10 @@ credentials, so it reads names only:
 
 | Source | What it reads | What it never reads |
 |---|---|---|
-| `settings.json` (yours, managed, each agent folder's, each project repo's `.claude/settings.json` and `settings.local.json`) | `permissions.allow`, `ask`, `deny` rule text, `defaultMode`, `disableBypassPermissionsMode`, `skipDangerousModePermissionPrompt`, whether `autoMode` is set, `additionalDirectories` (only whether one is your home folder or a big folder in it), `enableAllProjectMcpServers`, `disableClaudeAiConnectors`, hook **event names** and counts, `enabledPlugins` names | hook commands, `env`, `apiKeyHelper`, `otelHeadersHelper`, `autoMode` rules, any other value |
-| `~/.claude.json` | `mcpServers` keys, and this folder's own `projects[<folder>].mcpServers` keys; per server the basename of `command`, the first argument that looks like a package (`@scope/name` or `name`, at most 80 characters, not a flag, not a URL, not a token), the `type`, and the **host** of `url` | `env`, `headers`, every other argument, a URL's user, port, path or query, `oauthAccount`, `primaryApiKey`, everything else |
-| a repo's `.mcp.json` | server keys, and the same command, package and host rule | the same |
+| `settings.json` (yours, managed, each agent folder's, each project repo's `.claude/settings.json` and `settings.local.json`) | `permissions.allow`, `ask`, `deny` rule text, `defaultMode`, `disableBypassPermissionsMode`, `skipDangerousModePermissionPrompt`, whether `autoMode` is set, `additionalDirectories` (only whether one is your home folder or a big folder in it), `enableAllProjectMcpServers`, `disableClaudeAiConnectors`, whether `env` has the key `CLAUDE_CODE_ENABLE_CFC` (never its value), a managed file's `managedMcpServers` (by the MCP rule below), hook **event names** and counts, `enabledPlugins` names | hook commands, `env`, `apiKeyHelper`, `otelHeadersHelper`, `autoMode` rules, any other value |
+| `~/.claude.json` | `claudeInChromeDefaultEnabled` (true or not), `mcpServers` keys, and this folder's own `projects[<folder>].mcpServers` keys; per server the basename of `command`, the first argument that looks like a package (`@scope/name` or `name`, at most 80 characters, not a flag, not a URL, not a token), the `type`, and the **host** of `url` | `env`, `headers`, every other argument, a URL's user, port, path or query, `oauthAccount`, `primaryApiKey`, everything else |
+| a repo's `.mcp.json`, and `managed-mcp.json` beside your managed settings | server keys, and the same command, package and host rule | the same |
+| managed settings' `managed-settings.d/*.json` drop-ins; a device-management profile for Claude Code | the drop-ins like any settings file; only whether the profile exists | the profile's contents |
 | skills (`skills/<x>/SKILL.md`), commands (`commands/**/*.md`) and subagents (`agents/*.md`): yours, the session folder's `.claude/`, and each `--add-dir` folder's (the org folder, a group's repos) | from the frontmatter only: `name`, each `allowed-tools` rule (as rule text, redacted like above), a subagent's `permissionMode`, and whether it has `hooks` | the body (the prompt), hook commands, every other key |
 | plugins | names, marketplace ids, and a marketplace's source repo (`owner/name`) from `plugins/known_marketplaces.json` | plugin files |
 | `.gitignore`, `.claude/.gitignore`, `.git/info/exclude`, your global excludes file (`core.excludesFile`, else `~/.config/git/ignore`) | the ignore rules, to see whether `.claude/settings.local.json` is ignored | nothing else; no `git` process is started |
@@ -810,7 +811,8 @@ the server's output or `safety.json`; another runs the audit with sockets, DNS, 
 ### What the verdict means, and does not
 
 Green is "no trifecta found **by name**", never "secure": the audit sees names, not what a server or
-a script really does. A shell command that is not in its table (`capabilities.json`) is not
+a script really does. Settings an admin pushes from the claude.ai console, and a device-management
+profile's contents, are not read (a profile shows as "unknown: review"). A shell command that is not in its table (`capabilities.json`) is not
 classified, and it does not follow one agent asking another (`clawdling send`) to act for it. What it
 does follow is text: what one agent writes (its notes, its last lines in the report, Donna's "today so
 far") counts as untrusted input for every other agent once the agent that wrote it reads untrusted

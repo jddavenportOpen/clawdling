@@ -10,6 +10,18 @@
   ],
   "servers": [
     {
+      "id": "chrome-profile",
+      "label": "your signed-in browser",
+      "words": [
+        "claude-in-chrome"
+      ],
+      "caps": [
+        "private",
+        "untrusted",
+        "sends"
+      ]
+    },
+    {
       "id": "mail",
       "label": "mail",
       "words": [

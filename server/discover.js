@@ -1626,6 +1626,10 @@ export function settingsFacts(file, scope = LENIENT, { home } = {}) {
         hooks,
         all_project_mcp: s.enableAllProjectMcpServers === true,
         connectors_off: s.disableClaudeAiConnectors === true,
+        // Only whether the key is there (its value is never read): Claude in Chrome on for every session.
+        chrome_env: isObj(s.env) && Object.hasOwn(s.env, 'CLAUDE_CODE_ENABLE_CFC'),
+        // Servers a managed settings file gives every session (names only, like any MCP entry).
+        managed_mcp: mcpFacts(s.managedMcpServers),
         plugins: isObj(s.enabledPlugins) ? Object.entries(s.enabledPlugins).slice(0, LIST_MAX).map(([k, v]) => [tokenish(k) ? REDACTED : cleanName(k), v === true]).filter(([k]) => k) : [],
       };
     },
@@ -1898,7 +1902,7 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
  *   user: {settings, managed[], mcp[], plugins[], marketplaces[]}
  *   dirs: {<dir>: {settings, local, mcp_json[], mcp_local[], local_not_ignored, in_repo}}
  */
-export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [], homedir = os.homedir(), env = process.env, managed = [], orgHome = null } = {}) {
+export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [], homedir = os.homedir(), env = process.env, managed = [], managedMcp = [], profiles = [], orgHome = null } = {}) {
   const home = path.resolve(homedir);
   const cfg = path.resolve(configDir || configDirFor(env, home));
   const user = scopeOf(cfg, false);
@@ -1926,7 +1930,7 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
         if (dir && isObj(v)) byDir.set(dir, mcpFacts(v.mcpServers));
       }
     }
-    return { user: mcpFacts(j?.mcpServers), byDir };
+    return { user: mcpFacts(j?.mcpServers), byDir, chrome: !!j && j.claudeInChromeDefaultEnabled === true };
   });
   const marketplaces = withJson(path.join(cfg, 'plugins', 'known_marketplaces.json'), (j) =>
     isObj(j)
@@ -1942,6 +1946,11 @@ export function scanSafety({ configDir, claudeJsonPath, dirs = [], addDirs = [],
       config_dir: show(cfg),
       settings,
       managed: (Array.isArray(managed) ? managed : []).map((f) => fileFacts(f, LENIENT)).filter(Boolean),
+      // managed-mcp.json: a fixed set of servers for every session.
+      managed_mcp: (Array.isArray(managedMcp) ? managedMcp : []).flatMap((f) => (withJson(f, (j) => mcpFacts(j?.mcpServers)) || []).map((s) => ({ ...s, file: show(f) }))),
+      // A device-management profile for Claude Code: its contents are not read.
+      profiles: (Array.isArray(profiles) ? profiles : []).filter((f) => isFile(f)).map(show),
+      chrome: cj.chrome,
       mcp: cj.user,
       plugins: listPlugins(cfg, settings ? settings.plugins : []),
       marketplaces,

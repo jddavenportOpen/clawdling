@@ -937,6 +937,14 @@ review" item, "claude.ai MCP server", unless a settings file it loads sets
 `"disableClaudeAiConnectors": true`. The owner can say once what their connectors do (a tag named
 `claude.ai`); then they count like any tagged server.
 
+**Your organization's servers, and Claude in Chrome.** MCP servers from managed settings
+(`managedMcpServers`, in the file and its `managed-settings.d/*.json` drop-ins) and from
+`managed-mcp.json` beside it count like your own, with their file. A device-management profile for
+Claude Code is "unknown: review" (its contents are not read). Claude in Chrome, when it is on by
+default (`claudeInChromeDefaultEnabled` in `~/.claude.json`, or the key `CLAUDE_CODE_ENABLE_CFC` in a
+settings `env`, by name only), is a built-in `claude-in-chrome` server on every interactive row: your
+signed-in browser, all three; `mcp__claude-in-chrome` denies it.
+
 **Tools granted by skills, commands and subagents.** A skill's or command's `allowed-tools` lets Claude
 use those tools without asking during the turn it runs, and a subagent's `permissionMode` applies
 when the session asks first. The audit reads both from the frontmatter (never the body) of yours

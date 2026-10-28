@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { redactSecrets, scanSafety } from './discover.js';
 import { donnaAllowedTools } from './channels/donna.js';
-import { managedSettingsPaths } from './otel.js';
+import { managedProfiles, managedSettingsPaths } from './otel.js';
 import { ctoPermissions, CTO_ID } from './org.js';
 import { auditSafety, CAPS, USER_ROW } from './safety.js';
 import { badRequest, clampText, isValidAgentId, oneLine, readJson, writeJson } from './util.js';
@@ -92,7 +92,19 @@ function placeOf(a, home) {
  */
 export function runSafetyAudit({ agents = [], home, userHome, configDir, claudeJsonPath, env = process.env, channels = {}, choices = null, managed, accounts = 0, platform = process.platform } = {}) {
   const placed = agents.filter((a) => a && typeof a.id === 'string').map((a) => placeOf(a, home));
-  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), addDirs: placed.flatMap((a) => a.addDirs), homedir: userHome, env, managed: managed || managedSettingsPaths(platform, env), orgHome: home });
+  const base = managed || managedSettingsPaths(platform, env);
+  // Each managed settings file, its managed-settings.d drop-ins, and managed-mcp.json beside it.
+  const managedFiles = base.flatMap((f) => {
+    let extra = [];
+    try {
+      extra = fs.readdirSync(path.join(path.dirname(f), 'managed-settings.d')).filter((n) => n.endsWith('.json')).sort().map((n) => path.join(path.dirname(f), 'managed-settings.d', n));
+    } catch {
+      // no drop-in folder
+    }
+    return [f, ...extra];
+  });
+  const managedMcp = base.map((f) => path.join(path.dirname(f), 'managed-mcp.json'));
+  const scan = scanSafety({ configDir, claudeJsonPath, dirs: placed.map((a) => a.cwd), addDirs: placed.flatMap((a) => a.addDirs), homedir: userHome, env, managed: managedFiles, managedMcp, profiles: managed ? [] : managedProfiles(platform), orgHome: home });
   const cto = placed.find((a) => a.kind === 'cto' || a.id === CTO_ID);
   let ctoRules = null;
   if (cto) {

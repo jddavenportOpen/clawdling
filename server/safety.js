@@ -250,6 +250,7 @@ function capsFor(view, { tags = {} } = {}) {
     if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
     if (g.mode === 'other') unknown.push({ text: `the subagent "${g.name}" sets a \`permissionMode\` Clawdling does not know`, source: g.file, why: 'unknown: check the mode name' });
   }
+  for (const f of view.profiles || []) unknown.push({ text: 'a device-management policy for Claude Code', source: f, why: 'unknown: your organization can add settings and MCP servers there that Clawdling cannot read' });
   for (const l of view.layers) if (l.facts && l.facts.default_mode === 'other') unknown.push({ text: '`defaultMode` set to a mode Clawdling does not know', source: l.file, why: 'unknown: check the mode name' });
   // A rule Clawdling cannot read once a secret in it is hidden (or cut short) is never assumed harmless.
   for (const x of allRules('allow')) if (!x.parsed) unknown.push({ text: `\`${x.rule}\` allowed`, source: x.layer.file, why: 'unknown: a rule Clawdling could not read after hiding a secret in it' });
@@ -323,7 +324,9 @@ function capsFor(view, { tags = {} } = {}) {
     // a server that runs here.
     if (!tagged && k.known && !k.caps.size && s.type !== 'stdio') k = { known: false, caps: new Set(), labels: [] };
     const what = `${s.name} MCP server${k.labels.length ? ` (${k.labels.join(', ')})` : ''}`;
-    const fix = view.isUserRow
+    const fix = s.scope === 'chrome'
+      ? `${view.isUserRow ? 'stop every session using it' : 'stop this agent using it'}: add "mcp__claude-in-chrome" to \`permissions.deny\` in ${view.denyFile}, or turn "Enabled by default" off in Claude in Chrome`
+      : view.isUserRow
       ? `stop every session using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}, or remove it with \`claude mcp remove ${s.name}\``
       : s.scope === 'user'
         ? `stop this agent using the ${s.name} MCP server: add "mcp__${s.name}" to \`permissions.deny\` in ${view.denyFile}`
@@ -539,7 +542,16 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
     ...(u.managed || []).map((f) => ({ kind: 'managed', file: f.file, facts: f })),
     ...(u.settings ? [{ kind: 'user', file: u.settings.file, facts: u.settings }] : []),
   ];
-  const userMcp = (u.mcp || []).map((s) => ({ ...s, scope: 'user', source: '~/.claude.json (mcpServers)' }));
+  const userMcp = [
+    ...(u.mcp || []).map((s) => ({ ...s, scope: 'user', source: '~/.claude.json (mcpServers)' })),
+    // Servers your organization gives every session: managed settings (managedMcpServers), managed-mcp.json.
+    ...(u.managed || []).flatMap((f) => (f.managed_mcp || []).map((s) => ({ ...s, scope: 'managed', source: `${f.file} (managedMcpServers)` }))),
+    ...(u.managed_mcp || []).map((s) => ({ ...s, scope: 'managed', source: s.file })),
+    // Claude in Chrome: your signed-in browser, on in every interactive session when it is turned on.
+    ...(u.chrome || [u.settings, ...(u.managed || [])].some((f) => f && f.chrome_env)
+      ? [{ name: 'claude-in-chrome', type: 'builtin', command: null, package: null, host: null, scope: 'chrome', source: u.chrome ? '~/.claude.json (claudeInChromeDefaultEnabled)' : 'your settings (CLAUDE_CODE_ENABLE_CFC)' }]
+      : []),
+  ];
   const homePosix = posix(home);
   const orgPosix = posix(org.home);
   const userFile = u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}${platform === 'win32' ? '\\' : '/'}settings.json`;
@@ -548,7 +560,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
   // Everything (user level): what a plain `claude` anywhere on this computer loads.
   const userGrants = u.grants || [];
   const userView = {
-    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
+    layers: [...userLayers, ...grantLayers(userGrants, true)], subagentModes: subagentModes(userGrants), grantUnknowns: userGrants, connectors: true, profiles: u.profiles || [], mcp: userMcp, plugins, pluginSource, homePosix, orgPosix, folderPosix: null, isUserRow: true,
     denyFile: u.settings ? u.settings.file : `${u.config_dir || '~/.claude'}/settings.json`,
     mode: (() => {
       const m = modeFrom(userLayers, userFile);
@@ -620,6 +632,7 @@ export function auditSafety({ scan, agents = [], org = {}, accepted = {}, tags =
         subagentModes: subagentModes([...userGrants, ...extraGrants, ...(d.grants || [])]),
         grantUnknowns: [...userGrants, ...extraGrants, ...(d.grants || [])],
         connectors: true,
+        profiles: u.profiles || [],
         repoGrants: [...(isRepo && d.in_repo ? d.grants || [] : []), ...extraRepoGrants],
         mcp: [...userMcp, ...folderMcp], plugins, folderPlugins, pluginSource, homePosix, orgPosix, folderPosix: posix(cwd), denyFile, mode, overridesMode, homeAddDirs, inheritsMode: setting === 'inherit',
         orgFolder,

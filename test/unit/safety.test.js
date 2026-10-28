@@ -731,3 +731,36 @@ test('claude.ai connectors: unknown on every row that loads them, until turned o
   const off = world({ connectors: true, agents: [{ id: 'a', kind: 'domain', folder: { disableClaudeAiConnectors: true } }] });
   assert.ok(!row(off.run(), 'a').unknown.some((u) => u.text.startsWith('claude.ai')), 'its own settings turn them off');
 });
+
+// ------------------------------------------------------------------------------ review round 7
+
+test('Claude in Chrome (on by default) is your signed-in browser in every session; a deny takes it away', () => {
+  const w = world({ claudeJson: { claudeInChromeDefaultEnabled: true, oauthAccount: { emailAddress: 'x@example.invalid' } }, agents: [{ id: 'a', kind: 'domain' }, { id: 'b', kind: 'domain', folder: { permissions: { deny: ['mcp__claude-in-chrome'] } } }] });
+  const a = w.run();
+  const r = row(a, 'a');
+  for (const c of ['private', 'untrusted', 'sends']) assert.ok(texts(r, c).some((t) => t.startsWith('claude-in-chrome MCP server (your signed-in browser')), c);
+  assert.equal(r.verdict, 'red');
+  assert.ok(!texts(row(a, 'b'), 'sends').some((t) => t.startsWith('claude-in-chrome')));
+  assert.ok(!JSON.stringify(a).includes('x@example.invalid'));
+  const env = world({ user: { env: { CLAUDE_CODE_ENABLE_CFC: 'sk-ant-api03-VALUEvalueVALUEvalue' } } });
+  const u = row(env.run(), USER_ROW);
+  assert.ok(texts(u, 'sends').some((t) => t.startsWith('claude-in-chrome')), 'the env key, by name');
+  assert.ok(!JSON.stringify(u).includes('VALUEvalue'), 'never its value');
+});
+
+test('servers your organization manages: managedMcpServers, managed-mcp.json, drop-ins; a policy profile is unknown', () => {
+  const w = world({ agents: [{ id: 'a', kind: 'domain' }] });
+  const dir = path.join(w.home, 'managed');
+  const f = write(path.join(dir, 'managed-settings.json'), { managedMcpServers: { slack: { type: 'http', url: 'https://mcp.slack.com/mcp', headers: { Authorization: 'Bearer PLANTEDmanaged0123456789' } } } });
+  write(path.join(dir, 'managed-settings.d', '10-extra.json'), { permissions: { allow: ['WebFetch'] } });
+  write(path.join(dir, 'managed-mcp.json'), { mcpServers: { postgres: { command: 'npx', args: ['@x/postgres-mcp'] } } });
+  const a = w.run({ managed: [f] });
+  const r = row(a, 'a');
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('slack MCP server')));
+  assert.ok(r.chips.sends.find((x) => x.text.startsWith('slack')).source.endsWith('(managedMcpServers)'));
+  assert.ok(texts(r, 'private').some((t) => t.startsWith('postgres MCP server')));
+  assert.ok(texts(r, 'untrusted').some((t) => t.startsWith('`WebFetch`')), 'a drop-in');
+  assert.ok(!JSON.stringify(a).includes('PLANTEDmanaged'));
+  const s = scanSafety({ configDir: path.join(w.home, '.claude'), homedir: w.home, env: {}, profiles: [f, path.join(dir, 'nope.plist')] });
+  assert.equal(s.user.profiles.length, 1);
+});
