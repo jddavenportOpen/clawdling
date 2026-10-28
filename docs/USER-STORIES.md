@@ -1,4 +1,4 @@
-# Clawdling 1.0 to 1.5 - test users and user stories
+# Clawdling 1.0 to 1.7 - test users and user stories
 
 Every story below is an acceptance test. The release gate is: every P0 story passes
 for every persona it names, run from a clean home directory with no prior state.
@@ -63,7 +63,7 @@ Priority: **P0** = release-blocking, **P1** = must work before the launch post, 
   - 1.1: an added Claude account is only a folder passed as `CLAUDE_CONFIG_DIR` (US-29); the chat view reads Claude Code's transcripts under `~/.claude/projects` (or `<account folder>/projects`), never a credential. Test: `test/integration/features.test.js` "accounts: only the default login until one is added; an added one is passed as CLAUDE_CONFIG_DIR".
 - **US-20 (P0, Rin)** As a skeptic, the cockpit refuses requests without the local token and refuses cross-origin writes; it binds to 127.0.0.1 by default.
   - 1.1: `--host 0.0.0.0` (what phone pairing needs, US-36) is opt-in, serves plain http with the token, and only logs a warning.
-- **US-21 (P0, everyone)** The README never claims "unlimited": it says no session caps and that plan usage limits still apply.
+- **US-21 (P0, everyone)** The README never claims "unlimited" or "no session caps": it says no per-agent fees and that plan usage limits still apply.
   - 1.1: README, START-HERE and SETUP.md say Pro works with a smaller shared allowance (one or two agents busy at a time) and the free plan cannot run Claude Code.
 
 ## New in 1.1

@@ -115,7 +115,9 @@ stream (output before the cut goes only to existing viewers). The terminal modes
 session, and replayed after the snapshot.
 
 **Status.** `--settings .clawdling/hooks-settings.json` registers `bin/clawdling-hook.js` for
-SessionStart, UserPromptSubmit, Stop, Notification and SessionEnd. The hook POSTs to
+SessionStart, UserPromptSubmit, Stop, StopFailure (Claude Code versions that have it), Notification
+and SessionEnd, plus PreToolUse and PostToolUse for the two tools that ask you something
+(AskUserQuestion and ExitPlanMode; the CTO seat registers them for every tool). The hook POSTs to
 `/api/hooks` and always exits 0 without output within 1.5 s; if the server is down it appends to
 `.clawdling/hook-spool.jsonl`, which the server replays on start. Before the first hook, the server
 reads the rendered screen (`capture-pane`) to recognise Claude Code's folder-trust dialog and shows
@@ -142,7 +144,8 @@ joins a serial queue and becomes one headless turn: `claude -p --output-format j
 (`--session-id` the first time, `--resume` afterwards, persisted as `org.json` `donna_session`),
 cwd `donna/`, `--permission-mode dontAsk`, `--setting-sources project,local --strict-mcp-config`
 (the owner's own settings and MCP servers do not apply) and a narrow `--allowedTools` list
-(`Bash(clawdling spawn|send|ls|new|end ...)`, `Read` of the org folder, `Edit(memory/**)`). The prompt
+(`Bash(clawdling spawn|send|ls|new|end|report|discover ...)`, `import` without `--yes`, `Read` of the
+org folder, `Edit(memory/**)`; the full list is in docs/SECURITY.md). The prompt
 carries the message plus a roster of agents and live sessions. Donna routes by running the real
 CLI, which talks to the server over HTTP like any other client. Every exchange is logged to
 `.clawdling/donna-chat.jsonl`.
@@ -184,6 +187,26 @@ importing the same repo again is recognised and skipped. Everything it writes re
 New routes: `GET /api/discover`, `GET /api/setup`, `POST /api/import`, `POST
 /api/setup/promote` (the same token auth as every other route). A successful import publishes the
 `agent_created` org event, so every open cockpit updates live.
+
+## Receipts and the CTO (1.5 to 1.7)
+
+All of these are local and read-only over Claude Code's own records, with no model call, except the
+check-ups and the CTO seat, which are ordinary Claude Code sessions on the owner's plan.
+
+- `server/ledger.js` reads what a session did and used from its transcript (tool results,
+  subagents, usage, the CLI's own cost-state). `server/report.js` builds the report card from the
+  ledger, the session registry, the agent's `memory/NOW.md` and `git log`; its JSON
+  (`clawdling report --json`) is a contract the CTO seat reads.
+- `server/claims.js` labels a "done" claim Verified, Not verified or Contradicted from the
+  transcript. `server/checks.js` runs the ship check, the commands the owner approved, in a scratch
+  worktree, never the live repo. `server/evals/` runs agent check-ups under a spend cap.
+- `server/receipts.js` gives every report item a stable id (`R-<kind>-<8 hex>`).
+  `server/status-rules.js` computes On track, At risk, Stalled or Quiet with fixed rules.
+  `server/review-lint.js` checks that every line of a CTO review cites a receipt that exists.
+  `server/cto.js` and `server/seat-policy.js` start and lock down the CTO seat.
+
+How each is sandboxed and what it may run: [SECURITY.md](SECURITY.md#verified-done-16) and
+[the CTO seat](SECURITY.md#the-cto-seat-17).
 
 ## Verified behaviour this design relies on
 

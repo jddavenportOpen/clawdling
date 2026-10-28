@@ -1,20 +1,20 @@
-# Clawdling 1.0 — build spec
+# Clawdling build spec
 
-Author: JD Davenport. Date: 2026-10-22. Status: shipped as 1.0.0.
+Author: JD Davenport. Started 2026-10-22 as the 1.0 spec (shipped as 1.0.0); later releases add their sections below.
 
 ## 0. One-line product
 
-**Clawdling turns Claude Code into an org of agents.** Hand Claude Code one GitHub link; it interviews you (5 questions, or "use defaults") and builds your org: a chief of staff ("Donna") you can text on Telegram or iMessage, a domain agent for each area of your life/work, and a project agent for each project. A local cockpit shows the whole org and every live Claude Code session; every agent is one click from a fresh Claude Code session preloaded with its context, its memory and its tools. No session caps, no per-agent fees: every agent is the official `claude` CLI running on the Claude plan you already pay for (your plan's usage limits still apply).
+**Clawdling turns Claude Code into an org of agents.** Hand Claude Code one GitHub link; it interviews you (5 questions, or "use defaults") and builds your org: a chief of staff ("Donna") you can text on Telegram or iMessage, a domain agent for each area of your life/work, and a project agent for each project. A local cockpit shows the whole org and every live Claude Code session; every agent is one click from a fresh Claude Code session preloaded with its context, its memory and its tools. No per-agent fees: every agent is the official `claude` CLI running on the Claude plan you already pay for (your plan's usage limits still apply).
 
-### The edge (from today's market research — do not dilute)
+### The edge
 1. **An organization, not an assistant.** Standing domain + project agents with persistent identity and memory, plus a chief of staff. Competitors are session lists (Conductor, Claude Squad, opcode) or one assistant (PAI, OpenClaw, Poke).
 2. **100% Claude-Code-native.** Clawdling only ever spawns the unmodified `claude` binary the user is already signed into. It never reads, stores or forwards credentials or OAuth tokens and never calls the Anthropic API itself (no summarizer, no routing model, nothing). Titles are derived locally from text. This is a hard requirement — Anthropic enforces against token reuse since 2026-04-04.
 3. **A visual cockpit over the whole org** — org map + live sessions + needs-you, in one local page.
 4. **One-link, interview-driven install** of the whole org. Faster than hand-writing CLAUDE.md files.
 5. **Donna routes.** A message to Donna on Telegram/iMessage goes to the right agent (she starts or continues that agent's session) and she reports back. Anthropic's native Channels can only inject into one already-open session.
 
-### Failure modes we must not ship (bounce risks)
-- Claiming "unlimited". Copy says "no session caps" and states that plan limits apply.
+### Failure modes we must not ship
+- Claiming "unlimited" or "no session caps". Copy says "no per-agent fees" and states that plan limits apply.
 - An interview slower than writing a CLAUDE.md. Max 5 questions; `--defaults` path; working org in under 5 minutes.
 - Agent amnesia. Every agent has a memory folder that every new session loads and every session is told to update. This must demonstrably work (live test).
 

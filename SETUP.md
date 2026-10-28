@@ -249,8 +249,9 @@ Clawdling shows a waiting session under **Needs you** until they answer, and nev
 them. Wait for that answer before you start any agent (step 10): an agent started before the org
 folder is trusted asks for its own folder too. (Alternative: run `claude` once in a terminal inside the org folder and accept there.)
 Claude Code's dialog also says the folder pre-approves a few tool permissions: those are the
-`clawdling` routing commands in the org's `.claude/settings.json` (ls, spawn, send, new, end,
-doctor; see docs/SECURITY.md), nothing else. Say so in one line if the user asks.
+`clawdling` commands in the org's `.claude/settings.json` (ls, spawn, send, new, end, discover,
+doctor, and the read-only remote list, remote serve-status and remote tailscale-name; see
+docs/SECURITY.md), nothing else. Say so in one line if the user asks.
 
 ## 8. Bring in your projects (optional)
 

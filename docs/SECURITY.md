@@ -787,12 +787,14 @@ applies. Clawdling never answers a permission prompt or a folder-trust question 
 text (Donna, the CLI, the `/send` API) is refused while one is on screen. A choice is picked only
 by someone holding the token: an explicit `POST /api/sessions/:sid/answer` (the cockpit's and
 the phone's buttons), or keys typed into the session's own terminal (`/ws/term`, the cockpit's
-terminal or `clawdling attach`). Clawdling pre-approves only `clawdling ls/spawn/send/new/end/doctor` (in the generated
-`--settings` file and the org `.claude/settings.json`). Agents can read the whole org folder
+terminal or `clawdling attach`). Clawdling pre-approves only these `clawdling` commands: `ls`, `spawn`, `send`, `new`, `end`,
+`discover`, `doctor`, and the read-only `remote list`, `remote serve-status` and `remote tailscale-name`
+(in the generated `--settings` file and the org `.claude/settings.json`), plus the read-only `report`
+(in the generated `--settings` file only). Agents can read the whole org folder
 (`--add-dir`) except Clawdling's own runtime folder: the same settings deny agents' file tools
 (Read, Edit) on `<org>/.clawdling/`, which holds the token, and Donna's turns get the same rule as
 `--disallowedTools`. A shell command you approve runs as you and can still read it, so treat an
-approved arbitrary command as owner-level (1.2 plans a separate, narrower token for agents). Permission mode defaults to "Ask before editing files", passed by name
+approved arbitrary command as owner-level (agents share the owner token; see Not in scope). Permission mode defaults to "Ask before editing files", passed by name
 (`--permission-mode manual`, or `default` on a Claude Code that calls it that; the names are read
 from `claude --help` at startup), because a Claude Code started with no mode now opens in auto
 mode. `acceptEdits` is opt-in, `inherit` (no flag: your own Claude Code setting) is opt-in, and
@@ -889,4 +891,5 @@ reading the token). To sign out every device paired through Use from anywhere, p
 the token link or QR code, stop Clawdling, delete `.clawdling/token` and start it again: a new
 token is made and each one pairs again.
 
-Report vulnerabilities privately via GitHub security advisories on the repository.
+Report vulnerabilities privately by email to me@jddavenport.com, or through the repository's
+Security tab (Report a vulnerability) where it is enabled. Please do not open a public issue.

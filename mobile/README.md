@@ -13,7 +13,7 @@ npm run ios                  # the iOS simulator
 ```
 
 To pair with a real server, start it so the phone can reach it (`clawdling start --host 0.0.0.0`),
-open Settings, Connect your phone in the cockpit, and scan the code. Or tap "Try the demo".
+open Settings, Use Clawdling on your phone in the cockpit, and scan the code. Or tap "Try the demo".
 
 ## Tests
 

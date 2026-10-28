@@ -60,7 +60,7 @@ are not core and are not listed.
 |---|---|---|---|---|
 | Model and effort chips | CS-25 | ✓ 1.1 | ✓ | |
 | Dictation | CS-26 | ✓ 1.1 | ✓ | Clawdling uses the browser's speech service; a local option is a candidate |
-| Cost per session | — | — | ✓ | From transcript token counts, no credential needed; candidate |
+| Cost per session | — | ✓ 1.5 | ✓ | From transcript token counts, no credential needed (the report card) |
 
 ## Org, memory and import
 

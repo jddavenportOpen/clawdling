@@ -1,7 +1,7 @@
 {
   "name": "clawdling",
   "version": "1.7.0",
-  "description": "Turn Claude Code into an org of agents: a visual cockpit, domain and project agents with memory, and a chief of staff you can text. Installed by handing Claude Code one link.",
+  "description": "Your Claude Code, as a whole org: every agent on one map, who's working, who needs you, and a receipt when one says done. Runs the official claude CLI on your own plan, locally.",
   "type": "module",
   "license": "AGPL-3.0-only",
   "bin": {

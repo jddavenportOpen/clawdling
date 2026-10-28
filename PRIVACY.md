@@ -1,6 +1,6 @@
 # Privacy
 
-_Last updated: 2026-10-25_
+_Last updated: 2026-10-28_
 
 Clawdling is open-source software you run on your own computer. This policy covers the
 Clawdling server and cockpit (this repository) and the Clawdling iPhone app.
@@ -47,6 +47,13 @@ no servers of its own. The author never receives any of your data.
   The **detailed timeline** (beta, off by default) has Claude Code send its own telemetry to
   Clawdling on `127.0.0.1` only; Clawdling drops your account identifiers and any prompt or
   response field from it and keeps the rest on your computer for 14 days.
+- **Verified done and the CTO** (1.6 and 1.7) stay on your computer too. Claim labels are read from
+  Claude Code's own transcripts with no model call. A ship check runs only the commands you
+  approved, only when you press Run, in a scratch copy of the repo; a command such as `npm ci` may
+  download packages, as it would if you ran it yourself. Check-ups, the cheaper-model test and the
+  CTO seat are ordinary Claude Code sessions on your own plan, started when you press the button
+  (or, for the CTO, every Monday if you turn that on). The CTO's line in the Monday report is off
+  by default and is only its headline and a count of decisions waiting.
 - **Telegram or iMessage** (optional, only if you turn on Donna's text channel): messages pass
   through Telegram's or Apple's own services under their terms. Clawdling answers only the one
   chat you pair it with. If you also turn on "Message me when an agent needs me" (off by default),

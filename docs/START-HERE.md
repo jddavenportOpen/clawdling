@@ -28,7 +28,8 @@ installing software or running Claude Code on their laptops. If yours does, ask 
 **About the Pro plan.** Pro works. Its usage allowance is smaller than Max's, and every assistant
 you talk to draws from that one allowance. Talk to one or two
 assistants at a time. When you hit the limit, Claude Code tells you when it resets, and the
-assistants simply wait until then. Clawdling adds no limits and no fees of its own. Max gives 5x
+assistants simply wait until then. Clawdling charges no per-agent fees; your plan's usage limits
+apply as usual. Max gives 5x
 or 20x Pro's usage if you end up using it all day.
 
 ## Step 1: get Claude Code
@@ -121,8 +122,9 @@ program, the same as Claude Code always does.
 - It never sees, saves or sends your Claude password or login.
 - It never talks to Anthropic directly and charges nothing. Your usage is your normal plan usage.
 - Your assistants and their notes are plain files in a folder called `clawdling` in your home
-  folder. Clawdling sends nothing anywhere; your assistants talk to Claude the same way Claude
-  Code always does.
+  folder. Clawdling has no servers or telemetry and sends nothing to its author; your assistants
+  talk to Claude the same way Claude Code always does. Telegram or iMessage, remote access and
+  GitHub are used only if you turn them on.
 - Texting Donna from your phone (Telegram, or iMessage on a Mac) is optional and stays off until
   you set it up.
 - Clawdling is a new open-source project, built by one person ([JD Davenport](https://jddavenport.com)),
@@ -163,5 +165,5 @@ you.
   the login item if there is one, and delete ~/.clawdling-app." Your assistants' files stay in
   `~/clawdling` until you delete that folder yourself.
 
-More: the [README](../README.md) and its Troubleshooting section, written for people who use a
+More: the [README](../README.md) and [Troubleshooting](TROUBLESHOOTING.md), written for people who use a
 terminal.
