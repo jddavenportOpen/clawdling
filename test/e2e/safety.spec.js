@@ -40,6 +40,8 @@ test.describe('setup safety', () => {
     await health.locator('.safety-row-head').click();
     await expect(health.locator('[data-cap="private"]')).toContainText('the org folder');
     await expect(health.locator('[data-cap="sends"]')).toContainText('nothing by name');
+    // A green row under a red user level says what its own deny rules take away.
+    await expect(health).toContainText('so they do not count here: the github MCP server, the linear MCP server');
     // Donna: her inbound is the owner's own, and the UI says why.
     await rowOf(page, 'donna').locator('.safety-row-head').click();
     await expect(rowOf(page, 'donna')).toContainText('Her text-message turns load none of your Claude Code setup (only her allow-list); the sessions you open with her in the cockpit load it like any agent');

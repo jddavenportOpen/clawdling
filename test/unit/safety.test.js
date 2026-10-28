@@ -175,7 +175,8 @@ test('the union of user, agent folder and repo: a project agent is red, a domain
   assert.ok(site.fixes.length >= 1 && site.fixes.length <= 3);
   assert.ok(site.fixes.every((f) => typeof f === 'string'), 'fixes are text');
   const health = row(a, 'health');
-  assert.deepEqual(texts(health, 'private'), ["the org folder: your me.md and every agent's notes (`--add-dir`, Clawdling)"], 'a deny rule in its folder takes gmail away; the org folder stays');
+  assert.deepEqual(texts(health, 'private'), ["the org folder: your me.md and every agent's notes (`--add-dir`)"], 'a deny rule in its folder takes gmail away; the org folder stays');
+  assert.ok(health.notes.some((n) => /^Denied in .*health.*settings\.json, so they do not count here: `WebFetch`, the gmail MCP server\.$/.test(n)), 'and the row says so');
   assert.deepEqual(texts(health, 'untrusted'), ['text written by agents that read untrusted input (Donna, site), in the org folder\'s notes and `clawdling report`'], 'its own WebFetch is denied; the site agent\'s words still reach it');
   assert.equal(health.trifecta, false);
   assert.equal(health.verdict, 'green');

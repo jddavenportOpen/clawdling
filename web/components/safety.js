@@ -79,6 +79,9 @@ export function MapShield({ verdict, x, y }) {
   return html`<g class=${`map-shield shield-${verdict}`} transform=${`translate(${x - 6} ${y - 6})`} data-map-shield=${verdict}>
     <title>Setup safety: ${SHIELD_WORD[verdict]}</title>
     <path d="M6 0.6 1.6 2.3v3.2c0 2.6 1.8 4.7 4.4 5.8 2.6-1.1 4.4-3.2 4.4-5.8V2.3z" />
+    ${verdict === 'green' ? html`<path class="map-shield-mark" d="m3.9 5.9 1.5 1.5 2.7-2.9" />`
+      : verdict === 'red' ? html`<path class="map-shield-mark" d="M6 3.4v3M6 8.3v.2" />`
+      : html`<path class="map-shield-mark" d="M4 5.9h4" />`}
   </g>`;
 }
 

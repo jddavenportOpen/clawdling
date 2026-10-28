@@ -244,8 +244,20 @@ function capsFor(view, { tags = {} } = {}) {
     if (!chips[cap].some((x) => x.text === text && x.source === source)) chips[cap].push({ text, source, ...(fix ? { fix } : {}) });
   };
   const allRules = (kind) => view.layers.flatMap((l) => (l.facts ? (l.facts[kind] || []).map((r) => ({ rule: r, parsed: parseRule(r), layer: l })) : []));
-  const deny = allRules('deny').map((x) => x.parsed).filter(Boolean);
-  const allowed = allRules('allow').filter((x) => x.parsed && !deny.some((d) => denies(d, x.parsed)));
+  const denyRules = allRules('deny').filter((x) => x.parsed);
+  const deny = denyRules.map((x) => x.parsed);
+  // What a deny rule takes away, said on the row: a green row whose parent is red must show why.
+  const taken = [];
+  const took = (what, d) => {
+    const by = denyRules.find((x) => x.parsed === d);
+    if (by && !taken.some((t) => t.what === what)) taken.push({ what, rule: by.rule, file: by.layer.file });
+  };
+  const allowed = allRules('allow').filter((x) => {
+    if (!x.parsed) return false;
+    const d = deny.find((dd) => denies(dd, x.parsed));
+    if (d) took(`\`${x.rule}\``, d);
+    return !d;
+  });
   for (const g of view.grantUnknowns || []) {
     if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
     if (g.cut) unknown.push({ text: `${g.kind}s Clawdling did not read (more files or folders than it reads)`, source: g.file, why: 'unknown: read the rest of the folder' });
@@ -312,7 +324,7 @@ function capsFor(view, { tags = {} } = {}) {
   }
 
   // Every agent but the CTO also gets the org folder (--add-dir): you, and every agent's notes.
-  if (view.orgFolder) add('private', 'the org folder: your me.md and every agent\'s notes (`--add-dir`, Clawdling)', 'Clawdling', null);
+  if (view.orgFolder) add('private', 'the org folder: your me.md and every agent\'s notes (`--add-dir`)', 'Clawdling', null);
 
   // Extra folders that are the home folder (or a big folder in it).
   for (const l of view.layers) for (const d of (l.facts && l.facts.home_dirs) || []) add('private', `extra folder ${d} (additionalDirectories)`, l.file, `remove ${d} from \`additionalDirectories\` in ${l.file}`);
@@ -320,7 +332,11 @@ function capsFor(view, { tags = {} } = {}) {
 
   // MCP servers, by name.
   for (const s of view.mcp) {
-    if (mcpDenied(s.name, deny)) continue;
+    if (mcpDenied(s.name, deny)) {
+      const d = deny.find((r) => mcpDenied(s.name, [r]));
+      if (d) took(`the ${s.name} MCP server`, d);
+      continue;
+    }
     const tagged = Object.hasOwn(tags, s.name) && Array.isArray(tags[s.name]) ? tags[s.name].filter((c) => CAPS.includes(c)) : null;
     let k = tagged ? { known: true, caps: new Set(tagged), labels: ['tagged by you'] } : classifyName(s.name, s.command, s.package, s.host);
     // A remote server called "memory" is someone else's computer: a local-helper name counts only for
@@ -377,7 +393,7 @@ function capsFor(view, { tags = {} } = {}) {
 
   // What Clawdling itself gives this agent (Donna's channel, the CTO's report).
   for (const o of view.own || []) add(o.cap, o.text, o.source, o.fix || null);
-  return { chips, unknown };
+  return { chips, unknown, taken };
 }
 
 /** The risks (US-88 in the spec, US-93 here) one agent's setup carries. */
@@ -483,7 +499,7 @@ const SUMMARY = {
 };
 
 function finish(base, view, opts) {
-  const { chips, unknown } = capsFor(view, opts);
+  const { chips, unknown, taken } = capsFor(view, opts);
   const trifecta = CAPS.every((c) => chips[c].length > 0);
   const risks = risksFor(view);
   const accepted = opts.accepted && Object.hasOwn(opts.accepted, base.id) && opts.accepted[base.id] ? { reason: String(opts.accepted[base.id].reason || ''), at: opts.accepted[base.id].at || null } : null;
@@ -495,7 +511,14 @@ function finish(base, view, opts) {
     unknown,
     trifecta,
     risks,
-    notes: view.notes || [],
+    notes: [
+      ...(view.notes || []),
+      // Grouped by the file whose deny rules did it: "Denied here, so it does not count: ...".
+      ...[...new Set(taken.map((t) => t.file))].map((f) => {
+        const xs = taken.filter((t) => t.file === f).map((t) => t.what);
+        return `Denied in ${f}, so ${xs.length === 1 ? 'it does' : 'they do'} not count here: ${xs.slice(0, 6).join(', ')}${xs.length > 6 ? ` and ${xs.length - 6} more` : ''}.`;
+      }),
+    ],
     accepted: trifecta ? accepted : null,
   };
   row.sentence = trifecta ? trifectaSentence(chips, view.isUserRow ? 'a session' : 'this agent') : null;
