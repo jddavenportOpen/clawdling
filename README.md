@@ -52,15 +52,16 @@ it), so the next session picks up where the last one stopped.
 **A chief of staff you can text.** Pair Donna with your own Telegram bot on any OS (or iMessage,
 on a Mac). Text "have the health agent look at my sleep" and Donna starts the Health agent's
 session, tells you who is on it, and you can watch it in the cockpit. Her tools are deliberately
-narrow: she can start, message and list sessions and read your org, nothing else.
+narrow: she can start, message, list and end sessions, add an agent, and read your org and its
+report card. She has no other shell, no MCP servers and no writes outside her own memory.
 
 ![Donna's page: pair a Telegram bot or iMessage, and her recent messages](docs/img/donna.png)
 
 ## Don't take "done" on faith
 
 **When an agent says "done", Clawdling shows the receipt, or says "not verified".** A developer
-can read the diff; an owner needs a receipt. No model judges anything: every label is a fact from
-Claude Code's own transcript, so it is free and instant.
+can read the diff; an owner needs a receipt. No model decides the label: each label is a fact
+from Claude Code's own transcript, so it is free and instant.
 
 - **Verified**: a check ran after the agent's last change and passed ("`npm test` passed at 14:02,
   after the last edit").
@@ -88,7 +89,8 @@ a bill.
 project's receipts and writes one page: which projects are on track, at risk or stalled, why, and
 up to three decisions for you. Every line cites its receipt; a line without one is marked
 **uncited**. The labels come from fixed rules in Clawdling, not the model's opinion. It runs when
-you press the button, or every Monday if you turn that on, under a weekly spend cap you set.
+you press the button (the cost is shown first), or every Monday if you turn that on; the Monday
+run stays under a weekly spend cap you set ($2 to start).
 
 ![The CTO's weekly review: each project's status computed by Clawdling, every line linked to its receipt, and the decisions it asked](docs/img/cto-review.png)
 

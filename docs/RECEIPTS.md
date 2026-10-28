@@ -57,7 +57,7 @@ of three labels:
 
 ![A receipt under an agent's "Done": Contradicted, quoting the failed test, with Ask the agent to fix it](img/verified-done.png)
 
-No model judges anything: the label is a fact from Claude Code's own transcript, so it is free and
+No model decides the label: it is a fact from Claude Code's own transcript, so it is free and
 instant. To get more receipts:
 
 - **A ship check per project.** Pick, once, the commands that prove the project works (tests,
