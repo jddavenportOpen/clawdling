@@ -1635,6 +1635,7 @@ export function settingsFacts(file, scope = LENIENT, { home } = {}) {
         all_project_mcp: s.enableAllProjectMcpServers === true,
         connectors_off: s.disableClaudeAiConnectors === true,
         sync_plugins_off: s.syncClaudeAiPlugins === false,
+        sync_skills_off: s.syncClaudeAiSkills === false,
         // Only whether the key is there (its value is never read): Claude in Chrome on for every session.
         chrome_env: isObj(s.env) && Object.hasOwn(s.env, 'CLAUDE_CODE_ENABLE_CFC'),
         // Servers a managed settings file gives every session (names only, like any MCP entry).
@@ -1922,7 +1923,15 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
   };
   if (kinds.includes('skills')) {
     const sd = path.join(dir, 'skills');
-    if (dirIn(sd, scope)) for (const e of listEntries(sd, LIST_MAX).entries) if (!e.name.startsWith('.') && direntIsDir(sd, e)) take('skill', path.join(sd, e.name, 'SKILL.md'), e.name);
+    if (dirIn(sd, scope)) {
+      for (const e of listEntries(sd, LIST_MAX).entries) {
+        if (e.name.startsWith('.') || !direntIsDir(sd, e)) continue;
+        const one = path.join(sd, e.name);
+        if (locate(path.join(one, 'SKILL.md'), scope)) take('skill', path.join(one, 'SKILL.md'), e.name);
+        // A folder of skills, like skills/synced/ (skills synced from claude.ai): one level down.
+        else if (dirIn(one, scope)) for (const f of listEntries(one, LIST_MAX).entries) if (!f.name.startsWith('.') && direntIsDir(one, f)) take('skill', path.join(one, f.name, 'SKILL.md'), f.name);
+      }
+    }
   }
   // Commands and subagents: `.md` files to depth 3 (Claude Code reads both folders recursively). Each
   // real folder once; a walk cut short by its budget is said, never silent.

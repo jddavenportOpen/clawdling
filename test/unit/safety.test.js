@@ -54,7 +54,7 @@ function world({ user = null, claudeJson = null, agents = [], connectors = false
   const cfg = path.join(home, '.claude');
   fs.mkdirSync(cfg, { recursive: true });
   // claude.ai connectors are off unless a test turns them on (each one is its own "unknown: review").
-  if (user || !connectors) write(path.join(cfg, 'settings.json'), { ...(connectors ? {} : { disableClaudeAiConnectors: true, syncClaudeAiPlugins: false }), ...(user || {}) });
+  if (user || !connectors) write(path.join(cfg, 'settings.json'), { ...(connectors ? {} : { disableClaudeAiConnectors: true, syncClaudeAiPlugins: false, syncClaudeAiSkills: false }), ...(user || {}) });
   if (claudeJson) write(path.join(home, '.claude.json'), claudeJson);
   const list = [{ id: 'donna', name: 'Donna', kind: 'chief', dir: path.join(org, 'donna') }];
   for (const a of agents) {
@@ -726,9 +726,11 @@ test('claude.ai connectors: unknown on every row that loads them, until turned o
   const choices = new SafetyChoices(path.join(w.org, '.clawdling', 'safety.json'));
   choices.tag('claude.ai', ['private', 'untrusted', 'sends']);
   const t = row(w.run({ choices }), 'a');
-  assert.ok(texts(t, 'private').some((x) => x.startsWith('claude.ai MCP server (your claude.ai connectors and plugins, tagged by you)')));
+  assert.ok(texts(t, 'private').some((x) => x.startsWith('claude.ai MCP server (your claude.ai connectors, plugins and skills, tagged by you)')));
   assert.equal(t.verdict, 'red');
   const off = world({ connectors: true, agents: [{ id: 'a', kind: 'domain', folder: { disableClaudeAiConnectors: true, syncClaudeAiPlugins: false } }] });
+  // (a folder's settings.json is project scope: syncClaudeAiSkills there does not count; this one sets it in local)
+  write(path.join(off.org, 'domains', 'a', '.claude', 'settings.local.json'), { syncClaudeAiSkills: false });
   assert.ok(!row(off.run(), 'a').unknown.some((u) => u.text.startsWith('claude.ai')), 'its own settings turn them off');
 });
 
@@ -830,4 +832,14 @@ test('subagents and skills your organization deploys in the managed folder reach
     assert.ok(texts(r, 'untrusted').some((t) => t.startsWith('`WebFetch`')), id);
   }
   assert.ok(!JSON.stringify(a).includes('PLANTEDmanaged'));
+});
+
+test('skills synced from claude.ai (skills/synced/<x>/) are read; the claude.ai item stays until syncClaudeAiSkills is false', () => {
+  const w = world({ user: { syncClaudeAiSkills: true }, agents: [{ id: 'a', kind: 'domain' }] });
+  write(path.join(w.cfg, 'skills', 'synced', 'research', 'SKILL.md'), '---\nname: research\nallowed-tools: WebFetch\n---\nbody\n');
+  const r = row(w.run(), 'a');
+  assert.ok(texts(r, 'untrusted').some((t) => t.startsWith('`WebFetch`')));
+  assert.ok(r.chips.untrusted.find((x) => x.text.startsWith('`WebFetch`')).source.includes('synced'));
+  assert.ok(r.unknown.some((u) => /claude\.ai account's skills/.test(u.text)));
+  assert.notEqual(r.verdict, 'green');
 });

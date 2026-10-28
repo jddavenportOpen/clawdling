@@ -362,12 +362,16 @@ function capsFor(view, { tags = {} } = {}) {
   const connectorsOn = !view.layers.some((l) => l.facts && l.facts.connectors_off);
   // Plugins turned on for your claude.ai account (or your organization) sync in after a session starts.
   const syncOn = !view.layers.some((l) => l.facts && l.facts.sync_plugins_off);
-  if (view.connectors && (connectorsOn || syncOn)) {
-    const which = connectorsOn && syncOn ? 'connectors and plugins, like Gmail, Calendar or Slack' : connectorsOn ? 'connectors, like Gmail, Calendar or Drive' : 'plugins (yours, and any your organization turns on)';
+  // Skills on your claude.ai account sync into ~/.claude/skills/synced/ while sessions run (user, local
+  // or managed settings can turn that off).
+  const skillsOn = !view.layers.some((l) => l.facts && l.facts.sync_skills_off && ['user', 'local', 'managed'].includes(l.kind));
+  if (view.connectors && (connectorsOn || syncOn || skillsOn)) {
+    const parts = [connectorsOn ? 'connectors' : null, syncOn ? 'plugins' : null, skillsOn ? 'skills' : null].filter(Boolean);
+    const which = `${parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0]} (yours, and any your organization turns on)`;
     const what = `claude.ai MCP server (your claude.ai account's ${which}: Clawdling cannot see which)`;
     const ctag = Object.hasOwn(tags, 'claude.ai') && Array.isArray(tags['claude.ai']) ? tags['claude.ai'].filter((c) => CAPS.includes(c)) : null;
-    if (ctag) for (const c of ctag) add(c, 'claude.ai MCP server (your claude.ai connectors and plugins, tagged by you)', 'your claude.ai account', `turn them off for this agent: set \`"disableClaudeAiConnectors": true\` and \`"syncClaudeAiPlugins": false\` in ${view.denyFile}`);
-    else unknown.push({ text: what, source: 'your claude.ai account', why: 'unknown: check `/mcp` and `/plugin` in Claude Code, or set "disableClaudeAiConnectors": true and "syncClaudeAiPlugins": false' });
+    if (ctag) for (const c of ctag) add(c, 'claude.ai MCP server (your claude.ai connectors, plugins and skills, tagged by you)', 'your claude.ai account', `turn them off for this agent: set \`"disableClaudeAiConnectors": true\`, \`"syncClaudeAiPlugins": false\` and \`"syncClaudeAiSkills": false\` in ${view.denyFile}`);
+    else unknown.push({ text: what, source: 'your claude.ai account', why: 'unknown: check `/mcp`, `/plugin` and `/skills` in Claude Code, or set "disableClaudeAiConnectors": true, "syncClaudeAiPlugins": false and "syncClaudeAiSkills": false' });
   }
 
   // What Clawdling itself gives this agent (Donna's channel, the CTO's report).
