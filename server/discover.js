@@ -1924,25 +1924,36 @@ function toolGrants(dir, scope, kinds = ['skills', 'commands', 'agents'], home =
     const sd = path.join(dir, 'skills');
     if (dirIn(sd, scope)) for (const e of listEntries(sd, LIST_MAX).entries) if (!e.name.startsWith('.') && direntIsDir(sd, e)) take('skill', path.join(sd, e.name, 'SKILL.md'), e.name);
   }
-  if (kinds.includes('agents')) for (const f of mdFiles(path.join(dir, 'agents'), scope)) take('subagent', path.join(dir, 'agents', f), f.replace(/\.md$/i, ''));
-  if (kinds.includes('commands')) {
+  // Commands and subagents: `.md` files to depth 3 (Claude Code reads both folders recursively). Each
+  // real folder once; a walk cut short by its budget is said, never silent.
+  const walkMd = (top, kind) => {
     let budget = WALK_MAX;
     const seen = new Set();
-    const walk = (d, depth) => {
-      const rd = dirIn(d, scope);
-      if (!rd || budget <= 0 || seen.has(samePathKey(rd))) return;
+    let cut = false;
+    const walk = (dd, depth) => {
+      const rd = dirIn(dd, scope);
+      if (!rd || seen.has(samePathKey(rd))) return;
+      if (budget <= 0) {
+        cut = true;
+        return;
+      }
       seen.add(samePathKey(rd));
-      const { entries } = listEntries(rd, Math.min(LIST_MAX, budget));
+      const { entries, more } = listEntries(rd, Math.min(LIST_MAX, budget));
+      if (more) cut = true;
       budget -= entries.length;
       for (const e of entries) {
         if (e.name.startsWith('.')) continue;
         if (direntIsDir(rd, e)) {
           if (depth < 3) walk(path.join(rd, e.name), depth + 1);
-        } else if (/\.md$/i.test(e.name)) take('command', path.join(rd, e.name), e.name.replace(/\.md$/i, ''));
+          else cut = true;
+        } else if (/\.md$/i.test(e.name)) take(kind, path.join(rd, e.name), e.name.replace(/\.md$/i, ''));
       }
     };
-    walk(path.join(dir, 'commands'), 0);
-  }
+    walk(top, 0);
+    if (cut) out.push({ kind, name: `${kind}s`, file: tildify(top, home), allowed: [], mode: null, hooks: false, unreadable: false, mcp: [], mcp_unreadable: false, cut: true });
+  };
+  if (kinds.includes('commands')) walkMd(path.join(dir, 'commands'), 'command');
+  if (kinds.includes('agents')) walkMd(path.join(dir, 'agents'), 'subagent');
   return out.slice(0, LIST_MAX);
 }
 

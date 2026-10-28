@@ -960,7 +960,8 @@ command or subagent that grants tools, sets a mode or registers hooks is a setup
 subagent defines inline (`mcpServers`, read like any MCP entry, never env or headers) count on every row
 that loads that subagent, and a repo's are `repo_mcp`
 (`repo_grants`). `allowed-tools` that are there but cannot be read are "unknown: review", never
-empty. Not read: folders above the session folder, nested `.claude/skills/` below it (they load
+empty. Commands and subagents are read to depth 3 (Claude Code reads both folders recursively); a walk
+cut short says so as "unknown: review". Not read: folders above the session folder, nested `.claude/skills/` below it (they load
 when Claude first touches that subfolder), and skills a plugin brings.
 
 **What each agent's sessions load** (Claude Code reads `.claude/settings.json` from the session's

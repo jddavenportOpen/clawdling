@@ -808,3 +808,11 @@ test('plugins your organization turns on in managed settings count everywhere; m
   assert.ok(texts(r, 'sends').some((t) => t.startsWith('slack plugin (chat)')));
   assert.ok(!texts(r, 'private').some((t) => t.startsWith('gmail-tools')), 'blocked by managed settings');
 });
+
+test('subagents in subfolders of agents/ are read (Claude Code reads the folder recursively)', () => {
+  const w = world({ agents: [{ id: 'a', kind: 'domain', mode: null }] });
+  write(path.join(w.cfg, 'agents', 'testing', 'browser-tester.md'), '---\nname: browser-tester\npermissionMode: auto\nmcpServers:\n  playwright:\n    command: npx\n    args: ["@playwright/mcp"]\n---\nbody\n');
+  const r = row(w.run(), 'a');
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('playwright MCP server')));
+  assert.ok(texts(r, 'sends').some((t) => /the browser-tester subagent runs in auto mode/.test(t)));
+});

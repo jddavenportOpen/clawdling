@@ -248,6 +248,7 @@ function capsFor(view, { tags = {} } = {}) {
   const allowed = allRules('allow').filter((x) => x.parsed && !deny.some((d) => denies(d, x.parsed)));
   for (const g of view.grantUnknowns || []) {
     if (g.unreadable) unknown.push({ text: `the ${g.kind} "${g.name}" has \`allowed-tools\` Clawdling could not read`, source: g.file, why: 'unknown: read what it lets Claude use' });
+    if (g.cut) unknown.push({ text: `${g.kind}s Clawdling did not read (more files or folders than it reads)`, source: g.file, why: 'unknown: read the rest of the folder' });
     if (g.mcp_unreadable) unknown.push({ text: `the subagent "${g.name}" defines MCP servers Clawdling could not read`, source: g.file, why: 'unknown: read its mcpServers' });
     if (g.mode === 'other') unknown.push({ text: `the subagent "${g.name}" sets a \`permissionMode\` Clawdling does not know`, source: g.file, why: 'unknown: check the mode name' });
   }
