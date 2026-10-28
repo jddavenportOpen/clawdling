@@ -27,7 +27,7 @@ test('the seat\'s deny rules cover CLAUDE.local.md, not only CLAUDE.md', () => {
 
 test('the seat will not start with a CLAUDE.local.md Clawdling did not put there', () => {
   // A folder path Claude Code's file rules can express (no underscores, as macOS temp dirs often have).
-  const root = /^\/[A-Za-z0-9._/ -]+$/.test(os.tmpdir()) ? os.tmpdir() : '/tmp';
+  const root = fs.realpathSync.native(os.tmpdir()); // the real temp folder (no Windows short names), on every OS
   const home = fs.mkdtempSync(path.join(root, 'clawdling-probe-'));
   try {
     const dir = path.join(home, 'cto');

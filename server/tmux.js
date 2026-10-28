@@ -199,13 +199,17 @@ export class Tmux {
     }
   }
 
-  /** With `strict`, only tmux's own "no such session" (or no server) is false: a timeout throws. */
+  /**
+   * With `strict`, a check that could not finish (tmux timed out, or was killed) throws instead of
+   * reading as "no session"; tmux answering at all (no such session, no server, the server exiting
+   * as its last session ends) is a real answer.
+   */
   async hasSession(name, { strict = false } = {}) {
     try {
       await this.exec(['has-session', '-t', `=${name}`]);
       return true;
     } catch (err) {
-      if (strict && !/can't find session|no server running|error connecting|no such file/i.test(String(err.stderr || ''))) throw err;
+      if (strict && (err.killed || err.signal || err.code === 'ETIMEDOUT')) throw err;
       return false;
     }
   }

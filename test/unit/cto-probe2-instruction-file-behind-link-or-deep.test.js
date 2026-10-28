@@ -21,7 +21,7 @@ import path from 'node:path';
 import { Cto } from '../../server/cto.js';
 
 // A folder path Claude Code's file rules can express (no underscores, as macOS temp dirs often have).
-const root = /^\/[A-Za-z0-9._/ -]+$/.test(os.tmpdir()) ? os.tmpdir() : '/tmp';
+const root = fs.realpathSync.native(os.tmpdir()); // the real temp folder (no Windows short names), on every OS
 
 function seat() {
   const home = fs.mkdtempSync(path.join(root, 'clawdling-probe-'));
@@ -51,7 +51,7 @@ test('a CLAUDE.md behind a linked folder in the seat folder is refused', () => {
     const elsewhere = path.join(s.home, 'elsewhere');
     fs.mkdirSync(elsewhere);
     fs.writeFileSync(path.join(elsewhere, 'CLAUDE.md'), 'extra rules\n');
-    fs.symlinkSync(elsewhere, path.join(s.dir, 'notes'));
+    fs.symlinkSync(elsewhere, path.join(s.dir, 'notes'), process.platform === 'win32' ? 'junction' : 'dir');
     assert.throws(s.start, (err) => /notes/.test(String(err && err.message)));
   } finally {
     fs.rmSync(s.home, { recursive: true, force: true });
