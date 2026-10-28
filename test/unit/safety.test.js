@@ -54,7 +54,7 @@ function world({ user = null, claudeJson = null, agents = [], connectors = false
   const cfg = path.join(home, '.claude');
   fs.mkdirSync(cfg, { recursive: true });
   // claude.ai connectors are off unless a test turns them on (each one is its own "unknown: review").
-  if (user || !connectors) write(path.join(cfg, 'settings.json'), { ...(connectors ? {} : { disableClaudeAiConnectors: true }), ...(user || {}) });
+  if (user || !connectors) write(path.join(cfg, 'settings.json'), { ...(connectors ? {} : { disableClaudeAiConnectors: true, syncClaudeAiPlugins: false }), ...(user || {}) });
   if (claudeJson) write(path.join(home, '.claude.json'), claudeJson);
   const list = [{ id: 'donna', name: 'Donna', kind: 'chief', dir: path.join(org, 'donna') }];
   for (const a of agents) {
@@ -726,9 +726,9 @@ test('claude.ai connectors: unknown on every row that loads them, until turned o
   const choices = new SafetyChoices(path.join(w.org, '.clawdling', 'safety.json'));
   choices.tag('claude.ai', ['private', 'untrusted', 'sends']);
   const t = row(w.run({ choices }), 'a');
-  assert.ok(texts(t, 'private').some((x) => x.startsWith('claude.ai MCP server (your claude.ai connectors, tagged by you)')));
+  assert.ok(texts(t, 'private').some((x) => x.startsWith('claude.ai MCP server (your claude.ai connectors and plugins, tagged by you)')));
   assert.equal(t.verdict, 'red');
-  const off = world({ connectors: true, agents: [{ id: 'a', kind: 'domain', folder: { disableClaudeAiConnectors: true } }] });
+  const off = world({ connectors: true, agents: [{ id: 'a', kind: 'domain', folder: { disableClaudeAiConnectors: true, syncClaudeAiPlugins: false } }] });
   assert.ok(!row(off.run(), 'a').unknown.some((u) => u.text.startsWith('claude.ai')), 'its own settings turn them off');
 });
 
@@ -763,4 +763,22 @@ test('servers your organization manages: managedMcpServers, managed-mcp.json, dr
   assert.ok(!JSON.stringify(a).includes('PLANTEDmanaged'));
   const s = scanSafety({ configDir: path.join(w.home, '.claude'), homedir: w.home, env: {}, profiles: [f, path.join(dir, 'nope.plist')] });
   assert.equal(s.user.profiles.length, 1);
+});
+
+// ------------------------------------------------------------------------------ review round 8
+
+test('plugins synced from claude.ai and skills-folder plugins are listed; the claude.ai item covers what syncs later', () => {
+  const w = world({ user: { syncClaudeAiPlugins: true }, agents: [{ id: 'a', kind: 'domain' }] });
+  fs.mkdirSync(path.join(w.cfg, 'plugins', 'synced', 'slack'), { recursive: true });
+  write(path.join(w.cfg, 'skills', 'tool', '.claude-plugin', 'plugin.json'), '{}');
+  write(path.join(w.cfg, 'skills', 'tool', 'SKILL.md'), '---\nname: tool\n---\n');
+  const a = w.run();
+  const r = row(a, 'a');
+  assert.ok(texts(r, 'sends').some((t) => t.startsWith('slack plugin (chat)')), 'slack@synced, on by default');
+  assert.ok(r.unknown.some((u) => u.text.startsWith('tool plugin')), 'tool@skills-dir');
+  assert.ok(r.unknown.some((u) => /claude\.ai account's plugins/.test(u.text)), 'what syncs after start');
+  assert.ok(!row(a, USER_ROW).risks.some((k) => k.id === 'marketplace' && /slack/.test(k.text)), 'synced is not a marketplace');
+  const off = world({ user: { syncClaudeAiPlugins: true, enabledPlugins: { 'slack@synced': false } }, agents: [{ id: 'a', kind: 'domain' }] });
+  fs.mkdirSync(path.join(off.cfg, 'plugins', 'synced', 'slack'), { recursive: true });
+  assert.ok(!texts(row(off.run(), 'a'), 'sends').some((t) => t.startsWith('slack plugin')), 'turned off by name');
 });

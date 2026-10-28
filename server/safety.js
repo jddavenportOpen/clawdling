@@ -355,11 +355,15 @@ function capsFor(view, { tags = {} } = {}) {
   // claude.ai connectors: MCP servers on your claude.ai account load in every session signed in with it.
   // Clawdling cannot see which without asking claude.ai, so it says so, unless a settings file turns them
   // off; you can say what yours do (a tag named "claude.ai").
-  if (view.connectors && !view.layers.some((l) => l.facts && l.facts.connectors_off)) {
-    const what = "claude.ai MCP server (your claude.ai account's connectors, like Gmail, Calendar or Drive: Clawdling cannot see which)";
+  const connectorsOn = !view.layers.some((l) => l.facts && l.facts.connectors_off);
+  // Plugins turned on for your claude.ai account (or your organization) sync in after a session starts.
+  const syncOn = !view.layers.some((l) => l.facts && l.facts.sync_plugins_off);
+  if (view.connectors && (connectorsOn || syncOn)) {
+    const which = connectorsOn && syncOn ? 'connectors and plugins, like Gmail, Calendar or Slack' : connectorsOn ? 'connectors, like Gmail, Calendar or Drive' : 'plugins (yours, and any your organization turns on)';
+    const what = `claude.ai MCP server (your claude.ai account's ${which}: Clawdling cannot see which)`;
     const ctag = Object.hasOwn(tags, 'claude.ai') && Array.isArray(tags['claude.ai']) ? tags['claude.ai'].filter((c) => CAPS.includes(c)) : null;
-    if (ctag) for (const c of ctag) add(c, 'claude.ai MCP server (your claude.ai connectors, tagged by you)', 'your claude.ai account', `turn them off for this agent: set \`"disableClaudeAiConnectors": true\` in ${view.denyFile}`);
-    else unknown.push({ text: what, source: 'your claude.ai account', why: 'unknown: check `/mcp` in Claude Code, or set "disableClaudeAiConnectors": true' });
+    if (ctag) for (const c of ctag) add(c, 'claude.ai MCP server (your claude.ai connectors and plugins, tagged by you)', 'your claude.ai account', `turn them off for this agent: set \`"disableClaudeAiConnectors": true\` and \`"syncClaudeAiPlugins": false\` in ${view.denyFile}`);
+    else unknown.push({ text: what, source: 'your claude.ai account', why: 'unknown: check `/mcp` and `/plugin` in Claude Code, or set "disableClaudeAiConnectors": true and "syncClaudeAiPlugins": false' });
   }
 
   // What Clawdling itself gives this agent (Donna's channel, the CTO's report).
@@ -414,7 +418,7 @@ function risksFor(view) {
   // Plugins load in every agent that loads your settings: listed once, on the user-level row.
   if (view.isUserRow) {
     for (const p of view.plugins) {
-      if (p.official) continue;
+      if (p.official || p.marketplace === 'synced' || p.marketplace === 'skills-dir') continue;
       add('marketplace', p.claims
         ? `The ${p.name} plugin comes from a marketplace named "${p.marketplace}" whose source is not Anthropic's: check where it came from.`
         : `The ${p.name} plugin comes from ${p.marketplace ? `the "${p.marketplace}" marketplace` : 'a marketplace Clawdling could not name'}, not Anthropic's official one.`, view.pluginSource);

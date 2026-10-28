@@ -1397,6 +1397,14 @@ function claudeMdLines(file, scope = LENIENT) {
 function listPlugins(cfg, enabled) {
   const installed = withJson(path.join(cfg, 'plugins', 'installed_plugins.json'), (j) => (j && isObj(j.plugins) ? Object.keys(j.plugins).slice(0, LIST_MAX) : []));
   const flags = new Map(enabled);
+  // Plugins synced from claude.ai (`<name>@synced`, on unless a setting says false) and a skills
+  // folder that is a plugin (`<name>@skills-dir`): names only, from folder names.
+  const onByDefault = new Set();
+  const syncedDir = path.join(cfg, 'plugins', 'synced');
+  if (dirIn(syncedDir)) for (const e of listEntries(syncedDir, LIST_MAX).entries) if (!e.name.startsWith('.')) onByDefault.add(`${e.name.replace(/\.json$/i, '')}@synced`);
+  const skillsDir = path.join(cfg, 'skills');
+  if (dirIn(skillsDir)) for (const e of listEntries(skillsDir, LIST_MAX).entries) if (!e.name.startsWith('.') && direntIsDir(skillsDir, e) && isFile(path.join(skillsDir, e.name, '.claude-plugin', 'plugin.json'))) onByDefault.add(`${e.name}@skills-dir`);
+  for (const k of onByDefault) if (!flags.has(k)) flags.set(k, true);
   const keys = [...new Set([...installed, ...flags.keys()])];
   const out = [];
   for (const k of keys) {
@@ -1626,6 +1634,7 @@ export function settingsFacts(file, scope = LENIENT, { home } = {}) {
         hooks,
         all_project_mcp: s.enableAllProjectMcpServers === true,
         connectors_off: s.disableClaudeAiConnectors === true,
+        sync_plugins_off: s.syncClaudeAiPlugins === false,
         // Only whether the key is there (its value is never read): Claude in Chrome on for every session.
         chrome_env: isObj(s.env) && Object.hasOwn(s.env, 'CLAUDE_CODE_ENABLE_CFC'),
         // Servers a managed settings file gives every session (names only, like any MCP entry).

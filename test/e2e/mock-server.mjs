@@ -424,7 +424,7 @@ const SAFETY_SCAN = (agents) => {
   return {
     user: {
       config_dir: '~/.claude',
-      settings: safetyFacts('~/.claude/settings.json', { default_mode: 'default', connectors_off: true, allow: ['WebSearch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
+      settings: safetyFacts('~/.claude/settings.json', { default_mode: 'default', connectors_off: true, sync_plugins_off: true, allow: ['WebSearch', 'Bash(git status:*)'], hooks: [{ event: 'PreToolUse', count: 2 }, { event: 'Stop', count: 1 }, { event: 'SessionStart', count: 1 }], plugins: [['superpowers@obra', true], ['frontend-design@claude-plugins', false]] }),
       managed: [],
       mcp: [{ name: 'github', type: 'http', command: null, package: null, host: 'api.githubcopilot.com' }, { name: 'linear', type: 'http', command: null, package: null, host: 'mcp.linear.app' }],
       plugins: [{ name: 'frontend-design', marketplace: 'claude-plugins', enabled: false }, { name: 'superpowers', marketplace: 'obra', enabled: true }],

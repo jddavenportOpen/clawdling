@@ -933,8 +933,11 @@ the reading, and also starts no process (the `.gitignore` check reads the ignore
 **claude.ai connectors.** MCP servers connected on the owner's claude.ai account load in every session
 signed in with it, and Clawdling cannot list them without asking claude.ai. So every row whose
 sessions load them (the user level, domains, projects, Donna's cockpit sessions) carries one "unknown:
-review" item, "claude.ai MCP server", unless a settings file it loads sets
-`"disableClaudeAiConnectors": true`. The owner can say once what their connectors do (a tag named
+review" item, "claude.ai MCP server", unless the settings it loads set both
+`"disableClaudeAiConnectors": true` and `"syncClaudeAiPlugins": false` (plugins on the account sync in
+after a session starts). Plugins already synced (`plugins/synced/<name>`, as `<name>@synced`) and a
+skills folder that is a plugin (`<name>@skills-dir`) are listed like any plugin, on unless a setting
+turns that name off. The owner can say once what their connectors do (a tag named
 `claude.ai`); then they count like any tagged server.
 
 **Your organization's servers, and Claude in Chrome.** MCP servers from managed settings
