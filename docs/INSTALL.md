@@ -38,7 +38,8 @@ node bin\clawdling.js start --open
 ```
 
 No git? Download [the ZIP](https://github.com/jddavenportOpen/clawdling/archive/refs/heads/main.zip),
-unzip it to `.clawdling-app` in your home folder and run the same commands from there.
+unzip it in your home folder, rename the `clawdling-main` folder it makes to `.clawdling-app`, and
+run the same commands from there.
 
 The first time Claude Code starts in your org it asks whether you trust the folder. Start one
 Scratch session (`node bin/clawdling.js spawn scratch`), answer "Yes" once in the cockpit, and

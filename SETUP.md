@@ -100,9 +100,10 @@ Then offer the option for their OS below that needs no admin password, and say h
 - tmux (optional, recommended): `brew install tmux` if Homebrew is there. Without Homebrew, skip
   it: do not install Homebrew just for this (it needs an admin password). The built-in terminal
   is used and needs nothing else on a Mac.
-- git: part of the Xcode Command Line Tools; if `git --version` opens an install dialog, let the
-  user finish it, or skip git and download the ZIP (see Windows below for the link) instead of
-  cloning in step 2.
+- git: part of the Xcode Command Line Tools. Check it BEFORE installing Node, because the nvm
+  installer uses git: if `git --version` opens an install dialog, let the user finish it first. Or
+  skip git and download the ZIP (see Windows below for the link), unzip it in the home folder and
+  rename the `clawdling-main` folder inside to `.clawdling-app`, instead of cloning in step 2.
 
 **Linux**
 - tmux is the simple path: `sudo apt install -y tmux` (Debian/Ubuntu), `sudo dnf install -y tmux`
@@ -119,8 +120,9 @@ Then offer the option for their OS below that needs no admin password, and say h
   first. Afterwards a new terminal (or a session restart) may be needed for `node` to be on PATH.
 - Git for Windows: recommended (Claude Code's Bash tool needs it; without it agents use
   PowerShell, which also works). `winget install --id Git.Git -e`, with the user's OK. Without
-  git, download https://github.com/jddavenportOpen/clawdling/archive/refs/heads/main.zip and
-  expand it to `$HOME\.clawdling-app` (`Expand-Archive`), instead of cloning in step 2.
+  git, download https://github.com/jddavenportOpen/clawdling/archive/refs/heads/main.zip, expand
+  it into the home folder (`Expand-Archive main.zip $HOME`) and rename the `clawdling-main` folder
+  it makes to `$HOME\.clawdling-app`, instead of cloning in step 2.
 - Claude Code older than 2.1.139: ask the user to update it (`claude update`) before going on;
   Clawdling's hooks need it on Windows.
 

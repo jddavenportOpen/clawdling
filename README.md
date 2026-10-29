@@ -89,8 +89,8 @@ backstory into each new chat.
 its `memory/NOW.md`. Before an agent finishes it updates that memory (the `/handoff` skill does
 it), so the next session picks up where the last one stopped.
 
-**A chief of staff you can text.** Pair Donna with your own Telegram bot on any OS (or iMessage,
-on a Mac). Text "have the health agent look at my sleep" and Donna starts the Health agent's
+**A chief of staff you can text.** Pair Donna with your own Telegram bot on any OS (or iMessage
+on a Mac, experimental). Text "have the health agent look at my sleep" and Donna starts the Health agent's
 session, tells you who is on it, and you can watch it in the cockpit. Her tools are deliberately
 narrow: she can start, message, list and end sessions, add an agent, and read your org and its
 report card. She has no other shell, no MCP servers and no writes outside her own memory.

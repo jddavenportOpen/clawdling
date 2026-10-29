@@ -113,8 +113,9 @@ What happens next, so nothing surprises you:
    projects you already have, then makes an assistant for each one you pick, already knowing what
    it is and how to run it.
 
-Every assistant is a normal Claude Code session. It asks before it edits your files or runs a
-program, the same as Claude Code always does.
+Every assistant is a normal Claude Code session. By default it asks before it edits your files or
+runs a program: that is the "Ask before editing files" mode from the interview, and you can change
+it for each agent.
 
 ## What Clawdling does and does not do with your account
 
